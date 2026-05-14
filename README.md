@@ -206,6 +206,13 @@ See `trajectory_tools_research.md` for:
 
 See `project_plan.md` for details.
 
+## TODO
+- rework Robot definition ".chor" file no need to keep choreos format
+- move input output into on directory
+
+
+
+
 ## License
 
 This project is for FLL educational use.
