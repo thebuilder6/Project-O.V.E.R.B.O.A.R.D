@@ -241,7 +241,8 @@ async def follow_trajectory(drivebase, samples, config=None, b=2.0, zeta=0.7, de
     max_dt = 0.0
     
     # OPTIMIZATION: Force a clean garbage collection BEFORE we start driving
-    gc.collect() 
+    gc.collect()
+    gc.threshold(4096)
 
     # Run the control loop
     while True:
@@ -344,3 +345,4 @@ async def follow_trajectory(drivebase, samples, config=None, b=2.0, zeta=0.7, de
         print(f"Max Math Calc Time: {max_calc_time:.1f} ms")
         print("---------------------------")
     drivebase.stop()
+    gc.threshold(-1)
