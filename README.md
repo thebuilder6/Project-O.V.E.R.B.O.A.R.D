@@ -1,7 +1,8 @@
-# FLL Trajectory Optimizer
+# **O**ptimal **V**elocity **E**ngine for **R**obotic **B**oundary-constrained **O**rchestration and **A**dvanced **R**amsete **D**ynamics
 
 A high-performance trajectory optimizer for LEGO differential-drive robots in FIRST LEGO League (FLL). Generates time-optimal, physically feasible trajectories using direct collocation with CasADi and IPOPT.
 
+Also contains a Pybricks template with a performance optimized Ramsete controller.
 ## Features
 
 - **Time-optimal trajectories**: Minimizes travel time while respecting actuator limits
@@ -15,6 +16,8 @@ A high-performance trajectory optimizer for LEGO differential-drive robots in FI
 - **Stop constraints**: Force robot to come to rest at waypoints
 - **Choreo-compatible**: Uses Choreo-like configuration format for easy migration
 
+
+
 ## Installation
 
 ### Prerequisites
@@ -25,7 +28,7 @@ A high-performance trajectory optimizer for LEGO differential-drive robots in FI
 ### Dependencies
 
 ```bash
-pip install numpy casadi click matplotlib
+pip install numpy casadi click matplotlib rsplan
 ```
 
 Or install from a requirements file:
@@ -38,7 +41,7 @@ pip install -r requirements.txt
 
 ### 1. Create a robot configuration
 
-Create a `.chor` file with your robot's physical parameters:
+Create a `.json` file with your robot's physical parameters:
 
 ```json
 {
@@ -106,10 +109,10 @@ python main.py -c fll_choreo.chor -w test_waypoints.json -o output.traj \
 ```
 
 This generates two files:
-- `output.traj`: Full trajectory with variable timesteps (for analysis)
+- `output.traj`: Full trajectory with variable timesteps (for analysis) or generate .py python file for the robot
 - `output_controller.json`: Fixed 20ms timesteps (for robot controller)
 
-### 5. Live Visualization (Optional)
+### 5. Live Visualization (Optional) (Broken) 
 
 To see the optimization progress in real-time in your browser:
 
