@@ -14,7 +14,6 @@ Also contains a Pybricks template with a performance optimized Ramsete controlle
 - **Controller export**: Resamples trajectories to fixed timesteps for on-robot execution
 - **Event markers**: Trigger robot actions at specific waypoints
 - **Stop constraints**: Force robot to come to rest at waypoints
-- **Choreo-compatible**: Uses Choreo-like configuration format for easy migration
 
 
 
