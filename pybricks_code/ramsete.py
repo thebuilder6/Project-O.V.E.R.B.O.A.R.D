@@ -268,7 +268,7 @@ async def follow_trajectory(drivebase, samples, config=None, b=2.0, zeta=0.7, de
                 print(f"[{t:.2f}s] Event triggered: {event_name}")
                 
             # If a dictionary was passed and the event exists in it
-            if event_map and event_name in event_map:
+            if event_name in event_map:
                 action = event_map[event_name]
                 action()
 

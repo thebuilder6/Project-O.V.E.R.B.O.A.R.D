@@ -99,7 +99,7 @@ async def follow_trajectory(drivebase, samples, config=None, b=2.0, zeta=0.7):
             et = (tr - h + _PI) % _2PI - _PI
             
             sinc = 1.0 if abs(et) < 1e-6 else m_sin(et) / et
-            kg = 1.4 * kr # (2 * zeta * kr) where zeta=0.7
+            kg = 2 *zeta * kr
             
             c_v = vr * m_cos(et) + kg * ex
             c_w = wr + b * vr * sinc * ey + kg * et
@@ -115,8 +115,7 @@ async def follow_trajectory(drivebase, samples, config=None, b=2.0, zeta=0.7):
             dur = w_time() - calc_start
             t_math += dur
             if dur > m_math: m_math = dur
-            l_count = l_cnt + 1
-            l_cnt = l_count # Micro-optimization: avoid re-reading l_cnt
+            l_cnt += 1
 
             # 8. PRECISION WAIT & MICRO-GC
             # We target a 20ms window. If the loop finished in 18ms, 

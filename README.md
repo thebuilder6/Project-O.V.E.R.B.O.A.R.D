@@ -2,7 +2,10 @@
 
 A high-performance trajectory optimizer for LEGO differential-drive robots in FIRST LEGO League (FLL). Generates time-optimal, physically feasible trajectories using direct collocation with CasADi and IPOPT.
 
+**📖 For detailed technical documentation, see the [Technical Whitepaper](docs/WHITEPAPER.md)**
+
 Also contains a Pybricks template with a performance optimized Ramsete controller.
+
 ## Features
 
 - **Time-optimal trajectories**: Minimizes travel time while respecting actuator limits
@@ -14,8 +17,6 @@ Also contains a Pybricks template with a performance optimized Ramsete controlle
 - **Controller export**: Resamples trajectories to fixed timesteps for on-robot execution
 - **Event markers**: Trigger robot actions at specific waypoints
 - **Stop constraints**: Force robot to come to rest at waypoints
-
-
 
 ## Installation
 
@@ -48,21 +49,22 @@ Create a `.json` file with your robot's physical parameters:
   "version": 2,
   "type": "Differential",
   "config": {
-    "mass": {"val": 0.8},
-    "inertia": {"val": 0.000001},
-    "differentialTrackWidth": {"val": 0.0965},
-    "radius": {"val": 0.028},
-    "vmax": {"val": 15.7},
-    "tmax": {"val": 0.04},
-    "gearing": {"val": 1.0},
-    "cof": {"val": 1.5},
-    "torqueHeadroom": {"val": 0.85},
-    "speedHeadroom": {"val": 0.90}
+    "mass": { "val": 0.8 },
+    "inertia": { "val": 0.000001 },
+    "differentialTrackWidth": { "val": 0.0965 },
+    "radius": { "val": 0.028 },
+    "vmax": { "val": 15.7 },
+    "tmax": { "val": 0.04 },
+    "gearing": { "val": 1.0 },
+    "cof": { "val": 1.5 },
+    "torqueHeadroom": { "val": 0.85 },
+    "speedHeadroom": { "val": 0.9 }
   }
 }
 ```
 
 **Key parameters:**
+
 - `mass`: Robot mass in kg (0.5-1.5 kg typical)
 - `inertia`: Rotational inertia in kg·m² (1e-6 to 1e-4 typical)
 - `differentialTrackWidth`: Distance between wheel centers in meters
@@ -82,13 +84,14 @@ Create a JSON file with waypoints:
 
 ```json
 [
-  {"x": 0.0, "y": 0.0, "heading": 0.0},
-  {"x": 1.0, "y": 0.5, "heading": 0.5},
-  {"x": 2.0, "y": 1.0, "heading": 1.0}
+  { "x": 0.0, "y": 0.0, "heading": 0.0 },
+  { "x": 1.0, "y": 0.5, "heading": 0.5 },
+  { "x": 2.0, "y": 1.0, "heading": 1.0 }
 ]
 ```
 
 **Waypoint options:**
+
 - `x`, `y`: Position in meters (required)
 - `heading`: Heading in radians (optional, use `null` for unconstrained)
 - `stop`: Force robot to stop at this waypoint (optional, default: `false`)
@@ -108,17 +111,20 @@ python main.py -c fll_choreo.chor -w test_waypoints.json -o output.traj \
 ```
 
 This generates two files:
+
 - `output.traj`: Full trajectory with variable timesteps (for analysis) or generate .py python file for the robot
 - `output_controller.json`: Fixed 20ms timesteps (for robot controller)
 
-### 5. Live Visualization (Optional) (Broken) 
+### 5. Live Visualization (Optional) (Broken)
 
 To see the optimization progress in real-time in your browser:
 
 1. Run the optimizer with the `--live` flag:
+
    ```bash
    python main.py -c fll_choreo.chor -w test_waypoints.json --live
    ```
+
 2. Open `viz/index.html` in any modern web browser.
 3. The visualizer will connect to the WebSocket server and show trajectory updates as they happen.
 
@@ -193,6 +199,7 @@ The solver (IPOPT) finds the optimal trajectory that satisfies all constraints i
 ### Multi-Verse Refinement
 
 For complex paths, the optimizer can use **Multi-Verse refinement**:
+
 - Generates multiple candidate trajectories with different initial conditions
 - Refines the best candidates in parallel
 - Produces higher-quality trajectories for challenging paths
@@ -308,9 +315,16 @@ Typical solve times on a modern laptop:
 - 5 waypoints (4 segments, 40 samples): ~383 ms
 - Complex paths: < 500 ms
 
+### Example Trajectory
+
+![Example trajectory visualization](random_suite/run_000/plot.png)
+
+This shows a complex trajectory optimized with the Multi-Verse refinement pipeline, demonstrating smooth path following through multiple waypoints.
+
 ## Research & References
 
 See `trajectory_tools_research.md` for:
+
 - Comparison with other tools (Choreo, PathPlanner, CasADi)
 - Academic papers on trajectory optimization
 - Research directions for accuracy improvements
@@ -337,6 +351,7 @@ See `project_plan.md` for details.
 ## Pybricks Integration
 
 The `pybricks_code/` directory contains example robot controller code for Pybricks:
+
 - `robot.py`: Base robot class with Ramsete controller
 - `ramsete.py`: Ramsete trajectory following algorithm
 - `mission_*.py`: Example mission scripts
