@@ -721,7 +721,7 @@ The `TrajectoryCritic` evaluates trajectory quality and identifies problematic s
 tortuosity = path_length / straight_line_distance
 ```
 
-High tortuosity indicates unnecessarily winding paths.
+High tortuosity indicates unnecessarily winding paths. Threshold: `1.1` (Configurable).
 
 **2. Yaw excess:**
 
@@ -729,7 +729,7 @@ High tortuosity indicates unnecessarily winding paths.
 yaw_excess = total_yaw_change - expected_yaw_change
 ```
 
-Excess yaw indicates unnecessary rotation.
+Excess yaw indicates unnecessary rotation. Threshold: `0.2 rad` (Configurable).
 
 **3. Velocity chattering:**
 
@@ -778,6 +778,9 @@ The `MultiVerseRefiner` applies two heuristic approaches in parallel:
 - **Point-turn bias**: Force vl = -vr at midpoint to encourage in-place turning
 - **Wide sweep bias**: Add sinusoidal lateral offset to encourage wider turns
 - **Point-Turn Override**: A specialized heuristic that ignores Reeds-Shepp and injects a pure point-turn followed by a straight line, critical for fixing "Spiral Death Loops".
+- **Direct Heading**: Seeds a straight-line position and heading guess between window boundaries to break out of suboptimal loops.
+- **Reverse Direct Heading**: Seeds a straight-line reverse path.
+- **Intermediate Heading Candidates**: For windows containing unconstrained waypoints, seeds specific heading candidates (In-aligned, Out-aligned, and Average) combined with exact position pinning to explore direct path topologies.
 
 **STOMP (Stochastic Trajectory Optimization for Motion Planning) heuristics:**
 
@@ -796,7 +799,7 @@ The refinement phase leverages a hybrid parallelization architecture to maximize
 - **ThreadPoolExecutor**: Switched from `ProcessPoolExecutor` to `ThreadPoolExecutor` for Windows compatibility. Since CasADi releases the Python Global Interpreter Lock (GIL) during heavy C-level solver operations, threads provide near-linear speedups without the overhead of process spawning.
 - **Safety Mechanism**: Nested parallelism is automatically managed to prevent thread oversubscription and resource exhaustion.
 
-Each heuristic is optimized independently using the `LocalSegmentOptimizer`, which solves a constrained local optimization problem with pinned boundary states. The best result (lowest cost) is selected and stitched back into the global trajectory.
+Each heuristic is optimized independently using the `LocalSegmentOptimizer`, which solves a constrained local optimization problem with pinned boundary states. Crucially, the local optimizer inherits the `accuracy_weight` (smoothness penalty) from the global configuration, ensuring that refined segments are not only faster but also respect the desired smoothness profile. The best result (lowest total cost) is selected and stitched back into the global trajectory.
 
 ### 7.7 Phase 5: Final Polish
 
@@ -1272,14 +1275,14 @@ s_opts = {
 
 ```python
 # Critic thresholds (original metrics)
-tortuosity_threshold = 1.5
-yaw_buffer_rad = 0.5
-velocity_chattering_threshold = 3
+tortuosity_threshold = 1.1
+yaw_buffer_rad = 0.2
+velocity_chattering_threshold = 2
 
 # Critic thresholds (research-grounded metrics)
-jerk_cost_threshold = 10.0  # Smoothness threshold
-curvature_cost_threshold = 5.0  # Turn sharpness threshold
-centripetal_cost_threshold = 1.0  # Friction limit approach threshold
+jerk_cost_threshold = 2.0  # Normalized jerk cost threshold
+curvature_cost_threshold = 1.5  # Turn sharpness threshold
+centripetal_cost_threshold = 0.6  # Safety margin for friction limits
 
 # STOMP noise
 stomp_variants = 5

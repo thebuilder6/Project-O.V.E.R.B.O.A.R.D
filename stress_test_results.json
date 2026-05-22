@@ -1,0 +1,132 @@
+[
+  {
+    "scenario": "Heading_Flip_Win",
+    "accuracy_weight": 0.0,
+    "simple": {
+      "solve_time": 4.004320859909058,
+      "cost": 4.346672268711204,
+      "metrics": {
+        "total_time_s": 4.346672268711204,
+        "path_length_m": 1.2211776505132448,
+        "max_linear_speed_m_s": 0.3916724196456062,
+        "avg_linear_speed_m_s": 0.275473772394599,
+        "max_wheel_speed_m_s": 0.3916816443670514,
+        "max_accel_m_s2": 2.916238231363774,
+        "max_jerk_m_s3": 20.12733862265708,
+        "avg_jerk_m_s3": 4.177575338697535,
+        "tortuosity": 1.2211776505132448,
+        "velocity_chattering": 9,
+        "avg_force_utilization": 0.3552982380594631,
+        "max_force_utilization": 0.9999629971242333
+      }
+    },
+    "multiverse": {
+      "solve_time": 21.767245054244995,
+      "cost": 4.346672268711204,
+      "metrics": {
+        "total_time_s": 4.346672268711204,
+        "path_length_m": 1.2211776505132448,
+        "max_linear_speed_m_s": 0.3916724196456062,
+        "avg_linear_speed_m_s": 0.275473772394599,
+        "max_wheel_speed_m_s": 0.3916816443670514,
+        "max_accel_m_s2": 2.916238231363774,
+        "max_jerk_m_s3": 20.12733862265708,
+        "avg_jerk_m_s3": 4.177575338697535,
+        "tortuosity": 1.2211776505132448,
+        "velocity_chattering": 9,
+        "avg_force_utilization": 0.3552982380594631,
+        "max_force_utilization": 0.9999629971242333
+      },
+      "improvement_pct": 0.0,
+      "refinements_solved": 3,
+      "heuristic_wins": [
+        {
+          "window": "W0-W2",
+          "heuristic": "Direct_Heading",
+          "original_cost": 2.897781512474136,
+          "refined_cost": 2.7296245310126133,
+          "improvement_pct": 5.802955838376855
+        },
+        {
+          "window": "W2-W4",
+          "heuristic": "Heading_Div_0.79",
+          "original_cost": 1.448890756237068,
+          "refined_cost": 1.4488797794655244,
+          "improvement_pct": 0.000757598286582617
+        },
+        {
+          "window": "W1-W3",
+          "heuristic": "TEB_Base",
+          "original_cost": 2.897781512474136,
+          "refined_cost": 2.8976718734287585,
+          "improvement_pct": 0.0037835511375039488
+        }
+      ]
+    }
+  },
+  {
+    "scenario": "Heading_Flip_Win",
+    "accuracy_weight": 2.0,
+    "simple": {
+      "solve_time": 8.675111293792725,
+      "cost": 6.0602296176414265,
+      "metrics": {
+        "total_time_s": 6.0602296176414265,
+        "path_length_m": 1.1654150833504222,
+        "max_linear_speed_m_s": 0.3626481433925446,
+        "avg_linear_speed_m_s": 0.187735574106167,
+        "max_wheel_speed_m_s": 0.3916836100008054,
+        "max_accel_m_s2": 0.6426263397970344,
+        "max_jerk_m_s3": 2.8042427825465355,
+        "avg_jerk_m_s3": 0.5239929797807718,
+        "tortuosity": 1.1654150833504222,
+        "velocity_chattering": 4,
+        "avg_force_utilization": 0.17988822541184554,
+        "max_force_utilization": 0.42793473225130924
+      }
+    },
+    "multiverse": {
+      "solve_time": 157.58265018463135,
+      "cost": 6.0602296176414265,
+      "metrics": {
+        "total_time_s": 6.0602296176414265,
+        "path_length_m": 1.1654150833504222,
+        "max_linear_speed_m_s": 0.3626481433925446,
+        "avg_linear_speed_m_s": 0.187735574106167,
+        "max_wheel_speed_m_s": 0.3916836100008054,
+        "max_accel_m_s2": 0.6426263397970344,
+        "max_jerk_m_s3": 2.8042427825465355,
+        "avg_jerk_m_s3": 0.5239929797807718,
+        "tortuosity": 1.1654150833504222,
+        "velocity_chattering": 4,
+        "avg_force_utilization": 0.17988822541184554,
+        "max_force_utilization": 0.42793473225130924
+      },
+      "improvement_pct": 0.0,
+      "refinements_solved": 3,
+      "heuristic_wins": [
+        {
+          "window": "W0-W2",
+          "heuristic": "STOMP_90_Flip",
+          "original_cost": 4.841595748681405,
+          "refined_cost": 4.825220171426833,
+          "improvement_pct": 0.33822685958512233
+        },
+        {
+          "window": "W2-W4",
+          "heuristic": "STOMP_Noise_1",
+          "original_cost": 2.46768702296998,
+          "refined_cost": 2.459099609616219,
+          "improvement_pct": 0.34799442854084317
+        },
+        {
+          "window": "W1-W3",
+          "heuristic": "STOMP_-90_Flip",
+          "original_cost": 4.872972014266818,
+          "refined_cost": 4.692843002934766,
+          "improvement_pct": 3.6964918083805975
+        }
+      ]
+    }
+  }
+]

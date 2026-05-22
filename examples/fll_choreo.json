@@ -16,7 +16,7 @@
     "speed_headroom": 0.90
   },
   "multiverse": {
-    "enable_parallel": true,
+    "enable_parallel": false,
     "num_workers": 2,
     "stomp_variants": 5,
     "stomp_noise": {
@@ -30,9 +30,12 @@
       "wide_sweep_bias": 2.0
     },
     "critic_thresholds": {
-      "tortuosity": 1.5,
-      "yaw_buffer_rad": 0.5,
-      "velocity_chattering_threshold": 3
+      "tortuosity": 1.05,
+      "yaw_buffer_rad": 0.1,
+      "velocity_chattering_threshold": 2,
+      "jerk_cost": 1.0,
+      "curvature_cost": 1.0,
+      "centripetal_cost": 0.5
     },
     "bootstrap": {
       "turning_radius": 0.0,
