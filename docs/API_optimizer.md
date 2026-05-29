@@ -142,11 +142,11 @@ samples, stats = optimizer.solve(waypoints, live_viz=True)
 
 ## `live_visualizer.py`
 
-Provides a WebSocket server for real-time trajectory visualization in a web browser.
+Provides a robust, bi-directional WebSocket server for real-time trajectory visualization and interaction in a web browser.
 
 ### Function `get_visualizer()`
 
-Returns the global `LiveVisualizer` instance, starting the server thread if it hasn't been started yet.
+Returns the global `LiveVisualizer` instance, starting the server thread if it hasn't been started yet. Reclaims the port (8765) if it is currently in use by another process.
 
 **Returns:**
 - `LiveVisualizer`: The global visualizer instance.
@@ -156,10 +156,20 @@ Returns the global `LiveVisualizer` instance, starting the server thread if it h
 #### `start()`
 Starts the WebSocket server on `localhost:8765` in a separate daemon thread.
 
-#### `send_state(iteration, trajectory, phase="solve")`
-Broadcasts the current trajectory and solver state to all connected WebSocket clients.
+#### `send_trajectory(trajectory, phase="solve", iteration=0)`
+Broadcasts the current trajectory state including rich telemetry (position, heading, velocity, force).
+
+#### `send_candidates(window, candidates)`
+Broadcasts alternative candidate trajectories from the Multi-Verse refinement phases.
+
+#### `send_config(robot_config, waypoints)`
+Broadcasts the initial robot configuration and waypoint set to the visualizer.
+
+#### `on_regenerate` (Callback)
+A configurable callback property that is triggered when the visualizer sends a `regenerate` request for a specific window. This runs in a separate thread to maintain UI responsiveness.
 
 **Usage with Browser:**
 1. Call `get_visualizer()` or set `live_viz=True` in `solve()`.
-2. Open `viz/index.html` in a web browser.
-3. The browser will automatically connect to `ws://localhost:8765` and display updates.
+2. Open `viz/index.html` in a modern web browser.
+3. The browser will automatically connect to `ws://localhost:8765`.
+4. The new interactive dashboard allows for panning/zooming, segment selection, playback animation, and on-demand refinement.
