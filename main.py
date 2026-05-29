@@ -142,7 +142,10 @@ def main(config, waypoints, output, samples, accuracy_weight, stop_waypoints, ev
 
     # Start live visualizer if requested
     if live:
-        get_visualizer()
+        viz = get_visualizer()
+        # Convert waypoints to dictionaries for JSON serialization
+        wp_dicts = [{"x": w[0], "y": w[1], "heading": w[2]} for w in wps]
+        viz.send_config(config_data, wp_dicts)
         if not quiet:
             click.echo("Live visualizer started. Open viz/index.html in your browser.")
             
@@ -252,9 +255,78 @@ def main(config, waypoints, output, samples, accuracy_weight, stop_waypoints, ev
                 click.echo("No iteration history available for convergence visualization.")
 
     if live:
-        click.echo("\nLive visualizer is still active. Press Enter to stop and exit...")
+        viz = get_visualizer()
+
+        def on_regenerate(window_label):
+            click.echo(f"Regenerating window: {window_label}")
+            try:
+                # Parse window label "W0-W2"
+                import re
+                match = re.match(r"W(\d+)-W(\d+)", window_label)
+                if match:
+                    w_start, w_end = int(match.group(1)), int(match.group(2))
+
+                    # Window data extraction
+                    start_idx = w_start * samples
+                    end_idx = min(w_end * samples, len(samples_data) - 1)
+
+                    start_state = (
+                        samples_data[start_idx]['x'], samples_data[start_idx]['y'],
+                        samples_data[start_idx]['heading'], samples_data[start_idx]['vl'],
+                        samples_data[start_idx]['vr']
+                    )
+                    end_state = (
+                        samples_data[end_idx]['x'], samples_data[end_idx]['y'],
+                        samples_data[end_idx]['heading'], samples_data[end_idx]['vl'],
+                        samples_data[end_idx]['vr']
+                    )
+
+                    num_window_samples = end_idx - start_idx + 1
+
+                    # Original dt for comparison
+                    original_dt = (samples_data[end_idx]['t'] - samples_data[start_idx]['t']) / max(num_window_samples - 1, 1)
+
+                    base_guess = np.zeros(1 + num_window_samples * 5)
+                    base_guess[0] = original_dt if original_dt > 0.001 else 0.1
+                    for j in range(num_window_samples):
+                        sample = samples_data[start_idx + j]
+                        base_guess[1 + j * 5] = sample['x']
+                        base_guess[1 + j * 5 + 1] = sample['y']
+                        base_guess[1 + j * 5 + 2] = sample['heading']
+                        base_guess[1 + j * 5 + 3] = sample['vl']
+                        base_guess[1 + j * 5 + 4] = sample['vr']
+
+                    # Trigger refinement
+                    refined, best_name = optimizer.refiner.refine_segment(
+                        start_state, end_state, num_window_samples, base_guess,
+                        live_viz=True, window_label=window_label)
+
+                    if best_name != "None":
+                        click.echo(f"Regeneration successful with {best_name}")
+                        # Update samples_data
+                        dt_val = refined[0]
+                        states = refined[1:].reshape((num_window_samples, 5))
+                        for j in range(num_window_samples):
+                            idx = start_idx + j
+                            samples_data[idx]['x'] = float(states[j, 0])
+                            samples_data[idx]['y'] = float(states[j, 1])
+                            samples_data[idx]['heading'] = float(states[j, 2])
+                            samples_data[idx]['vl'] = float(states[j, 3])
+                            samples_data[idx]['vr'] = float(states[j, 4])
+
+                        # Re-broadcast updated trajectory
+                        viz.send_trajectory(samples_data, phase="regenerated")
+                    else:
+                        click.echo("Regeneration failed to find a better path.")
+            except Exception as e:
+                click.echo(f"Error during regeneration: {e}")
+
+        viz.on_regenerate = on_regenerate
+
+        click.echo("\nLive visualizer is active. You can interact via the web interface.")
+        click.echo("Press Enter to stop and exit...")
         input()
-        get_visualizer().stop()
+        viz.stop()
 
 if __name__ == '__main__':
     main()

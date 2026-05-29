@@ -184,15 +184,31 @@ class TrajectoryOptimizer:
                 try:
                     # Get current state from debug
                     X_curr = np.array(opti.debug.value(X))
+                    dt_curr = float(opti.debug.value(dt))
                     # Convert to list of dicts for JSON serialization
                     traj_data = []
                     for k in range(N):
+                        vl_k = float(X_curr[k, 3])
+                        vr_k = float(X_curr[k, 4])
+
+                        # Rough force/torque estimate for live viz
+                        fl, fr = 0.0, 0.0
+                        if k < N - 1:
+                            al = (float(X_curr[k+1, 3]) - vl_k) / dt_curr
+                            ar = (float(X_curr[k+1, 4]) - vr_k) / dt_curr
+                            fl, fr = self.model.get_dynamics(vl_k, vr_k, al, ar)
+
                         traj_data.append({
+                            "t": k * dt_curr,
                             "x": float(X_curr[k, 0]),
                             "y": float(X_curr[k, 1]),
-                            "heading": float(X_curr[k, 2])
+                            "heading": float(X_curr[k, 2]),
+                            "vl": vl_k,
+                            "vr": vr_k,
+                            "fl": fl,
+                            "fr": fr
                         })
-                    viz.send_state(iteration, traj_data, phase="global_solve")
+                    viz.send_trajectory(traj_data, phase="global_solve", iteration=iteration)
                 except Exception:
                     pass
             
