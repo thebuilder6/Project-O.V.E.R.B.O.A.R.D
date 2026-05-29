@@ -3,541 +3,617 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>FLL Choreo - Live Visualizer</title>
-    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600&display=swap" rel="stylesheet">
+    <title>OVERBOARD - Trajectory Visualizer</title>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600&family=JetBrains+Mono&display=swap" rel="stylesheet">
+    <script src="https://cdn.tailwindcss.com"></script>
     <style>
         :root {
-            --bg-color: #0f172a;
-            --panel-bg: rgba(30, 41, 59, 0.7);
-            --accent-color: #38bdf8;
-            --accent-glow: rgba(56, 189, 248, 0.5);
-            --text-color: #f1f5f9;
-            --text-muted: #94a3b8;
+            --bg-dark: #020617;
+            --card-bg: #0f172a;
+            --accent: #38bdf8;
+            --accent-glow: rgba(56, 189, 248, 0.4);
             --danger: #ef4444;
             --success: #22c55e;
-            --card-border: rgba(255, 255, 255, 0.1);
+            --warning: #f59e0b;
         }
 
         body {
             font-family: 'Outfit', sans-serif;
-            background-color: var(--bg-color);
-            background-image: 
-                radial-gradient(at 0% 0%, rgba(56, 189, 248, 0.15) 0px, transparent 50%),
-                radial-gradient(at 100% 100%, rgba(139, 92, 246, 0.15) 0px, transparent 50%);
-            color: var(--text-color);
-            margin: 0;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            height: 100vh;
+            background-color: var(--bg-dark);
+            color: #f1f5f9;
             overflow: hidden;
         }
 
-        #header {
-            padding: 30px 20px 10px;
-            text-align: center;
-            z-index: 10;
-        }
+        .mono { font-family: 'JetBrains Mono', monospace; }
 
-        h1 {
-            margin: 0;
-            font-weight: 600;
-            letter-spacing: -0.02em;
-            background: linear-gradient(to right, #38bdf8, #818cf8);
-            -webkit-background-clip: text;
-            background-clip: text;
-            -webkit-text-fill-color: transparent;
-            font-size: 2.5rem;
-        }
-
-        #status-container {
-            margin-top: 8px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            gap: 8px;
-            font-size: 0.9rem;
-            color: var(--text-muted);
+        .glass {
+            background: rgba(15, 23, 42, 0.8);
+            backdrop-filter: blur(12px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
         }
 
         .status-dot {
             width: 8px;
             height: 8px;
             border-radius: 50%;
-            background-color: var(--danger);
-            box-shadow: 0 0 10px var(--danger);
             transition: all 0.3s ease;
         }
 
-        .status-dot.connected {
-            background-color: var(--success);
-            box-shadow: 0 0 10px var(--success);
+        .connected { background-color: var(--success); box-shadow: 0 0 12px var(--success); }
+        .disconnected { background-color: var(--danger); box-shadow: 0 0 12px var(--danger); }
+
+        #viewport-container {
+            cursor: grab;
+        }
+        #viewport-container:active { cursor: grabbing; }
+
+        .metric-card {
+            border-left: 3px solid var(--accent);
         }
 
-        #main-layout {
-            display: flex;
-            width: 100%;
-            max-width: 1200px;
-            flex: 1;
-            padding: 20px;
-            gap: 20px;
-            box-sizing: border-box;
-            align-items: stretch;
-        }
+        /* Scrollbar */
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.1); border-radius: 10px; }
+        ::-webkit-scrollbar-thumb:hover { background: rgba(255, 255, 255, 0.2); }
 
-        #viz-wrapper {
-            flex: 1;
-            position: relative;
-            background: var(--panel-bg);
-            backdrop-filter: blur(12px);
-            border: 1px solid var(--card-border);
-            border-radius: 24px;
-            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
-            overflow: hidden;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-        }
-
-        canvas {
-            max-width: 100%;
-            max-height: 100%;
-        }
-
-        #sidebar {
-            width: 300px;
-            display: flex;
-            flex-direction: column;
-            gap: 20px;
-        }
-
-        .card {
-            background: var(--panel-bg);
-            backdrop-filter: blur(12px);
-            border: 1px solid var(--card-border);
-            border-radius: 20px;
-            padding: 20px;
-            box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.2);
-        }
-
-        .card-title {
-            font-size: 0.8rem;
-            text-transform: uppercase;
-            letter-spacing: 0.1em;
-            color: var(--text-muted);
-            margin-bottom: 12px;
-            font-weight: 600;
-        }
-
-        .metric {
-            margin-bottom: 15px;
-        }
-
-        .metric-label {
-            font-size: 0.9rem;
-            color: var(--text-muted);
-        }
-
-        .metric-value {
-            font-size: 1.5rem;
-            font-weight: 600;
-            color: var(--accent-color);
-        }
-
-        #controls {
-            display: flex;
-            gap: 10px;
-            margin-top: auto;
-        }
-
-        button {
-            flex: 1;
+        .candidate-row:hover {
             background: rgba(56, 189, 248, 0.1);
-            color: var(--accent-color);
-            border: 1px solid rgba(56, 189, 248, 0.2);
-            padding: 12px;
-            border-radius: 12px;
-            cursor: pointer;
-            font-family: inherit;
-            font-weight: 600;
-            transition: all 0.2s ease;
         }
 
-        button:hover:not(:disabled) {
-            background: var(--accent-color);
-            color: var(--bg-color);
-            transform: translateY(-2px);
-            box-shadow: 0 4px 12px var(--accent-glow);
-        }
-
-        button:disabled {
-            opacity: 0.3;
-            cursor: not-allowed;
-        }
-
-        #log-container {
-            flex: 1;
-            overflow-y: auto;
-            font-family: 'Monaco', 'Consolas', monospace;
-            font-size: 0.8rem;
-            color: var(--text-muted);
-            background: rgba(0, 0, 0, 0.2);
-            border-radius: 12px;
-            padding: 10px;
-            display: flex;
-            flex-direction: column-reverse;
-        }
-
-        .log-entry {
-            margin-bottom: 4px;
-            border-left: 2px solid transparent;
-            padding-left: 8px;
-        }
-
-        .log-entry.state { border-left-color: var(--accent-color); }
-        .log-entry.info { border-left-color: var(--text-muted); }
-
-        /* Animation for the "Live" pulse */
         @keyframes pulse {
-            0% { transform: scale(1); opacity: 1; }
-            50% { transform: scale(1.5); opacity: 0; }
-            100% { transform: scale(1); opacity: 0; }
+            0% { opacity: 1; }
+            50% { opacity: 0.5; }
+            100% { opacity: 1; }
         }
-
-        .live-badge {
-            position: absolute;
-            top: 20px;
-            right: 20px;
-            background: rgba(239, 68, 68, 0.1);
-            color: #ef4444;
-            padding: 4px 12px;
-            border-radius: 20px;
-            font-size: 0.75rem;
-            font-weight: 700;
-            text-transform: uppercase;
-            display: flex;
-            align-items: center;
-            gap: 6px;
-            border: 1px solid rgba(239, 68, 68, 0.2);
-        }
-
-        .live-dot {
-            width: 6px;
-            height: 6px;
-            background: #ef4444;
-            border-radius: 50%;
-            position: relative;
-        }
-
-        .live-dot::after {
-            content: '';
-            position: absolute;
-            top: 0; left: 0; right: 0; bottom: 0;
-            background: #ef4444;
-            border-radius: 50%;
-            animation: pulse 2s infinite;
+        .animating-dot {
+            animation: pulse 1.5s infinite;
         }
     </style>
 </head>
-<body>
-    <div id="header">
-        <h1>FLL Choreo Live</h1>
-        <div id="status-container">
-            <div id="status-dot" class="status-dot"></div>
-            <span id="status-text">Searching for solver...</span>
-        </div>
-    </div>
-
-    <div id="main-layout">
-        <div id="viz-wrapper">
-            <div class="live-badge" id="live-badge" style="display: none;">
-                <div class="live-dot"></div>
-                Live
+<body class="h-screen flex flex-col">
+    <!-- Top Nav -->
+    <nav class="h-16 glass flex items-center justify-between px-6 z-50">
+        <div class="flex items-center gap-4">
+            <div class="text-2xl font-bold tracking-tighter">
+                <span class="text-sky-400">OVER</span>BOARD
             </div>
-            <canvas id="vizCanvas"></canvas>
-        </div>
-
-        <div id="sidebar">
-            <div class="card">
-                <div class="card-title">Solver Telemetry</div>
-                <div class="metric">
-                    <div class="metric-label">Current Phase</div>
-                    <div id="phase-val" class="metric-value">Idle</div>
-                </div>
-                <div class="metric">
-                    <div class="metric-label">Iteration</div>
-                    <div id="iter-val" class="metric-value">0</div>
-                </div>
-                <div class="metric">
-                    <div class="metric-label">Samples</div>
-                    <div id="sample-val" class="metric-value">0</div>
-                </div>
-            </div>
-
-            <div class="card" style="flex: 1; display: flex; flex-direction: column;">
-                <div class="card-title">Live Log</div>
-                <div id="log-container"></div>
-            </div>
-
-            <div id="controls">
-                <button id="clearBtn">Clear View</button>
-                <button id="reconnectBtn">Force Reconnect</button>
+            <div class="h-6 w-px bg-slate-700"></div>
+            <div id="connection-status" class="flex items-center gap-2 text-sm text-slate-400 font-medium">
+                <div id="status-dot" class="status-dot disconnected"></div>
+                <span id="status-text">DISCONNECTED</span>
             </div>
         </div>
-    </div>
+
+        <div class="flex items-center gap-6">
+            <div class="flex flex-col items-end">
+                <span class="text-[10px] text-slate-500 uppercase font-bold tracking-widest">Active Phase</span>
+                <span id="phase-display" class="text-sm font-semibold text-sky-400">IDLE</span>
+            </div>
+            <div class="h-6 w-px bg-slate-700"></div>
+            <div class="flex gap-2">
+                <button id="reset-view" class="p-2 hover:bg-slate-800 rounded-lg transition-colors title='Reset Camera'">
+                    <svg class="w-5 h-5 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6"></path></svg>
+                </button>
+            </div>
+        </div>
+    </nav>
+
+    <main class="flex-1 flex overflow-hidden relative">
+        <!-- Sidebar -->
+        <aside class="w-80 glass flex flex-col z-40">
+            <!-- Telemetry -->
+            <div class="p-4 border-b border-white/5">
+                <h3 class="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-4">Solver Telemetry</h3>
+                <div class="grid grid-cols-2 gap-3">
+                    <div class="bg-slate-900/50 p-3 rounded-xl border border-white/5">
+                        <div class="text-[10px] text-slate-500 font-bold uppercase">Iteration</div>
+                        <div id="stat-iteration" class="text-lg font-bold mono text-white">0</div>
+                    </div>
+                    <div class="bg-slate-900/50 p-3 rounded-xl border border-white/5">
+                        <div class="text-[10px] text-slate-500 font-bold uppercase">Samples</div>
+                        <div id="stat-samples" class="text-lg font-bold mono text-white">0</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Trajectory Details -->
+            <div class="flex-1 overflow-y-auto p-4 space-y-6">
+                <div id="selected-segment-panel" class="hidden">
+                    <h3 class="text-[10px] font-bold text-sky-500 uppercase tracking-widest mb-4">Selected Window</h3>
+                    <div class="space-y-3">
+                        <div class="metric-card bg-sky-500/5 p-3 rounded-r-xl">
+                            <div class="text-[10px] text-slate-400 font-bold uppercase">Window ID</div>
+                            <div id="window-id" class="text-lg font-bold mono">W0 - W1</div>
+                        </div>
+                        <button id="btn-regenerate" class="w-full py-3 bg-sky-500 hover:bg-sky-400 text-slate-950 font-bold rounded-xl transition-all shadow-lg shadow-sky-500/20 active:scale-95 disabled:opacity-50">
+                            REGENERATE WINDOW
+                        </button>
+                    </div>
+
+                    <div class="mt-6">
+                        <h4 class="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-3">Multi-Verse Candidates</h4>
+                        <div id="candidates-list" class="space-y-2">
+                            <!-- Candidates injected here -->
+                            <div class="text-xs text-slate-500 italic">No candidates generated for this window yet.</div>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="no-selection-msg" class="h-full flex flex-col items-center justify-center text-center p-8">
+                    <svg class="w-12 h-12 text-slate-700 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M15 15l-2 5L9 9l11 4-5 2zm0 0l5 5M7.188 2.239l.777 2.897M5.136 7.965l-2.898-.777M13.95 4.05l-2.122 2.122m-5.657 5.656l-2.12 2.122"></path></svg>
+                    <p class="text-sm text-slate-500">Select a segment on the path to view details and alternative paths.</p>
+                </div>
+            </div>
+
+            <!-- Playback Controls -->
+            <div class="p-4 glass border-t border-white/10">
+                <div class="flex items-center justify-between mb-2">
+                    <span id="playback-time" class="text-xs mono text-slate-400">0.00s / 0.00s</span>
+                    <span id="playback-speed" class="text-[10px] font-bold text-slate-500 uppercase">1.0x Speed</span>
+                </div>
+                <input type="range" id="playback-slider" class="w-full h-1.5 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-sky-500 mb-4" min="0" max="100" value="0">
+                <div class="flex items-center justify-center gap-4">
+                    <button id="btn-play-pause" class="p-3 bg-white text-slate-950 rounded-full hover:scale-110 transition-transform active:scale-95">
+                        <svg id="play-icon" class="w-6 h-6" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"></path></svg>
+                        <svg id="pause-icon" class="w-6 h-6 hidden" fill="currentColor" viewBox="0 0 24 24"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"></path></svg>
+                    </button>
+                </div>
+            </div>
+        </aside>
+
+        <!-- Main Viewport -->
+        <div id="viewport-container" class="flex-1 relative bg-[radial-gradient(#1e293b_1px,transparent_1px)] [background-size:40px_40px]">
+            <canvas id="vizCanvas" class="absolute inset-0 w-full h-full"></canvas>
+
+            <!-- Floating Layers Toggle -->
+            <div class="absolute top-6 right-6 flex flex-col gap-2">
+                <button id="toggle-alternates" class="px-4 py-2 glass rounded-full text-xs font-bold text-slate-400 hover:text-white transition-colors flex items-center gap-2">
+                    <div class="w-2 h-2 rounded-full bg-purple-500"></div>
+                    Show Alternate Paths
+                </button>
+                <button id="toggle-ghost" class="px-4 py-2 glass rounded-full text-xs font-bold text-slate-400 hover:text-white transition-colors flex items-center gap-2">
+                    <div class="w-2 h-2 rounded-full bg-white/20"></div>
+                    Ghost Previous Iteration
+                </button>
+            </div>
+
+            <!-- Interaction Tooltip -->
+            <div id="viz-tooltip" class="absolute pointer-events-none hidden glass p-3 rounded-lg border border-sky-500/30 shadow-2xl z-50">
+                <div class="text-[10px] text-sky-400 font-bold uppercase mb-1" id="tooltip-title">Waypoint 0</div>
+                <div class="grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
+                    <span class="text-slate-500">X:</span> <span class="mono" id="tooltip-x">0.000m</span>
+                    <span class="text-slate-500">Y:</span> <span class="mono" id="tooltip-y">0.000m</span>
+                    <span class="text-slate-500">V:</span> <span class="mono" id="tooltip-v">0.000m/s</span>
+                </div>
+            </div>
+        </div>
+    </main>
 
     <script>
         const canvas = document.getElementById('vizCanvas');
         const ctx = canvas.getContext('2d');
         const statusDot = document.getElementById('status-dot');
         const statusText = document.getElementById('status-text');
-        const phaseVal = document.getElementById('phase-val');
-        const iterVal = document.getElementById('iter-val');
-        const sampleVal = document.getElementById('sample-val');
-        const logContainer = document.getElementById('log-container');
-        const liveBadge = document.getElementById('live-badge');
-        
-        function resize() {
-            const container = canvas.parentElement;
-            canvas.width = container.clientWidth * window.devicePixelRatio;
-            canvas.height = container.clientHeight * window.devicePixelRatio;
-            canvas.style.width = container.clientWidth + 'px';
-            canvas.style.height = container.clientHeight + 'px';
-            draw(lastTrajectory);
-        }
-        window.addEventListener('resize', resize);
-        resize();
+        const phaseDisplay = document.getElementById('phase-display');
+        const statIteration = document.getElementById('stat-iteration');
+        const statSamples = document.getElementById('stat-samples');
+        const playbackSlider = document.getElementById('playback-slider');
+        const playbackTime = document.getElementById('playback-time');
+        const btnPlayPause = document.getElementById('btn-play-pause');
+        const playIcon = document.getElementById('play-icon');
+        const pauseIcon = document.getElementById('pause-icon');
+        const selectedSegmentPanel = document.getElementById('selected-segment-panel');
+        const noSelectionMsg = document.getElementById('no-selection-msg');
+        const candidatesList = document.getElementById('candidates-list');
+        const btnRegenerate = document.getElementById('btn-regenerate');
+        const tooltip = document.getElementById('viz-tooltip');
 
+        // State
         let ws = null;
-        let reconnectTimeout;
+        let config = null;
+        let trajectory = [];
+        let ghostTrajectory = null;
+        let waypoints = [];
+        let candidatesMap = new Map(); // window -> candidates
+        let selectedWindow = null;
+        let activeCandidateIndex = -1;
+        let isPlaying = false;
+        let currentTime = 0;
+        let totalTime = 0;
+        let showAlternates = true;
+        let showGhost = true;
+
+        // Camera
+        let scale = 100;
+        let offset = { x: 0, y: 0 };
+        let isDragging = false;
+        let lastMouse = { x: 0, y: 0 };
+
+        function init() {
+            window.addEventListener('resize', resize);
+            resize();
+            connect();
+            requestAnimationFrame(renderLoop);
+        }
+
+        function resize() {
+            canvas.width = canvas.clientWidth * window.devicePixelRatio;
+            canvas.height = canvas.clientHeight * window.devicePixelRatio;
+            // auto-center if no offset yet
+            if (offset.x === 0 && offset.y === 0) {
+                resetView();
+            }
+        }
+
+        function resetView() {
+            offset = { x: canvas.width / 2, y: canvas.height / 2 };
+            scale = 400; // Pixels per meter
+        }
+
+        document.getElementById('reset-view').onclick = resetView;
 
         function connect() {
-            if (ws) {
-                ws.onclose = null;
-                ws.onerror = null;
-                ws.close();
+            if (ws) ws.close();
+            const url = `ws://${window.location.hostname}:8765`;
+            statusText.innerText = "CONNECTING...";
+            
+            ws = new WebSocket(url);
+            ws.onopen = () => {
+                statusDot.className = "status-dot connected";
+                statusText.innerText = "CONNECTED";
+            };
+            ws.onclose = () => {
+                statusDot.className = "status-dot disconnected";
+                statusText.innerText = "DISCONNECTED";
+                setTimeout(connect, 2000);
+            };
+            ws.onmessage = (e) => {
+                const data = JSON.parse(e.data);
+                handleMessage(data);
+            };
+        }
+
+        function handleMessage(msg) {
+            switch(msg.type) {
+                case 'config':
+                    config = msg.robot;
+                    waypoints = msg.waypoints;
+                    break;
+                case 'trajectory':
+                    if (trajectory.length > 0) ghostTrajectory = [...trajectory];
+                    trajectory = msg.samples;
+                    phaseDisplay.innerText = msg.phase.toUpperCase();
+                    statIteration.innerText = msg.iteration;
+                    statSamples.innerText = trajectory.length;
+                    if (trajectory.length > 0) {
+                        totalTime = trajectory[trajectory.length - 1].t;
+                    }
+                    break;
+                case 'candidates':
+                    candidatesMap.set(msg.window, msg.candidates);
+                    if (selectedWindow === msg.window) {
+                        updateCandidatesUI();
+                    }
+                    break;
+                case 'status':
+                    phaseDisplay.innerText = msg.phase.toUpperCase();
+                    break;
             }
-            
-            // Try localhost by default for Windows compatibility
-            const url = `ws://localhost:8765`;
-            
-            log(`Attempting connection to ${url}...`, 'info');
-            try {
-                ws = new WebSocket(url);
-            } catch (e) {
-                log(`Failed to create WebSocket: ${e}`, 'info');
-                reconnectTimeout = setTimeout(connect, 2000);
+        }
+
+        function updateCandidatesUI() {
+            const list = candidatesMap.get(selectedWindow) || [];
+            if (list.length === 0) {
+                candidatesList.innerHTML = '<div class="text-xs text-slate-500 italic">No candidates generated for this window yet.</div>';
                 return;
             }
-            
-            ws.onopen = () => {
-                statusDot.classList.add('connected');
-                statusText.innerText = 'Connected to solver';
-                liveBadge.style.display = 'flex';
-                log('Connection established', 'info');
-                clearTimeout(reconnectTimeout);
-            };
-            
-            ws.onclose = () => {
-                statusDot.classList.remove('connected');
-                statusText.innerText = 'Solver offline - Retrying...';
-                liveBadge.style.display = 'none';
-                log('Connection lost', 'info');
-                
-                clearTimeout(reconnectTimeout);
-                reconnectTimeout = setTimeout(connect, 2000);
-            };
-            
-            ws.onerror = (err) => {
-                log('Connection error', 'info');
-            };
 
-            ws.onmessage = (event) => {
-                try {
-                    const data = JSON.parse(event.data);
-                    if (data.type === 'state') {
-                        lastTrajectory = data.trajectory;
-                        phaseVal.innerText = data.phase || 'solve';
-                        iterVal.innerText = data.iteration || '0';
-                        sampleVal.innerText = data.trajectory.length;
-                        
-                        if (data.iteration % 5 === 0 || data.phase.includes('refinement')) {
-                             log(`Received update: ${data.phase} (iter ${data.iteration})`, 'state');
-                        }
-                        
-                        draw(data.trajectory);
-                    }
-                } catch (e) {
-                    console.error('Failed to parse message', e);
+            candidatesList.innerHTML = list.map((c, i) => `
+                <div class="candidate-row p-2 rounded-lg border border-white/5 cursor-pointer transition-colors ${activeCandidateIndex === i ? 'bg-sky-500/20 border-sky-500/50' : ''}" onclick="selectCandidate(${i})">
+                    <div class="flex justify-between items-center mb-1">
+                        <span class="text-xs font-bold ${c.success ? 'text-white' : 'text-slate-500'}">${c.name}</span>
+                        <span class="text-[10px] mono ${c.success ? 'text-sky-400' : 'text-danger'}">${c.success ? c.cost.toFixed(3) + 's' : 'FAIL'}</span>
+                    </div>
+                    ${c.message ? `<div class="text-[9px] text-danger italic">${c.message}</div>` : ''}
+                </div>
+            `).join('');
+        }
+
+        window.selectCandidate = (idx) => {
+            activeCandidateIndex = idx;
+            updateCandidatesUI();
+        };
+
+        btnRegenerate.onclick = () => {
+            if (selectedWindow && ws) {
+                ws.send(JSON.stringify({
+                    type: 'regenerate',
+                    window: selectedWindow
+                }));
+                btnRegenerate.disabled = true;
+                setTimeout(() => btnRegenerate.disabled = false, 2000);
+            }
+        };
+
+        // Input Handling
+        canvas.addEventListener('mousedown', (e) => {
+            isDragging = true;
+            lastMouse = { x: e.clientX, y: e.clientY };
+            
+            // Check for segment selection
+            const worldPos = screenToWorld(e.offsetX * window.devicePixelRatio, e.offsetY * window.devicePixelRatio);
+            checkSelection(worldPos);
+        });
+
+        window.addEventListener('mousemove', (e) => {
+            if (isDragging) {
+                const dx = e.clientX - lastMouse.x;
+                const dy = e.clientY - lastMouse.y;
+                offset.x += dx * window.devicePixelRatio;
+                offset.y += dy * window.devicePixelRatio;
+                lastMouse = { x: e.clientX, y: e.clientY };
+            }
+            
+            // Tooltip
+            const rect = canvas.getBoundingClientRect();
+            const mouseX = (e.clientX - rect.left) * window.devicePixelRatio;
+            const mouseY = (e.clientY - rect.top) * window.devicePixelRatio;
+            updateTooltip(screenToWorld(mouseX, mouseY), e.clientX, e.clientY);
+        });
+
+        window.addEventListener('mouseup', () => isDragging = false);
+        canvas.addEventListener('wheel', (e) => {
+            const zoom = Math.exp(-e.deltaY * 0.001);
+            scale *= zoom;
+        }, { passive: true });
+
+        function screenToWorld(sx, sy) {
+            return {
+                x: (sx - offset.x) / scale,
+                y: -(sy - offset.y) / scale
+            };
+        }
+
+        function worldToScreen(wx, wy) {
+            return {
+                x: wx * scale + offset.x,
+                y: -wy * scale + offset.y
+            };
+        }
+
+        function checkSelection(pos) {
+            if (trajectory.length < 2) return;
+            
+            let bestDist = 0.1; // 10cm tolerance
+            let bestWindow = null;
+            
+            // Find nearest segment
+            // Simplification: just check distance to waypoints for window selection
+            const samplesPerSegment = trajectory.length / (waypoints.length - 1);
+            
+            for (let i = 0; i < waypoints.length - 1; i++) {
+                const wp = waypoints[i];
+                const d = Math.sqrt((pos.x - wp.x) ** 2 + (pos.y - wp.y) ** 2);
+                if (d < bestDist) {
+                    bestDist = d;
+                    bestWindow = `W${i}-W${Math.min(i+2, waypoints.length-1)}`;
                 }
-            };
+            }
+
+            if (bestWindow) {
+                selectedWindow = bestWindow;
+                document.getElementById('window-id').innerText = bestWindow;
+                selectedSegmentPanel.classList.remove('hidden');
+                noSelectionMsg.classList.add('hidden');
+                updateCandidatesUI();
+            } else {
+                selectedWindow = null;
+                selectedSegmentPanel.classList.add('hidden');
+                noSelectionMsg.classList.remove('hidden');
+            }
         }
 
-        function log(msg, type) {
-            const entry = document.createElement('div');
-            entry.className = `log-entry ${type}`;
-            const time = new Date().toLocaleTimeString([], { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
-            entry.innerText = `[${time}] ${msg}`;
-            logContainer.prepend(entry);
-            
-            if (logContainer.childNodes.length > 50) {
-                logContainer.removeChild(logContainer.lastChild);
+        function updateTooltip(pos, screenX, screenY) {
+            if (trajectory.length === 0) {
+                tooltip.classList.add('hidden');
+                return;
             }
-        }
 
-        let lastTrajectory = [];
-        
-        function draw(trajectory) {
-            ctx.clearRect(0, 0, canvas.width, canvas.height);
-            
-            // Draw Grid
-            drawGrid();
-            
-            if (!trajectory || trajectory.length === 0) return;
-            
-            // Scaling logic
-            const padding = 80 * window.devicePixelRatio;
-            const w = canvas.width - padding * 2;
-            const h = canvas.height - padding * 2;
-            
-            // Find bounds
-            let minX = Math.min(...trajectory.map(p => p.x));
-            let maxX = Math.max(...trajectory.map(p => p.x));
-            let minY = Math.min(...trajectory.map(p => p.y));
-            let maxY = Math.max(...trajectory.map(p => p.y));
-            
-            // Ensure some minimum size for the view
-            const dataWidth = Math.max(maxX - minX, 0.5);
-            const dataHeight = Math.max(maxY - minY, 0.5);
-            
-            const scale = Math.min(w / dataWidth, h / dataHeight);
-            
-            const offsetX = (canvas.width - dataWidth * scale) / 2 - minX * scale;
-            const offsetY = (canvas.height - dataHeight * scale) / 2 - minY * scale;
-            
-            function toScreen(x, y) {
-                return {
-                    x: x * scale + offsetX,
-                    y: canvas.height - (y * scale + offsetY)
-                };
-            }
-            
-            // Draw Path Shadow/Glow
-            ctx.beginPath();
-            ctx.strokeStyle = 'rgba(56, 189, 248, 0.2)';
-            ctx.lineWidth = 8 * window.devicePixelRatio;
-            ctx.lineJoin = 'round';
-            ctx.lineCap = 'round';
-            let start = toScreen(trajectory[0].x, trajectory[0].y);
-            ctx.moveTo(start.x, start.y);
-            for (let i = 1; i < trajectory.length; i++) {
-                const p = toScreen(trajectory[i].x, trajectory[i].y);
-                ctx.lineTo(p.x, p.y);
-            }
-            ctx.stroke();
-
-            // Draw Main Path
-            ctx.beginPath();
-            ctx.strokeStyle = '#38bdf8';
-            ctx.lineWidth = 3 * window.devicePixelRatio;
-            ctx.lineJoin = 'round';
-            ctx.lineCap = 'round';
-            ctx.moveTo(start.x, start.y);
-            for (let i = 1; i < trajectory.length; i++) {
-                const p = toScreen(trajectory[i].x, trajectory[i].y);
-                ctx.lineTo(p.x, p.y);
-            }
-            ctx.stroke();
-            
-            // Draw Robot and Waypoints
-            trajectory.forEach((p, idx) => {
-                const isWaypoint = idx % 10 === 0 || idx === trajectory.length - 1;
-                if (isWaypoint) {
-                    const s = toScreen(p.x, p.y);
-                    
-                    // Waypoint marker
-                    ctx.fillStyle = idx === 0 ? '#22c55e' : (idx === trajectory.length - 1 ? '#ef4444' : '#f472b6');
-                    ctx.shadowBlur = 10;
-                    ctx.shadowColor = ctx.fillStyle;
-                    ctx.beginPath();
-                    ctx.arc(s.x, s.y, 6 * window.devicePixelRatio, 0, Math.PI * 2);
-                    ctx.fill();
-                    ctx.shadowBlur = 0;
-                    
-                    // Heading indicator
-                    ctx.beginPath();
-                    ctx.strokeStyle = '#fff';
-                    ctx.lineWidth = 2 * window.devicePixelRatio;
-                    ctx.moveTo(s.x, s.y);
-                    ctx.lineTo(s.x + Math.cos(-p.heading) * 20 * window.devicePixelRatio, s.y + Math.sin(-p.heading) * 20 * window.devicePixelRatio);
-                    ctx.stroke();
+            let nearest = null;
+            let minDist = 0.2;
+            trajectory.forEach(s => {
+                const d = Math.sqrt((pos.x - s.x) ** 2 + (pos.y - s.y) ** 2);
+                if (d < minDist) {
+                    minDist = d;
+                    nearest = s;
                 }
             });
 
-            // Draw Current Robot Pose (last sample)
-            const lastP = trajectory[trajectory.length - 1];
-            const lastS = toScreen(lastP.x, lastP.y);
-            drawRobot(lastS.x, lastS.y, lastP.heading);
+            if (nearest) {
+                tooltip.classList.remove('hidden');
+                tooltip.style.left = (screenX + 20) + 'px';
+                tooltip.style.top = (screenY - 20) + 'px';
+                document.getElementById('tooltip-x').innerText = nearest.x.toFixed(3) + 'm';
+                document.getElementById('tooltip-y').innerText = nearest.y.toFixed(3) + 'm';
+                document.getElementById('tooltip-v').innerText = ((nearest.vl + nearest.vr)/2).toFixed(2) + 'm/s';
+                document.getElementById('tooltip-title').innerText = `Time: ${nearest.t.toFixed(2)}s`;
+            } else {
+                tooltip.classList.add('hidden');
+            }
+        }
+
+        // Playback
+        btnPlayPause.onclick = () => {
+            isPlaying = !isPlaying;
+            playIcon.classList.toggle('hidden', isPlaying);
+            pauseIcon.classList.toggle('hidden', !isPlaying);
+        };
+
+        playbackSlider.oninput = () => {
+            currentTime = (playbackSlider.value / 100) * totalTime;
+            isPlaying = false;
+            playIcon.classList.remove('hidden');
+            pauseIcon.classList.add('hidden');
+        };
+
+        document.getElementById('toggle-alternates').onclick = function() {
+            showAlternates = !showAlternates;
+            this.classList.toggle('opacity-50', !showAlternates);
+        };
+
+        document.getElementById('toggle-ghost').onclick = function() {
+            showGhost = !showGhost;
+            this.classList.toggle('opacity-50', !showGhost);
+        };
+
+        // Render Loop
+        function renderLoop(time) {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            
+            drawGrid();
+            
+            if (showGhost && ghostTrajectory) {
+                drawPath(ghostTrajectory, 'rgba(255, 255, 255, 0.05)', 2);
+            }
+
+            if (showAlternates && selectedWindow) {
+                const candidates = candidatesMap.get(selectedWindow) || [];
+                candidates.forEach((c, idx) => {
+                    if (c.success) {
+                        const alpha = activeCandidateIndex === idx ? 0.6 : 0.15;
+                        drawPath(c.samples, `rgba(168, 85, 247, ${alpha})`, activeCandidateIndex === idx ? 3 : 1);
+                    }
+                });
+            }
+
+            drawPath(trajectory, 'rgba(56, 189, 248, 0.2)', 12); // Glow
+            drawPath(trajectory, '#38bdf8', 3);
+
+            drawWaypoints();
+
+            if (isPlaying) {
+                currentTime += 0.016; // Approx 60fps
+                if (currentTime > totalTime) currentTime = 0;
+                playbackSlider.value = (currentTime / totalTime) * 100;
+            }
+            
+            updatePlaybackUI();
+            drawRobot();
+
+            requestAnimationFrame(renderLoop);
         }
 
         function drawGrid() {
-            const step = 50 * window.devicePixelRatio;
             ctx.strokeStyle = 'rgba(255, 255, 255, 0.03)';
             ctx.lineWidth = 1;
-            
-            for (let x = 0; x < canvas.width; x += step) {
-                ctx.beginPath();
-                ctx.moveTo(x, 0);
-                ctx.lineTo(x, canvas.height);
-                ctx.stroke();
+            const step = 0.5 * scale; // 0.5m grid
+
+            for (let x = offset.x % step; x < canvas.width; x += step) {
+                ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, canvas.height); ctx.stroke();
             }
-            for (let y = 0; y < canvas.height; y += step) {
-                ctx.beginPath();
-                ctx.moveTo(0, y);
-                ctx.lineTo(canvas.width, y);
-                ctx.stroke();
+            for (let y = offset.y % step; y < canvas.height; y += step) {
+                ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(canvas.width, y); ctx.stroke();
             }
         }
 
-        function drawRobot(x, y, heading) {
-            const size = 30 * window.devicePixelRatio;
-            ctx.save();
-            ctx.translate(x, y);
-            ctx.rotate(-heading);
+        function drawPath(path, color, width) {
+            if (path.length < 2) return;
+            ctx.strokeStyle = color;
+            ctx.lineWidth = width;
+            ctx.lineJoin = 'round';
+            ctx.lineCap = 'round';
+            ctx.beginPath();
+            const start = worldToScreen(path[0].x, path[0].y);
+            ctx.moveTo(start.x, start.y);
+            for (let i = 1; i < path.length; i++) {
+                const p = worldToScreen(path[i].x, path[i].y);
+                ctx.lineTo(p.x, p.y);
+            }
+            ctx.stroke();
+        }
+
+        function drawWaypoints() {
+            waypoints.forEach((wp, i) => {
+                const pos = worldToScreen(wp.x, wp.y);
+                const isSelected = selectedWindow && (selectedWindow.includes(`W${i}-`) || selectedWindow.includes(`-W${i}`));
+
+                ctx.fillStyle = isSelected ? '#38bdf8' : (wp.heading !== null ? '#f472b6' : '#94a3b8');
+                ctx.beginPath();
+                ctx.arc(pos.x, pos.y, 6 * window.devicePixelRatio, 0, Math.PI * 2);
+                ctx.fill();
+
+                if (wp.heading !== null) {
+                    ctx.strokeStyle = '#fff';
+                    ctx.lineWidth = 2 * window.devicePixelRatio;
+                    ctx.beginPath();
+                    ctx.moveTo(pos.x, pos.y);
+                    ctx.lineTo(pos.x + Math.cos(wp.heading) * 20 * window.devicePixelRatio,
+                               pos.y - Math.sin(wp.heading) * 20 * window.devicePixelRatio);
+                    ctx.stroke();
+                }
+
+                ctx.fillStyle = '#64748b';
+                ctx.font = 'bold 12px Outfit';
+                ctx.fillText(`W${i}`, pos.x + 10, pos.y - 10);
+            });
+        }
+
+        function drawRobot() {
+            if (trajectory.length === 0) return;
             
-            // Robot body
+            // Interpolate position based on currentTime
+            let sample = trajectory[0];
+            for (let i = 0; i < trajectory.length - 1; i++) {
+                if (trajectory[i+1].t >= currentTime) {
+                    const t = (currentTime - trajectory[i].t) / (trajectory[i+1].t - trajectory[i].t);
+                    sample = {
+                        x: trajectory[i].x + (trajectory[i+1].x - trajectory[i].x) * t,
+                        y: trajectory[i].y + (trajectory[i+1].y - trajectory[i].y) * t,
+                        heading: trajectory[i].heading + (trajectory[i+1].heading - trajectory[i].heading) * t
+                    };
+                    break;
+                }
+                sample = trajectory[trajectory.length - 1];
+            }
+
+            const pos = worldToScreen(sample.x, sample.y);
+            const size = (config?.differentialTrackWidth || 0.1) * scale;
+
+            ctx.save();
+            ctx.translate(pos.x, pos.y);
+            ctx.rotate(-sample.heading);
+            
+            // Body
             ctx.fillStyle = 'rgba(56, 189, 248, 0.2)';
             ctx.strokeStyle = '#38bdf8';
             ctx.lineWidth = 2 * window.devicePixelRatio;
             ctx.beginPath();
-            ctx.roundRect(-size/2, -size/2, size, size, 4 * window.devicePixelRatio);
+            ctx.roundRect(-size/2, -size/2, size, size, 4);
             ctx.fill();
             ctx.stroke();
+
+            // Wheels
+            ctx.fillStyle = '#fff';
+            ctx.fillRect(-size/2 - 4, -size/2, 8, size/4);
+            ctx.fillRect(-size/2 - 4, size/4, 8, size/4);
             
-            // Front indicator
+            // Direction Arrow
             ctx.fillStyle = '#38bdf8';
             ctx.beginPath();
             ctx.moveTo(size/2, 0);
-            ctx.lineTo(size/2 - 8, -6);
-            ctx.lineTo(size/2 - 8, 6);
-            ctx.closePath();
+            ctx.lineTo(size/2 - 10, -6);
+            ctx.lineTo(size/2 - 10, 6);
             ctx.fill();
             
             ctx.restore();
         }
 
-        document.getElementById('clearBtn').onclick = () => {
-            lastTrajectory = [];
-            draw([]);
-            log('View cleared', 'info');
-        };
+        function updatePlaybackUI() {
+            playbackTime.innerText = `${currentTime.toFixed(2)}s / ${totalTime.toFixed(2)}s`;
+        }
 
-        document.getElementById('reconnectBtn').onclick = () => {
-            connect();
-        };
-
-        // Start connection
-        connect();
+        init();
     </script>
 </body>
 </html>

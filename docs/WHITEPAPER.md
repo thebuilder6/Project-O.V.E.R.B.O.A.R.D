@@ -827,9 +827,11 @@ To facilitate real-time monitoring and debugging of the optimization process, th
 
 **Capabilities:**
 
-1. **Real-time Streaming**: The optimizer emits current trajectory estimates at each major phase or iteration.
-2. **Phase Tracking**: The UI distinguishes between bootstrapping, global solve, and refinement phases.
-3. **Interactive Control**: (Planned) Support for manual segment regeneration and parameter adjustment.
+1. **Real-time Streaming**: The optimizer emits current trajectory estimates at each major phase or iteration, including rich telemetry such as wheel velocities and forces.
+2. **Phase Tracking**: The UI distinguishes between bootstrapping, global solve, and refinement phases, providing clear visual feedback on the current optimization status.
+3. **Interactive Control**: Users can select segments on the path to view detailed metrics and alternative "rejected" candidates from the Multi-Verse refinement.
+4. **On-Demand Regeneration**: The UI allows triggering manual segment regeneration, which re-runs the refinement pipeline for a specific window in the background and updates the main trajectory.
+5. **Playback Animation**: An integrated playback engine with a scrubbing slider allows for visualizing the robot's physical motion along the optimized path.
 
 This decoupling of solver and visualizer ensures that visualization overhead does not impact optimization performance while providing a responsive user experience.
 

@@ -535,7 +535,7 @@ class MultiVerseRefiner:
         self.point_turn_bias = teb_cfg.get("point_turn_bias", TEB_POINT_TURN_BIAS)
         self.wide_sweep_bias = teb_cfg.get("wide_sweep_bias", TEB_WIDE_SWEEP_BIAS)
     
-    def refine_segment(self, start_state: Tuple[float, float, float, float, float], end_state: Tuple[float, float, float, float, float], num_samples: int, base_guess: np.ndarray, capture_iterations: bool = False, live_viz: bool = False, override_parallel: Optional[bool] = None) -> np.ndarray:
+    def refine_segment(self, start_state: Tuple[float, float, float, float, float], end_state: Tuple[float, float, float, float, float], num_samples: int, base_guess: np.ndarray, capture_iterations: bool = False, live_viz: bool = False, override_parallel: Optional[bool] = None, window_label: str = "") -> np.ndarray:
         """
         Refine a segment using parallel TEB/STOMP exploration.
 
@@ -547,6 +547,7 @@ class MultiVerseRefiner:
             capture_iterations: If True, captures heuristic results for convergence visualization
             live_viz: If True, streams updates to the visualizer
             override_parallel: If provided, overrides self.enable_parallel
+            window_label: Label for the window (e.g., "W0-W2")
 
         Returns:
             Tuple of (Best trajectory array, name of best heuristic)
@@ -560,7 +561,6 @@ class MultiVerseRefiner:
         stomp_guesses = self._generate_stomp_heuristics(base_guess, num_samples)
         
         all_guesses = teb_guesses + stomp_guesses
-        total_guesses = len(all_guesses)
         
         # Filter out infeasible direction constraints
         feasible_guesses = []
@@ -578,10 +578,9 @@ class MultiVerseRefiner:
         best_name = "None"
         viz = get_visualizer() if live_viz else None
         
+        candidates = []
+
         if enable_parallel and total_feasible > 1:
-            # Parallel heuristic evaluation using threads
-            # CasADi releases the GIL during C-level solves, so threads give real parallelism
-            
             def _solve_one(args):
                 guess, direction_constraint, name = args
                 solver = LocalSegmentOptimizer(self.config)
@@ -598,20 +597,35 @@ class MultiVerseRefiner:
                     done_count += 1
                     success, cost, result, name = future.result()
                     
+                    if success:
+                        N = num_samples
+                        X_curr = result[1:].reshape((N, 5))
+                        samples = [{"x": float(X_curr[k, 0]), "y": float(X_curr[k, 1]), "heading": float(X_curr[k, 2])} for k in range(N)]
+                        candidates.append({
+                            "name": name,
+                            "cost": cost,
+                            "samples": samples,
+                            "success": True
+                        })
+
+                        if cost < best_cost:
+                            best_cost = cost
+                            best_result = result
+                            best_name = name
+                    else:
+                        candidates.append({
+                            "name": name,
+                            "cost": float('inf'),
+                            "success": False,
+                            "message": "Solver failed"
+                        })
+
                     if self.verbose:
                         sys.stdout.write(f"\r  Refining: {done_count}/{total_feasible} - Best: {best_cost:.4f}s [{best_name}]")
                         sys.stdout.flush()
                     
-                    if success and cost < best_cost:
-                        best_cost = cost
-                        best_result = result
-                        best_name = name
-                    
-                    if live_viz and success:
-                        N = num_samples
-                        X_curr = result[1:].reshape((N, 5))
-                        traj_data = [{"x": float(X_curr[k, 0]), "y": float(X_curr[k, 1]), "heading": float(X_curr[k, 2])} for k in range(N)]
-                        viz.send_state(done_count, traj_data, phase=f"refinement_{name}")
+                    if live_viz:
+                        viz.send_candidates(window_label, candidates)
                     
                     if capture_iterations and success:
                         N = num_samples
@@ -1023,7 +1037,8 @@ class MasterTrajectoryOptimizer:
                                 
                             refined, name = self.refiner.refine_segment(
                                 start_state, end_state, num_window_samples, base_guess, 
-                                live_viz=live_viz, override_parallel=False)
+                                live_viz=live_viz, override_parallel=False,
+                                window_label=f"W{window_start}-W{window_end}")
                             
                             return (w_info, refined, name, original_cost, start_idx, end_idx)
                         except Exception as e:
@@ -1100,7 +1115,8 @@ class MasterTrajectoryOptimizer:
                         
                         refinement_count += 1
                         refined, best_heuristic_name = self.refiner.refine_segment(
-                            start_state, end_state, num_window_samples, base_guess, live_viz=live_viz)
+                            start_state, end_state, num_window_samples, base_guess,
+                            live_viz=live_viz, window_label=f"W{window_start}-W{window_end}")
                         
                         if refined is not None and best_heuristic_name != "None":
                             refined_cost = refined[0] * (num_window_samples - 1)

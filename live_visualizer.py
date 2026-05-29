@@ -76,47 +76,71 @@ class LiveVisualizer:
     async def _handler(self, websocket):
         # Ensure thread-safe modification of clients set
         with self._lock:
-            # Kick any existing clients to ensure only one active connection (optional, but keeps it clean)
-            if self.clients:
-                for client in list(self.clients):
-                    try:
-                        await client.close(1001, "New client connected")
-                    except:
-                        pass
-                self.clients.clear()
             self.clients.add(websocket)
             
         try:
             async for message in websocket:
                 try:
                     data = json.loads(message)
-                    if data.get("type") == "regenerate":
-                        print(f"Live visualizer: Received regenerate request for segments: {data.get('segments')}")
+                    msg_type = data.get("type")
+                    if msg_type == "regenerate":
+                        window = data.get("window")
+                        print(f"Live visualizer: Received regenerate request for window: {window}")
+                        # Run callback in a separate thread to avoid blocking the event loop
+                        if hasattr(self, 'on_regenerate') and self.on_regenerate:
+                            threading.Thread(target=self.on_regenerate, args=(window,), daemon=True).start()
+                    elif msg_type == "ping":
+                        await websocket.send(json.dumps({"type": "pong"}))
                 except json.JSONDecodeError:
                     pass
         finally:
             with self._lock:
                 self.clients.discard(websocket)
 
-    def send_state(self, iteration: int, trajectory: List[Dict[str, Any]], phase: str = "solve"):
-        """Send current solver state to all connected clients."""
-        # Use a quick check for clients before scheduling to avoid overhead
+    def broadcast(self, data: Dict[str, Any]):
+        """Send a message to all connected clients."""
         if not self.loop or not self.clients:
             return
             
-        message = json.dumps({
-            "type": "state",
-            "iteration": iteration,
-            "phase": phase,
-            "trajectory": trajectory
-        })
-        
-        # Schedule the broadcast in the event loop
+        message = json.dumps(data)
         try:
             asyncio.run_coroutine_threadsafe(self._broadcast(message), self.loop)
         except RuntimeError:
-            # Loop might be closing
             pass
+
+    def send_trajectory(self, trajectory: List[Dict[str, Any]], phase: str = "solve", iteration: int = 0):
+        """Send current trajectory state."""
+        self.broadcast({
+            "type": "trajectory",
+            "phase": phase,
+            "iteration": iteration,
+            "samples": trajectory
+        })
+
+    def send_candidates(self, window: str, candidates: List[Dict[str, Any]]):
+        """Send candidate paths from Multi-Verse."""
+        self.broadcast({
+            "type": "candidates",
+            "window": window,
+            "candidates": candidates
+        })
+
+    def send_status(self, phase: str, message: str, progress: float = 0):
+        """Send status update."""
+        self.broadcast({
+            "type": "status",
+            "phase": phase,
+            "message": message,
+            "progress": progress
+        })
+
+    def send_config(self, robot_config: Dict[str, Any], waypoints: List[Any]):
+        """Send initial configuration."""
+        self.broadcast({
+            "type": "config",
+            "robot": robot_config,
+            "waypoints": waypoints
+        })
 
     async def _broadcast(self, message):
         # Snapshoting clients to avoid modification issues
