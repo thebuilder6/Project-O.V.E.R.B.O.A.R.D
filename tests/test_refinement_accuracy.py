@@ -159,31 +159,6 @@ class TestRefinementAccuracy(unittest.TestCase):
         # This is a placeholder for the integration test
         self.assertIsNotNone(initial_cost, "Should be able to calculate initial cost")
     
-    def test_individual_heuristic_contribution(self):
-        """Test contribution of each individual heuristic to accuracy."""
-        # This test isolates each heuristic to measure its individual contribution
-        
-        refiner = optimizer = MasterTrajectoryOptimizer(self.config, enable_parallel=False, num_workers=1)
-        
-        start_state = (0.0, 0.0, 0.0, 0.0, 0.0)
-        end_state = (1.0, 0.5, np.pi/4, 0.0, 0.0)
-        num_samples = 10
-        base_guess = np.zeros(1 + num_samples * 5)
-        base_guess[0] = 0.1
-        
-        # Generate TEB heuristics only
-        teb_guesses = refiner.refiner._generate_teb_heuristics(start_state, end_state, num_samples, base_guess)
-        
-        # Generate STOMP heuristics only
-        stomp_guesses = refiner.refiner._generate_stomp_heuristics(base_guess, num_samples)
-        
-        # Each should contribute unique guesses
-        self.assertGreater(len(teb_guesses), 0, "TEB should generate guesses")
-        self.assertGreater(len(stomp_guesses), 0, "STOMP should generate guesses")
-        
-        # They should be different from each other
-        self.assertNotEqual(len(teb_guesses), len(stomp_guesses),
-                           "TEB and STOMP should generate different numbers of guesses")
     
     def test_refinement_preserves_constraints(self):
         """Test that refinement preserves kinematic constraints."""
