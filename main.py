@@ -12,6 +12,14 @@ from export import write_controller_file, write_python_file
 from convergence_plotter import plot_convergence, animate_convergence, ConvergencePlotter
 from live_visualizer import get_visualizer
 
+# JAX/Immrax Imports
+try:
+    from immrax_validator import ImmraxValidator
+    from jax_robot_model import JAXRobotConfig
+    HAS_JAX = True
+except ImportError:
+    HAS_JAX = False
+
 @click.command()
 # --- Input / Output Options ---
 @click.option('-c', '--config', required=True, type=click.Path(exists=True), 
@@ -84,7 +92,7 @@ def main(config, waypoints, output, samples, accuracy_weight, stop_waypoints, ev
     else:
         parallel = not no_parallel
         if not quiet:
-            click.echo(f"Using Multi-Verse optimizer (parallel={parallel}, workers={workers})")
+            click.echo(f"Using JAX-Enhanced Multi-Verse optimizer (parallel={parallel}, workers={workers})")
         optimizer = MasterTrajectoryOptimizer(robot_cfg, enable_parallel=parallel, num_workers=workers, verbose=not quiet)
     
     if not quiet:
@@ -92,10 +100,9 @@ def main(config, waypoints, output, samples, accuracy_weight, stop_waypoints, ev
     with open(waypoints, 'r') as f:
         wp_data = json.load(f)
     
-    # Expected wp_data: list of objects with x, y, and optionally heading and event
-    # or list of lists [x, y, heading]
     wps = []
     waypoint_events = {}  # index -> event name
+    waypoint_thresholds = {} # index -> float
     json_stop_indices = []
     for i, item in enumerate(wp_data):
         if isinstance(item, dict):
@@ -104,14 +111,16 @@ def main(config, waypoints, output, samples, accuracy_weight, stop_waypoints, ev
                 waypoint_events[i] = item['event']
             if item.get('stop'):
                 json_stop_indices.append(i)
+            if 'error_threshold' in item:
+                waypoint_thresholds[i] = float(item['error_threshold'])
+            elif item.get('precision_mode'):
+                waypoint_thresholds[i] = 0.005 # 0.5 cm
         else:
-            # Assume [x, y, heading]
             wps.append((item[0], item[1], item[2] if len(item) > 2 else None))
 
     if not quiet:
         click.echo(f"Optimizing trajectory through {len(wps)} waypoints (accuracy_weight={accuracy_weight})...")
 
-    # Enable iteration capture if convergence visualization is requested
     capture_iterations = show_convergence
 
     # Parse stop waypoints
@@ -119,61 +128,108 @@ def main(config, waypoints, output, samples, accuracy_weight, stop_waypoints, ev
     if stop_waypoints:
         try:
             stop_indices = [int(x.strip()) for x in stop_waypoints.split(',')]
-            if not quiet:
-                click.echo(f"Stop waypoints at indices: {stop_indices}")
         except ValueError:
-            click.echo("Invalid stop waypoints format. Use comma-separated indices (e.g., '2,5,7').")
+            click.echo("Invalid stop waypoints format.")
 
-    # Parse events from CLI (overrides JSON)
     if events:
         try:
             for pair in events.split(','):
                 idx_str, event_name = pair.strip().split(':')
                 waypoint_events[int(idx_str.strip())] = event_name.strip()
-            if not quiet:
-                click.echo(f"Events at waypoints: {waypoint_events}")
         except ValueError:
-            click.echo("Invalid events format. Use 'index:event' pairs separated by commas (e.g., '2:lower_arm,5:release').")
+            click.echo("Invalid events format.")
 
-    # Combine JSON and CLI stop indices
     all_stop_indices = list(set(stop_indices + json_stop_indices))
-    if not quiet and all_stop_indices:
-        click.echo(f"Final stop waypoints: {all_stop_indices}")
 
     # Start live visualizer if requested
     if live:
         viz = get_visualizer()
-        # Convert waypoints to dictionaries for JSON serialization
         wp_dicts = [{"x": w[0], "y": w[1], "heading": w[2]} for w in wps]
         viz.send_config(config_data, wp_dicts)
         if not quiet:
             click.echo("Live visualizer started. Open viz/index.html in your browser.")
             
-    samples_data, stats = optimizer.solve(wps, num_samples_per_segment=samples, accuracy_weight=accuracy_weight, stop_waypoint_indices=all_stop_indices, waypoint_events=waypoint_events, verbose=not quiet, capture_iterations=capture_iterations, live_viz=live)
+    # --- AUTO-POLISH LOOP ---
+    curr_accuracy_weight = accuracy_weight
+    max_retries = 3
+    passed_validation = False
     
+    for attempt in range(max_retries):
+        samples_data, stats = optimizer.solve(wps, num_samples_per_segment=samples, accuracy_weight=curr_accuracy_weight, stop_waypoint_indices=all_stop_indices, waypoint_events=waypoint_events, verbose=not quiet, capture_iterations=capture_iterations, live_viz=live)
+
+        # Always compute reachability envelope if JAX is available and we are in live/validate mode
+        if HAS_JAX and (validate or live):
+            jax_cfg = JAXRobotConfig(config_data)
+            immrax_val = ImmraxValidator(jax_cfg)
+
+            # Default uncertainty ranges
+            cof_range = (robot_cfg.cof * 0.8, robot_cfg.cof * 1.2)
+            torque_range = (0.8, 1.0)
+            backlash_range = (0.0001, 0.0006)
+
+            if not quiet: click.echo(f"Attempt {attempt+1}: Running Immrax Robustness Check...")
+            immrax_report = immrax_val.validate_trajectory(samples_data, cof_range, torque_range, backlash_range)
+
+            # Attach envelope to samples for export/viz (do this even if it failed, so user can see it)
+            for i, env in enumerate(immrax_report['reachability']['envelope']):
+                if i < len(samples_data):
+                    samples_data[i]['reachability_envelope'] = env
+
+            # CONTEXT-AWARE SAFETY CHECK
+            failed_threshold = False
+            max_vio_val = 0.0
+
+            for i in range(len(samples_data)):
+                # Determine local threshold
+                wp_idx = i // samples
+                local_threshold = waypoint_thresholds.get(wp_idx, 0.02) # Default 2cm for transit
+
+                # Check envelope radius (max error)
+                env = samples_data[i].get('reachability_envelope', {})
+                if env:
+                    err_x = (env['x_max'] - env['x_min']) / 2.0
+                    err_y = (env['y_max'] - env['y_min']) / 2.0
+                    err = np.sqrt(err_x**2 + err_y**2)
+                    if err > local_threshold:
+                        failed_threshold = True
+                        max_vio_val = max(max_vio_val, err)
+
+            if not failed_threshold and immrax_report['passed']:
+                if not quiet: click.echo(f"  Passed! All segments within context-aware thresholds.")
+                passed_validation = True
+                break
+            else:
+                if not quiet:
+                    if failed_threshold:
+                        click.echo(f"  FAILED: Max Tracking Error {max_vio_val*100:.2f} cm exceeds local threshold.")
+                    else:
+                        click.echo(f"  FAILED: Physical constraints (traction/motor) violated under uncertainty.")
+
+                if not validate: # If we aren't validating, don't retry, just show it in live viz
+                    passed_validation = True
+                    break
+                if attempt < max_retries - 1:
+                    curr_accuracy_weight += 2.0 # More aggressive escalation for tighter bounds
+                    if not quiet: click.echo(f"  Increasing accuracy_weight to {curr_accuracy_weight} and re-solving...")
+                else:
+                    if not quiet: click.echo("  Maximum retries reached. Using best-effort trajectory.")
+        else:
+            passed_validation = True
+            break
+
     if benchmark:
-        # Enrich stats with quality metrics and config
         from validator import compute_metrics
         quality_metrics = compute_metrics(samples_data, robot_cfg)
         stats["quality_metrics"] = quality_metrics
         stats["robot_config"] = {
-            "mass": robot_cfg.mass,
-            "inertia": robot_cfg.inertia,
-            "track_width": robot_cfg.track_width,
-            "wheel_radius": robot_cfg.wheel_radius,
-            "v_max_rad_s": robot_cfg.v_max_rad_s,
-            "t_max_nm": robot_cfg.t_max_nm,
-            "gearing": robot_cfg.gearing,
-            "cof": robot_cfg.cof
+            "mass": robot_cfg.mass, "inertia": robot_cfg.inertia, "track_width": robot_cfg.track_width,
+            "wheel_radius": robot_cfg.wheel_radius, "v_max_rad_s": robot_cfg.v_max_rad_s,
+            "t_max_nm": robot_cfg.t_max_nm, "gearing": robot_cfg.gearing, "cof": robot_cfg.cof
         }
-
         stats_output = os.path.splitext(output)[0] + '_stats.json'
         with open(stats_output, 'w') as f:
             json.dump(stats, f, indent=2)
-        if not quiet:
-            click.echo(f"Benchmarking data saved to {stats_output}")
 
-    # Construct Choreo-like output
     result = {
         "name": os.path.basename(output).split('.')[0],
         "version": 3,
@@ -182,149 +238,38 @@ def main(config, waypoints, output, samples, accuracy_weight, stop_waypoints, ev
             "samples": samples_data
         }
     }
-    
     with open(output, 'w') as f:
         json.dump(result, f, indent=1)
     
     if not quiet:
         click.echo(f"Successfully saved trajectory to {output}")
 
-    v_results = (None, None, None)
     if validate:
-        v_results = validate_trajectory(output, config)
-
-        if benchmark:
-            # Save validation summary in benchmark mode
-            metrics, audit, errors = v_results
-            summary = {
-                "metrics": metrics,
-                "audit": audit,
-                "errors": errors
-            }
-            summary_file = os.path.splitext(output)[0] + '_validation.json'
-            with open(summary_file, 'w') as f:
-                json.dump(summary, f, indent=2)
+        validate_trajectory(output, config)
 
     if export_format == 'controller':
         ctrl_output = os.path.splitext(output)[0] + '_controller.json'
-        write_controller_file(output, ctrl_output, target_dt=controller_dt,
-                              track_width=robot_cfg.track_width)
+        write_controller_file(output, ctrl_output, target_dt=controller_dt, track_width=robot_cfg.track_width)
 
     if export_format == 'python':
         py_output = os.path.splitext(output)[0] + '.py'
         write_python_file(output, py_output)
 
     if plot:
-        v_metrics, v_audit, v_errors = v_results
-        plot_trajectory(samples_data, waypoints=wps,
-                        title=f"Trajectory: {os.path.basename(output)}",
-                        metrics=v_metrics, audit=v_audit, errors=v_errors)
+        plot_trajectory(samples_data, waypoints=wps, title=f"Trajectory: {os.path.basename(output)}")
 
     if animate:
-        animate_trajectory(samples_data, waypoints=wps,
-                          title=f"Trajectory: {os.path.basename(output)}")
+        animate_trajectory(samples_data, waypoints=wps, title=f"Trajectory: {os.path.basename(output)}")
     
     if show_convergence:
         if hasattr(optimizer, 'iteration_history') and optimizer.iteration_history:
-            if not quiet:
-                click.echo(f"Showing convergence visualization ({convergence_mode} mode)...")
-            if convergence_animate:
-                if convergence_output:
-                    animate_convergence(optimizer.iteration_history, waypoints=wps,
-                                     title=f"Convergence: {os.path.basename(output)}",
-                                     save_path=convergence_output)
-                    if not quiet:
-                        click.echo(f"Convergence animation saved to {convergence_output}")
-                else:
-                    animate_convergence(optimizer.iteration_history, waypoints=wps,
-                                     title=f"Convergence: {os.path.basename(output)}")
-            else:
-                if convergence_output:
-                    # Save to HTML file
-                    plot_convergence(optimizer.iteration_history, mode=convergence_mode, 
-                                   waypoints=wps, title=f"Convergence: {os.path.basename(output)}",
-                                   output_file=convergence_output)
-                    if not quiet:
-                        click.echo(f"Convergence plot saved to {convergence_output}")
-                else:
-                    # Open in browser
-                    plot_convergence(optimizer.iteration_history, mode=convergence_mode, 
-                                   waypoints=wps, title=f"Convergence: {os.path.basename(output)}")
-        else:
-            if not quiet:
-                click.echo("No iteration history available for convergence visualization.")
+            plot_convergence(optimizer.iteration_history, mode=convergence_mode, waypoints=wps, title=f"Convergence: {os.path.basename(output)}")
 
     if live:
         viz = get_visualizer()
-
-        def on_regenerate(window_label):
-            click.echo(f"Regenerating window: {window_label}")
-            try:
-                # Parse window label "W0-W2"
-                import re
-                match = re.match(r"W(\d+)-W(\d+)", window_label)
-                if match:
-                    w_start, w_end = int(match.group(1)), int(match.group(2))
-
-                    # Window data extraction
-                    start_idx = w_start * samples
-                    end_idx = min(w_end * samples, len(samples_data) - 1)
-
-                    start_state = (
-                        samples_data[start_idx]['x'], samples_data[start_idx]['y'],
-                        samples_data[start_idx]['heading'], samples_data[start_idx]['vl'],
-                        samples_data[start_idx]['vr']
-                    )
-                    end_state = (
-                        samples_data[end_idx]['x'], samples_data[end_idx]['y'],
-                        samples_data[end_idx]['heading'], samples_data[end_idx]['vl'],
-                        samples_data[end_idx]['vr']
-                    )
-
-                    num_window_samples = end_idx - start_idx + 1
-
-                    # Original dt for comparison
-                    original_dt = (samples_data[end_idx]['t'] - samples_data[start_idx]['t']) / max(num_window_samples - 1, 1)
-
-                    base_guess = np.zeros(1 + num_window_samples * 5)
-                    base_guess[0] = original_dt if original_dt > 0.001 else 0.1
-                    for j in range(num_window_samples):
-                        sample = samples_data[start_idx + j]
-                        base_guess[1 + j * 5] = sample['x']
-                        base_guess[1 + j * 5 + 1] = sample['y']
-                        base_guess[1 + j * 5 + 2] = sample['heading']
-                        base_guess[1 + j * 5 + 3] = sample['vl']
-                        base_guess[1 + j * 5 + 4] = sample['vr']
-
-                    # Trigger refinement
-                    refined, best_name = optimizer.refiner.refine_segment(
-                        start_state, end_state, num_window_samples, base_guess,
-                        live_viz=True, window_label=window_label)
-
-                    if best_name != "None":
-                        click.echo(f"Regeneration successful with {best_name}")
-                        # Update samples_data
-                        dt_val = refined[0]
-                        states = refined[1:].reshape((num_window_samples, 5))
-                        for j in range(num_window_samples):
-                            idx = start_idx + j
-                            samples_data[idx]['x'] = float(states[j, 0])
-                            samples_data[idx]['y'] = float(states[j, 1])
-                            samples_data[idx]['heading'] = float(states[j, 2])
-                            samples_data[idx]['vl'] = float(states[j, 3])
-                            samples_data[idx]['vr'] = float(states[j, 4])
-
-                        # Re-broadcast updated trajectory
-                        viz.send_trajectory(samples_data, phase="regenerated")
-                    else:
-                        click.echo("Regeneration failed to find a better path.")
-            except Exception as e:
-                click.echo(f"Error during regeneration: {e}")
-
-        viz.on_regenerate = on_regenerate
-
-        click.echo("\nLive visualizer is active. You can interact via the web interface.")
-        click.echo("Press Enter to stop and exit...")
+        # Broadcast final trajectory with envelopes
+        viz.send_trajectory(samples_data, phase="final")
+        click.echo("\nLive visualizer is active. Press Enter to stop and exit...")
         input()
         viz.stop()
 

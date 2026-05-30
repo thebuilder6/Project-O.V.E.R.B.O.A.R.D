@@ -168,6 +168,10 @@
 
             <!-- Floating Layers Toggle -->
             <div class="absolute top-6 right-6 flex flex-col gap-2">
+                <button id="toggle-reachability" class="px-4 py-2 glass rounded-full text-xs font-bold text-slate-400 hover:text-white transition-colors flex items-center gap-2">
+                    <div class="w-2 h-2 rounded-full bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.6)]"></div>
+                    Immrax Safety Ribbon
+                </button>
                 <button id="toggle-alternates" class="px-4 py-2 glass rounded-full text-xs font-bold text-slate-400 hover:text-white transition-colors flex items-center gap-2">
                     <div class="w-2 h-2 rounded-full bg-purple-500"></div>
                     Show Alternate Paths
@@ -223,6 +227,7 @@
         let totalTime = 0;
         let showAlternates = true;
         let showGhost = true;
+        let showReachability = true;
 
         // Camera
         let scale = 100;
@@ -467,12 +472,21 @@
             this.classList.toggle('opacity-50', !showGhost);
         };
 
+        document.getElementById('toggle-reachability').onclick = function() {
+            showReachability = !showReachability;
+            this.classList.toggle('opacity-50', !showReachability);
+        };
+
         // Render Loop
         function renderLoop(time) {
             ctx.clearRect(0, 0, canvas.width, canvas.height);
             
             drawGrid();
             
+            if (showReachability) {
+                drawSafetyRibbon(trajectory);
+            }
+
             if (showGhost && ghostTrajectory) {
                 drawPath(ghostTrajectory, 'rgba(255, 255, 255, 0.05)', 2);
             }
@@ -531,6 +545,60 @@
                 ctx.lineTo(p.x, p.y);
             }
             ctx.stroke();
+        }
+
+        function drawSafetyRibbon(path) {
+            if (path.length < 2) return;
+
+            // Draw as a filled polygon trace
+            ctx.fillStyle = 'rgba(16, 185, 129, 0.15)';
+            ctx.beginPath();
+
+            // Forward pass (upper bounds)
+            let first = true;
+            for (let s of path) {
+                if (!s.reachability_envelope) continue;
+                const p = worldToScreen(s.reachability_envelope.x_max, s.reachability_envelope.y_max);
+                if (first) { ctx.moveTo(p.x, p.y); first = false; }
+                else ctx.lineTo(p.x, p.y);
+            }
+
+            // Backward pass (lower bounds)
+            for (let i = path.length - 1; i >= 0; i--) {
+                const s = path[i];
+                if (!s.reachability_envelope) continue;
+                const p = worldToScreen(s.reachability_envelope.x_min, s.reachability_envelope.y_min);
+                ctx.lineTo(p.x, p.y);
+            }
+
+            ctx.closePath();
+            ctx.fill();
+
+            // Draw boundaries
+            ctx.strokeStyle = 'rgba(16, 185, 129, 0.3)';
+            ctx.lineWidth = 1;
+            ctx.setLineDash([5, 5]);
+
+            ctx.beginPath();
+            first = true;
+            for (let s of path) {
+                if (!s.reachability_envelope) continue;
+                const p = worldToScreen(s.reachability_envelope.x_max, s.reachability_envelope.y_max);
+                if (first) { ctx.moveTo(p.x, p.y); first = false; }
+                else ctx.lineTo(p.x, p.y);
+            }
+            ctx.stroke();
+
+            ctx.beginPath();
+            first = true;
+            for (let s of path) {
+                if (!s.reachability_envelope) continue;
+                const p = worldToScreen(s.reachability_envelope.x_min, s.reachability_envelope.y_min);
+                if (first) { ctx.moveTo(p.x, p.y); first = false; }
+                else ctx.lineTo(p.x, p.y);
+            }
+            ctx.stroke();
+            ctx.setLineDash([]);
         }
 
         function drawWaypoints() {

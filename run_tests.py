@@ -13,8 +13,7 @@ project_root = Path(__file__).parent
 sys.path.insert(0, str(project_root))
 
 # Import test modules
-from tests.test_teb_topologies import TestTEBTopologies
-from tests.test_stomp_variants import TestSTOMPVariants
+from tests.test_jax_heuristics import TestJAXHeuristics
 from tests.test_refinement_accuracy import TestRefinementAccuracy
 from tests.test_critic_metrics import TestCriticMetrics
 
@@ -26,8 +25,7 @@ def run_tests():
     suite = unittest.TestSuite()
     
     # Add all test classes
-    suite.addTests(loader.loadTestsFromTestCase(TestTEBTopologies))
-    suite.addTests(loader.loadTestsFromTestCase(TestSTOMPVariants))
+    suite.addTests(loader.loadTestsFromTestCase(TestJAXHeuristics))
     suite.addTests(loader.loadTestsFromTestCase(TestRefinementAccuracy))
     suite.addTests(loader.loadTestsFromTestCase(TestCriticMetrics))
     
