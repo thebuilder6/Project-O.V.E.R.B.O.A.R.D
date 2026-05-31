@@ -5,7 +5,7 @@ import numpy as np
 from robot_model import RobotConfig
 from optimizer import TrajectoryOptimizer
 from multiverse_optimizer import MasterTrajectoryOptimizer
-from plotter import plot_trajectory
+from plotter import plot_trajectory, plot_reachability_envelope
 from animated_plotter import animate_trajectory
 from validator import validate_trajectory
 from export import write_controller_file, write_python_file
@@ -153,22 +153,35 @@ def main(config, waypoints, output, samples, accuracy_weight, stop_waypoints, ev
     curr_accuracy_weight = accuracy_weight
     max_retries = 5
     passed_validation = False
+    all_attempts = []  # Track all attempts: (samples_data, stats, cost)
     
     for attempt in range(max_retries):
         samples_data, stats = optimizer.solve(wps, num_samples_per_segment=samples, accuracy_weight=curr_accuracy_weight, stop_waypoint_indices=all_stop_indices, waypoint_events=waypoint_events, verbose=not quiet, capture_iterations=capture_iterations, live_viz=live)
+        
+        # Track this attempt
+        cost = stats.get('final_cost', float('inf'))
+        all_attempts.append((samples_data, stats, cost))
 
         # Always compute reachability envelope if JAX is available and we are in live/validate mode
+        if not quiet: click.echo(f"DEBUG: HAS_JAX={HAS_JAX}, validate={validate}, live={live}")
         if HAS_JAX and (validate or live):
-            jax_cfg = JAXRobotConfig(config_data)
-            immrax_val = ImmraxValidator(jax_cfg)
+            try:
+                jax_cfg = JAXRobotConfig(config_data)
+                immrax_val = ImmraxValidator(jax_cfg)
 
-            # Default uncertainty ranges
-            cof_range = (robot_cfg.cof * 0.8, robot_cfg.cof * 1.2)
-            torque_range = (0.8, 1.0)
-            backlash_range = (0.0001, 0.0006)
+                # Default uncertainty ranges
+                cof_range = (robot_cfg.cof * 0.8, robot_cfg.cof * 1.2)
+                torque_range = (0.8, 1.0)
+                backlash_range = (0.0001, 0.0006)
 
-            if not quiet: click.echo(f"Attempt {attempt+1}: Running Immrax Robustness Check...")
-            immrax_report = immrax_val.validate_trajectory(samples_data, cof_range, torque_range, backlash_range)
+                if not quiet: click.echo(f"Attempt {attempt+1}: Running Immrax Robustness Check...")
+                immrax_report = immrax_val.validate_trajectory(samples_data, cof_range, torque_range, backlash_range)
+            except Exception as e:
+                if not quiet: click.echo(f"  ERROR: Immrax validation failed: {e}")
+                import traceback
+                traceback.print_exc()
+                passed_validation = True  # Continue without Immrax if it fails
+                break
 
             # Attach envelope to samples for export/viz (do this even if it failed, so user can see it)
             for i, env in enumerate(immrax_report['reachability']['envelope']):
@@ -212,7 +225,16 @@ def main(config, waypoints, output, samples, accuracy_weight, stop_waypoints, ev
                     curr_accuracy_weight += 2.0 # More aggressive escalation for tighter bounds
                     if not quiet: click.echo(f"  Increasing accuracy_weight to {curr_accuracy_weight} and re-solving...")
                 else:
-                    if not quiet: click.echo("  Maximum retries reached. Using best-effort trajectory.")
+                    if not quiet:
+                        # Select the trajectory with the lowest cost from all attempts
+                        best_attempt = min(all_attempts, key=lambda x: x[2])
+                        best_samples_data, best_stats, best_cost = best_attempt
+                        if best_cost != cost:
+                            click.echo(f"  Maximum retries reached. Selecting best trajectory from {len(all_attempts)} attempts (cost={best_cost:.4f}s vs last={cost:.4f}s).")
+                            samples_data = best_samples_data
+                            stats = best_stats
+                        else:
+                            click.echo("  Maximum retries reached. Using best-effort trajectory.")
         else:
             passed_validation = True
             break
@@ -256,7 +278,15 @@ def main(config, waypoints, output, samples, accuracy_weight, stop_waypoints, ev
         write_python_file(output, py_output)
 
     if plot:
+        if not quiet: click.echo("Generating plot...")
+        # Always show standard trajectory plot
+        if not quiet: click.echo("  Generating standard trajectory plot...")
         plot_trajectory(samples_data, waypoints=wps, title=f"Trajectory: {os.path.basename(output)}")
+        
+        # Also show reachability envelope plot if Immrax data is available
+        if HAS_JAX and any('reachability_envelope' in s for s in samples_data):
+            if not quiet: click.echo("  Generating reachability envelope plot...")
+            plot_reachability_envelope(samples_data, waypoints=wps, title=f"Reachability Envelope: {os.path.basename(output)}", block=True)
 
     if animate:
         animate_trajectory(samples_data, waypoints=wps, title=f"Trajectory: {os.path.basename(output)}")

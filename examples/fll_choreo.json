@@ -19,8 +19,8 @@
       "torque_headroom": [0.75, 0.9],
       "gear_backlash_m": [0.0002, 0.0007],
       "inertia_kg_m2": [0.0008, 0.0011],
-      "track_width_range": [0.0946, 0.0984],
-      "wheel_radius_range": [0.0274, 0.0286]
+      "track_width_range": [0.096, 0.097],
+      "wheel_radius_range": [0.0275, 0.0285]
     }
   },
   "interactions": {},

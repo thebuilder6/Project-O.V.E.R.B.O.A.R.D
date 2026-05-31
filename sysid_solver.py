@@ -1124,12 +1124,12 @@ if __name__ == "__main__":
     
     # Generate Interval Margins (± percentages based on sensor noise)
     intervals = {
-        "cof": [round(mu * 0.9, 2), round(mu * 1.1, 2)],
+        "cof": [round(mu * 0.9, 2), round(mu * 1.05, 2)],
         "torque_headroom": [0.75, 0.90],
         "gear_backlash_m": [round(b * 0.5, 4), round(b * 1.5, 4)],
         "inertia_kg_m2": [round(I * 0.85, 4), round(I * 1.15, 4)],
-        "track_width_range": [round(TRACK_WIDTH * 0.98, 4), round(TRACK_WIDTH * 1.02, 4)],
-        "wheel_radius_range": [round(WHEEL_RADIUS * 0.98, 4), round(WHEEL_RADIUS * 1.02, 4)]
+        "track_width_range": [round(TRACK_WIDTH * 0.99, 4), round(TRACK_WIDTH * 1.01, 4)],
+        "wheel_radius_range": [round(WHEEL_RADIUS * 0.99, 4), round(WHEEL_RADIUS * 1.01, 4)]
     }
 
     # Build the final JSON schema

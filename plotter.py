@@ -167,8 +167,116 @@ def plot_trajectory(samples, waypoints=None, title="Robot Trajectory", show=True
         plt.tight_layout(rect=[0, 0.03, 1, 0.95])
 
     if show:
-        plt.show()
+        plt.show(block=False)
     return fig
+
+def plot_reachability_envelope(samples, waypoints=None, title="Reachability Envelope", show=True, block=False):
+    """
+    Plot the trajectory with Immrax reachability envelope (uncertainty bounds).
+    
+    Args:
+        samples: list of trajectory sample dicts with 'reachability_envelope' key
+        waypoints: optional list of (x, y, heading_or_None) tuples
+        title: plot title
+        show: if True, calls plt.show()
+    """
+    t = [s['t'] for s in samples]
+    x = [s['x'] for s in samples]
+    y = [s['y'] for s in samples]
+    h = [s['heading'] for s in samples]
+    
+    fig, ax = plt.subplots(figsize=(12, 10))
+    fig.suptitle(title, fontsize=14, fontweight='bold')
+    
+    # Plot nominal trajectory
+    v_lin = np.array([(s['vl'] + s['vr']) / 2 for s in samples])
+    points = np.array([x, y]).T.reshape(-1, 1, 2)
+    segments = np.concatenate([points[:-1], points[1:]], axis=1)
+    
+    from matplotlib.collections import LineCollection
+    from matplotlib.cm import ScalarMappable
+    from matplotlib.colors import Normalize
+    
+    norm = Normalize(vmin=v_lin.min(), vmax=v_lin.max())
+    lc = LineCollection(segments, cmap='plasma', norm=norm, linewidth=3, alpha=0.8)
+    lc.set_array(v_lin[:-1])
+    ax.add_collection(lc)
+    plt.colorbar(ScalarMappable(norm=norm, cmap='plasma'),
+                 ax=ax, label='Speed (m/s)', shrink=0.8)
+    
+    # Plot reachability envelope
+    has_envelope = any('reachability_envelope' in s for s in samples)
+    if has_envelope:
+        envelope_x_min = []
+        envelope_x_max = []
+        envelope_y_min = []
+        envelope_y_max = []
+        
+        for s in samples:
+            env = s.get('reachability_envelope', {})
+            if env:
+                envelope_x_min.append(env['x_min'])
+                envelope_x_max.append(env['x_max'])
+                envelope_y_min.append(env['y_min'])
+                envelope_y_max.append(env['y_max'])
+            else:
+                envelope_x_min.append(s['x'])
+                envelope_x_max.append(s['x'])
+                envelope_y_min.append(s['y'])
+                envelope_y_max.append(s['y'])
+        
+        # Fill the uncertainty region
+        ax.fill_between(x, envelope_y_min, envelope_y_max, alpha=0.2, color='red', label='Uncertainty bounds')
+        ax.fill_between(y, envelope_x_min, envelope_x_max, alpha=0.2, color='red')
+        
+        # Plot envelope boundaries
+        ax.plot(envelope_x_min, envelope_y_min, 'r--', linewidth=1, alpha=0.5, label='Envelope boundary')
+        ax.plot(envelope_x_max, envelope_y_max, 'r--', linewidth=1, alpha=0.5)
+    
+    # Waypoint overlays
+    if waypoints:
+        arrow_len = 0.12
+        for idx, wp in enumerate(waypoints):
+            wx, wy = wp[0], wp[1]
+            wh = wp[2] if len(wp) > 2 else None
+            
+            ax.plot(wx, wy, marker='*', markersize=18,
+                   color='gold', markeredgecolor='darkorange',
+                   markeredgewidth=1.2, zorder=5)
+            
+            if wh is not None:
+                ax.annotate('', xy=(wx + arrow_len*np.cos(wh),
+                                   wy + arrow_len*np.sin(wh)),
+                           xytext=(wx, wy),
+                           arrowprops=dict(arrowstyle='->', color='darkorange',
+                                           lw=2.5), zorder=6)
+            
+            ax.text(wx, wy + 0.05, f'W{idx}', ha='center', va='bottom',
+                   fontsize=9, fontweight='bold', color='darkorange', zorder=7)
+    
+    # Heading arrows
+    step = max(1, len(x) // 12)
+    for i in range(0, len(x), step):
+        ax.annotate('', xy=(x[i] + 0.06*np.cos(h[i]), y[i] + 0.06*np.sin(h[i])),
+                    xytext=(x[i], y[i]),
+                    arrowprops=dict(arrowstyle='->', color='steelblue', lw=1.5))
+    
+    ax.autoscale()
+    ax.set_xlabel('X (m)')
+    ax.set_ylabel('Y (m)')
+    ax.set_title('Trajectory with Reachability Envelope (Uncertainty Bounds)')
+    ax.set_aspect('equal')
+    ax.grid(True, linestyle='--', alpha=0.5)
+    
+    if has_envelope:
+        ax.legend(loc='best')
+    
+    plt.tight_layout()
+    
+    if show:
+        plt.show(block=block)
+    return fig
+
 
 if __name__ == "__main__":
     import sys, json
@@ -182,5 +290,10 @@ if __name__ == "__main__":
             with open(wp_file, 'r') as f:
                 raw = json.load(f)
             wps = [(w['x'], w['y'], w.get('heading')) for w in raw]
-        plot_trajectory(data['trajectory']['samples'], waypoints=wps,
-                        title=traj_file)
+        
+        # Check if trajectory has reachability envelope
+        samples = data['trajectory']['samples']
+        if any('reachability_envelope' in s for s in samples):
+            plot_reachability_envelope(samples, waypoints=wps, title=traj_file)
+        else:
+            plot_trajectory(samples, waypoints=wps, title=traj_file)
