@@ -1214,6 +1214,8 @@ The system provides FLL teams with a powerful tool for generating optimal trajec
 
 7. **Ramsete**: Østergaard, E. Z., et al. "Trajectory tracking and robot manipulator control using Lyapunov stable MPC with constraints." IFAC Proceedings Volumes, 2016.
 
+8. **immrax**: Harapanahalli, A., Jafarpour, S., and Coogan, S. "immrax: A Parallelizable and Differentiable Toolbox for Interval Analysis and Mixed Monotone Reachability in JAX." IFAC-PapersOnLine, vol. 58, no. 11, pp. 75-80, 2024. doi: [10.1016/j.ifacol.2024.07.428](https://doi.org/10.1016/j.ifacol.2024.07.428).
+
 ---
 
 ## Appendix A: Configuration Parameters

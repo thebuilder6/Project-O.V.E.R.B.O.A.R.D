@@ -84,7 +84,16 @@ def generate_candidates_jax(start_state, end_state, num_samples, num_stomp, conf
     stomp_guesses = vmap(lambda k: perturb(k, base_guesses[0]))(random.split(key, num_stomp))
     all_guesses = jnp.concatenate([base_guesses, stomp_guesses])
     total = all_guesses.shape[0]
-    biases = {'forward_weight': jnp.zeros(total).at[0].set(10.0), 'reverse_weight': jnp.zeros(total).at[1].set(10.0), 'accuracy_weight': jnp.zeros(total)}
+        # Indices 0-3 are forward seeds, 4-7 are reverse seeds
+    # Indices 12+ are STOMP guesses (derived from the forward seed)
+    fw_array = jnp.zeros(total).at[0:4].set(10.0).at[12:].set(10.0)
+    rw_array = jnp.zeros(total).at[4:8].set(10.0)
+    
+    biases = {
+        'forward_weight': fw_array, 
+        'reverse_weight': rw_array, 
+        'accuracy_weight': jnp.zeros(total)
+    }
     def eval_one(g, fw, rw, aw):
         b = {'forward_weight': fw, 'reverse_weight': rw, 'accuracy_weight': aw}
         return local_trajectory_cost(g, start_state, end_state, b, config, 10)

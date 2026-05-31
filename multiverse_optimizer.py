@@ -2,9 +2,10 @@
 Multi-Verse Segment Refinement Pipeline (JAX/Immrax Optimized)
 
 A hybrid trajectory generation architecture combining:
-- Gradient-based optimization (CasADi)
+- Kinematic Profiling (Replaces Initial CasADi Solve)
 - Topology exploration (TEB)
 - JAX-accelerated parallel refinement and candidate generation
+- Gradient-based optimization (CasADi) for final polish
 """
 
 from typing import List, Dict, Tuple, Any, Optional
@@ -55,7 +56,7 @@ class OptimizationStats:
         self.total_time = 0.0
         self.phase_times = {
             "bootstrap": 0.0,
-            "global_solve": 0.0,
+            "kinematic_profile": 0.0,
             "critic": 0.0,
             "refinement": 0.0,
             "polish": 0.0
@@ -209,20 +210,16 @@ class TrajectoryCritic:
         if len(samples) < 3: return 0.0
         jerk = 0.0
         for k in range(len(samples)-2):
-            # --- CHANGED: Align Critic with CasADi Pseudo-Jerk (No dt division) ---
-            # If the samples already contain pre-calculated accelerations:
             if 'al' in samples[k] and 'al' in samples[k+1]:
                 jerk += (samples[k+1]['al'] - samples[k]['al'])**2
                 jerk += (samples[k+1]['ar'] - samples[k]['ar'])**2
             else:
-                # Fallback if raw states are used
                 dt = max(samples[k+1]['t']-samples[k]['t'], 1e-3)
                 al1 = (samples[k+1]['vl'] - samples[k]['vl']) / dt
                 al2 = (samples[k+2]['vl'] - samples[k+1]['vl']) / dt
                 ar1 = (samples[k+1]['vr'] - samples[k]['vr']) / dt
                 ar2 = (samples[k+2]['vr'] - samples[k+1]['vr']) / dt
                 jerk += (al2 - al1)**2 + (ar2 - ar1)**2
-            # -----------------------------------------------------------------------
         return jerk
     
     def _calculate_curvature_cost(self, samples):
@@ -266,16 +263,17 @@ class MasterTrajectoryOptimizer:
         if stop_waypoint_indices is None: stop_waypoint_indices = []
         if waypoint_events is None: waypoint_events = {}
         
-        # Phase 1 & 2: Bootstrap and Global Solve
+        # Phase 1: Bootstrap (Geometry Generation)
         phase1_start = time.time()
-        if verbose: print("Phase 1: Bootstrapping...")
+        if verbose: print("Phase 1: Bootstrapping (Geometry)...")
         guess = self.bootstrapper.generate_baseline(waypoints, num_samples_per_segment)
         self.stats.phase_times["bootstrap"] = time.time() - phase1_start
 
+        # Phase 2: NEW Kinematic Profiler (Replaces Slow CasADi Initial Solve)
         phase2_start = time.time()
-        if verbose: print("Phase 2: Global optimization (CasADi)...")
-        global_traj = self._global_solve(waypoints, num_samples_per_segment, guess, accuracy_weight, stop_waypoint_indices, waypoint_events, apply_headroom, fast_mode=True, capture_iterations=capture_iterations, live_viz=live_viz)
-        self.stats.phase_times["global_solve"] = time.time() - phase2_start
+        if verbose: print("Phase 2: Kinematic Profiling (Replaces Global CasADi)...")
+        global_traj = self._profile_kinematics(guess, num_samples_per_segment, stop_waypoint_indices, waypoint_events, apply_headroom)
+        self.stats.phase_times["kinematic_profile"] = time.time() - phase2_start
         if global_traj: self.stats.initial_cost = (global_traj[1]['t']-global_traj[0]['t']) * (len(global_traj)-1)
 
         # Phase 3: Critic
@@ -343,13 +341,89 @@ class MasterTrajectoryOptimizer:
         # Phase 5: Global Polish
         phase5_start = time.time()
         if verbose: print("Phase 5: Final global polish (CasADi/IPOPT)...")
-        final_traj = self._global_solve(waypoints, num_samples_per_segment, guess, accuracy_weight, stop_waypoint_indices, waypoint_events, apply_headroom, fast_mode=False, initial_samples=global_traj, capture_iterations=capture_iterations, live_viz=live_viz)
+        # Warm start CasADi using the fully JAX-refined trajectory!
+        final_traj = self._global_solve(waypoints, num_samples_per_segment, None, accuracy_weight, stop_waypoint_indices, waypoint_events, apply_headroom, fast_mode=False, initial_samples=global_traj, capture_iterations=capture_iterations, live_viz=live_viz)
         self.stats.phase_times["polish"] = time.time() - phase5_start
         
         self.stats.total_time = time.time() - total_start_time
         if final_traj: self.stats.final_cost = (final_traj[1]['t']-final_traj[0]['t']) * (len(final_traj)-1)
         if verbose: print(f"\nOptimization complete in {self.stats.total_time:.2f}s. Final cost: {self.stats.final_cost:.4f}s")
         return final_traj, self.stats.to_dict()
+
+    def _profile_kinematics(self, guess: np.ndarray, num_samples_per_segment: int, stops: List[int], events: Dict[int, str], apply_headroom: bool) -> List[Dict[str, Any]]:
+        """Converts geometric Reeds-Shepp arrays into a continuous time-series dictionary format without invoking CasADi."""
+        N = (len(guess) - 1) // 5
+        states = guess[1:].reshape((N, 5))
+        
+        # 1. Calculate path distances
+        dists = np.zeros(N)
+        for i in range(1, N):
+            dists[i] = dists[i-1] + np.hypot(states[i,0]-states[i-1,0], states[i,1]-states[i-1,1])
+            
+        total_dist = dists[-1]
+        
+        # 2. Determine base dt (using a conservative nominal speed)
+        v_max = self.config.max_linear_speed(apply_headroom)
+        v_nom = v_max * 0.4  
+        total_time = total_dist / v_nom if v_nom > 1e-3 else 1.0
+        dt = total_time / max(1, (N - 1))
+        dt = max(dt, 0.02)  # Prevent division by zero limits
+        
+        trajectory = []
+        for i in range(N):
+            x, y, th = states[i, 0], states[i, 1], states[i, 2]
+            
+            # Determine velocity using central differences
+            if i == 0 or i == N - 1:
+                v, w = 0.0, 0.0
+            else:
+                dx = states[i+1, 0] - states[i-1, 0]
+                dy = states[i+1, 1] - states[i-1, 1]
+                dth = (states[i+1, 2] - states[i-1, 2] + np.pi) % (2*np.pi) - np.pi
+                
+                v = np.hypot(dx, dy) / (2 * dt)
+                w = dth / (2 * dt)
+                
+                # Reverse motion check
+                if dx * np.cos(th) + dy * np.sin(th) < 0:
+                    v = -v
+            
+            # Force stops at requested waypoints
+            if i % num_samples_per_segment == 0:
+                wp_idx = i // num_samples_per_segment
+                if wp_idx in stops:
+                    v, w = 0.0, 0.0
+                    
+            vl = v - w * self.config.track_width / 2.0
+            vr = v + w * self.config.track_width / 2.0
+            
+            event = events.get(i // num_samples_per_segment) if i % num_samples_per_segment == 0 else None
+            
+            trajectory.append({
+                "t": float(i * dt),
+                "x": float(x),
+                "y": float(y),
+                "heading": float(th),
+                "vl": float(vl),
+                "vr": float(vr),
+                "omega": float(w),
+                "al": 0.0, "ar": 0.0, "fl": 0.0, "fr": 0.0
+            })
+            if event:
+                trajectory[-1]["event"] = event
+                
+        # 3. Calculate Accelerations and Forces
+        model = DifferentialDriveModel(self.config)
+        for i in range(N - 1):
+            al = (trajectory[i+1]['vl'] - trajectory[i]['vl']) / dt
+            ar = (trajectory[i+1]['vr'] - trajectory[i]['vr']) / dt
+            trajectory[i]['al'] = float(al)
+            trajectory[i]['ar'] = float(ar)
+            fl, fr = model.get_dynamics(trajectory[i]['vl'], trajectory[i]['vr'], al, ar)
+            trajectory[i]['fl'] = float(fl)
+            trajectory[i]['fr'] = float(fr)
+            
+        return trajectory
     
     def _global_solve(self, waypoints, num_samples, guess, accuracy, stops, events, headroom, fast_mode, initial_samples=None, capture_iterations=False, live_viz=False):
         from optimizer import TrajectoryOptimizer

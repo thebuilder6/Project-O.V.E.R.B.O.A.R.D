@@ -151,7 +151,7 @@ def main(config, waypoints, output, samples, accuracy_weight, stop_waypoints, ev
             
     # --- AUTO-POLISH LOOP ---
     curr_accuracy_weight = accuracy_weight
-    max_retries = 3
+    max_retries = 5
     passed_validation = False
     
     for attempt in range(max_retries):

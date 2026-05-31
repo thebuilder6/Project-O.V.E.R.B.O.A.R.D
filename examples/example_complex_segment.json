@@ -1,0 +1,7 @@
+[
+  { "x": 0.4, "y": 0.3, "heading": null, "stop": false },
+  { "x": 0.35, "y": 0.45, "heading": 2.0, "error_threshold": 0.10, "event": "intake" },
+  { "x": 0.25, "y": 0.55, "heading": null, "stop": true },
+  { "x": 0.15, "y": 0.5, "heading": 3.14, "error_threshold": 0.10, "event": "deposit" },
+  { "x": 0.1, "y": 0.35, "heading": null, "stop": true }
+]
