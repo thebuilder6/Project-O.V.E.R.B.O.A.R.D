@@ -1,7 +1,7 @@
 from typing import List, Dict, Tuple, Any, Optional
 import json
 import numpy as np
-from robot_model import RobotConfig, DifferentialDriveModel
+from ..core.robot_model import RobotConfig, DifferentialDriveModel
 
 
 def forward_integrate(samples: List[Dict[str, Any]], robot_cfg: RobotConfig, fine_dt: float = 0.001) -> Tuple[List[Dict[str, Any]], Dict[str, float]]:

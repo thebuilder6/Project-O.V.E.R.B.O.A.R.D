@@ -4,8 +4,8 @@ Unit tests for optimizer.py and benchmark dry-run smoke tests.
 
 import unittest
 import numpy as np
-from robot_model import RobotConfig
-from optimizer import TrajectoryOptimizer
+from overboard.core.robot_model import RobotConfig
+from overboard.core.optimizer import TrajectoryOptimizer
 
 
 class TestTrajectoryOptimizer(unittest.TestCase):
@@ -388,7 +388,7 @@ import sys
 import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from benchmark import (
+from benchmarks.benchmark import (
     STANDARD_CONFIG,
     CLIBenchmarkRunner,
     RandomBenchmark,
@@ -402,7 +402,7 @@ class TestBenchmarkDryRun(unittest.TestCase):
     # Shared config so we only build it once per test class
     @classmethod
     def setUpClass(cls):
-        from robot_model import RobotConfig
+        from overboard.core.robot_model import RobotConfig
         cls.config_data = STANDARD_CONFIG
         cls.cfg = RobotConfig(STANDARD_CONFIG)
 
@@ -520,7 +520,7 @@ class TestBenchmarkDryRun(unittest.TestCase):
         In-process simple solve (same fixture as pipeline) must produce samples
         that start and end at rest and have monotonically increasing time.
         """
-        from optimizer import TrajectoryOptimizer
+        from overboard.core.optimizer import TrajectoryOptimizer
         opt = TrajectoryOptimizer(self.cfg)
         wps = [(0, 0, 0), (1, 0, 0), (2, 1, np.pi / 2)]
         samples, stats = opt.solve(wps, num_samples_per_segment=5, verbose=False)

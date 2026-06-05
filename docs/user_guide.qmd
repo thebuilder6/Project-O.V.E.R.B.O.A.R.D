@@ -1,0 +1,116 @@
+---
+title: "OVERBOARD User Guide"
+subtitle: "Step-by-Step Trajectory Optimization for FLL"
+format:
+  html:
+    toc: true
+    number-sections: true
+    code-fold: show
+---
+
+# Introduction
+
+Welcome to **OVERBOARD** (Optimal Velocity Engine for Robotic Boundary-constrained Orchestration and Advanced Ramsete Dynamics). This guide will walk you through the process of generating high-performance trajectories for your LEGO differential-drive robot.
+
+## What is OVERBOARD?
+
+OVERBOARD is a trajectory optimizer that helps your robot move as fast as possible without slipping or stalling. It uses advanced math to ensure your robot follows the most efficient path between waypoints.
+
+# Getting Started
+
+## Installation
+
+Ensure you have Python 3.8+ installed, then run:
+
+```bash
+pip install -r requirements.txt
+```
+
+## The Workflow
+
+The standard workflow follows these steps:
+
+```{mermaid}
+graph TD
+    A[Define Robot Config] --> B[Define Waypoints]
+    B --> C[Run Optimizer]
+    C --> D[Validate Trajectory]
+    D --> E[Export to Robot]
+    E --> F[Run on Pybricks]
+```
+
+# Step 1: Define Your Robot
+
+Create a `.json` file (e.g., `my_robot.json`) with your robot's physical parameters. Accuracy here is key!
+
+```json
+{
+  "robot": {
+    "mass": 0.8,
+    "inertia": 0.002,
+    "track_width": 0.1,
+    "wheel_radius": 0.028,
+    "v_max_rad_s": 15.7,
+    "t_max_nm": 0.04,
+    "gearing": 1.0,
+    "cof": 0.5
+  }
+}
+```
+
+*Tip: Use the `sysid_solver.py` (in the archive) or the upcoming automated calibration tools to find these values.*
+
+# Step 2: Define Waypoints
+
+Create a JSON file for your mission waypoints (e.g., `mission.json`).
+
+```json
+[
+  { "x": 0.0, "y": 0.0, "heading": 0.0 },
+  { "x": 0.5, "y": 0.5, "heading": 1.57, "stop": true },
+  { "x": 1.0, "y": 0.0, "heading": 0.0 }
+]
+```
+
+# Step 3: Optimize
+
+Run the optimizer from the command line:
+
+```bash
+python main.py -c my_robot.json -w mission.json -o mission.traj --plot
+```
+
+## Useful Flags
+
+- `--accuracy-weight 1.0`: Makes the path smoother (better for real-world tracking).
+- `--live`: Watch the optimization happen in your browser (open `viz/index.html`).
+- `--validate`: Run a physics check to make sure the robot won't slip.
+
+# Step 4: Export and Run
+
+Export the trajectory for your Pybricks robot:
+
+```bash
+python main.py -c my_robot.json -w mission.json --export-format python
+```
+
+This generates a `.py` file that you can copy-paste into your Pybricks project!
+
+# Advanced Features
+
+## Multi-Verse Optimization
+
+By default, OVERBOARD uses a "Multi-Verse" approach. It explores many different ways to navigate your path and picks the best one. It's particularly good at fixing "spiral loops" or awkward turns.
+
+## Event Markers
+
+You can trigger robot actions (like lowering an arm) at specific waypoints:
+
+```json
+{ "x": 0.5, "y": 0.5, "event": "lower_arm" }
+```
+
+# Troubleshooting
+
+- **Robot is slipping**: Increase `accuracy_weight` or decrease `cof` in your config.
+- **Optimization fails**: Try adding a `stop: true` to difficult waypoints or use `--simple` for a more basic (but less clever) solve.

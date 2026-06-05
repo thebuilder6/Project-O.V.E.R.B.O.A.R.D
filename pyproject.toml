@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "overboard"
+version = "0.1.0"
+description = "Optimal Velocity Engine for Robotic Boundary-constrained Orchestration and Advanced Ramsete Dynamics"
+readme = "README.md"
+requires-python = ">=3.8"
+dependencies = [
+    "numpy>=1.24.0,<2.0.0",
+    "casadi>=3.6.0,<4.0.0",
+    "plotly>=5.18.0,<6.0.0",
+    "click>=8.1.0,<9.0.0",
+    "matplotlib>=3.8.0,<4.0.0",
+    "rsplan>=0.1.0",
+    "websockets>=12.0",
+    "jax>=0.4.0",
+    "jaxlib>=0.4.0",
+    "jaxopt",
+    "immrax"
+]
+
+[project.scripts]
+overboard = "overboard.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]

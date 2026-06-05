@@ -12,9 +12,9 @@ import numpy as np
 import json
 import tempfile
 import os
-from robot_model import RobotConfig
-from multiverse_optimizer import MasterTrajectoryOptimizer, PathBootstrapper, TrajectoryCritic
-from validator import validate_trajectory
+from overboard.core.robot_model import RobotConfig
+from overboard.core.multiverse_optimizer import MasterTrajectoryOptimizer, PathBootstrapper, TrajectoryCritic
+from overboard.validation.validator import validate_trajectory
 
 
 class TestRefinementAccuracy(unittest.TestCase):
@@ -79,7 +79,7 @@ class TestRefinementAccuracy(unittest.TestCase):
             })
         
         # Generate linear interpolation trajectory
-        from path_planning import linear_interpolation_waypoints
+        from overboard.core.path_planning import linear_interpolation_waypoints
         linear_traj = []
         for i in range(len(self.complex_waypoints) - 1):
             start = self.complex_waypoints[i]
@@ -162,7 +162,7 @@ class TestRefinementAccuracy(unittest.TestCase):
     
     def test_refinement_preserves_constraints(self):
         """Test that refinement preserves kinematic constraints."""
-        from robot_model import DifferentialDriveModel
+        from overboard.core.robot_model import DifferentialDriveModel
         optimizer = MasterTrajectoryOptimizer(self.config, enable_parallel=False, num_workers=1)
         
         # Generate trajectory
@@ -408,7 +408,7 @@ class TestRefinementAccuracy(unittest.TestCase):
         self.assertIsNotNone(critic.centripetal_cost_threshold)
         
         # Verify thresholds match constants
-        from multiverse_optimizer import JERK_COST_THRESHOLD, CURVATURE_COST_THRESHOLD, CENTRIPETAL_COST_THRESHOLD
+        from overboard.core.multiverse_optimizer import JERK_COST_THRESHOLD, CURVATURE_COST_THRESHOLD, CENTRIPETAL_COST_THRESHOLD
         self.assertEqual(critic.jerk_cost_threshold, JERK_COST_THRESHOLD)
         self.assertEqual(critic.curvature_cost_threshold, CURVATURE_COST_THRESHOLD)
         self.assertEqual(critic.centripetal_cost_threshold, CENTRIPETAL_COST_THRESHOLD)

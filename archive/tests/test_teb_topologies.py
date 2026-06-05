@@ -9,8 +9,8 @@ Tests each topology individually to measure:
 
 import unittest
 import numpy as np
-from robot_model import RobotConfig
-from multiverse_optimizer import MultiVerseRefiner, LocalSegmentOptimizer
+from overboard.core.robot_model import RobotConfig
+from overboard.core.multiverse_optimizer import MultiVerseRefiner, LocalSegmentOptimizer
 
 
 class TestTEBTopologies(unittest.TestCase):

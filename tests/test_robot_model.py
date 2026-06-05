@@ -4,7 +4,7 @@ Unit tests for robot_model.py
 
 import unittest
 import numpy as np
-from robot_model import RobotConfig, DifferentialDriveModel
+from overboard.core.robot_model import RobotConfig, DifferentialDriveModel
 
 
 class TestRobotConfig(unittest.TestCase):

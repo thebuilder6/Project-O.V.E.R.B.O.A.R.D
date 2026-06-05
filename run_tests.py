@@ -21,9 +21,6 @@ from tests.test_validator import TestForwardIntegrate, TestAuditConstraints, Tes
 try:
     from tests.test_jax_heuristics import TestJAXHeuristics
     from tests.test_jax_ramsete import TestJAXRamsete
-    from tests.test_refinement_accuracy import TestRefinementAccuracy
-    from tests.test_stomp_variants import TestSTOMPVariants
-    from tests.test_teb_topologies import TestTEBTopologies
     from tests.test_critic_metrics import TestCriticMetrics
     JAX_AVAILABLE = True
 except ImportError as e:
@@ -41,9 +38,6 @@ def run_tests():
     if JAX_AVAILABLE:
         suite.addTests(loader.loadTestsFromTestCase(TestJAXHeuristics))
         suite.addTests(loader.loadTestsFromTestCase(TestJAXRamsete))
-        suite.addTests(loader.loadTestsFromTestCase(TestRefinementAccuracy))
-        suite.addTests(loader.loadTestsFromTestCase(TestSTOMPVariants))
-        suite.addTests(loader.loadTestsFromTestCase(TestTEBTopologies))
         suite.addTests(loader.loadTestsFromTestCase(TestCriticMetrics))
     suite.addTests(loader.loadTestsFromTestCase(TestTrajectoryOptimizer))
     suite.addTests(loader.loadTestsFromTestCase(TestRobotConfig))
