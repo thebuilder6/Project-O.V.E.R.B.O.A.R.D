@@ -34,13 +34,13 @@ from pathlib import Path
 
 import numpy as np
 
-from robot_model import RobotConfig
-from optimizer import TrajectoryOptimizer
-from validator import validate_trajectory
+from overboard.core.robot_model import RobotConfig
+from overboard.core.optimizer import TrajectoryOptimizer
+from overboard.validation.validator import validate_trajectory
 
 # MV optimizer is optional (JAX may not be installed)
 try:
-    from multiverse_optimizer import MasterTrajectoryOptimizer
+    from overboard.core.multiverse_optimizer import MasterTrajectoryOptimizer
     HAS_MULTIVERSE = True
 except ImportError:
     HAS_MULTIVERSE = False

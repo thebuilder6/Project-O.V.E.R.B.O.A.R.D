@@ -1,7 +1,7 @@
 import jax
 import jax.numpy as jnp
 from jax import jit, vmap, random
-from jax_robot_model import JAXRobotConfig, JAXDifferentialDriveModel
+from .jax_robot_model import JAXRobotConfig, JAXDifferentialDriveModel
 import jaxopt
 from typing import Dict, Any, Tuple, Optional
 from functools import partial

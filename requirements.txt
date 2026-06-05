@@ -5,3 +5,7 @@ click>=8.1.0,<9.0.0
 matplotlib>=3.8.0,<4.0.0
 rsplan>=0.1.0
 websockets>=12.0
+jax>=0.4.0
+jaxlib>=0.4.0
+jaxopt
+immrax

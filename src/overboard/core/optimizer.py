@@ -1,8 +1,8 @@
 from typing import List, Dict, Tuple, Any, Optional
 import numpy as np
 import casadi as ca
-from robot_model import RobotConfig, DifferentialDriveModel
-from live_visualizer import get_visualizer
+from .robot_model import RobotConfig, DifferentialDriveModel
+from ..visualization.live_visualizer import get_visualizer
 
 class TrajectoryOptimizer:
     def __init__(self, config: RobotConfig) -> None:

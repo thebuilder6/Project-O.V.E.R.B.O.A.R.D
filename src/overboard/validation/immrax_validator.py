@@ -3,8 +3,8 @@ import jax.numpy as jnp
 from jax import jit, vmap
 import immrax
 from immrax import Interval, interval
-from jax_robot_model import JAXRobotConfig, JAXDifferentialDriveModel
-from jax_ramsete import JAXRamseteController
+from ..core.jax_robot_model import JAXRobotConfig, JAXDifferentialDriveModel
+from ..core.jax_ramsete import JAXRamseteController
 from typing import List, Dict, Any, Tuple, Optional
 import math
 

@@ -9,8 +9,8 @@ Tests each anomaly detection metric individually:
 
 import unittest
 import numpy as np
-from robot_model import RobotConfig
-from multiverse_optimizer import TrajectoryCritic
+from overboard.core.robot_model import RobotConfig
+from overboard.core.multiverse_optimizer import TrajectoryCritic
 
 
 class TestCriticMetrics(unittest.TestCase):

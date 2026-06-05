@@ -12,9 +12,9 @@ from typing import List, Dict, Tuple, Any, Optional
 import numpy as np
 import casadi as ca
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from robot_model import RobotConfig, DifferentialDriveModel
-from path_planning import ReedsSheppPath, linear_interpolation_waypoints
-from live_visualizer import get_visualizer
+from .robot_model import RobotConfig, DifferentialDriveModel
+from .path_planning import ReedsSheppPath, linear_interpolation_waypoints
+from ..visualization.live_visualizer import get_visualizer
 import sys
 import time
 
@@ -22,8 +22,8 @@ import time
 try:
     import jax
     import jax.numpy as jnp
-    from jax_robot_model import JAXRobotConfig
-    from jax_optimizer import generate_candidates_jax, get_jax_refiner
+    from .jax_robot_model import JAXRobotConfig
+    from .jax_optimizer import generate_candidates_jax, get_jax_refiner
     HAS_JAX = True
 except ImportError:
     HAS_JAX = False
@@ -426,7 +426,7 @@ class MasterTrajectoryOptimizer:
         return trajectory
     
     def _global_solve(self, waypoints, num_samples, guess, accuracy, stops, events, headroom, fast_mode, initial_samples=None, capture_iterations=False, live_viz=False):
-        from optimizer import TrajectoryOptimizer
+        from .optimizer import TrajectoryOptimizer
         optimizer = TrajectoryOptimizer(self.config)
         if initial_samples:
             dt = initial_samples[1]['t'] - initial_samples[0]['t']

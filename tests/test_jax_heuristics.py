@@ -6,10 +6,10 @@ import unittest
 import jax
 import jax.numpy as jnp
 import numpy as np
-from robot_model import RobotConfig
-from jax_robot_model import JAXRobotConfig
-from multiverse_optimizer import MasterTrajectoryOptimizer
-from jax_optimizer import generate_candidates_jax
+from overboard.core.robot_model import RobotConfig
+from overboard.core.jax_robot_model import JAXRobotConfig
+from overboard.core.multiverse_optimizer import MasterTrajectoryOptimizer
+from overboard.core.jax_optimizer import generate_candidates_jax
 
 class TestJAXHeuristics(unittest.TestCase):
     def setUp(self):
