@@ -31,6 +31,7 @@ class JAXRamseteController:
         omega_cmd = ref_omega + self.b * ref_v * sinc_etheta * ey + k1 * etheta
         return v_cmd, omega_cmd
 
+
 @jit
 def ramsete_step_jax(current_pose: jnp.ndarray, ref_pose: jnp.ndarray, ref_v: float, ref_omega: float, dt: float,
                      backlash_b: float = 0.0, b: float = 2.0, zeta: float = 0.7):

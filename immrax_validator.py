@@ -64,6 +64,8 @@ class RobotOpenLoop(immrax.system.OpenLoopSystem):
 
         return jnp.array([dx, dy, dtheta])
 
+#irx.natemb
+
 # ==============================================================================
 # 2. THE CONTROLLER (Control Strategy)
 # ==============================================================================
@@ -101,6 +103,11 @@ class ClosedLoopRobotSystem(immrax.System):
         u_cmd = self.controller(t, x, u, w)
         # 2. Plant applies commands to physical dynamics
         return self.plant.f(t, x, u_cmd, w)
+
+# use immrax.ControlledSystem()
+
+
+
 
 class ImmraxValidator:
     def __init__(self, config: JAXRobotConfig):
