@@ -102,11 +102,13 @@ class TrajectoryOptimizer:
         self_consistent: bool = True,
         proportional_samples: bool = True,
         split_at_boundaries: bool = True,
+        force_weight: float = 0.0,
     ) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
         """
         waypoints: list of (x, y, heading)
         heading is in radians. None means unconstrained.
         accuracy_weight: weight for smoothness/jerk penalty (0 = pure time-optimal).
+        force_weight: weight for soft wheel-force and traction-utilization penalty (0 = none).
         stop_waypoint_indices: list of waypoint indices where robot must come to rest (vl=vr=0).
                              None means only start and end at rest.
         waypoint_events: dict mapping waypoint indices to event names (e.g., {2: "lower_arm", 5: "release"}).
@@ -189,6 +191,7 @@ class TrajectoryOptimizer:
                             self_consistent=self_consistent,
                             proportional_samples=proportional_samples,
                             split_at_boundaries=False,
+                            force_weight=force_weight,
                         )
                         if s_stats.get("converged", False):
                             best_sub_samples = s_samples
@@ -283,6 +286,7 @@ class TrajectoryOptimizer:
             per_segment_dt=per_segment_dt,
             self_consistent=self_consistent,
             proportional_samples=proportional_samples,
+            force_weight=force_weight,
         )
 
         if not fast_polish:
@@ -388,6 +392,7 @@ class TrajectoryOptimizer:
         solver_options: Optional[Dict[str, Any]] = None,
         self_consistent: bool = True,
         proportional_samples: bool = True,
+        force_weight: float = 0.0,
     ) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
         num_segments = len(waypoints) - 1
         segment_samples = self.get_segment_sample_counts(
@@ -454,7 +459,6 @@ class TrajectoryOptimizer:
                                         + (ar_k1 - ar_k)**2) * scale**2
                 else:
                     smoothness_cost += (al_k1 - al_k)**2 + (ar_k1 - ar_k)**2
-        opti.minimize(time_cost + accuracy_weight * smoothness_cost)
 
         if per_segment_dt:
             for i in range(num_segments):
@@ -477,6 +481,14 @@ class TrajectoryOptimizer:
         opti.subject_to(vl <= v_bound)
         opti.subject_to(vr >= -v_bound)
         opti.subject_to(vr <= v_bound)
+
+        force_cost = 0
+        f_stall_ref = max(
+            self.config.get_max_force_at_velocity_robust(0.0)
+            if apply_headroom
+            else self.config.get_max_force_at_velocity(0.0, apply_headroom=False),
+            1e-6,
+        )
 
         for k in range(N - 1):
             dt_k = interval_dt(k)
@@ -532,6 +544,25 @@ class TrajectoryOptimizer:
             f_traction_max = self.model.get_traction_limit_symbolic(vl[k], vr[k], apply_headroom)
             opti.subject_to(f_bound <= f_traction_max)
 
+            if force_weight > 0:
+                a_lin = (al + ar) / 2.0
+                alpha_ang = (ar - al) / self.config.track_width
+                f_lin = 0.5 * self.config.mass * a_lin
+                f_ang = (self.config.inertia * alpha_ang) / self.config.track_width
+                fl_k = f_lin - f_ang
+                fr_k = f_lin + f_ang
+                f_trac_ref = ca.fmax(f_traction_max, 1e-6)
+                force_cost += (
+                    0.5 * ((fl_k / f_stall_ref) ** 2 + (fr_k / f_stall_ref) ** 2)
+                    + 0.5 * ((fl_k / f_trac_ref) ** 2 + (fr_k / f_trac_ref) ** 2)
+                ) * dt_k
+
+        opti.minimize(
+            time_cost
+            + accuracy_weight * smoothness_cost
+            + force_weight * force_cost
+        )
+
         for i, wp in enumerate(waypoints):
             idx = waypoint_sample_indices[i]
             opti.subject_to(x[idx] == wp[0])
@@ -579,7 +610,8 @@ class TrajectoryOptimizer:
                 opti.subject_to(_vr_res * scale == 0)
         
         if capture_iterations:
-            initial_cost = self._compute_cost(guess, N, segment_samples, accuracy_weight, waypoints)
+            initial_cost = self._compute_cost(
+                guess, N, segment_samples, accuracy_weight, waypoints, force_weight=force_weight)
             self.iteration_history.append({
                 'iteration': 0,
                 'cost': initial_cost,
@@ -623,7 +655,8 @@ class TrajectoryOptimizer:
             total_time = float(np.sum(np.array(segment_samples) * dt_val))
             
             if capture_iterations:
-                final_cost = self._compute_cost(params, N, segment_samples, accuracy_weight, waypoints)
+                final_cost = self._compute_cost(
+                    params, N, segment_samples, accuracy_weight, waypoints, force_weight=force_weight)
                 self.iteration_history.append({
                     'iteration': len(self.iteration_history),
                     'cost': final_cost,
@@ -637,7 +670,8 @@ class TrajectoryOptimizer:
             
             stats = sol.stats()
             stats["total_time"] = time.time() - start_time
-            stats["initial_cost"] = self._compute_cost(guess, N, segment_samples, accuracy_weight, waypoints)
+            stats["initial_cost"] = self._compute_cost(
+                guess, N, segment_samples, accuracy_weight, waypoints, force_weight=force_weight)
             stats["final_cost"] = total_time
             stats["segment_dt"] = dt_val.tolist()
             stats["segment_samples"] = [int(s) for s in segment_samples]
@@ -659,7 +693,8 @@ class TrajectoryOptimizer:
             total_time = float(np.sum(np.array(segment_samples) * dt_val))
             
             if capture_iterations:
-                failed_cost = self._compute_cost(params, N, segment_samples, accuracy_weight, waypoints)
+                failed_cost = self._compute_cost(
+                    params, N, segment_samples, accuracy_weight, waypoints, force_weight=force_weight)
                 self.iteration_history.append({
                     'iteration': len(self.iteration_history),
                     'cost': failed_cost,
@@ -670,7 +705,8 @@ class TrajectoryOptimizer:
             
             stats = {
                 "total_time": time.time() - start_time,
-                "initial_cost": self._compute_cost(guess, N, segment_samples, accuracy_weight, waypoints),
+                "initial_cost": self._compute_cost(
+                    guess, N, segment_samples, accuracy_weight, waypoints, force_weight=force_weight),
                 "final_cost": total_time,
                 "segment_dt": dt_val.tolist(),
                 "segment_samples": [int(s) for s in segment_samples],
@@ -681,7 +717,15 @@ class TrajectoryOptimizer:
                 stats["iter_count"] = int(s_opts.get("max_iter", 0) or 0)
             return self.format_output(params, N, segment_samples, waypoint_events), stats
 
-    def _compute_cost(self, params: np.ndarray, N: int, num_samples_per_segment: Union[int, Sequence[int]], accuracy_weight: float, waypoints: List[Tuple[float, float, Optional[float]]]) -> float:
+    def _compute_cost(
+        self,
+        params: np.ndarray,
+        N: int,
+        num_samples_per_segment: Union[int, Sequence[int]],
+        accuracy_weight: float,
+        waypoints: List[Tuple[float, float, Optional[float]]],
+        force_weight: float = 0.0,
+    ) -> float:
         if len(params) == 1 + N * 5:
             num_dt = 1
             num_segments = len(waypoints) - 1
@@ -714,8 +758,26 @@ class TrajectoryOptimizer:
                 dt_span = 0.5 * (dt_k + dt_k1)
                 scale = dt_ref / dt_span
                 smoothness_cost += ((al_k1 - al_k)**2 + (ar_k1 - ar_k)**2) * scale**2
+
+        force_cost = 0.0
+        if force_weight > 0 and N > 1:
+            f_stall_ref = max(self.config.get_max_force_at_velocity_robust(0.0), 1e-6)
+            for k in range(N - 1):
+                dt_k = dt_values[sample_to_segment[k]]
+                if dt_k <= 0:
+                    continue
+                vl_k = states[k, 3]
+                vr_k = states[k, 4]
+                al_k = (states[k + 1, 3] - vl_k) / dt_k
+                ar_k = (states[k + 1, 4] - vr_k) / dt_k
+                fl_k, fr_k = self.model.get_wheel_forces(al_k, ar_k)
+                f_trac_ref = max(self.model.get_traction_limit(vl_k, vr_k, apply_headroom=True), 1e-6)
+                force_cost += (
+                    0.5 * ((fl_k / f_stall_ref) ** 2 + (fr_k / f_stall_ref) ** 2)
+                    + 0.5 * ((fl_k / f_trac_ref) ** 2 + (fr_k / f_trac_ref) ** 2)
+                ) * dt_k
         
-        return time_cost + accuracy_weight * smoothness_cost
+        return time_cost + accuracy_weight * smoothness_cost + force_weight * force_cost
 
     def _build_initial_guess(self, waypoints: List[Tuple[float, float, Optional[float]]], num_samples_per_segment: Union[int, Sequence[int]], N: int, style: str = "baseline", stop_waypoint_indices: Optional[List[int]] = None) -> np.ndarray:
         if style not in GUESS_STYLES:

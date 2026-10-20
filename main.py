@@ -24,7 +24,13 @@ import numpy as np
 
 from robot_model import RobotConfig
 from optimizer import TrajectoryOptimizer, GUESS_STYLES
-from validator import validate_trajectory, validate_samples, check_final_waypoint, compute_metrics
+from validator import (
+    validate_trajectory,
+    validate_samples,
+    check_final_waypoint,
+    compute_metrics,
+    compute_path_fitness,
+)
 from export import write_controller_file, write_python_file
 
 REPO_ROOT = Path(__file__).resolve().parent
@@ -99,14 +105,27 @@ def _ensure_jax_classes():
 
 def _select_attempt(attempts):
     """Choose the candidate to export: a passing converged attempt with the
-    smallest reachability envelope, then the shortest one (accuracy first, then
-    speed). Otherwise the converged attempt with the smallest quantified
-    violation. Non-converged attempts are never eligible (KI-001)."""
+    lowest 5-part time-equivalent fitness score (when fitness is scored), or
+    smallest reachability envelope then shortest duration as tie-breakers.
+    Otherwise the converged attempt with the smallest quantified violation.
+    Non-converged attempts are never eligible (KI-001)."""
     candidates = [a for a in attempts if a.get("converged", False)]
     if not candidates:
         return None, False
     passing = [a for a in candidates if a["ok"]]
     if passing:
+        if any(
+            a.get("fitness") is not None and math.isfinite(float(a["fitness"]))
+            for a in passing
+        ):
+            return min(
+                passing,
+                key=lambda a: (
+                    float(a.get("fitness", float("inf"))),
+                    a.get("tube", float("inf")),
+                    a.get("duration", a["cost"]),
+                ),
+            ), True
         return min(passing, key=lambda a: (a.get("tube", float("inf")),
                                            a.get("duration", a["cost"]))), True
     return min(candidates, key=lambda a: (a["violation"], a["cost"])), False
@@ -646,6 +665,12 @@ def _emit_validation_report(attempts, selected_index, propagation=None):
             "peak_jerk_m_s3": _finite(attempt.get("peak_jerk_m_s3")),
             "heading_error_deg": _finite(
                 (attempt.get("heading_rad", 0.0) or 0.0) * 180.0 / math.pi),
+            "fitness_s": _finite(attempt.get("fitness")),
+            "stop_spread_cm": _finite(
+                (attempt.get("stop_spread_m", 0.0) or 0.0) * 100.0),
+            "slip_risk": _finite(attempt.get("slip_risk", 0.0)),
+            "rms_force_n": _finite(attempt.get("rms_force_n", 0.0)),
+            "rms_force_util": _finite(attempt.get("rms_force_util", 0.0)),
             "ok": bool(attempt.get("ok")),
             "converged": bool(attempt.get("converged")),
             "reasons": list(attempt.get("reasons", [])),
@@ -968,6 +993,9 @@ def _print_summary(output, samples_data, robot_cfg, validate, attempt_passed, tu
               help='Samples per segment.')
 @click.option('-a', '--accuracy-weight', default=0.0, type=click.FloatRange(min=0.0),
               help='Smoothness/accuracy weight (0 = pure time-optimal).')
+@click.option('--force-weight', default=0.0, type=click.FloatRange(min=0.0),
+              help='Soft wheel-force and traction-utilization penalty weight in the NLP '
+                   'objective (simple solver only).')
 @click.option('--candidates', default=2, type=click.IntRange(1, len(GUESS_STYLES)),
               help='Candidates to solve and compare. With the simple solver these combine initial-guess '
                    'seeds (baseline, rolling, bow_left, bow_right, turn_first) with the timing '
@@ -1071,7 +1099,7 @@ def _print_summary(output, samples_data, robot_cfg, validate, attempt_passed, tu
 @click.option('--quiet', '-q', is_flag=True, help='Suppress verbose output.')
 @click.pass_context
 def main(ctx, config, waypoints, output, gui, gui_port, doctor, multiverse, simple, preset,
-         samples, accuracy_weight, candidates, stop_waypoints, events, per_segment_dt, uniform_dt,
+         samples, accuracy_weight, force_weight, candidates, stop_waypoints, events, per_segment_dt, uniform_dt,
          no_parallel, workers, fast_polish, sweep, self_consistent, refine, validate,
          sysid_fit, export_format, controller_dt, control_dt, propagation, benchmark,
          push_hub, hub_conn, hub_name, hub_log,
@@ -1120,6 +1148,10 @@ def main(ctx, config, waypoints, output, gui, gui_port, doctor, multiverse, simp
     if refine and multiverse:
         raise click.ClickException(
             "--refine is only supported by the simple solver."
+        )
+    if force_weight > 0.0 and multiverse:
+        raise click.ClickException(
+            "--force-weight is only supported by the simple solver."
         )
 
     if doctor:
@@ -1373,6 +1405,8 @@ def main(ctx, config, waypoints, output, gui, gui_port, doctor, multiverse, simp
                 solve_kwargs["guess_style"] = spec["guess_style"]
                 solve_kwargs["per_segment_dt"] = spec.get("per_segment_dt", False)
                 solve_kwargs["self_consistent"] = bool(self_consistent)
+                if force_weight > 0.0:
+                    solve_kwargs["force_weight"] = float(force_weight)
             if fast_polish:
                 solve_kwargs["fast_polish"] = True
             payloads.append((robot_cfg, wps, spec, solve_kwargs, multiverse))
@@ -1575,6 +1609,35 @@ def main(ctx, config, waypoints, output, gui, gui_port, doctor, multiverse, simp
                 attempt_record["peak_jerk_m_s3"] = float(
                     cpu_summary.get("metrics", {}).get("max_jerk_m_s3", 0.0) or 0.0)
 
+            # 5-part time-equivalent path fitness score (Stage 3: precision > accuracy)
+            if waypoint_bounds:
+                stop_sample_indices = [
+                    waypoint_bounds[w] for w in all_stop_indices
+                    if 0 <= w < len(waypoint_bounds)
+                ]
+            else:
+                stop_sample_indices = [
+                    w * samples for w in all_stop_indices
+                    if 0 <= w * samples < len(samples_data)
+                ]
+            fitness_info = compute_path_fitness(
+                samples_data,
+                robot_cfg,
+                stop_sample_indices=stop_sample_indices,
+                immrax_report=immrax_report,
+                cpu_summary=cpu_summary,
+            )
+            attempt_record["fitness"] = float(fitness_info["fitness_score_s"])
+            attempt_record["stop_spread_m"] = float(
+                fitness_info["components"]["stop_precision_spread_m"])
+            attempt_record["slip_risk"] = float(
+                fitness_info["components"]["slip_risk_penalty"])
+            attempt_record["rms_force_n"] = float(
+                fitness_info["components"]["rms_wheel_force_n"])
+            attempt_record["rms_force_util"] = float(
+                fitness_info["components"]["rms_force_utilization"])
+            attempt_record["fitness_info"] = fitness_info
+
             # Per-segment detail, so a failure can be pinned to a part of the path.
             attempt_record["segments"] = _segment_report(
                 samples_data, samples, waypoint_thresholds, immrax_report,
@@ -1583,7 +1646,11 @@ def main(ctx, config, waypoints, output, gui, gui_port, doctor, multiverse, simp
             if not quiet:
                 score = "envelope diverged" if attempt_record["diverged"] else f"envelope {attempt_record['tube']*100:.2f} cm"
                 if attempt_record["ok"]:
-                    click.echo(f"  Passed! {score}, all segments within thresholds.")
+                    click.echo(
+                        f"  Passed! {score}, fitness {attempt_record['fitness']:.3f} s "
+                        f"(stop spread {attempt_record['stop_spread_m']*100:.2f} cm), "
+                        f"all segments within thresholds."
+                    )
                 else:
                     reason_text = "; ".join(attempt_record["reasons"]) or "validation failed"
                     click.echo(f"  FAILED: {reason_text}.")

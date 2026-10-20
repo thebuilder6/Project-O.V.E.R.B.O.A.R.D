@@ -1088,7 +1088,9 @@ class ImmraxValidator:
             "max_slip_l_N": float(jnp.max(slip_ls)),
             "max_slip_r_N": float(jnp.max(slip_rs)),
             "max_tracking_error_m": reach_report['max_tracking_error_m'],
+            "rms_tracking_error_m": reach_report.get('rms_tracking_error_m', 0.0),
             "max_heading_error_rad": reach_report['max_heading_error_rad'],
+            "rms_heading_error_rad": reach_report.get('rms_heading_error_rad', 0.0),
             "max_envelope_radius_m": reach_report['max_envelope_radius_m'],
             "max_wheel_speed_m_s": max_wheel_speed,
             "wheel_speed_limit_m_s": wheel_speed_limit,
@@ -1341,6 +1343,9 @@ class ImmraxValidator:
             return {
                 "x_min": float(flat[0]), "x_max": float(flat[state_len]),
                 "y_min": float(flat[1]), "y_max": float(flat[state_len + 1]),
+                "theta_min": float(flat[2]), "theta_max": float(flat[state_len + 2]),
+                "tracking_error_m": 0.0,
+                "heading_error_rad": 0.0,
             }
 
         ramsete_b = getattr(self, "ramsete_b", 2.0)
@@ -1349,6 +1354,9 @@ class ImmraxValidator:
         max_heading_error = 0.0
         max_envelope_radius = 0.0
         max_total_error = 0.0
+        sum_sq_tracking = 0.0
+        sum_sq_heading = 0.0
+        n_tracked = 0
         diverged = False
         command_history = []
         # Half the backlash, used as the position uncertainty the reachable
@@ -1473,6 +1481,7 @@ class ImmraxValidator:
                     # safety envelope instead of widening it.
                     spread = backlash_half * max(0.0, elapsed)
                     env = {
+                        **env,
                         "x_min": env["x_min"] - spread,
                         "x_max": env["x_max"] + spread,
                         "y_min": env["y_min"] - spread,
@@ -1491,6 +1500,8 @@ class ImmraxValidator:
                 heading_error = float(abs(
                     (mid_heading - s_next['heading'] + math.pi)
                     % (2 * math.pi) - math.pi))
+                env["tracking_error_m"] = tracking_error
+                env["heading_error_rad"] = heading_error
                 radius = float(jnp.sqrt(
                     ((env["x_max"] - env["x_min"]) / 2.0)**2
                     + ((env["y_max"] - env["y_min"]) / 2.0)**2))
@@ -1499,6 +1510,9 @@ class ImmraxValidator:
                 max_heading_error = max(max_heading_error, heading_error)
                 max_envelope_radius = max(max_envelope_radius, radius)
                 max_total_error = max(max_total_error, tracking_error + radius)
+                sum_sq_tracking += tracking_error ** 2
+                sum_sq_heading += heading_error ** 2
+                n_tracked += 1
 
                 # If the interval tube exceeds 5cm the propagation has diverged (non-monotone
                 # closed loop). Do not shrink the box to a smaller one (that would report a
@@ -1515,7 +1529,9 @@ class ImmraxValidator:
             # should use the tracking and envelope fields separately.
             "max_error_m": max_total_error,
             "max_tracking_error_m": max_tracking_error,
+            "rms_tracking_error_m": math.sqrt(sum_sq_tracking / n_tracked) if n_tracked else 0.0,
             "max_heading_error_rad": max_heading_error,
+            "rms_heading_error_rad": math.sqrt(sum_sq_heading / n_tracked) if n_tracked else 0.0,
             "max_envelope_radius_m": max_envelope_radius,
             "envelope": envelope,
             "diverged": diverged,
