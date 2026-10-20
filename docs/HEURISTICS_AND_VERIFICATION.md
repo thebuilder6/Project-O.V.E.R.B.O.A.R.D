@@ -167,7 +167,7 @@ waypoints
    ├─ format        : optimizer.py:677  format_output
    │
    ├─ CPU audit     : validator.py:321  validate_samples
-   ├─ Immrax        : immrax_validator.py:436  validate_trajectory
+   ├─ Immrax        : immrax_validator.py:873  validate_trajectory
    ├─ scoring       : main.py:1106      per-candidate tube / tracking / ok
    ├─ selection     : main.py:92        _select_attempt
    └─ export gate   : main.py:272       _export_block_reason
@@ -839,7 +839,7 @@ A candidate must clear every gate below. The order matters: cheap and categorica
  G2  final waypoint check          validator.py:300
       |  2 cm position, 2 cm heading
       |
- G3  Immrax reachability           immrax_validator.py:436
+ G3  Immrax reachability           immrax_validator.py:873
       |  - motor force, per-wheel slip, wheel speed
       |  - closed-loop tracking error <= 5 mm
       |  - reachability envelope
@@ -881,9 +881,9 @@ ok = (errors["max_pos_error_m"] < 0.01
 
 ### 10.4 G3 — Immrax reachability
 
-`ImmraxValidator.validate_trajectory` (`immrax_validator.py:436`) simulates the closed loop with interval arithmetic. Details in [Section 12](#12-controller-and-plant-parity).
+`ImmraxValidator.validate_trajectory` (`immrax_validator.py:873`) simulates the closed loop with interval arithmetic. Details in [Section 12](#12-controller-and-plant-parity).
 
-The physical pass condition (`immrax_validator.py:526-533`):
+The physical pass condition (`immrax_validator.py:969-976`):
 
 ```python
 is_physically_safe = (
@@ -1044,7 +1044,7 @@ The **chirp tests are held out of the fit** and are the only genuinely independe
 | G3 Immrax motor / slip | the plan survives the *declared* uncertainty intervals under the simulated closed loop | that the intervals contain the real robot |
 | G3 Immrax tracking | the simulated plant stays within 5 mm of the reference | that the real robot does; the plant omits the PID, motor transients, slip and odometry error. **And, per RQ-A, it does not even mean that the simulated plant tracks the reference: the number is dominated by the mismatch between the optimizer's discretisation, the reference interpolation and the plant's integration** |
 | G3 Immrax envelope | the reachable set stays inside the local threshold under the declared intervals | that the reachable set is the real reachable set |
-| G4 local threshold | no waypoint's envelope budget is exceeded | that the budget is the right budget. **With a calibrated model this gate, not the tracking gate, is the one that binds**: the measured actuator-gain band widens the reachable set (11.8 mm at ±1 % over a 1 m straight, against a 20 mm threshold) while barely moving the tracking error, because the controller corrects the speed error (RQ-A finding F5). On a curve the tube still crosses the 50 mm guard, but the sampled reachable set there is 4.09 mm against a 48 mm tube, so the excess is the *open-loop* treatment of the feedback, not the band and not the arithmetic (RQ-A finding F12, KI-049) |
+| G4 local threshold | no waypoint's envelope budget is exceeded | that the budget is the right budget. **With a calibrated model this gate, not the tracking gate, is the one that binds**: the measured actuator-gain band widens the reachable set (11.8 mm at ±1 % over a 1 m straight, against a 20 mm threshold) while barely moving the tracking error, because the controller corrects the speed error (RQ-A finding F5). On a curve the tube still crosses the 50 mm guard, but the sampled reachable set there is 4.09 mm against a 48 mm tube, so the excess is the *open-loop* treatment of the feedback, not the band and not the arithmetic (RQ-A finding F12, KI-049). The lever is the closed-loop tick map, which is implemented and off by default: it wins on the default plant and loses on the digital twin, where the belief's spread is added to the plant's |
 | G5 export gate | nothing unsafe was written to disk | that the trajectory is safe |
 
 **The single most important sentence in this document:** reachability is a **post-solve candidate score**, not an objective term and not a constraint in the optimizer (KI-020). The optimizer does not know that a path it is about to find will fail the envelope gate. When validation fails, the planner has not learned anything; a human has to decide what to change.

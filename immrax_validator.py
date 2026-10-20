@@ -107,6 +107,53 @@ CONTROLLER_INCLUSION = "nat"
 PLANT_INCLUSIONS = ("nat", "jac", "mjac")
 CONTROLLER_INCLUSIONS = ("nat", "jac", "mjac")
 
+# Which propagation the reachability uses.
+#
+# "plant" is what has always shipped: the plant is embedded and propagated,
+# and the controller is evaluated *outside* the propagation, at the tube's
+# midpoint, with the command held for the tick.  The interval arithmetic
+# therefore never sees the feedback, and the tube it produces is the tube of
+# an open-loop plant driven by a pre-recorded command.  The real robot is a
+# contracting closed loop.
+#
+# "tick" embeds one control tick of the *closed loop* as a discrete map, with
+# the controller inside it, and propagates the map once per tick.  The map's
+# Jacobian carries the feedback term dF/dx = dPhi/dx + (dPhi/du)(dN/dx), and
+# the Ramsete feedback makes that term contract the tube - which is what the
+# robot does.  Measured on the shipped s-curve trajectory with a +/-1 % gain
+# band (docs/research/rq_a/exp20_closed_loop_tick.py): the plant propagation
+# crosses the 50 mm guard (53.6 mm) and fails the envelope gate, the tick
+# propagation with the mixed-Jacobian inclusion gives 18.8 mm and passes it,
+# and both contain the sampled reachable set.
+#
+# The tick propagation needs a Jacobian inclusion: with the natural extension
+# the closed-loop map explodes (627 mm on a 1 m straight), because that is
+# the naive interval Ramsete the "interval" feedback mode already avoids.
+PROPAGATION = "plant"
+PROPAGATIONS = ("plant", "tick")
+
+# Which inclusion function embeds the closed-loop tick map.
+#
+# The natural extension cannot be used here at all (it explodes), so the
+# choice is between the Jacobian and the mixed-Jacobian. The mixed one is
+# tighter - on the shipped s-curve trajectory with a +/-1 % gain band it gives
+# 18.8 mm against the Jacobian's 25.3 mm, and the 20 mm gate is decided in
+# between - and it costs 7-10x the validation time against the Jacobian's
+# 2-3x. The gate is a safety gate, so the tighter one is the one to ship
+# and the cost is paid only by the runs that validate.
+#
+# On the default plant this is a clear win: with the mixed-Jacobian the
+# s-curve, the stops and the complex mission stop diverging and pass the
+# 20 mm gate, and every tube contains the sampled reachable set
+# (docs/research/rq_a/exp22_twin_propagation.py). With the digital twin it
+# is *worse*, because the map has to carry the robot's own pose estimate and
+# an estimate in an interval state grows with the wheel-speed uncertainty:
+# the belief's spread is added to the plant's, because the two are
+# perfectly correlated and an interval box cannot say so. That is why the
+# default propagation is still "plant".
+TICK_INCLUSION = "mjac"
+TICK_INCLUSIONS = ("nat", "jac", "mjac")
+
 
 def _plant_embedding(plant, kind: str):
     """Embed the plant with the requested inclusion function."""
@@ -487,6 +534,114 @@ class ClosedLoopRobotSystem(immrax.System):
 # use immrax.ControlledSystem()
 
 
+class ClosedLoopTickMap(immrax.system.System):
+    """One control tick of the closed loop, as a discrete map.
+
+    The controller is inside the map, so the map's Jacobian carries the
+    feedback: the reachable set contracts the way the robot's does, instead of
+    fanning out the way an open-loop plant's does.
+
+    The state is the plant's state, and then the quantities the closed loop
+    needs but the plant does not have:
+
+      * the robot's own pose estimate (the digital twin), because the
+        controller reacts to the belief and not to the truth, and the
+        feedback term is dN/dx through the belief; and
+      * the command from the previous ticks, when the fitted model has a
+        command delay - the robot drives the command it was given a moment
+        ago, so that command's dependence on the older state belongs in the
+        map as well.
+
+    The tick duration rides in the last slot of the reference vector: it
+    changes from tick to tick (the last tick of a sample interval is
+    shorter), and a value that changes must be a traced argument, or the
+    inclusion function would be rebuilt for every tick.
+    """
+
+    def __init__(self, plant, controller, track_width,
+                 substeps: int = PLANT_SUBSTEPS,
+                 carry_belief: bool = False,
+                 belief_scale=(1.0, 1.0), gyro_bias: float = 0.0,
+                 delay_ticks: int = 0, wheel_state: str = "wheels"):
+        self.evolution = "discrete"
+        self.plant = plant
+        self.controller = controller
+        self.track_width = float(track_width)
+        self.substeps = int(substeps)
+        self.carry_belief = bool(carry_belief)
+        self.distance_scale = float(belief_scale[0])
+        self.heading_scale = float(belief_scale[1])
+        self.gyro_bias = float(gyro_bias)
+        self.delay_ticks = int(delay_ticks)
+        self.wheel_state = wheel_state
+        self.n_plant = plant.xlen
+        self.n_belief = 3 if carry_belief else 0
+        self.n_cmds = 2 * self.delay_ticks
+        self.xlen = self.n_plant + self.n_belief + self.n_cmds
+
+    def f(self, t, x, u_ref, w):
+        dt = u_ref[6]
+        n = self.n_plant
+        plant_x = x[:n]
+        belief = x[n:n + 3] if self.carry_belief else plant_x[:3]
+
+        # normalize=False: the angle normalisation is a modulo, and immrax's
+        # interval arithmetic has no inclusion rule for it.  The plan's
+        # headings are unrolled before they get here, so the difference is
+        # already the short way and the wrap is not needed - the same reason
+        # the "interval" feedback mode uses the raw headings.
+        u_cmd = self.controller(0.0, belief, u_ref[:6], w, normalize=False,
+                                quantize=False)
+
+        if self.delay_ticks:
+            # The slots hold the commands of the last delay_ticks ticks,
+            # newest first, and the oldest one is the command the robot is
+            # still driving.
+            cmds = x[n + self.n_belief:]
+            u_applied = cmds[2 * (self.delay_ticks - 1):2 * self.delay_ticks]
+        else:
+            u_applied = u_cmd
+
+        h = dt / self.substeps
+        plant_next = plant_x
+        belief_next = belief
+        for _ in range(self.substeps):
+            if self.carry_belief:
+                # The belief moves with the same speeds and in the same order
+                # as the plant, so a perfect odometry keeps it on the truth.
+                belief_next = self._advance_belief(belief_next, plant_next, h)
+            plant_next = plant_next + self.plant.f(
+                0.0, plant_next, u_applied, w) * h
+
+        parts = [plant_next]
+        if self.carry_belief:
+            parts.append(belief_next)
+        if self.delay_ticks:
+            # The new command goes in front and the oldest one falls off.
+            parts.append(jnp.concatenate(
+                [u_cmd, cmds[:2 * (self.delay_ticks - 1)]]))
+        return jnp.concatenate(parts)
+
+    def _advance_belief(self, belief, plant_x, dt):
+        """The robot's own pose estimate, advanced from the wheel motion."""
+        v_mean = plant_x[3]
+        v_diff = plant_x[4]
+        if self.wheel_state == "mean_diff":
+            odo_v = v_mean
+            odo_w = v_diff / self.track_width
+        else:
+            vl, vr = v_mean, v_diff
+            odo_v = (vl + vr) / 2.0
+            odo_w = (vr - vl) / self.track_width
+        odo_v = odo_v * self.distance_scale
+        odo_w = odo_w * self.heading_scale + self.gyro_bias
+        x, y, heading = belief
+        heading = heading + odo_w * dt
+        x = x + odo_v * jnp.cos(heading) * dt
+        y = y + odo_v * jnp.sin(heading) * dt
+        return jnp.array([x, y, heading])
+
+
 
 
 class ImmraxValidator:
@@ -497,7 +652,9 @@ class ImmraxValidator:
                  digital_twin: Optional[DigitalTwinConfig] = None,
                  plant_inclusion: Optional[str] = None,
                  controller_inclusion: Optional[str] = None,
-                 wheel_state: Optional[str] = None):
+                 wheel_state: Optional[str] = None,
+                 propagation: Optional[str] = None,
+                 tick_inclusion: Optional[str] = None):
         self.cfg = config
         self.model = JAXDifferentialDriveModel(config)
         self.ramsete_b = float(ramsete_b)
@@ -534,6 +691,19 @@ class ImmraxValidator:
             raise ValueError(
                 f"controller_inclusion must be one of {CONTROLLER_INCLUSIONS}, "
                 f"got {self.controller_inclusion!r}")
+        # "plant" propagates the plant and evaluates the controller outside the
+        # propagation; "tick" embeds a tick of the closed loop and propagates
+        # that.  See the PROPAGATION comment above.
+        self.propagation = propagation or PROPAGATION
+        if self.propagation not in PROPAGATIONS:
+            raise ValueError(
+                f"propagation must be one of {PROPAGATIONS}, "
+                f"got {self.propagation!r}")
+        self.tick_inclusion = tick_inclusion or TICK_INCLUSION
+        if self.tick_inclusion not in TICK_INCLUSIONS:
+            raise ValueError(
+                f"tick_inclusion must be one of {TICK_INCLUSIONS}, "
+                f"got {self.tick_inclusion!r}")
 
         self.digital_twin_gain_range = (
             digital_twin.actuator_gain_range()
@@ -589,6 +759,40 @@ class ImmraxValidator:
         self._controller_if = _controller_inclusion(
             self._controller_command_interval, self.controller_inclusion)
         self._sampled_control = True
+
+        # The closed-loop tick map, for the "tick" propagation. The robot's
+        # own pose estimate rides in the map's state when the plant has
+        # wheel-speed states, because the controller reacts to the belief and
+        # not to the truth, and the feedback term is dN/dx through it. The
+        # command delay rides there too when the fit measured one: the robot
+        # drives the command it was given a moment ago, so that command's
+        # dependence on the older state belongs in the map as well.
+        self.tick_map = None
+        self.tick_emb_sys = None
+        self._carry_belief = bool(
+            self._digital_twin_active and self.plant.xlen > 3)
+        self._tick_delay_ticks = 0
+        if getattr(self, "propagation", PROPAGATION) == "tick":
+            if self.tick_inclusion == "nat":
+                raise ValueError(
+                    "the tick propagation needs a Jacobian inclusion: with the "
+                    "natural extension the closed-loop map explodes "
+                    "(docs/research/rq_a/exp20_closed_loop_tick.py)")
+            self._tick_delay_ticks = max(1, int(math.ceil(
+                self.digital_twin_delay_s / self.control_dt))) \
+                if (self._digital_twin_active
+                    and self.digital_twin_delay_s > 0.0) else 0
+            self.tick_map = ClosedLoopTickMap(
+                self.plant, self.controller, config.track_width,
+                substeps=PLANT_SUBSTEPS,
+                carry_belief=self._carry_belief,
+                belief_scale=(self.digital_twin_distance_scale,
+                              self.digital_twin_heading_scale),
+                gyro_bias=self.digital_twin_gyro_bias_rad_s,
+                delay_ticks=self._tick_delay_ticks,
+                wheel_state=self.wheel_state)
+            self.tick_emb_sys = _plant_embedding(self.tick_map,
+                                                 self.tick_inclusion)
 
     def _controller_command_interval(self, x, u_ref, w):
         """Interval inclusion of the controller for one control tick."""
@@ -797,6 +1001,7 @@ class ImmraxValidator:
                 "plant": self.plant_inclusion,
                 "controller": self.controller_inclusion,
             },
+            "propagation": getattr(self, "propagation", PROPAGATION),
             "digital_twin": (
                 self.digital_twin.summary()
                 if self.digital_twin is not None else None
@@ -804,7 +1009,154 @@ class ImmraxValidator:
             "passed": bool(is_physically_safe)
         }
 
-    def compute_reachability(self, samples: List[Dict[str, Any]], 
+    def _reachability_tick(self, samples, w_interval, backlash_half):
+        """Propagate the tube through the closed-loop tick map.
+
+        The "plant" propagation embeds the plant and evaluates the controller
+        *outside* the propagation, at the tube's midpoint, so the interval
+        arithmetic never sees the feedback: what it bounds is the reachable
+        set of an open-loop plant driven by a pre-recorded command, and the
+        real robot is a contracting closed loop. The tick map puts the
+        controller inside the map, so the map's Jacobian carries the feedback
+        term dF/dx = dPhi/dx + (dPhi/du)(dN/dx), and the tube contracts the
+        way the robot's does.
+
+        The model is also a different one, and in the twin's case a more
+        conservative one: the controller is fed the whole tube (or, with the
+        digital twin, the whole *belief* interval), not the robot's own best
+        estimate, so the set it bounds contains the set the real robot
+        reaches. That is also why the twin's tube is *wider* under this
+        propagation and not narrower: the belief carried in an interval state
+        grows with the wheel-speed uncertainty, and its growth is added to
+        the plant's, because the belief and the wheel speeds are perfectly
+        correlated and an interval box cannot say so.
+        """
+        N = len(samples)
+        n_plant = self.plant.xlen
+        n_state = self.tick_map.xlen
+        start_pose = jnp.array([samples[0]['x'], samples[0]['y'],
+                                samples[0]['heading']])
+
+        # The state is the plant's state, then the belief, then the delayed
+        # commands. The pose starts with 1 mm of uncertainty; everything else
+        # starts exact.
+        lower = jnp.concatenate([start_pose - 0.001,
+                                 jnp.zeros(n_plant - 3)])
+        upper = jnp.concatenate([start_pose + 0.001,
+                                 jnp.zeros(n_plant - 3)])
+        if self._carry_belief:
+            # The robot's own estimate starts where the robot starts, and it
+            # is exact: it is a reading, not an uncertain quantity.
+            lower = jnp.concatenate([lower, start_pose])
+            upper = jnp.concatenate([upper, start_pose])
+        if self._tick_delay_ticks:
+            # There was no command before the run started.
+            zeros = jnp.zeros(2 * self._tick_delay_ticks)
+            lower = jnp.concatenate([lower, zeros])
+            upper = jnp.concatenate([upper, zeros])
+        x_flat = jnp.concatenate([lower, upper])
+
+        def _box(flat):
+            # Slicing: the first n_state entries are lower bounds, the next
+            # n_state entries are upper bounds.
+            return {
+                "x_min": float(flat[0]), "x_max": float(flat[n_state]),
+                "y_min": float(flat[1]), "y_max": float(flat[n_state + 1]),
+            }
+
+        ramsete_b = getattr(self, "ramsete_b", 2.0)
+        envelope = [_box(x_flat)]
+        max_tracking_error = 0.0
+        max_heading_error = 0.0
+        max_envelope_radius = 0.0
+        max_total_error = 0.0
+        diverged = False
+
+        for i in range(N - 1):
+            s = samples[i]
+            s_next = samples[i + 1]
+            dt = s_next['t'] - s['t']
+
+            if not math.isfinite(dt) or dt <= 0:
+                # A failed solve can produce a non-monotone time vector. Do
+                # not integrate backwards; report the tube as unknown so the
+                # caller cannot export it.
+                diverged = True
+                max_tracking_error = float("inf")
+                max_envelope_radius = float("inf")
+                max_total_error = float("inf")
+                envelope.append({**envelope[-1], "unknown": True})
+                continue
+
+            if not diverged:
+                t = s['t']
+                while t < s['t'] + dt - 1e-12:
+                    dt_ctrl = min(self.control_dt, s['t'] + dt - t)
+                    frac = (t - s['t']) / dt
+                    ref = _interpolated_reference(
+                        s, s_next, dt, self.cfg.track_width, frac, ramsete_b)
+                    # The tick duration rides in the last slot of the
+                    # reference: it changes from tick to tick, and a value
+                    # that changes has to be a traced argument, or the
+                    # inclusion function would be rebuilt for every tick.
+                    u_ref = jnp.concatenate(
+                        [jnp.array(ref), jnp.array([dt_ctrl])])
+                    x_flat = self.tick_emb_sys.f(0.0, x_flat, u_ref,
+                                                 w_interval)
+                    t += dt_ctrl
+
+            if not diverged:
+                env = _box(x_flat)
+                # The gear backlash is a position dead-band, carried in the
+                # reachable set rather than in the motion (KI-025).
+                if backlash_half > 0.0:
+                    elapsed = s_next['t'] - samples[0]['t']
+                    # Never let the spread go negative: that would shrink
+                    # the safety envelope instead of widening it.
+                    spread = backlash_half * max(0.0, elapsed)
+                    env = {
+                        "x_min": env["x_min"] - spread,
+                        "x_max": env["x_max"] + spread,
+                        "y_min": env["y_min"] - spread,
+                        "y_max": env["y_max"] + spread,
+                    }
+                mid_x = (x_flat[0] + x_flat[n_state]) / 2.0
+                mid_y = (x_flat[1] + x_flat[n_state + 1]) / 2.0
+                tracking_error = float(jnp.sqrt(
+                    (mid_x - s_next['x'])**2 + (mid_y - s_next['y'])**2))
+                mid_heading = (x_flat[2] + x_flat[n_state + 2]) / 2.0
+                heading_error = float(abs(
+                    (mid_heading - s_next['heading'] + math.pi)
+                    % (2 * math.pi) - math.pi))
+                radius = float(jnp.sqrt(
+                    ((env["x_max"] - env["x_min"]) / 2.0)**2
+                    + ((env["y_max"] - env["y_min"]) / 2.0)**2))
+
+                max_tracking_error = max(max_tracking_error, tracking_error)
+                max_heading_error = max(max_heading_error, heading_error)
+                max_envelope_radius = max(max_envelope_radius, radius)
+                max_total_error = max(max_total_error, tracking_error + radius)
+
+                # The same 50 mm guard as the plant propagation: a cut-off
+                # propagation is reported as a lower bound, not as a width.
+                if radius > 0.05:
+                    diverged = True
+                envelope.append({**env, "unknown": True} if diverged else env)
+            else:
+                envelope.append({**envelope[-1], "unknown": True})
+
+        return {
+            "max_error_m": max_total_error,
+            "max_tracking_error_m": max_tracking_error,
+            "max_heading_error_rad": max_heading_error,
+            "max_envelope_radius_m": max_envelope_radius,
+            "envelope": envelope,
+            "diverged": diverged,
+            "envelope_truncated": bool(diverged),
+            "propagation": "tick",
+        }
+
+    def compute_reachability(self, samples: List[Dict[str, Any]],
                              backlash_range: Tuple[float, float],
                              track_width_range: Tuple[float, float],
                              wheel_radius_range: Tuple[float, float],
@@ -830,6 +1182,12 @@ class ImmraxValidator:
         w_lower = jnp.array([cof_range[0], torque_margin_range[0], backlash_range[0], track_width_range[0], wheel_radius_range[0], inertia_range[0], gain_range[0]])
         w_upper = jnp.array([cof_range[1], torque_margin_range[1], backlash_range[1], track_width_range[1], wheel_radius_range[1], inertia_range[1], gain_range[1]])
         w_interval = Interval(w_lower, w_upper)
+
+        if getattr(self, "propagation", PROPAGATION) == "tick":
+            # The closed-loop tick map: the controller is inside the map, so
+            # the feedback contracts the tube (see _reachability_tick).
+            return self._reachability_tick(
+                samples, w_interval, 0.5 * float(w_upper[2]))
 
         active_twin = getattr(self, "_digital_twin_active", False)
         state_len = self.plant.xlen if active_twin else 3
@@ -1041,6 +1399,10 @@ class ImmraxValidator:
             # lengths. A caller that quotes the radius without this flag is
             # quoting a truncation as if it were a measurement.
             "envelope_truncated": bool(diverged),
+            # Which propagation produced this number: the plant, propagated on
+            # its own with the controller outside it, or the closed-loop tick
+            # map. A number without its provenance cannot be read.
+            "propagation": "plant",
         }
 
 

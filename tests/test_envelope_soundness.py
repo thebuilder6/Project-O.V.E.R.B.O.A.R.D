@@ -290,5 +290,180 @@ class TestTheBoxContainsTheReachableSet(unittest.TestCase):
                              "a sampled pose is outside the reported box")
 
 
+@unittest.skipUnless(HAS_IMMRAX, "immrax not installed")
+class TestTheTickPropagation(unittest.TestCase):
+    """The closed-loop tick map, against the open-loop plant propagation.
+
+    The shipped propagation embeds the plant and evaluates the controller
+    outside the propagation, at the tube's midpoint, so the feedback's
+    contraction of the error is never in the tube: what it bounds is the
+    reachable set of an open-loop plant driven by a pre-recorded command.
+    The tick map puts the controller inside the map, so the map's Jacobian
+    carries the feedback term, and the tube contracts the way the robot's
+    does.
+    """
+
+    def _validate(self, propagation, inclusion=None, gain=GAIN):
+        cfg = JAXRobotConfig(_TEST_ROBOT)
+        kw = {} if inclusion is None else {"tick_inclusion": inclusion}
+        val = ImmraxValidator(cfg, propagation=propagation, **kw)
+        val.digital_twin_gain_range = gain
+        report = _validate(val, _straight())
+        return report, val
+
+    def test_the_natural_extension_is_refused(self):
+        """With the natural extension the closed-loop map explodes."""
+        with self.assertRaises(ValueError):
+            self._validate("tick", inclusion="nat")
+
+    def test_an_unknown_propagation_is_refused(self):
+        with self.assertRaises(ValueError):
+            ImmraxValidator(JAXRobotConfig(_TEST_ROBOT), propagation="magic")
+
+    def test_the_shipped_default_is_the_plant_propagation(self):
+        """The default has to be the one that is measured to work."""
+        val = ImmraxValidator(JAXRobotConfig(_TEST_ROBOT))
+        self.assertEqual(val.propagation, "plant")
+        self.assertIsNone(val.tick_map)
+
+    def test_the_tick_tube_is_tighter(self):
+        """The feedback is in the tube, so the tube is smaller."""
+        plant, _ = self._validate("plant")
+        tick, _ = self._validate("tick", inclusion="jac")
+        self.assertLess(tick["max_envelope_radius_m"],
+                        plant["max_envelope_radius_m"])
+        self.assertFalse(tick["reachability"]["diverged"])
+
+    def test_the_tick_tube_holds_the_reachable_set(self):
+        """A smaller tube that drops real poses is worse than a wide one.
+
+        The path is a quarter of a metre long: the mixed-Jacobian tick map
+        is the slowest thing in the suite, and the question - does the
+        tighter box drop a pose the robot can reach - does not need a long
+        path to answer.
+        """
+        cfg = JAXRobotConfig(_TEST_ROBOT)
+        samples = _straight(length=0.25)
+        for inclusion in ("jac", "mjac"):
+            val = ImmraxValidator(cfg, propagation="tick",
+                                  tick_inclusion=inclusion)
+            val.digital_twin_gain_range = GAIN
+            report = _validate(val, samples)
+
+            w_iv = Interval(
+                jnp.array([1.24, 0.75, BACKLASH[0], TRACK[0], 0.0275, 0.0008,
+                            GAIN[0]]),
+                jnp.array([1.51, 0.9, BACKLASH[1], TRACK[1], 0.0285, 0.0011,
+                           GAIN[1]]))
+
+            def _w(track, gain):
+                return jnp.array([1.24, 0.75, BACKLASH[0], track, 0.0275,
+                                  0.0008, gain])
+
+            draws = [_w(TRACK[0], GAIN[0]), _w(TRACK[1], GAIN[0]),
+                     _w(TRACK[0], GAIN[1]), _w(TRACK[1], GAIN[1])]
+            key = jax.random.key(5)
+            for _ in range(4):
+                keys = jax.random.split(key, 2)
+                draws.append(_w(
+                    float(jax.random.uniform(key=keys[0], shape=(),
+                                             minval=TRACK[0],
+                                             maxval=TRACK[1])),
+                    float(jax.random.uniform(key=keys[1], shape=(),
+                                             minval=GAIN[0],
+                                             maxval=GAIN[1]))))
+
+            env = report["reachability"]["envelope"]
+            spread_half = 0.5 * BACKLASH[1]
+            worst = 0.0
+            for w in draws:
+                poses = _point_poses(samples, w, val.plant, cfg)
+                for k, (px, py) in enumerate(poses):
+                    if k >= len(env) or env[k].get("unknown"):
+                        continue
+                    spread = spread_half * max(0.0,
+                                               samples[k]['t'] - samples[0]['t'])
+                    worst = max(worst, max(
+                        env[k]["x_min"] - spread - px,
+                        px - (env[k]["x_max"] + spread),
+                        env[k]["y_min"] - spread - py,
+                        py - (env[k]["y_max"] + spread)))
+            self.assertLessEqual(worst, 1e-9,
+                                 f"a sampled pose is outside the {inclusion} box")
+
+    def test_the_tracking_error_does_not_move(self):
+        """The tracking error is the tube's midpoint against the plan, so it
+        is decided by the discretisation and not by the uncertainty. The
+        propagation may not change it - not by a hair either: the two boxes
+        have different midpoints, because the tick map's midpoint is the
+        midpoint of the image and the plant's is the midpoint of the step.
+        A micrometre of difference cannot move a 5 mm gate.
+        """
+        plant, _ = self._validate("plant")
+        tick, _ = self._validate("tick", inclusion="jac")
+        self.assertAlmostEqual(tick["max_tracking_error_m"],
+                               plant["max_tracking_error_m"], delta=5e-6)
+
+    def test_the_report_says_which_propagation_produced_it(self):
+        """A number without its provenance cannot be read."""
+        plant, _ = self._validate("plant")
+        tick, _ = self._validate("tick", inclusion="jac")
+        self.assertEqual(plant["reachability"]["propagation"], "plant")
+        self.assertEqual(tick["reachability"]["propagation"], "tick")
+
+    def test_the_twin_propagates_with_the_belief_in_the_state(self):
+        """The controller reacts to the robot's own estimate, not to the
+        truth, so the belief has to be inside the map: otherwise the
+        feedback term is taken with respect to the wrong variable.
+        """
+        cfg = JAXRobotConfig(_TEST_ROBOT)
+        val = ImmraxValidator(cfg, digital_twin=_twin(), propagation="tick",
+                              tick_inclusion="jac")
+        samples = _straight(length=0.5)
+        report = _validate(val, samples)
+        self.assertFalse(report["reachability"]["diverged"])
+
+        def _w(track, gain):
+            return jnp.array([1.24, 0.75, BACKLASH[0], track, 0.0275, 0.0008,
+                               gain])
+
+        draws = [_w(TRACK[0], GAIN[0]), _w(TRACK[1], GAIN[0]),
+                 _w(TRACK[0], GAIN[1]), _w(TRACK[1], GAIN[1])]
+        env = report["reachability"]["envelope"]
+        spread_half = 0.5 * BACKLASH[1]
+        worst = 0.0
+        for w in draws:
+            poses = _point_poses(samples, w, val.plant, cfg, with_belief=True)
+            for k, (px, py) in enumerate(poses):
+                if k >= len(env) or env[k].get("unknown"):
+                    continue
+                spread = spread_half * max(0.0,
+                                           samples[k]['t'] - samples[0]['t'])
+                worst = max(worst, max(
+                    env[k]["x_min"] - spread - px,
+                    px - (env[k]["x_max"] + spread),
+                    env[k]["y_min"] - spread - py,
+                    py - (env[k]["y_max"] + spread)))
+        self.assertLessEqual(worst, 1e-9,
+                             "a sampled pose is outside the reported box")
+
+    def test_a_fitted_command_delay_rides_in_the_state(self):
+        """The robot drives the command it was given a moment ago, so the
+        delay belongs inside the map and not beside it.
+        """
+        cfg = JAXRobotConfig(_TEST_ROBOT)
+        twin = DigitalTwinConfig.from_dict({"actuator": {"straight": {
+            "calibrated": True, "gain": 1.0,
+            "gain_min": GAIN[0], "gain_max": GAIN[1],
+            "tau_s": 0.02, "delay_s": 0.02,
+        }}})
+        val = ImmraxValidator(cfg, digital_twin=twin, propagation="tick",
+                              tick_inclusion="jac")
+        self.assertEqual(val._tick_delay_ticks, 1)
+        report = _validate(val, _straight(length=0.5))
+        self.assertFalse(report["reachability"]["diverged"])
+        self.assertTrue(np.isfinite(report["max_envelope_radius_m"]))
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -14,6 +14,7 @@ see.
 | `exp18_real_missions.txt` | the six example missions under the three inclusion functions, with and without a calibrated model |
 | `exp20_closed_loop_tick.txt` | the closed-loop tick map against the shipped open-loop propagation |
 | `exp21_curve_geometry.txt` | the envelope on a curve: the box against the sampled set, sample by sample |
+| `exp22_twin_propagation.txt` | the shipped validator with the two propagations, on the six missions, with and without a calibrated model |
 | `exp10_gain_band.txt` | the gain band against the tracking and the envelope, re-measured after the fix |
 | `envelope_plain_*.png` | the plain plant: the interval box against the sampled reachable set, one figure per inclusion function |
 | `envelope_twin_wheels_*.png` | the digital twin carrying the two wheel speeds as states - the layout before the fix |
@@ -72,6 +73,77 @@ So the Jacobian is the right tool for the closed loop and the wrong tool
 for the open-loop plant: on the tick map the natural extension is
 catastrophic and the Jacobian is what makes the enclosure work at all.
 
+## The shipped validator with the two propagations
+
+`exp22_twin_propagation.txt` measures the validator itself, with the
+"plant" propagation and the "tick" one, on the six missions. The default
+plant, without a calibrated model, with the reachable set sampled over the
+declared uncertainty:
+
+| mission | plant | tick (jac) | tick (mjac) | reachable set | contains |
+|---|---:|---:|---:|---:|---|
+| straight | 1.19 cm | 0.64 cm | 0.61 cm | 0.45 cm | yes |
+| S-curve | 5.36 cm, cut off | 2.53 cm | **1.88 cm** | 0.33 cm | yes |
+| first four | 1.31 cm | 0.92 cm | 0.79 cm | 0.27 cm | yes |
+| events | 5.37 cm, cut off | 5.40 cm | 4.45 cm | 0.37 cm | yes |
+| stops | 5.31 cm, cut off | 1.94 cm | **1.30 cm** | 0.39 cm | yes |
+| complex | 5.07 cm, cut off | 3.17 cm | **1.83 cm** | 0.26 cm | yes |
+
+Every tube contains the sampled reachable set, with 0.000 mm of overshoot.
+The tick propagation with the mixed-Jacobian turns three of the four
+cut-off missions into passes of the 20 mm gate, and it costs 7-10x the
+validation time.
+
+**With the digital twin it is worse**, and that is the finding that keeps
+it off by default: the map has to carry the robot's own pose estimate,
+because the controller reacts to the estimate and not to the truth, and an
+estimate carried in an interval state grows with the wheel-speed
+uncertainty. The belief's spread is then *added* to the plant's, because
+the two are perfectly correlated and an interval box cannot say so - the
+same lost correlation as the phantom turn rate, one level up. The tick
+propagation is the lever for the default plant; the twin needs the belief's
+correlation to be made explicit first.
+
+### And on the curve, where it matters
+
+The table above is a straight. The curve is the case that fails today, and
+the fix behaves differently there (`exp20_closed_loop_tick.txt`, the
+`s_curve mission` case; the reachable set is **3.27 mm**):
+
+| propagation | inclusion | tube | gate | contains the set |
+|---|---|---:|---|---|
+| shipped (open loop) | natural | 53.64 mm | diverged | yes |
+| shipped (open loop) | Jacobian | 51.18 mm | diverged | yes |
+| shipped (open loop) | mixed-Jacobian | 50.77 mm | diverged | yes |
+| closed-loop tick map | natural | diverged | diverged | yes |
+| closed-loop tick map | Jacobian | 25.28 mm | FAIL | yes |
+| closed-loop tick map | **mixed-Jacobian** | **18.80 mm** | **pass** | yes |
+
+So on the curve the tick map with the mixed-Jacobian turns "diverged at
+50.8 mm" into "18.80 mm, passing the 20 mm gate" - and the tighter tube still
+contains the sampled set. The cost is 7-10x the validation time, and the
+tracking error is unchanged to the last digit (it is the tube's midpoint
+against the plan, so it is decided by the discretisation and not by the
+uncertainty).
+
+### The control that says why
+
+`exp21_curve_geometry.txt` runs the same plant, the same uncertainty and the
+same reference with the **feedback switched off** - the controller is fed the
+plan's own pose, so its correction term is zero:
+
+| | half-diagonal on the S-curve |
+|---|---:|
+| the box the gate sees | 48.44 mm |
+| the same simulation with the feedback off | 23.91 mm |
+| the sampled reachable set (the real, closed-loop robot) | **4.09 mm** |
+
+The tube is twice as wide as an open-loop robot and twelve times as wide as
+the real one. The feedback's contraction of the error is not in the tube at
+all, and the interval arithmetic adds a factor of about two on top of the
+open-loop drift. That is why the tick map is the fix and not a tighter
+interval over the same open-loop plant.
+
 ## The check is one-sided
 
 Sampled points inside the box do not *prove* the box is sound, they only
@@ -84,6 +156,22 @@ same check in the test suite.
 ## Reproducing
 
 ```bash
-python docs/research/rq_a/exp19_envelope_scatter.py --out docs/measurements/2026-10-20-envelope --draws 60
 python docs/research/rq_a/exp10_gain_band.py
+python docs/research/rq_a/exp17_envelope_headroom.py
+python docs/research/rq_a/exp18_real_missions.py
+python docs/research/rq_a/exp19_envelope_scatter.py --out docs/measurements/2026-10-20-envelope --draws 60
+python docs/research/rq_a/exp20_closed_loop_tick.py
+python docs/research/rq_a/exp21_curve_geometry.py --mission example_s_curve
+```
+
+`exp18`, `exp20` and `exp21` read the solved trajectories from
+`measurements/traj/`, so point `OVERBOARD_TRAJ` at it (and solve the six
+example missions into it first).
+
+**Save the output as UTF-8.** On Windows, PowerShell's `>` writes UTF-16,
+and a UTF-16 evidence file is twice the size, greps as binary and diffs as
+binary. Redirect through `cmd` instead:
+
+```powershell
+cmd /c "python docs\research\rq_a\exp21_curve_geometry.py > docs\measurements\2026-10-20-envelope\exp21_curve_geometry.txt 2>&1"
 ```

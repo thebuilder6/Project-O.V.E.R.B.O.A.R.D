@@ -91,7 +91,7 @@ Collapsing each declared interval in turn, on the S-curve (all-uncertainty basel
 
 The same holds on the stops mission (+0.7 %) and the complex mission (+0.2 %).
 
-This is structural, not accidental: `cof`, `torque_headroom`, `wheel_radius_range` and `inertia_kg_m2` are consumed only inside `check_sample_interval` (`immrax_validator.py:460-504`), which is `vmap`ed and never touches the propagated state. Only `track_width_range` reaches the plant (`immrax_validator.py:115, 130`). The backlash reached the plant too, as a velocity offset; it is now a position uncertainty in the reachable set ([Fix 1](#fix-1--the-backlash-was-subtracted-from-the-commanded-wheel-speed)).
+This is structural, not accidental: `cof`, `torque_headroom`, `wheel_radius_range` and `inertia_kg_m2` are consumed only inside `check_sample_interval` (`immrax_validator.py:903-949`), which is `vmap`ed and never touches the propagated state. Only `track_width_range` reaches the plant (`immrax_validator.py:252, 373`). The backlash reached the plant too, as a velocity offset; it is now a position uncertainty in the reachable set ([Fix 1](#fix-1--the-backlash-was-subtracted-from-the-commanded-wheel-speed)).
 
 **So the tracking gate is not a robustness gate.** It is a deterministic check of the model-versus-plan consistency.
 
@@ -255,7 +255,7 @@ The finer tick is a property of the *model*, not of the robot: the controllers t
 
 ### F7 — The reference interpolates four coupled quantities independently, and the firmware does the same
 
-`_interpolated_reference` (`immrax_validator.py:46-77`) interpolates the heading, the speed, the turn rate and the Ramsete gain as four independent lines between the samples. But they are coupled:
+`_interpolated_reference` (`immrax_validator.py:173-215`) interpolates the heading, the speed, the turn rate and the Ramsete gain as four independent lines between the samples. But they are coupled:
 
 - the turn rate must be the **derivative** of the heading,
 - the heading must be the **integral** of the turn rate,
@@ -263,7 +263,7 @@ The finer tick is a property of the *model*, not of the robot: the controllers t
 
 A line for `ω` means the heading is a **parabola**, not a line. The two agree at the sample instants and disagree in between by up to `Δω·dt/8` — **8.7° of contradictory heading mid-interval** on the S-curve at `n=10`.
 
-**The deployed controller has the same defect.** `pybricks_code/ramsete_compact_events.py:155-160` interpolated `tr` (the heading), `vr` (the speed) and `wr` (the turn rate) as three independent lines and handed the robot a heading target and a turn rate that describe different motions. `ramsete_compact.py:151-156` and `ramsete_fast.py:85-91` did the same. The validator (`immrax_validator.py:46-77`) mirrored them, which is why the model and the robot agreed on the bug.
+**The deployed controller has the same defect.** `pybricks_code/ramsete_compact_events.py:155-160` interpolated `tr` (the heading), `vr` (the speed) and `wr` (the turn rate) as three independent lines and handed the robot a heading target and a turn rate that describe different motions. `ramsete_compact.py:151-156` and `ramsete_fast.py:85-91` did the same. The validator (`immrax_validator.py:173-215`) mirrored them, which is why the model and the robot agreed on the bug.
 
 | file | heading | turn rate | gain |
 |---|---|---|---|
@@ -460,7 +460,7 @@ Reproduce with `rq_a/verify_backlash_fix.py`; the behaviour is pinned by `tests/
 
 ### Fix 2 — the tracking metric ignored the heading
 
-The metric is position-only (`immrax_validator.py:740-741`), so a trajectory could follow the path while arriving at the wrong heading, and nothing measured it. `compute_reachability` now reports `max_heading_error_rad`, and the machine-readable validation report carries `heading_error_deg` per candidate.
+The metric is position-only (`immrax_validator.py:1112-1114`), so a trajectory could follow the path while arriving at the wrong heading, and nothing measured it. `compute_reachability` now reports `max_heading_error_rad`, and the machine-readable validation report carries `heading_error_deg` per candidate.
 
 It is **reported, not gated**: the heading behaviour is not calibrated against hardware, so it must not become a pass/fail criterion on its own. It is the measurement OQ4 needs.
 
@@ -645,7 +645,7 @@ The open part of RQ-A is therefore narrower than it was: **not** "find a formula
 | **OQ1** | What sets the floor of ~0.5–1.1 cm at n=40–80 on the S-curve? The plan/profile deviation is 0.063 cm there, so 95 % of the error is unexplained. | Until this is answered, no fix can be shown to work. | **CLOSED (F6).** It is the 20 ms command hold: refining the tick to 2 ms takes the error from 0.271 cm to 0.071 cm at n=40. At coarse sampling the floor is the plan/profile mismatch instead, and the error is U-shaped in the density. The mechanism is the distance covered per interval: giving the controller the interval-average velocity removes the hold without touching the tick (F6, F8) |
 | **OQ2** | Can the optimizer be reformulated so that consistency is structural? | It is the only fix that addresses the root cause. | **CLOSED (KI-026, F10).** The trapezoidal collocation was replaced with a four-node Gauss-Legendre quadrature over the *integrated* heading, so the samples lie on the path by construction and the headings are the tangents. It is behind `--self-consistent` (off by default, so the measured plans stay reproducible) |
 | **OQ3** | Should the reference become a spline in the validator **and** the firmware? | The firmware and the validator must agree, or the parity is lost. | The controllers in use interpolate linearly today. Any change there is a firmware change and needs the plan fix to be in place everywhere first. The spline on its own is catastrophic (F8's variant 3) |
-| **OQ4** | Does the tracking metric need a heading term? | The metric is position-only (`immrax_validator.py:740-741`). A plan can be followed in position while the heading is off by up to Δθ/2 — 9.4° on the S-curve at n=10. | Measure the heading error the closed loop actually shows, and decide whether it is a gate, a reported metric, or both. The heading error is reported now (Fix 2) but not gated |
+| **OQ4** | Does the tracking metric need a heading term? | The metric is position-only (`immrax_validator.py:1112-1114`). A plan can be followed in position while the heading is off by up to Δθ/2 — 9.4° on the S-curve at n=10. | Measure the heading error the closed loop actually shows, and decide whether it is a gate, a reported metric, or both. The heading error is reported now (Fix 2) but not gated |
 | **OQ5** | What is the stops mission's extra 0.6 cm? (1.15 cm of deviation but 2.19 cm of tracking error on the current tree.) | Stops are where the discretisations interact worst: the robot reverses, the backlash sign flips, the chord degenerates. | Separate the reversals from the curvature. Build a variant of the stops mission with the stops removed but the same geometry |
 | **OQ6** | Does any of this change the seed conclusions? | The companion document's headline is that the seeds buy gate insurance, not speed. | Probably not, but re-run the 60-candidate matrix once the discretisation is fixed. **That has been done** (31 of 60 candidates pass, 7 of the 12 cells produce a trajectory, and the envelope still never binds); the win counts may change, because the gate is what the seeds are escaping |
 
@@ -753,6 +753,48 @@ Three things came out of that table.
 So the reachable set on a curve is 4 mm wide, and the tube is more than ten times too wide. The reason is that the validator propagates the **plant** and evaluates the controller *outside* the propagation, at the tube's midpoint, so the feedback contraction is never in the tube: what it bounds is the reachable set of an open-loop plant driven by a pre-recorded command, not of the contracting closed loop the robot actually runs. That is the model gap KI-020 is about, and the lever is to embed the **closed-loop tick map** as a discrete map, so the Jacobian carries the feedback term `dF/dx = dPhi/dx + (dPhi/du)(dN/dx)` (`rq_a/exp20_closed_loop_tick.py`).
 
 There the Jacobian is not a refinement but the thing that makes the enclosure work at all: on a straight the tick map with the natural extension is 627 mm and diverges, with the Jacobian it is 6.31 mm and with the mixed-Jacobian 5.98 mm, against a 4.51 mm reachable set. **The Jacobian is the right tool for the closed loop and the wrong tool for the open-loop plant** - which is the opposite of what the plant embedding was assumed to need, and the reason the two are worth separating.
+
+**The tick map is implemented** (`PROPAGATION` in `immrax_validator.py`, measured by `rq_a/exp22_twin_propagation.py`), and on the default plant it is a clear win: with the mixed-Jacobian the S-curve, the stops and the complex mission stop diverging and pass the 20 mm gate, at 1.88, 1.30 and 1.83 cm against 5.36, 5.31 and 5.07 cm, and every tube contains the sampled reachable set. The cost is 7-10x the validation time.
+
+**With the digital twin it is worse** (5.8-12.1 cm against 5.1 cm), and that is the more interesting half. The map has to carry the robot's own pose estimate, because the controller reacts to the estimate and not to the truth - otherwise the feedback term is taken with respect to the wrong variable. But an estimate carried in an *interval* state grows with the wheel-speed uncertainty, and its growth is *added* to the plant's, because the belief and the wheel speeds are perfectly correlated and an interval box cannot say so. **That is the same lost correlation as the phantom turn rate, one level up** - and the same kind of fix: make the correlation explicit in the state rather than hope the arithmetic recovers it. Until that is done the default stays the plant propagation, and the tick map is the lever for the default plant only.
+
+### F13 — The closed-loop tick map, measured and landed
+
+F12 ended with the lever. This is the measurement of the lever, and it is now in the tree behind `propagation="tick"` (`immrax_validator.py`, `ClosedLoopTickMap`).
+
+**The map.** One 20 ms tick of the closed loop is a discrete map,
+
+```
+x_{k+1} = F_k(x_k, w) = Phi(x_k, N(x_k, u_ref_k, w), w; T)
+```
+
+with the controller *inside* it. The map's Jacobian then carries the feedback term
+
+```
+dF/dx = dPhi/dx + (dPhi/du)(dN/dx)
+```
+
+and the Ramsete feedback makes that term contract the tube, which is what the robot does. The robot's own pose estimate and the delayed command ride in the map's state too, because the feedback term is taken through them: the controller reacts to the belief, not to the truth.
+
+**The measurement** (`rq_a/exp20_closed_loop_tick.py`, a ±1 % gain band, the reachable set sampled with the corners of the uncertainty box included):
+
+| path | reachable set | plant propagation | tick, natural | tick, Jacobian | tick, mixed-Jacobian |
+|---|---:|---:|---:|---:|---:|
+| straight 1 m | 4.51 mm | 11.77 mm | 627 mm | **6.31 mm** | **5.98 mm** |
+| arc R0.5, 1.2 rad | 3.15 mm | 11.79 mm | diverged | 10.90 mm | 10.19 mm |
+| the shipped S-curve | 3.27 mm | 53.64 mm (cut off) | diverged | 25.28 mm | **18.80 mm** |
+
+Three things in that table.
+
+- **The S-curve case stops failing.** The plant propagation crosses the 50 mm guard and the mission is rejected; the tick map with the mixed-Jacobian gives 18.80 mm, which is inside the 20 mm gate. The Jacobian gives 25.28 mm, which is not.
+- **The natural extension is not an option here.** On the tick map it is 627 mm on a straight and diverges on a curve, because the controller inside the map is evaluated over the whole box and the naive interval Ramsete does not see the centroid error. This is the same failure the "interval" feedback mode has always had, and the Jacobian is what makes the enclosure work at all.
+- **The tracking error does not move.** It is the tube's midpoint against the plan, so it is decided by the discretisation and not by the uncertainty: 0.000 mm against 0.000 mm on the straight, 1.239 against 1.237 on the arc, 15.648 against 15.531 on the S-curve. The change is in the envelope only.
+
+**The soundness check is the same one F12 used**, and it passes at every sample: the tighter box still contains the sampled reachable set (0.00 mm of overshoot), for the Jacobian and the mixed-Jacobian, on the straight, the arc and the S-curve, and with the digital twin's belief and its delayed command in the state. A tighter box that dropped real poses would be worse than a wide one, so this check ships with the map (`tests/test_envelope_soundness.py::TestTheTickPropagation`).
+
+**The cost is why it is not the default.** The mixed-Jacobian tick map is 7-10x the validation time and the Jacobian 2-3x, and the validation runs per candidate. The plant propagation stays the default: after F12's reformulations it is already exact on the paths where the dependency bit, and the tick map's own gain is on the paths where the plant propagation *diverges* rather than merely widens. It is opt-in in the validator and **not wired to the CLI**, so the studio and `main.py --validate` still run the plant propagation.
+
+**What the tick map does not fix.** Its box is still two to five times the sampled reachable set on a curve (18.80 mm against 3.27 mm on the S-curve). The map's image of the box is a parallelogram and the box hull re-inflates it, so the *shape* of the reachable set is the next lever, not a tighter inclusion function: the set has to be carried as something that is not a box (a polytope, a zonotope, or the refinement's H-representation), which is where the machinery immrax has and this repository does not use comes in.
 
 ## What this changes in the research agenda
 In [`../HEURISTICS_AND_VERIFICATION.md`](../HEURISTICS_AND_VERIFICATION.md) Part IV:

@@ -80,6 +80,7 @@ from tests.test_validator_model import TestBacklashModel, TestHeadingMetric
 from tests.test_envelope_soundness import (
     TestNoPhantomTurnRate,
     TestTheBoxContainsTheReachableSet,
+    TestTheTickPropagation,
 )
 from tests.test_sysid_compare import TestSysIdCompare
 from tests.test_export_compact import TestCompactExport
@@ -291,6 +292,7 @@ def test_classes():
         TestHeadingMetric,
         TestNoPhantomTurnRate,
         TestTheBoxContainsTheReachableSet,
+        TestTheTickPropagation,
         TestParallelCandidates,
         TestValidationReport,
         TestIterationHistory,
