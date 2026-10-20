@@ -60,7 +60,10 @@ research/missions/
 # The mat pictures the studio fetches. FIRST's mat artwork is copyrighted,
 # so it is downloaded on request and kept out of the repository.
 mats/
-# Calibration session artifacts
+# Calibration session artifacts. The studio writes them per robot, as
+# calibration/<robot>.{session.csv,sheet.csv,poses.csv,sysid_fit.json}, so
+# the folder is ignored rather than the bare names.
+calibration/
 session.csv
 calibration_sheet.csv
 poses.csv

@@ -547,14 +547,27 @@ class TestStudioModel(StudioTestCase):
         self.assertIn("listed-robot", names)
 
     def test_a_fit_is_loaded_from_a_path(self):
+        # The route only reads a file under the project folder or the
+        # calibration folder (KI-035), so the fit is written into the
+        # calibration folder the test already redirects.
+        path = str(gui_server.calibration_paths("loaded")["fit"])
+        with open(path, "w", encoding="utf-8") as handle:
+            json.dump(self._fit(), handle)
+        status, model = _request(f"{self.base}/api/robot/model/load", method="POST",
+                                  payload={"path": path})
+        self.assertEqual(status, 200)
+        self.assertAlmostEqual(model["straight"]["gain"], 0.981)
+
+    def test_a_fit_outside_the_project_folder_is_refused(self):
+        """Any page on this machine must not be able to read a file."""
         with tempfile.TemporaryDirectory() as tmp:
             path = os.path.join(tmp, "sysid_fit.json")
             with open(path, "w", encoding="utf-8") as handle:
                 json.dump(self._fit(), handle)
-            status, model = _request(f"{self.base}/api/robot/model/load", method="POST",
-                                      payload={"path": path})
-            self.assertEqual(status, 200)
-            self.assertAlmostEqual(model["straight"]["gain"], 0.981)
+            with self.assertRaises(urllib.error.HTTPError) as ctx:
+                _request(f"{self.base}/api/robot/model/load", method="POST",
+                         payload={"path": path})
+            self.assertEqual(ctx.exception.code, 400)
 
     def test_a_file_that_is_not_a_fit_is_refused(self):
         with self.assertRaises(urllib.error.HTTPError) as ctx:
@@ -563,13 +576,12 @@ class TestStudioModel(StudioTestCase):
         self.assertEqual(ctx.exception.code, 400)
 
     def test_a_solve_with_a_model_turns_validation_on(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            path = os.path.join(tmp, "sysid_fit.json")
-            with open(path, "w", encoding="utf-8") as handle:
-                json.dump(self._fit(), handle)
-            status, model = _request(f"{self.base}/api/robot/model/load", method="POST",
-                                     payload={"path": path, "name": "fitted robot"})
-            self.assertEqual(status, 200)
+        path = str(gui_server.calibration_paths("fitted robot")["fit"])
+        with open(path, "w", encoding="utf-8") as handle:
+            json.dump(self._fit(), handle)
+        status, model = _request(f"{self.base}/api/robot/model/load", method="POST",
+                                 payload={"path": path, "name": "fitted robot"})
+        self.assertEqual(status, 200)
 
         payload = {
             "name": "fitted",
@@ -888,7 +900,7 @@ class TestStudioHelpers(unittest.TestCase):
     def test_saving_a_mission_writes_to_the_missions_folder(self):
         # The missions folder is the operator's own git repository. The
         # test must not commit into it: it did, and the operator's history
-        # carried "Mission unit-test-mission" commits (KI-036).
+        # carried "Mission unit-test-mission" commits (KI-037).
         with tempfile.TemporaryDirectory() as tmp:
             missions = Path(tmp)
             with patch.object(gui_server, "MISSIONS_DIR", missions):
