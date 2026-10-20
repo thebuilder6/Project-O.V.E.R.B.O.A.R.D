@@ -305,6 +305,9 @@ class RandomBenchmark:
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(exist_ok=True)
         self.results: list[dict] = []
+        # Keep the config that was actually used, so validation reads it back instead of
+        # parsing robot parameters out of the trajectory file.
+        self.config_file = self.output_dir / "config_used.json"
 
     # ------------------------------------------------------------------
     def generate_waypoints(self, profile: str) -> tuple[list, list]:
@@ -338,7 +341,7 @@ class RandomBenchmark:
             json.dump(data, f)
         try:
             metrics, audit, errors = validate_trajectory(
-                str(output_file), str(output_file), apply_headroom=False
+                str(output_file), str(self.config_file), apply_headroom=False
             )
             return {"metrics": metrics, "audit": audit, "errors": errors}
         except Exception as exc:
@@ -349,6 +352,9 @@ class RandomBenchmark:
     def run(self, num_runs: int = 10, profiles: list[str] | None = None) -> None:
         profiles = profiles or list(self.PROFILES)
         print(f"\n=== Random Benchmark  ({num_runs} runs, profiles={profiles}) ===")
+
+        with open(self.config_file, "w") as f:
+            json.dump(self.config_data, f, indent=2)
 
         for i in range(num_runs):
             profile = random.choice(profiles)
@@ -457,7 +463,7 @@ class RandomBenchmark:
 
         with open(report_path, "w", encoding="utf-8") as f:
             f.write("\n".join(lines))
-        print(f"\nMarkdown report → {report_path}")
+        print(f"\nMarkdown report -> {report_path}")
 
 
 # ---------------------------------------------------------------------------

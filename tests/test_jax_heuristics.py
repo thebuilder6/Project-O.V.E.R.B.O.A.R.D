@@ -61,5 +61,73 @@ class TestJAXHeuristics(unittest.TestCase):
         # Guesses should not be identical
         self.assertFalse(jnp.allclose(guesses[0], guesses[1]))
 
+    def test_jax_config_matches_legacy_robot_config(self):
+        """KI-008/KI-009: JAX must parse the same robot and ranges."""
+        legacy = {
+            "config": {
+                "mass": {"val": 1.23},
+                "inertia": {"val": 0.004},
+                "differentialTrackWidth": {"val": 0.2},
+                "radius": {"val": 0.04},
+                "vmax": {"val": 10.0},
+                "tmax": {"val": 0.08},
+                "gearing": {"val": 1.0},
+                "cof": {"val": 0.9},
+                "gravity": {"val": 9.81},
+                "torqueHeadroom": {"val": 0.8},
+                "speedHeadroom": {"val": 0.85},
+                "uncertainties": {
+                    "cof": {"val": [0.8, 1.2]},
+                    "track_width_range": [0.19, 0.21],
+                    "wheel_radius_range": [0.039, 0.041],
+                    "inertia_kg_m2": [0.003, 0.005],
+                    "torque_headroom": [0.7, 0.9],
+                    "gear_backlash_m": [0.0002, 0.0003],
+                },
+            }
+        }
+        rc = RobotConfig(legacy)
+        jc = JAXRobotConfig(legacy)
+
+        for attr in ("mass", "inertia", "track_width", "wheel_radius",
+                     "v_max_rad_s", "t_max_nm", "gearing", "cof", "g",
+                     "torque_headroom", "speed_headroom"):
+            self.assertEqual(getattr(jc, attr), getattr(rc, attr), attr)
+
+        self.assertEqual(jc.track_width_range, (0.19, 0.21))
+        self.assertEqual(jc.wheel_radius_range, (0.039, 0.041))
+        self.assertEqual(jc.inertia_range, (0.003, 0.005))
+        self.assertEqual(jc.cof_range, (0.8, 1.2))
+        self.assertEqual(jc.torque_headroom_range, (0.7, 0.9))
+        self.assertEqual(jc.backlash_range, (0.0002, 0.0003))
+
+        # A parsed RobotConfig is accepted directly, avoiding double parsing.
+        self.assertEqual(JAXRobotConfig(rc).track_width, rc.track_width)
+
+    def test_jax_config_reads_nested_uncertainties(self):
+        """KI-009: canonical robot.uncertainties must reach the JAX config."""
+        config = {"robot": {
+            "cof": 1.37,
+            "inertia": 0.001,
+            "track_width": 0.0965,
+            "wheel_radius": 0.028,
+            "uncertainties": {
+                "cof": [1.24, 1.51],
+                "torque_headroom": [0.75, 0.9],
+                "gear_backlash_m": [0.0002, 0.0007],
+                "track_width_range": [0.096, 0.097],
+                "wheel_radius_range": [0.0275, 0.0285],
+                "inertia_kg_m2": [0.0008, 0.0011],
+            },
+        }}
+        jc = JAXRobotConfig(config)
+
+        self.assertEqual(jc.cof_range, (1.24, 1.51))
+        self.assertEqual(jc.torque_headroom_range, (0.75, 0.9))
+        self.assertEqual(jc.backlash_range, (0.0002, 0.0007))
+        self.assertEqual(jc.track_width_range, (0.096, 0.097))
+        self.assertEqual(jc.wheel_radius_range, (0.0275, 0.0285))
+        self.assertEqual(jc.inertia_range, (0.0008, 0.0011))
+
 if __name__ == '__main__':
     unittest.main()

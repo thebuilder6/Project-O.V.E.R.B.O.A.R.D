@@ -78,6 +78,25 @@ class TestForwardIntegrate(unittest.TestCase):
         # For constant velocity, error should be small
         self.assertLess(errors["max_pos_error_m"], 0.01)
 
+    def test_forward_integrate_exact_trajectory_has_no_shift(self):
+        """integrated[0] is the initial pose; an exact trajectory integrates to ~zero error."""
+        config = RobotConfig({
+            "mass": 0.8, "inertia": 0.002, "track_width": 0.1,
+            "wheel_radius": 0.03, "v_max_rad_s": 15.0, "t_max_nm": 0.05,
+            "gearing": 1.0, "cof": 0.5,
+        })
+        samples = [{
+            "t": i * 0.1, "x": 0.5 * i * 0.1, "y": 0.0, "heading": 0.0,
+            "vl": 0.5, "vr": 0.5, "omega": 0.0,
+        } for i in range(11)]
+
+        integrated, errors = forward_integrate(samples, config, fine_dt=0.001)
+
+        self.assertEqual(integrated[0]["t"], 0.0)
+        self.assertAlmostEqual(integrated[0]["x"], 0.0, places=9)
+        self.assertAlmostEqual(integrated[1]["x"], 0.0005, places=9)
+        self.assertLess(errors["max_pos_error_m"], 1e-9)
+
     def test_forward_integrate_with_turning(self):
         """Test forward integration with turning motion."""
         config_dict = {
@@ -193,6 +212,37 @@ class TestAuditConstraints(unittest.TestCase):
         
         self.assertEqual(audit["num_violating_samples"], 0)
         self.assertEqual(audit["num_slip_points"], 0)
+
+    def test_audit_constraints_flags_overspeed(self):
+        """The removed soft saturator is replaced by an explicit speed check."""
+        config_dict = {
+            "robot": {
+                "mass": 0.8,
+                "inertia": 0.002,
+                "track_width": 0.1,
+                "wheel_radius": 0.03,
+                "v_max_rad_s": 15.0,
+                "t_max_nm": 0.05,
+                "gearing": 1.0,
+                "cof": 0.5,
+            }
+        }
+        config = RobotConfig(config_dict)
+        samples = [{
+            "t": 0.0, "x": 0.0, "y": 0.0, "heading": 0.0,
+            "vl": 0.6, "vr": 0.6, "omega": 0.0,
+            "al": 0.0, "ar": 0.0, "fl": 0.0, "fr": 0.0,
+        }]
+
+        audit = audit_constraints(samples, config, apply_headroom=False)
+
+        expected_limit = config.v_max_rad_s * min(
+            config.uncertainties["wheel_radius_range"])
+        self.assertAlmostEqual(audit["max_wheel_speed_m_s"], 0.6, places=9)
+        self.assertAlmostEqual(
+            audit["wheel_speed_limit_m_s"], expected_limit, places=9)
+        self.assertAlmostEqual(
+            audit["speed_violation_m_s"], 0.6 - expected_limit, places=9)
 
     def test_audit_constraints_with_motor_violation(self):
         """Test constraint audit with motor limit violation."""

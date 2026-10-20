@@ -17,9 +17,9 @@
     "uncertainties": {
       "cof": [1.24, 1.51],
       "torque_headroom": [0.75, 0.9],
-      "gear_backlash_m": [0.0002, 0.0007],
+      "gear_backlash_m": [0.0004, 0.0005],
       "inertia_kg_m2": [0.0008, 0.0011],
-      "track_width_range": [0.096, 0.097],
+      "track_width_range": [0.0964, 0.0966],
       "wheel_radius_range": [0.0275, 0.0285]
     }
   },

@@ -1,33 +1,41 @@
 import jax.numpy as jnp
 from jax import jit
-from typing import Dict, Any, Tuple, Optional
+from typing import Dict, Any, Tuple, Optional, Union
 from jax.tree_util import register_pytree_node_class
+
+from robot_model import RobotConfig, CG_HEIGHT_M, wheel_normal_forces
 
 @register_pytree_node_class
 class JAXRobotConfig:
     """
     Robot configuration mirroring RobotConfig but using JAX.
     """
-    def __init__(self, config_dict: Dict[str, Any]) -> None:
-        robot_cfg = config_dict.get("robot", config_dict)
+    def __init__(self, config_dict: Union[Dict[str, Any], RobotConfig]) -> None:
+        # Delegate parsing to RobotConfig so canonical, flat, and legacy
+        # config formats all produce the same robot (KI-008).
+        rc = config_dict if isinstance(config_dict, RobotConfig) else RobotConfig(config_dict)
 
-        self.mass = float(robot_cfg.get("mass", 0.723))
-        self.inertia = float(robot_cfg.get("inertia", 0.0024))
-        self.track_width = float(robot_cfg.get("track_width", 0.0965))
-        self.wheel_radius = float(robot_cfg.get("wheel_radius", 0.028))
-        self.v_max_rad_s = float(robot_cfg.get("v_max_rad_s", 15.7))
-        self.t_max_nm = float(robot_cfg.get("t_max_nm", 0.04))
-        self.gearing = float(robot_cfg.get("gearing", 1.0))
-        self.cof = float(robot_cfg.get("cof", 0.45))
-        self.g = float(robot_cfg.get("gravity", 9.81))
-        self.torque_headroom = float(robot_cfg.get("torque_headroom", 0.85))
-        self.speed_headroom = float(robot_cfg.get("speed_headroom", 0.90))
+        self.mass = float(rc.mass)
+        self.inertia = float(rc.inertia)
+        self.track_width = float(rc.track_width)
+        self.wheel_radius = float(rc.wheel_radius)
+        self.v_max_rad_s = float(rc.v_max_rad_s)
+        self.t_max_nm = float(rc.t_max_nm)
+        self.gearing = float(rc.gearing)
+        self.cof = float(rc.cof)
+        self.g = float(rc.g)
+        self.torque_headroom = float(rc.torque_headroom)
+        self.speed_headroom = float(rc.speed_headroom)
 
-        # Uncertainty Intervals
-        self.track_width_range = tuple(robot_cfg.get("track_width_range", (self.track_width * 0.98, self.track_width * 1.02)))
-        self.wheel_radius_range = tuple(robot_cfg.get("wheel_radius_range", (self.wheel_radius * 0.98, self.wheel_radius * 1.02)))
-        self.inertia_range = tuple(robot_cfg.get("inertia_range", (self.inertia * 0.8, self.inertia * 1.2)))
-        self.t_max_range = tuple(robot_cfg.get("t_max_range", (self.t_max_nm * 0.75, self.t_max_nm * 0.95)))
+        # Uncertainty Intervals (normalized by RobotConfig, including the
+        # nested robot.uncertainties block used by canonical configs).
+        self.track_width_range = tuple(rc.uncertainties["track_width_range"])
+        self.wheel_radius_range = tuple(rc.uncertainties["wheel_radius_range"])
+        self.inertia_range = tuple(rc.uncertainties["inertia_kg_m2"])
+        self.t_max_range = tuple(rc.uncertainties["t_max_range"])
+        self.cof_range = tuple(rc.uncertainties["cof"])
+        self.torque_headroom_range = tuple(rc.uncertainties["torque_headroom"])
+        self.backlash_range = tuple(rc.uncertainties["gear_backlash_m"])
 
     def get_max_force_at_velocity(self, v_wheel: jnp.ndarray, apply_headroom: bool = True, use_intervals: bool = False) -> jnp.ndarray:
         r = self.wheel_radius_range if use_intervals else self.wheel_radius
@@ -65,7 +73,9 @@ class JAXRobotConfig:
                     self.v_max_rad_s, self.t_max_nm, self.gearing, self.cof,
                     self.g, self.torque_headroom, self.speed_headroom,
                     self.track_width_range, self.wheel_radius_range,
-                    self.inertia_range, self.t_max_range)
+                    self.inertia_range, self.t_max_range,
+                    self.cof_range, self.torque_headroom_range,
+                    self.backlash_range)
         aux_data = None
         return (children, aux_data)
 
@@ -76,7 +86,9 @@ class JAXRobotConfig:
          obj.v_max_rad_s, obj.t_max_nm, obj.gearing, obj.cof,
          obj.g, obj.torque_headroom, obj.speed_headroom,
          obj.track_width_range, obj.wheel_radius_range,
-         obj.inertia_range, obj.t_max_range) = children
+         obj.inertia_range, obj.t_max_range,
+         obj.cof_range, obj.torque_headroom_range,
+         obj.backlash_range) = children
         return obj
 
 class JAXDifferentialDriveModel:
@@ -112,35 +124,23 @@ class JAXDifferentialDriveModel:
         return fl, fr
 
     def get_wheel_normal_forces(self, vl: jnp.ndarray, vr: jnp.ndarray, al: jnp.ndarray, ar: jnp.ndarray, use_intervals: bool = False) -> Tuple[Any, Any]:
+        # Lateral (turning) weight transfer only; no front/rear split on a
+        # two-wheel robot (KI-010). Same formula as the CPU model and Immrax.
         if use_intervals:
             from immrax import Interval
             L = Interval(*self.cfg.track_width_range)
         else:
             L = self.cfg.track_width
 
-        a = (al + ar) / 2.0
-        base_normal = (self.cfg.mass * self.cfg.g) / 2.0
-        h_cg = 0.05
-        wheelbase = L
-
+        v = (vl + vr) / 2.0
         if use_intervals:
             from immrax import Interval
-            longitudinal_transfer = Interval(self.cfg.mass * a * h_cg, self.cfg.mass * a * h_cg) / wheelbase
-            v = (vl + vr) / 2.0
             omega = Interval(vr - vl, vr - vl) / L
-            centripetal_accel_iv = Interval(v, v) * omega
-            lateral_transfer = Interval(self.cfg.mass * h_cg, self.cfg.mass * h_cg) * centripetal_accel_iv / L
-            nl = Interval(base_normal, base_normal) - longitudinal_transfer - lateral_transfer
-            nr = Interval(base_normal, base_normal) - longitudinal_transfer + lateral_transfer
+            centripetal_accel = Interval(v, v) * omega
         else:
-            longitudinal_transfer = (self.cfg.mass * a * h_cg) / wheelbase
-            v = (vl + vr) / 2.0
             omega = (vr - vl) / L
             centripetal_accel = v * omega
-            lateral_transfer = (self.cfg.mass * centripetal_accel * h_cg) / L
-            nl = base_normal - longitudinal_transfer - lateral_transfer
-            nr = base_normal - longitudinal_transfer + lateral_transfer
-        return nl, nr
+        return wheel_normal_forces(self.cfg.mass, self.cfg.g, CG_HEIGHT_M, L, centripetal_accel)
 
     def check_constraints(self, vl: jnp.ndarray, vr: jnp.ndarray, al: jnp.ndarray, ar: jnp.ndarray, apply_headroom: bool = True, use_intervals: bool = False) -> Dict[str, Any]:
         fl, fr = self.get_dynamics(vl, vr, al, ar, use_intervals)

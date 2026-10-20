@@ -126,6 +126,38 @@ class TestRobotConfig(unittest.TestCase):
         
         self.assertEqual(force_with_headroom, force_no_headroom * 0.8)
 
+    def test_robust_force_uses_declared_worst_case(self):
+        """KI-009/KI-010: use the declared torque headroom and radius ranges."""
+        config_dict = {
+            "robot": {
+                "mass": 0.723,
+                "inertia": 0.001,
+                "track_width": 0.0965,
+                "wheel_radius": 0.028,
+                "v_max_rad_s": 18.94,
+                "t_max_nm": 0.138,
+                "gearing": 1.0,
+                "cof": 1.37,
+                "uncertainties": {
+                    "torque_headroom": [0.75, 0.9],
+                    "wheel_radius_range": [0.0275, 0.0285],
+                },
+            }
+        }
+        config = RobotConfig(config_dict)
+
+        v = 0.3771
+        speed_radius, force_radius, headroom = config.get_robust_force_params()
+        omega = v / speed_radius
+        torque = max(0.0, config.t_max_nm * (1.0 - omega / config.v_max_rad_s))
+        expected = (torque / force_radius) * config.gearing * headroom
+
+        self.assertAlmostEqual(
+            config.get_max_force_at_velocity_robust(v), expected, places=9)
+        self.assertLess(
+            config.get_max_force_at_velocity_robust(v),
+            config.get_max_force_at_velocity(v, apply_headroom=True))
+
     def test_max_linear_speed(self):
         """Test max linear speed calculation."""
         config_dict = {"robot": {"mass": 0.8, "inertia": 0.002, "track_width": 0.1,
@@ -148,6 +180,53 @@ class TestRobotConfig(unittest.TestCase):
         speed_with_headroom = config.max_linear_speed(apply_headroom=True)
         
         self.assertEqual(speed_with_headroom, speed_no_headroom * 0.9)
+
+    def test_canonical_uncertainties_are_parsed(self):
+        """KI-009: robot.uncertainties must be normalized for validation."""
+        config_dict = {
+            "robot": {
+                "cof": 1.37,
+                "inertia": 0.001,
+                "track_width": 0.0965,
+                "wheel_radius": 0.028,
+                "uncertainties": {
+                    "cof": [1.24, 1.51],
+                    "torque_headroom": [0.75, 0.9],
+                    "gear_backlash_m": [0.0002, 0.0007],
+                    "track_width_range": [0.096, 0.097],
+                    "wheel_radius_range": [0.0275, 0.0285],
+                    "inertia_kg_m2": [0.0008, 0.0011],
+                },
+            }
+        }
+        config = RobotConfig(config_dict)
+
+        self.assertEqual(config.uncertainties["cof"], (1.24, 1.51))
+        self.assertEqual(config.uncertainties["torque_headroom"], (0.75, 0.9))
+        self.assertEqual(config.uncertainties["gear_backlash_m"], (0.0002, 0.0007))
+        self.assertEqual(config.uncertainties["track_width_range"], (0.096, 0.097))
+        self.assertEqual(config.uncertainties["wheel_radius_range"], (0.0275, 0.0285))
+        self.assertEqual(config.uncertainties["inertia_kg_m2"], (0.0008, 0.0011))
+
+    def test_legacy_uncertainties_are_normalized(self):
+        """KI-008/KI-009: legacy {val} ranges must work too."""
+        config_dict = {
+            "config": {
+                "mass": {"val": 1.23},
+                "differentialTrackWidth": {"val": 0.2},
+                "uncertainties": {
+                    "cof": {"val": [0.8, 1.2]},
+                    "track_width_range": [0.19, 0.21],
+                },
+            }
+        }
+        config = RobotConfig(config_dict)
+
+        self.assertEqual(config.track_width, 0.2)
+        self.assertEqual(config.uncertainties["cof"], (0.8, 1.2))
+        self.assertEqual(config.uncertainties["track_width_range"], (0.19, 0.21))
+        # Missing declarations keep the previous defaults.
+        self.assertEqual(config.uncertainties["gear_backlash_m"], (0.0001, 0.0006))
 
 
 class TestDifferentialDriveModel(unittest.TestCase):
@@ -196,6 +275,39 @@ class TestDifferentialDriveModel(unittest.TestCase):
         self.assertEqual(violations["right_motor_violation"], 0.0)
         self.assertEqual(violations["traction_violation"], 0.0)
 
+    def test_check_constraints_headroom_uses_declared_worst_case(self):
+        """KI-010: CPU and Immrax use the same per-wheel force limit."""
+        config_dict = {
+            "robot": {
+                "mass": 0.723,
+                "inertia": 0.001,
+                "track_width": 0.0965,
+                "wheel_radius": 0.028,
+                "v_max_rad_s": 18.94,
+                "t_max_nm": 0.138,
+                "gearing": 1.0,
+                "cof": 1.37,
+                "uncertainties": {
+                    "torque_headroom": [0.75, 0.9],
+                    "wheel_radius_range": [0.0275, 0.0285],
+                },
+            }
+        }
+        config = RobotConfig(config_dict)
+        model = DifferentialDriveModel(config)
+
+        v = 0.3771
+        a = 3.2
+        self.assertLess(abs(model.get_dynamics(v, v, a, a)[0]),
+                        config.get_max_force_at_velocity(v, apply_headroom=True))
+        violations = model.check_constraints(
+            vl=v, vr=v, al=a, ar=a, apply_headroom=True)
+
+        self.assertGreater(violations["left_motor_violation"], 0.0)
+        self.assertAlmostEqual(
+            violations["left_motor_violation"],
+            violations["right_motor_violation"], places=9)
+
     def test_check_constraints_motor_limit(self):
         """Test constraint checking with motor limit violation."""
         config_dict = {"robot": {"mass": 0.8, "inertia": 0.002, "track_width": 0.1,
@@ -227,17 +339,21 @@ class TestDifferentialDriveModel(unittest.TestCase):
         self.assertAlmostEqual(nr, expected, places=6)
 
     def test_get_wheel_normal_forces_acceleration(self):
-        """Test normal force calculation with acceleration."""
+        """KI-010: straight acceleration must not split load left/right."""
         config_dict = {"robot": {"mass": 0.8, "inertia": 0.002, "track_width": 0.1,
                                "wheel_radius": 0.03, "v_max_rad_s": 15.0, "t_max_nm": 0.05,
                                "gearing": 1.0, "cof": 0.5}}
         config = RobotConfig(config_dict)
         model = DifferentialDriveModel(config)
-        
-        # Accelerating forward
-        nl, nr = model.get_wheel_normal_forces(vl=0.5, vr=0.5, al=1.0, ar=1.0)
-        
-        # Weight should shift (longitudinal transfer)
         base_normal = (0.8 * 9.81) / 2.0
-        # nl and nr should differ from base_normal due to weight transfer
-        self.assertTrue(abs(nl - base_normal) > 1e-6 or abs(nr - base_normal) > 1e-6)
+
+        # Accelerating straight: no left/right weight transfer (no front axle)
+        nl, nr = model.get_wheel_normal_forces(vl=0.5, vr=0.5, al=1.0, ar=1.0)
+        self.assertAlmostEqual(nl, base_normal, places=6)
+        self.assertAlmostEqual(nr, base_normal, places=6)
+
+        # Turning: the outer wheel gets more load than the inner wheel
+        nl, nr = model.get_wheel_normal_forces(vl=0.3, vr=0.6, al=0.0, ar=0.0)
+        self.assertLess(nl, base_normal)
+        self.assertGreater(nr, base_normal)
+        self.assertLess(nl + nr, 2.0 * base_normal + 1e-9)

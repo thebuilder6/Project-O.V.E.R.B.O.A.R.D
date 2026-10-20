@@ -225,9 +225,15 @@ def plot_reachability_envelope(samples, waypoints=None, title="Reachability Enve
                 envelope_y_min.append(s['y'])
                 envelope_y_max.append(s['y'])
         
-        # Fill the uncertainty region
-        ax.fill_between(x, envelope_y_min, envelope_y_max, alpha=0.2, color='red', label='Uncertainty bounds')
-        ax.fill_between(y, envelope_x_min, envelope_x_max, alpha=0.2, color='red')
+        # Fill the uncertainty region with one box per sample (x and y are the plot axes)
+        for i in range(len(samples)):
+            width = envelope_x_max[i] - envelope_x_min[i]
+            height = envelope_y_max[i] - envelope_y_min[i]
+            ax.add_patch(mpatches.Rectangle(
+                (envelope_x_min[i], envelope_y_min[i]), width, height,
+                facecolor='red', alpha=0.2, edgecolor='none',
+                label='Uncertainty bounds' if i == 0 else None,
+            ))
         
         # Plot envelope boundaries
         ax.plot(envelope_x_min, envelope_y_min, 'r--', linewidth=1, alpha=0.5, label='Envelope boundary')

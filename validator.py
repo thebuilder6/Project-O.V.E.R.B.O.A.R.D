@@ -20,6 +20,19 @@ def forward_integrate(samples: List[Dict[str, Any]], robot_cfg: RobotConfig, fin
     vl_arr = np.array([s["vl"] for s in samples])
     vr_arr = np.array([s["vr"] for s in samples])
 
+    # A failed solve can leave a negative or non-monotone time vector. Refuse to
+    # integrate it instead of silently producing a meaningless (or crashing) result.
+    _inf_errors = {
+        "max_pos_error_m": float("inf"),
+        "rms_pos_error_m": float("inf"),
+        "max_heading_error_rad": float("inf"),
+        "final_pos_error_m": float("inf"),
+        "final_heading_error_rad": float("inf"),
+    }
+    if (t_arr.size < 2 or not np.all(np.isfinite(t_arr))
+            or np.any(np.diff(t_arr) <= 0) or t_arr[-1] <= t_arr[0]):
+        return [], _inf_errors
+
     # Interpolators for wheel speeds
     def interp_v(t_query):
         if t_query <= t_arr[0]:
@@ -44,6 +57,9 @@ def forward_integrate(samples: List[Dict[str, Any]], robot_cfg: RobotConfig, fin
         vl, vr = interp_v(t)
         v = (vl + vr) / 2.0
         omega = (vr - vl) / robot_cfg.track_width
+
+        # Record the state at time t before advancing to t + dt
+        integrated.append({"t": float(t), "x": float(x), "y": float(y), "heading": float(theta)})
 
         # RK4 integration step
         if step < num_steps:
@@ -78,20 +94,15 @@ def forward_integrate(samples: List[Dict[str, Any]], robot_cfg: RobotConfig, fin
             y += (k1y + 2 * k2y + 2 * k3y + k4y) * dt / 6.0
             theta += (k1t + 2 * k2t + 2 * k3t + k4t) * dt / 6.0
 
-        integrated.append({"t": float(t), "x": float(x), "y": float(y), "heading": float(theta)})
-
     # Error vs planned samples
+    def integrated_pose(t_query):
+        # integrated[k] is the pose at t = k * fine_dt; use the nearest step
+        idx = int(min(max(round(t_query / fine_dt), 0), num_steps))
+        s = integrated[idx]
+        return s["x"], s["y"], s["heading"]
+
     planned = np.array([[s["x"], s["y"], s["heading"]] for s in samples])
-    integrated_at_t = np.array(
-        [
-            [
-                integrated[int(min(np.ceil(s["t"] / fine_dt), num_steps))]["x"],
-                integrated[int(min(np.ceil(s["t"] / fine_dt), num_steps))]["y"],
-                integrated[int(min(np.ceil(s["t"] / fine_dt), num_steps))]["heading"],
-            ]
-            for s in samples
-        ]
-    )
+    integrated_at_t = np.array([integrated_pose(s["t"]) for s in samples])
 
     dx = planned[:, 0] - integrated_at_t[:, 0]
     dy = planned[:, 1] - integrated_at_t[:, 1]
@@ -135,9 +146,11 @@ def audit_constraints(samples: List[Dict[str, Any]], robot_cfg: RobotConfig, app
     
     left_normal_forces = []
     right_normal_forces = []
+    max_wheel_speed = 0.0
     
     for i, s in enumerate(samples):
         violations = model.check_constraints(s["vl"], s["vr"], s["al"], s["ar"], apply_headroom)
+        max_wheel_speed = max(max_wheel_speed, abs(s["vl"]), abs(s["vr"]))
         
         # Update max violations
         for key in max_violations:
@@ -169,12 +182,23 @@ def audit_constraints(samples: List[Dict[str, Any]], robot_cfg: RobotConfig, app
                 "vr": s["vr"]
             })
     
+    # Use the smallest declared wheel radius so this matches the Immrax
+    # validator's no-load speed bound.
+    wheel_speed_limit = (
+        robot_cfg.v_max_rad_s
+        * min(robot_cfg.uncertainties["wheel_radius_range"])
+    )
+    speed_violation = max(0.0, max_wheel_speed - wheel_speed_limit)
+
     audit = {
         "left_motor_force": float(max_violations["left_motor_violation"]),
         "right_motor_force": float(max_violations["right_motor_violation"]),
         "left_wheel_slip": float(max_violations["left_wheel_slip"]),
         "right_wheel_slip": float(max_violations["right_wheel_slip"]),
         "traction_total": float(max_violations["traction_violation"]),
+        "max_wheel_speed_m_s": float(max_wheel_speed),
+        "wheel_speed_limit_m_s": float(wheel_speed_limit),
+        "speed_violation_m_s": float(speed_violation),
         "left_normal_force": float(np.mean(left_normal_forces)) if left_normal_forces else float((robot_cfg.mass * robot_cfg.g) / 2.0),
         "right_normal_force": float(np.mean(right_normal_forces)) if right_normal_forces else float((robot_cfg.mass * robot_cfg.g) / 2.0),
         "num_violating_samples": len(violating_indices),
@@ -259,7 +283,57 @@ def compute_metrics(samples: List[Dict[str, Any]], robot_cfg: Optional[RobotConf
     }
 
 
-def validate_trajectory(traj_file: str, config_file: str, apply_headroom: bool = True) -> Tuple[Dict[str, Any], Dict[str, Any], Dict[str, float]]:
+def check_final_waypoint(samples: List[Dict[str, Any]],
+                         waypoint: Tuple[float, float, Optional[float]],
+                         pos_tol: float = 0.02,
+                         heading_tol: float = 0.02) -> Dict[str, Any]:
+    """Second line of defence: the exported trajectory must reach its last waypoint."""
+    if not samples or waypoint is None:
+        return {"passed": True, "pos_error_m": 0.0, "heading_error_rad": 0.0}
+
+    wx, wy, wh = waypoint
+    last = samples[-1]
+    pos_err = float(np.hypot(last["x"] - wx, last["y"] - wy))
+    heading_err = 0.0
+    if wh is not None:
+        heading_err = float(abs((last["heading"] - wh + np.pi) % (2 * np.pi) - np.pi))
+    return {
+        "passed": pos_err <= pos_tol and heading_err <= heading_tol,
+        "pos_error_m": pos_err,
+        "heading_error_rad": heading_err,
+    }
+
+
+def validate_samples(samples: List[Dict[str, Any]], robot_cfg: RobotConfig,
+                     apply_headroom: bool = True) -> Dict[str, Any]:
+    """Run the same checks as validate_trajectory without writing or printing.
+
+    main.py uses this before writing so a failing validation cannot leave an
+    output file behind (KI-002).
+    """
+    metrics = compute_metrics(samples, robot_cfg)
+    audit = audit_constraints(samples, robot_cfg, apply_headroom)
+    integrated, errors = forward_integrate(samples, robot_cfg, fine_dt=0.001)
+
+    ok = (
+        errors["max_pos_error_m"] < 0.01
+        and errors["final_pos_error_m"] < 0.01
+        and audit["num_violating_samples"] == 0
+        and audit["num_slip_points"] == 0
+        and audit["speed_violation_m_s"] < 1e-6
+    )
+    return {
+        "passed": bool(ok),
+        "metrics": metrics,
+        "audit": audit,
+        "errors": errors,
+        "integrated": integrated,
+    }
+
+
+def validate_trajectory(traj_file: str, config_file: str, apply_headroom: bool = True,
+                        waypoints: Optional[List[Tuple[float, float, Optional[float]]]] = None
+                        ) -> Tuple[Dict[str, Any], Dict[str, Any], Dict[str, float]]:
     """
     CLI entry point: load a .traj file and a .json config, run validation,
     and print a human-readable report.
@@ -268,10 +342,8 @@ def validate_trajectory(traj_file: str, config_file: str, apply_headroom: bool =
         traj_file: Path to trajectory file
         config_file: Path to config file
         apply_headroom: If True, applies safety margin for real-world tracking
+        waypoints: Optional waypoints; when given, the final pose is checked too
     """
-    import time
-    start_time = time.time()
-    
     with open(traj_file, "r") as f:
         traj_data = json.load(f)
     with open(config_file, "r") as f:
@@ -285,8 +357,10 @@ def validate_trajectory(traj_file: str, config_file: str, apply_headroom: bool =
     if apply_headroom:
         print(f"Safety margins: torque_headroom={robot_cfg.torque_headroom:.2f}, speed_headroom={robot_cfg.speed_headroom:.2f}")
 
-    # Metrics
-    metrics = compute_metrics(samples, robot_cfg)
+    # In-memory checks: the same ones main.py runs before writing (KI-002)
+    summary = validate_samples(samples, robot_cfg, apply_headroom)
+    metrics, audit, errors = summary["metrics"], summary["audit"], summary["errors"]
+
     print("\n-- Metrics --")
     for k, v in metrics.items():
         if isinstance(v, float):
@@ -295,13 +369,14 @@ def validate_trajectory(traj_file: str, config_file: str, apply_headroom: bool =
             print(f"  {k}: {v}")
 
     # Constraint audit
-    audit = audit_constraints(samples, robot_cfg, apply_headroom)
     print("\n-- Constraint Audit --")
     print(f"  Violating samples: {audit['num_violating_samples']}")
     if audit["num_violating_samples"]:
         print(f"  Indices: {audit['violating_sample_indices']}")
     for label in ["left_motor_force", "right_motor_force", "traction_total"]:
         print(f"  Max {label} violation: {audit[label]:.6f} N")
+    print(f"  Max wheel speed: {audit['max_wheel_speed_m_s']:.4f} m/s "
+          f"(limit {audit['wheel_speed_limit_m_s']:.4f} m/s)")
     
     # Wheel slip detection
     print(f"\n-- Wheel Slip Detection --")
@@ -321,29 +396,20 @@ def validate_trajectory(traj_file: str, config_file: str, apply_headroom: bool =
             print(f"    ... and {audit['num_slip_points'] - 5} more")
 
     # Forward integration
-    integrated, errors = forward_integrate(samples, robot_cfg, fine_dt=0.001)
     print("\n-- Forward Integration (1 ms RK4) --")
     for k, v in errors.items():
         print(f"  {k}: {v:.6f}")
 
-    # Pass / fail summary
-    ok = (
-        errors["max_pos_error_m"] < 0.01
-        and errors["final_pos_error_m"] < 0.01
-        and audit["num_violating_samples"] == 0
-        and audit["num_slip_points"] == 0
-    )
+    # Third check: the exported trajectory must reach the last waypoint.
+    waypoint_check = None
+    if waypoints:
+        waypoint_check = check_final_waypoint(samples, waypoints[-1])
+        print("\n-- Waypoint Check --")
+        print(f"  Final position error: {waypoint_check['pos_error_m']:.6f} m")
+        if waypoints[-1][2] is not None:
+            print(f"  Final heading error: {waypoint_check['heading_error_rad']:.6f} rad")
 
-    validation_time = time.time() - start_time
-
-    summary = {
-        "passed": ok,
-        "validation_time": validation_time,
-        "metrics": metrics,
-        "audit": audit,
-        "errors": errors
-    }
-
+    ok = summary["passed"] and (waypoint_check is None or waypoint_check["passed"])
 
     print(f"\n{'PASS' if ok else 'WARN'} — trajectory {'is' if ok else 'may not be'} safe to run.")
     

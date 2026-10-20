@@ -2,6 +2,38 @@ from typing import Dict, Tuple, Any, Optional
 import numpy as np
 import casadi as ca
 
+# Center-of-mass height used by every weight-transfer calculation. Kept in
+# one place so the optimizer, CPU audit, JAX model, and Immrax agree.
+CG_HEIGHT_M = 0.05
+
+
+def wheel_normal_forces(
+    mass: float,
+    g: float,
+    h_cg: float,
+    track_width: Any,
+    centripetal_accel: Any,
+) -> Tuple[Any, Any]:
+    """
+    Normal force on each wheel with lateral (turning) weight transfer.
+
+    A two-wheel differential robot has no front/rear axle, so longitudinal
+    acceleration does not split load left/right (KI-010). Only the lateral
+    transfer from centripetal acceleration (v * omega) applies:
+
+        nl = m*g/2 - m*h*a_c/b
+        nr = m*g/2 + m*h*a_c/b
+
+    Shared by the optimizer, the CPU audit, the JAX model, and Immrax so all
+    four use the same per-wheel limit. Types may be floats, JAX arrays, or
+    Immrax Intervals.
+    """
+    base_normal = (mass * g) / 2.0
+    # Immrax Intervals only implement left-hand operators, so the interval (or
+    # array) term leads every expression; plain floats and CasADi MX work too.
+    lateral_transfer = centripetal_accel * (mass * h_cg) / track_width
+    return (-lateral_transfer) + base_normal, lateral_transfer + base_normal
+
 
 class RobotConfig:
     """
@@ -59,7 +91,47 @@ class RobotConfig:
         self.g = get_val("gravity", self.GRAVITY)
         self.torque_headroom = get_val("torque_headroom", self.DEFAULT_TORQUE_HEADROOM, "torqueHeadroom")
         self.speed_headroom = get_val("speed_headroom", self.DEFAULT_SPEED_HEADROOM, "speedHeadroom")
-        
+
+        # Normalize the uncertainty block once so validation and JAX models use
+        # the same ranges as the optimizer. Canonical configs nest these under
+        # robot.uncertainties; older configs may put them at the same level as
+        # the robot keys. Fall back to the old hard-coded behaviour.
+        uncertainty_cfg = robot_cfg.get("uncertainties", {})
+        if not isinstance(uncertainty_cfg, dict):
+            uncertainty_cfg = {}
+
+        def get_range(key_names: Tuple[str, ...], default: Tuple[float, float]) -> Tuple[float, float]:
+            for key in key_names:
+                item = uncertainty_cfg.get(key)
+                if item is None:
+                    item = robot_cfg.get(key)
+                if item is None:
+                    continue
+                if isinstance(item, dict) and "val" in item:
+                    item = item["val"]
+                if isinstance(item, (list, tuple)) and len(item) == 2:
+                    return (float(item[0]), float(item[1]))
+            return default
+
+        self.uncertainties = {
+            "cof": get_range(("cof",), (self.cof * 0.8, self.cof * 1.2)),
+            "torque_headroom": get_range(
+                ("torque_headroom", "torqueHeadroom"), (0.8, 1.0)),
+            "gear_backlash_m": get_range(
+                ("gear_backlash_m", "backlash"), (0.0001, 0.0006)),
+            "track_width_range": get_range(
+                ("track_width_range",),
+                (self.track_width * 0.99, self.track_width * 1.01)),
+            "wheel_radius_range": get_range(
+                ("wheel_radius_range",),
+                (self.wheel_radius * 0.99, self.wheel_radius * 1.01)),
+            "inertia_kg_m2": get_range(
+                ("inertia_kg_m2", "inertia_range"),
+                (self.inertia * 0.90, self.inertia * 1.10)),
+            "t_max_range": get_range(
+                ("t_max_range",), (self.t_max_nm * 0.75, self.t_max_nm * 0.95)),
+        }
+
         # Store multiverse config if present
         self.multiverse_config = config_dict.get("multiverse", {})
 
@@ -107,6 +179,49 @@ class RobotConfig:
         if apply_headroom:
             force *= self.torque_headroom
         return force
+
+    def get_robust_force_params(self) -> Tuple[float, float, float]:
+        """
+        Worst-case parameters for the per-wheel torque-speed limit.
+
+        The Immrax validator evaluates its lower force bound with the smallest
+        wheel radius in the speed term, the largest wheel radius in the force
+        term, and the smallest declared torque headroom. Reusing the same
+        values here keeps the optimizer's constraints and the validator's
+        declared uncertainty ranges consistent (KI-009/KI-010).
+
+        Returns:
+            (speed_radius, force_radius, torque_headroom)
+        """
+        radius_range = self.uncertainties["wheel_radius_range"]
+        headroom_range = self.uncertainties["torque_headroom"]
+        return (float(min(radius_range)), float(max(radius_range)),
+                float(min(headroom_range)))
+
+    def get_max_force_at_velocity_robust(self, v_wheel: float) -> float:
+        """
+        Worst-case per-wheel force limit at a wheel velocity.
+
+        This matches the lower bound used by the Immrax validator: the smaller
+        radius reduces the available torque, the larger radius reduces the
+        force per unit torque, and the smaller declared headroom derates the
+        result.
+        """
+        r_speed, r_force, headroom = self.get_robust_force_params()
+        omega = (abs(v_wheel) / r_speed) * self.gearing
+        torque = max(0.0, self.t_max_nm * (1.0 - omega / self.v_max_rad_s))
+        force = (torque / r_force) * self.gearing
+        return force * headroom
+
+    def get_max_force_symbolic_robust(self, v_wheel: ca.MX) -> ca.MX:
+        """CasADi symbolic version of get_max_force_at_velocity_robust."""
+        r_speed, r_force, headroom = self.get_robust_force_params()
+        omega = (v_wheel / r_speed) * self.gearing
+        abs_omega = ca.sqrt(omega**2 + 1e-8)
+        torque = self.t_max_nm * (1.0 - abs_omega / self.v_max_rad_s)
+        torque = ca.fmax(0, torque)
+        force = (torque / r_force) * self.gearing
+        return force * headroom
 
 
 class DifferentialDriveModel:
@@ -173,51 +288,71 @@ class DifferentialDriveModel:
 
     def get_wheel_normal_forces(self, vl: float, vr: float, al: float, ar: float) -> Tuple[float, float]:
         """
-        Calculate normal force on each wheel considering weight transfer.
+        Normal force on each wheel with lateral (turning) weight transfer.
 
-        During acceleration and turning, weight shifts between wheels:
-        - Longitudinal acceleration: weight shifts to rear wheels
-        - Lateral acceleration (turning): weight shifts to outer wheels
+        Longitudinal acceleration is intentionally not included: a two-wheel
+        differential robot has no front/rear axle to shift load between
+        (KI-010). The formula is shared with the JAX model and Immrax.
 
         Args:
             vl: Left wheel velocity (m/s)
             vr: Right wheel velocity (m/s)
-            al: Left wheel acceleration (m/s²)
-            ar: Right wheel acceleration (m/s²)
+            al: Left wheel acceleration (m/s²), unused (kept for callers)
+            ar: Right wheel acceleration (m/s²), unused (kept for callers)
 
         Returns:
             Tuple of (nl, nr) - Normal forces on left and right wheels (N)
         """
-        # Linear and angular acceleration
-        a = (al + ar) / 2.0
-        alpha = (ar - al) / self.cfg.track_width
-
-        # Base static weight distribution (assume 50/50)
-        base_normal = (self.cfg.mass * self.cfg.g) / 2.0
-
-        # Longitudinal weight transfer (during acceleration/deceleration)
-        # Assuming center of mass height h_cg (estimate as 50mm for FLL robot)
-        h_cg = 0.05  # meters
-        wheelbase = self.cfg.track_width  # approximate wheelbase as track width
-        longitudinal_transfer = (self.cfg.mass * a * h_cg) / wheelbase
-
-        # Lateral weight transfer (during turning)
-        # Assuming center of mass at track center
-        lateral_transfer = (self.cfg.mass * (a * 0) * h_cg) / self.cfg.track_width  # No lateral force from pure differential drive
-
-        # For differential drive, lateral force comes from centripetal acceleration during turns
         v = (vl + vr) / 2.0
         omega = (vr - vl) / self.cfg.track_width
-        centripetal_accel = v * omega
-        lateral_transfer = (self.cfg.mass * centripetal_accel * h_cg) / self.cfg.track_width
+        return wheel_normal_forces(
+            self.cfg.mass, self.cfg.g, CG_HEIGHT_M, self.cfg.track_width, v * omega
+        )
 
-        # Normal forces with weight transfer
-        # During acceleration, rear wheels get more load (assuming forward motion)
-        # During turning, outer wheel gets more load
-        nl = base_normal - longitudinal_transfer - lateral_transfer
-        nr = base_normal - longitudinal_transfer + lateral_transfer
+    def get_max_wheel_force_symbolic(self, al: ca.MX, ar: ca.MX, apply_headroom: bool = True) -> ca.MX:
+        """
+        Worst-case per-wheel force magnitude over the declared inertia and
+        track-width ranges.
 
-        return nl, nr
+        Immrax evaluates each wheel force as an interval; the optimizer must
+        bound the same quantity or it can satisfy its own check and still trip
+        the validator. With fl = f_total/2 - I*(ar-al)/b^2 and
+        fr = f_total/2 + I*(ar-al)/b^2, both wheels obey
+        |f| <= |f_total|/2 + max(I)*|ar-al|/min(b)^2.
+        """
+        if apply_headroom:
+            inertia = max(self.cfg.uncertainties["inertia_kg_m2"])
+            track_width = min(self.cfg.uncertainties["track_width_range"])
+        else:
+            inertia = self.cfg.inertia
+            track_width = self.cfg.track_width
+        f_total = self.cfg.mass * (al + ar) / 2.0
+        split = inertia * (ar - al) / track_width**2
+        # sqrt(x^2 + eps) is the repo's smooth |x| (see get_max_force_symbolic).
+        return 0.5 * ca.sqrt(f_total**2 + 1e-12) + ca.sqrt(split**2 + 1e-12)
+
+    def get_traction_limit_symbolic(self, vl: ca.MX, vr: ca.MX, apply_headroom: bool = True) -> ca.MX:
+        """
+        Per-wheel traction limit matching Immrax's per-wheel slip check.
+
+        Both wheels are held to the smaller (inner-wheel) normal force over the
+        lateral transfer, using the declared cof and track-width worst cases
+        when headroom is enabled. Immrax's interval lower bound for either
+        wheel is never larger than this limit.
+        """
+        cof = self.cfg.cof
+        track_width = self.cfg.track_width
+        if apply_headroom:
+            cof = min(self.cfg.uncertainties["cof"])
+            track_width = min(self.cfg.uncertainties["track_width_range"])
+        v = (vl + vr) / 2.0
+        omega = (vr - vl) / track_width
+        nl, nr = wheel_normal_forces(
+            self.cfg.mass, self.cfg.g, CG_HEIGHT_M, track_width, v * omega
+        )
+        # nl + nr = m*g; min(nl, nr) is the conservative per-wheel normal force.
+        min_normal = 0.5 * (nl + nr) - 0.5 * ca.sqrt((nl - nr) ** 2 + 1e-12)
+        return cof * ca.fmax(min_normal, 0)
 
     def check_constraints(self, vl: float, vr: float, al: float, ar: float, apply_headroom: bool = True) -> Dict[str, float]:
         """
@@ -240,9 +375,15 @@ class DifferentialDriveModel:
         """
         fl, fr = self.get_dynamics(vl, vr, al, ar)
 
-        # Motor force limits
-        fl_max = self.cfg.get_max_force_at_velocity(vl, apply_headroom)
-        fr_max = self.cfg.get_max_force_at_velocity(vr, apply_headroom)
+        # Motor force limits. With headroom enabled, use the same worst-case
+        # declared ranges as the optimizer and the Immrax validator. Without
+        # headroom (benchmark mode), use the nominal curve.
+        if apply_headroom:
+            fl_max = self.cfg.get_max_force_at_velocity_robust(vl)
+            fr_max = self.cfg.get_max_force_at_velocity_robust(vr)
+        else:
+            fl_max = self.cfg.get_max_force_at_velocity(vl, apply_headroom=False)
+            fr_max = self.cfg.get_max_force_at_velocity(vr, apply_headroom=False)
 
         left_motor_violation = max(0, abs(fl) - fl_max)
         right_motor_violation = max(0, abs(fr) - fr_max)
