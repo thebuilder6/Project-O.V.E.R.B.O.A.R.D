@@ -4,7 +4,7 @@ Last reviewed: 2026-10-19
 
 Scope: whole repository, reviewed as a single-user, offline desktop tool for one FLL robot. This is not a multi-user or server-scale review.
 
-Status: KI-001, KI-002, KI-003, KI-005, KI-006, KI-007, KI-008, KI-009, KI-010, KI-011, KI-012, KI-013, KI-014, KI-015, KI-016, KI-018, KI-019, KI-021, KI-022, KI-023, KI-024, KI-025, KI-026, KI-027, KI-028, and KI-029 are **fixed in the working tree** (uncommitted). All other items are open; KI-017 is partially fixed. KI-020 records the remaining digital-twin and optimization work. The user-facing docs were reconciled with this tree on 2026-10-19; the code remains the authority if they diverge again.
+Status: KI-001, KI-002, KI-003, KI-005, KI-006, KI-007, KI-008, KI-009, KI-010, KI-011, KI-012, KI-013, KI-014, KI-015, KI-016, KI-018, KI-019, KI-021, KI-022, KI-023, KI-024, KI-025, KI-026, KI-027, KI-028, KI-029, KI-030, and KI-031 are **fixed in the working tree** (uncommitted). All other items are open; KI-017 is partially fixed. KI-020 records the remaining digital-twin and optimization work. The user-facing docs were reconciled with this tree on 2026-10-19; the code remains the authority if they diverge again.
 
 How to use this list: refer to an item by its ID, for example “fix KI-003”.
 
@@ -42,6 +42,7 @@ How to use this list: refer to an item by its ID, for example “fix KI-003”.
 | KI-028 | P1 | Robot runtime / model | ~~The validator modelled a controller that is not the one that runs~~ (fixed) |
 | KI-029 | P1 | Robot runtime | ~~A late control tick silently skipped a mission event~~ (fixed) |
 | KI-030 | P1 | Studio | ~~The studio told the operator an unchecked trajectory was "approved", and kept the last solve's path on the field~~ (fixed) |
+| KI-031 | P1 | Install | ~~A new user could not install the project: the two requirement files contradicted each other, and the first run died with an ImportError~~ (fixed) |
 
 ## P0 — fix first
 
@@ -322,6 +323,30 @@ How to use this list: refer to an item by its ID, for example “fix KI-003”.
 - The error the operator reads no longer carries the path of the temporary folder the CLI would have written to; the solver log keeps the full text.
 
 **Workaround:** None needed. `tests/test_studio_honesty.py` pins all four.
+
+### KI-031 — A new user could not install the project
+
+**Status:** Fixed in the working tree (uncommitted).
+
+**Files:** `install.bat`, `install.sh`, `start_studio.bat`, `start_studio.sh`, `requirements.txt`, `diagnostics.py`, `main.py`, `.gitattributes`, `README.md`
+
+**Problem:** Three things stood between a first-time user and a working studio.
+
+1. The two requirement files could not be installed together. `requirements.txt` pinned `numpy<2.0.0` and the optional stack needs `numpy>=2.2` (JAX 0.12), so the two-step install ended with numpy 2.5.4 - outside the range the project's own file declares. A later `pip install -r requirements.txt` would then pull numpy back to 1.26 and break the optional stack.
+2. The check that was supposed to help - `python main.py --doctor` - could not run on a machine with nothing installed, because `main.py` imported click and numpy at the top. The first thing a new user saw was `ModuleNotFoundError: No module named 'click'`, not the install command.
+3. There was no one-click path at all. The install was a `pip install` line in the README, and the studio was `python main.py --gui`.
+
+**Evidence:** A fresh `install.bat` in an empty `.venv` produced numpy 2.5.4 with `requirements.txt` asking for `<2.0.0`. `python main.py --doctor` with the core packages hidden died with an ImportError traceback instead of a report. And `cmd.exe` could not find the `try_python` label in `install.bat` at all, because the file had LF endings: cmd.exe cannot find a batch label in a file without CRLF.
+
+**Fix:**
+
+- `requirements.txt` asks for `numpy>=1.24.0,<3.0.0`. The project already runs on numpy 2 (the solver, the validator and the suite pass on 2.3.5 and on the 2.5.4 a fresh install brings), and the pin under 2.0 only existed to keep the file tidy.
+- `main.py` checks the core packages before it imports click, and prints the environment report with the install command when one is missing. `--doctor` now works on a clean machine, because `diagnostics.py` is stdlib only.
+- `install.bat` and `install.sh` find a Python 3.9 or newer, create `.venv`, install the core packages and then the optional ones, and run the check. A failure in the optional packages is a warning, not a failure: the solver and the studio work without them.
+- `start_studio.bat` and `start_studio.sh` use that `.venv` and install it first when it is not there, so one double-click is enough on a fresh download.
+- `.gitattributes` keeps the `.bat` files out of the line-ending conversion, so their CRLF survives into a ZIP download, and keeps the `.sh` files LF.
+
+**Workaround:** None needed. `tests/test_cli_ux.py::TestFirstRun` pins the report on a clean machine, the install command in it, and the CRLF in the batch files.
 
 ## P2 — cleanup
 

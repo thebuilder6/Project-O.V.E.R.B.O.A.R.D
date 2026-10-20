@@ -221,4 +221,4 @@ python main.py --simple -c examples/fll_choreo.json -w examples/example_straight
 
 ## Installation note
 
-`pip install -r requirements.txt` covers the simple optimizer. The default Multi-Verse path and `--validate` need `jax`, `jaxopt`, and `immrax`; `sysid_solver.py` needs `pandas`. `--simple --live` can run without JAX, but live reachability envelopes require it. Those packages are not in `requirements.txt` yet (KI-006). JAX 0.6.2 was used for the current tests.
+`pip install -r requirements.txt` covers the simple optimizer. The default Multi-Verse path and `--validate` need `jax`, `jaxopt`, and `immrax`; `sysid_solver.py` needs `pandas`. `--simple --live` can run without JAX, but live reachability envelopes require it. Those packages are not in `requirements.txt` yet (KI-006). JAX 0.6.2 was used for the current tests. `install.bat` and `install.sh` install both sets into a `.venv` and check the result.

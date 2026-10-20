@@ -7,7 +7,9 @@
 #   --push-hub    pushing a trajectory to a Pybricks hub (needs pybricksdev)
 #   sysid_solver.py  the standalone pandas fitter
 #
-# Verified with JAX 0.6.2.
+# Verified with JAX 0.6.2. A fresh install brings the newest stack (JAX
+# 0.12.0, Immrax 0.3.8), which needs numpy 2.2 or newer; requirements.txt
+# asks for numpy 1.24 or newer and below 3.0, so the two files fit together.
 jax
 jaxopt
 immrax
