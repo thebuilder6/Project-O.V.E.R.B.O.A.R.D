@@ -2,6 +2,13 @@ This document outlines the system identification (SysId) tool, the telemetry rec
 
 This design shifts complex mathematical computation to the PC (host side), leaving the robot with lightweight execution steps that are structurally robust against real-world slip and physical interaction [1, 2].
 
+> **Implementation status (2026-10-19)**
+>
+> - **Implemented:** robot-side digital-twin collector (`pybricks_code/sysid_digital_twin.py`), older telemetry logger (`pybricks_code/sysid_data_logger.py`), and host fitter (`sysid_fit.py`); optional five-state actuator/odometry plant via `digital_twin.py` and `main.py --sysid-fit`; canonical/legacy/flat config parsing with declared uncertainty ranges; per-wheel force and traction limits; CPU + Immrax validation gate; controller JSON and Python export; JAX candidate generation/refinement.
+> - **Partial:** the older PC SysId solver (`sysid_solver.py`) is a standalone script with hardcoded CSV paths; braking slip is loaded/reported but not applied; integrated odometry, motor/DriveBase dynamics, and full slip dynamics are still missing; JAX refinement runs but its result is discarded by the final polish (KI-004); benchmark tooling is partially fixed (KI-015).
+> - **Not implemented:** interaction force injection (`interactions` is parsed only as data), full motor/DriveBase/odometry/slip dynamics, and reachability-driven optimization or a feedback loop into the planner. The validator is a post-solve gate and candidate score, not a full digital twin (KI-020).
+> - **Do not read this document as a claim that the robot currently guarantees zero slip.** The zero-slip target remains a design goal.
+
 ---
 
 # Part 1: System Identification & Telemetry Tools
@@ -9,7 +16,7 @@ This design shifts complex mathematical computation to the PC (host side), leavi
 These tools operate in two steps: a robot-side script (running on Pybricks) to collect high-frequency sensor data [1, 2], and a PC-side script (running in Python/JAX) to analyze the data and generate nominal and interval parameters [1].
 
 ```
-[Robot-Side Script (Pybricks)] ──(Run Tests)──> [CSV Data Log] ──(Upload)──> [PC-Side SysId Solver] ──> [RobotConfig JSON]
+[Robot-Side Collector: sysid_digital_twin.py] -> [CSV Data Log + poses.csv] -> [PC-Side Fitter: sysid_fit.py] -> [sysid_fit.json -> main.py --sysid-fit] -> [sysid_compare.py report]
 ```
 
 ## 1.1 Automated SysId Test Protocol
@@ -76,7 +83,7 @@ To plan for push/pull interactions (which disrupt standard path following), the 
 
 # Part 2: Data Output Schema
 
-The tool exports the calibration data into the standard trajectory optimizer `RobotConfig` JSON schema [1, 2]:
+The current `sysid_fit.py` writes a separate `sysid_fit.json` consumed by `main.py --sysid-fit`; it does not rewrite `RobotConfig`. It accepts a minimal drivebase profile (`wheel_radius_m`, optional `track_width_m`) so a different differential drive only needs its own geometry and profile logs; `sysid_compare.py` accepts the same profile and a plain predicted-pose CSV. The longer-term design target is to merge calibrated physical ranges into the robot config schema [1, 2]:
 
 ```json
 {
@@ -135,26 +142,25 @@ Before solving the global non-linear program (NLP), JAX evaluates thousands of s
 4.  **Seed Selection:** The single best candidate is selected as the seed [1, 2].
 
 ## Phase B: CasADi / IPOPT High-Precision Solver
-The selected seed is passed to IPOPT, which strictly enforces the physical constraints to compute the time-optimal trajectory [1, 2, 3.2].
-1.  **Friction Circle Enforcement:** At each timestep $k$, the solver restricts the forces to prevent slip, accounting for the calibrated CoF ($\underline{\mu}$) [1, 2]:
-    $$|f_{l,k}| + |f_{r,k}| \le \underline{\mu} \cdot m \cdot g$$
-2.  **Motor Limits Enforcement:** The velocity-dependent maximum force is constrained using the nominal battery/torque headroom $h_t$ [1, 2]:
-    $$|f_{w,k}| \le \frac{1}{r} \cdot \left(\tau_{\max} \cdot h_t \cdot \max\left(0, 1 - \frac{|\omega_k|}{\omega_{\max}}\right)\right)$$
-3.  **Interaction Force Injection:** For timesteps within the interaction window (e.g., waypoints 4 through 6), the dynamics equations are augmented with the recorded resistance force $F_{\text{push}}$ [1, 2]:
+The selected seed is passed to IPOPT, which enforces the physical constraints to compute the time-optimal trajectory [1, 2, 3.2].
+1.  **Per-Wheel Traction Enforcement:** At each timestep $k$, the solver limits each wheel separately, using the smaller normal force from lateral weight transfer and the lower calibrated CoF ($\underline{\mu}$) [1, 2]:
+    $$|f_{l,k}| \le \underline{\mu} \cdot n_{l,k}, \qquad |f_{r,k}| \le \underline{\mu} \cdot n_{r,k}$$
+    This replaces the older total-force friction-circle constraint (KI-010).
+2.  **Motor Limits Enforcement:** The velocity-dependent maximum force is constrained using the worst-case torque headroom, wheel radius, and speed term [1, 2]:
+    $$|f_{w,k}| \le \frac{1}{r_{\text{force}}} \cdot \left(\tau_{\max} \cdot \underline{h}_t \cdot \max\left(0, 1 - \frac{|\omega_k|}{\omega_{\max}}\right)\right)$$
+3.  **Interaction Force Injection (design only):** The current optimizer does not read `interactions` or inject $F_{\text{push}}$. When implemented, timesteps inside an interaction window would add the recorded resistance to the dynamics:
     $$f_{\text{total\_k}} = m \cdot a_k + \max(F_{\text{push\_interval}})$$
-    *This forces the optimizer to automatically scale down entry speeds and accelerations through the mission model to ensure the robot retains traction during the push [1].*
+    *This would force the optimizer to scale down entry speeds and accelerations through the mission model. It is not implemented yet (KI-020).*
 
 ## Phase C: Immrax Closed-Loop Robust Validator
 Once the optimal nominal trajectory is computed, the validator checks the path against bounded real-world variations [1, 2].
-1.  **Ramsete Closed-Loop Simulation:** Immrax simulates the calibrated Pybricks Ramsete tracking controller [1].
+1.  **Ramsete Closed-Loop Simulation:** Immrax simulates the deployed Pybricks Ramsete controller with a 20 ms sample-and-hold loop and 5 ms plant substeps [1].
 2.  **Uncertainty Propagation:** 
-    *   The robot mass ($m$), moment of inertia ($I$), and track width ($L$) are simulated as interval values [1, 2].
-    *   Motor backlash ($b$) is introduced as an interval step displacement ($[-\bar{b}, \bar{b}]$) at every velocity zero-crossing [1].
+    *   The robot mass ($m$), moment of inertia ($I$), track width ($L$), wheel radius, and CoF are modeled as interval values [1, 2].
+    *   Motor backlash ($b$) is introduced as an interval step displacement at every velocity zero-crossing [1].
     *   The motor torque headroom is modeled as the interval $[\underline{h}_t, \bar{h}_t]$ [1].
 3.  **Safety Verification:**
-    *   Immrax calculates the spatial reachable tube (the absolute bounding box of where the robot's frame could exist) [1].
-    *   It checks if the worst-case required traction force exceeds the lower bound of available surface friction ($\underline{\mu}$) [1].
-4.  **Feedback Loop:** 
-    *   If a robust tracking slip or boundary violation is detected, the validator flags the specific time step and coordinate [1, 2].
-    *   The path planner applies an extra penalty factor to that local segment and restarts Phase B [1, 2].
-    *   If validation passes, the safe, calibrated trajectory is exported as a JSON array ready for direct, zero-slip execution on the robot [1, 2].
+    *   Immrax calculates the spatial reachable tube (the bounding box of where the robot frame could exist) [1].
+    *   It checks the worst-case per-wheel motor force, wheel slip, wheel speed, tracking error, and envelope radius [1].
+4.  **Current feedback status:** the validator is a post-solve gate and candidate score. With `--validate`, `main.py` solves up to `--candidates` trajectories (default 2, max 5) and scores each by envelope. With `--simple` the candidates are distinct initial-guess seeds (`baseline`, `rolling`, `bow_left`, `bow_right`, `turn_first`); the Multi-Verse path uses increasing accuracy weights. It selects a passing one with the smallest envelope; it does not feed the violated segment back into the optimizer as a penalty. Reachability-driven optimization remains future work (KI-020).
+    *   If validation passes, the trajectory is exported; if it fails, no output is written and the command exits non-zero.
