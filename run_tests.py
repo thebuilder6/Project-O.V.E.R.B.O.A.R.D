@@ -124,6 +124,7 @@ from tests.test_cli_ux import (
     TestStudioEntryPoints,
     TestParallelCandidates,
     TestValidationReport,
+    TestVariableSampleLayout,
     TestIterationHistory,
 )
 from tests.test_gui_server import (
@@ -296,6 +297,7 @@ def test_classes():
         TestTheTickPropagation,
         TestParallelCandidates,
         TestValidationReport,
+        TestVariableSampleLayout,
         TestIterationHistory,
         TestFastPolish,
         TestSolverIterationBudget,

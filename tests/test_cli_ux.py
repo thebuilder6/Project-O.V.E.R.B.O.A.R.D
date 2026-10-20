@@ -542,10 +542,17 @@ class TestVariableSampleLayout(unittest.TestCase):
         payload = self._run()
         segments = payload["candidates"][0]["segments"]
         self.assertEqual(len(segments), 3)
-        # The envelope of a segment is the widest of its own samples, and
-        # every sample's envelope is 1 mm wider than the last one's.
+        # The envelope of a segment is the half-diagonal of the widest box
+        # among its own samples. The first and the last segment hold narrow
+        # samples, and the second holds the two wide ones - which is what
+        # says the grouping follows the optimizer's layout: with the uniform
+        # layout every sample would be in the first segment, and the first
+        # segment would carry the wide box.
+        diagonal = 0.001 * (2 ** 0.5)
+        wide = 0.05 * (2 ** 0.5)
         widths = [round(segment["envelope_m"], 6) for segment in segments]
-        self.assertEqual(widths, [0.002, 0.003, 0.005])
+        self.assertEqual(widths, [round(diagonal, 6), round(wide, 6),
+                                  round(diagonal, 6)])
 
     def test_a_tight_threshold_applies_to_its_own_waypoint(self):
         """The failing segment is the one the tight threshold belongs to."""
