@@ -173,6 +173,17 @@ def push_trajectory(traj_file, connection="ble", name=None, log_path=None,
     """
     from export import write_compact_python_file
 
+    try:
+        import json
+        from robot_model import RobotConfig
+        with open(traj_file, "r", encoding="utf-8") as handle:
+            doc = json.load(handle)
+        cfg_dict = doc.get("config") or doc.get("robot")
+        if cfg_dict:
+            RobotConfig(cfg_dict).sync_pybricks_robot_config()
+    except Exception:
+        pass
+
     mission_module = mission_module or HUB_MISSION_MODULE
     runner = runner or HUB_RUNNER
     write_compact_python_file(traj_file, str(mission_module))

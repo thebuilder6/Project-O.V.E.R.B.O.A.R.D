@@ -865,7 +865,7 @@ The tick map is uniformly tighter and much tighter on the curves (2.9x on the S-
 
 **Fix (implemented):** `TrajectoryOptimizer.solve` defaults to the self-consistent rule as well, so the command line, the studio and the library all plan the same trajectory for the same mission. `--no-self-consistent` is the way to ask for the trapezoidal rule from any of them.
 
-**What is left:** the **numbers** in `docs/HEURISTICS_AND_VERIFICATION.md` §9 were measured with the trapezoidal rule, because that was the default when the matrix was taken. The shipped default has changed, so those tables describe the trapezoidal plan and not the one the command line now produces. The matrix has to be re-measured before it can be quoted as the shipped behaviour; the runner is `docs/measurements/2026-10-20-variable-samples/run_sweep.py`, and it refuses to report a run whose tree changed underneath it.
+**What is left:** the **numbers** in `docs/HEURISTICS_AND_VERIFICATION.md` §9 were measured with the trapezoidal rule, because that was the default when the matrix was taken. The shipped default has changed, so those tables described the trapezoidal plan and not the one the command line produced. The matrix has been re-measured on the current tree (`docs/measurements/2026-10-20-variable-samples/`), and §9 now quotes the new measurement - 26 of 60 candidates pass, against 31 of 60 under the trapezoid, with the forward-integration failures gone and the tracking gate still binding.
 ---
 
 ## P2 — cleanup

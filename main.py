@@ -1258,28 +1258,25 @@ def main(ctx, config, waypoints, output, gui, gui_port, doctor, multiverse, simp
                     "using the nominal model."
                 )
 
-        # A measured motor replaces the declared one in the config, so that
-        # the optimizer, the CPU audit, the Immrax validator and the exported
-        # controller all plan against the same motor. Before this, the
-        # optimizer planned against the declared motor while the validator
-        # checked the measured one, so a plan could satisfy its own
-        # constraint and still trip the validator (KI-010).
-        measured_motor = digital_twin.measured_motor(gearing=robot_cfg.gearing)
-        if measured_motor:
-            changes = robot_cfg.apply_measured_motor(**measured_motor)
+        # A measured digital twin replaces the declared numbers in the config,
+        # so that the optimizer, the CPU audit, the Immrax validator and the
+        # exported controller all plan against the same calibrated robot.
+        changes = robot_cfg.apply_sysid_fit(digital_twin)
+        if changes:
             if not quiet:
                 for name, change in changes.items():
-                    if isinstance(change, dict):
+                    prefix = "Measured motor" if name in ("t_max_nm", "v_max_rad_s", "t_max_range") else "Measured fit"
+                    if isinstance(change, dict) and "declared" in change and "measured" in change:
                         click.echo(
-                            "  Measured motor: {n} {d:.4f} -> {m:.4f}".format(
-                                n=name, d=change["declared"], m=change["measured"])
+                            "  {p}: {n} {d:.4f} -> {m:.4f}".format(
+                                p=prefix, n=name, d=change["declared"], m=change["measured"])
                         )
                     else:
-                        click.echo(f"  Measured motor: {name} {change}")
+                        click.echo(f"  {prefix}: {name} {change}")
         elif not quiet:
             click.echo(
-                "  The fit has no measured motor numbers; the config's "
-                "declared motor is used."
+                "  The fit has no measured parameters; the config's "
+                "declared values are used."
             )
 
     # A motor written from memory is a guess. The published SPIKE Prime
@@ -1758,6 +1755,10 @@ def main(ctx, config, waypoints, output, gui, gui_port, doctor, multiverse, simp
                        selected_tube, written[1:])
 
     if push_hub:
+        try:
+            robot_cfg.sync_pybricks_robot_config()
+        except Exception:
+            pass
         _push_to_hub(output, hub_conn, hub_name, hub_log, quiet)
 
     if plot:

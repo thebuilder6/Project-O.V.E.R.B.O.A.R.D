@@ -1001,6 +1001,13 @@ def start_collect(server, payload):
     hub_name = payload.get("hub_name") or None
 
     job_dir = Path(tempfile.mkdtemp(prefix="overboard_collect_"))
+    try:
+        from robot_model import RobotConfig
+        cfg_dict = payload.get("config") or payload.get("robot")
+        if cfg_dict:
+            RobotConfig(cfg_dict).sync_pybricks_robot_config()
+    except Exception:
+        pass
     session_path = job_dir / "session.csv"
     command = [sys.executable, "-u", str(HUB_DEPLOY), str(COLLECTOR_SCRIPT),
                "--conn", connection, "--out", str(session_path)]
@@ -1319,6 +1326,14 @@ def start_push(server, payload):
     hub_name = payload.get("hub_name") or None
 
     job_dir = Path(tempfile.mkdtemp(prefix="overboard_push_"))
+    try:
+        from robot_model import RobotConfig
+        data = _read_json(traj) or {}
+        cfg_dict = data.get("config") or data.get("robot")
+        if cfg_dict:
+            RobotConfig(cfg_dict).sync_pybricks_robot_config()
+    except Exception:
+        pass
     session_path = job_dir / "session.csv"
     command = [sys.executable, "-u", str(HUB_DEPLOY),
                "--trajectory", str(traj), "--conn", connection,

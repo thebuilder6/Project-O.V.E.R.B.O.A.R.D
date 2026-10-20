@@ -1,4 +1,8 @@
-from typing import Dict, Tuple, Any, Optional
+import math
+import os
+import re
+from pathlib import Path
+from typing import Dict, Tuple, Any, Optional, Union, List
 import casadi as ca
 
 # Center-of-mass height used by every weight-transfer calculation. Kept in
@@ -53,6 +57,33 @@ class RobotConfig:
     GRAVITY = 9.81  # m/s²
     DEFAULT_TORQUE_HEADROOM = 0.85  # 15% headroom for torque corrections
     DEFAULT_SPEED_HEADROOM = 0.90  # 10% headroom for speed corrections
+    DEFAULT_ROLLING_RESISTANCE = 0.0
+    DEFAULT_GEARBOX_COULOMB_NM = 0.0
+    DEFAULT_GEARBOX_VISCOUS_NM_S = 0.0
+    DEFAULT_REFLECTED_INERTIA = 0.0
+
+    # Chassis footprint and sensor geometry defaults
+    DEFAULT_WIDTH_M = 0.16  # m
+    DEFAULT_LENGTH_M = 0.18  # m
+    DEFAULT_FRONT_BUMPER_M = 0.10  # m (forward of axle)
+    DEFAULT_BACK_BUMPER_M = 0.08  # m (backward of axle)
+    DEFAULT_LEVER_ARM_M = 0.10  # m
+    DEFAULT_COLOR_SENSOR_LEFT_OFFSET = (0.06, -0.03)  # (x, y) in m
+    DEFAULT_COLOR_SENSOR_RIGHT_OFFSET = (0.06, 0.03)  # (x, y) in m
+
+    # Hardware and port mapping defaults
+    DEFAULT_HUB_TOP_SIDE = "Axis.Z"
+    DEFAULT_HUB_FRONT_SIDE = "Axis.Y"
+    DEFAULT_MOTOR_LEFT_PORT = "Port.F"
+    DEFAULT_MOTOR_LEFT_DIR = "Direction.COUNTERCLOCKWISE"
+    DEFAULT_MOTOR_RIGHT_PORT = "Port.B"
+    DEFAULT_MOTOR_RIGHT_DIR = "Direction.CLOCKWISE"
+    DEFAULT_MOTOR_FRONT_PORT = "Port.C"
+    DEFAULT_MOTOR_FRONT_DIR = "Direction.CLOCKWISE"
+    DEFAULT_MOTOR_BACK_PORT = "Port.D"
+    DEFAULT_MOTOR_BACK_DIR = "Direction.CLOCKWISE"
+    DEFAULT_COLOR_SENSOR_LEFT_PORT = "Port.E"
+    DEFAULT_COLOR_SENSOR_RIGHT_PORT = "Port.A"
 
     def __init__(self, config_dict: Dict[str, Any]) -> None:
         """
@@ -79,17 +110,100 @@ class RobotConfig:
                 return item["val"]
             return item
 
-        self.mass = get_val("mass", self.DEFAULT_MASS)
-        self.inertia = get_val("inertia", self.DEFAULT_INERTIA)
-        self.track_width = get_val("track_width", self.DEFAULT_TRACK_WIDTH, "differentialTrackWidth")
-        self.wheel_radius = get_val("wheel_radius", self.DEFAULT_WHEEL_RADIUS, "radius")
-        self.v_max_rad_s = get_val("v_max_rad_s", self.DEFAULT_VMAX, "vmax")
-        self.t_max_nm = get_val("t_max_nm", self.DEFAULT_TMAX, "tmax")
-        self.gearing = get_val("gearing", self.DEFAULT_GEARING)
-        self.cof = get_val("cof", self.DEFAULT_COF)
-        self.g = get_val("gravity", self.GRAVITY)
-        self.torque_headroom = get_val("torque_headroom", self.DEFAULT_TORQUE_HEADROOM, "torqueHeadroom")
-        self.speed_headroom = get_val("speed_headroom", self.DEFAULT_SPEED_HEADROOM, "speedHeadroom")
+        self.mass = float(get_val("mass", self.DEFAULT_MASS))
+        self.inertia = float(get_val("inertia", self.DEFAULT_INERTIA))
+        self.track_width = float(get_val("track_width", self.DEFAULT_TRACK_WIDTH, "differentialTrackWidth"))
+        self.wheel_radius = float(get_val("wheel_radius", self.DEFAULT_WHEEL_RADIUS, "radius"))
+        self.v_max_rad_s = float(get_val("v_max_rad_s", self.DEFAULT_VMAX, "vmax"))
+        self.t_max_nm = float(get_val("t_max_nm", self.DEFAULT_TMAX, "tmax"))
+        self.gearing = float(get_val("gearing", self.DEFAULT_GEARING))
+        self.cof = float(get_val("cof", self.DEFAULT_COF))
+        self.g = float(get_val("gravity", self.GRAVITY))
+        self.torque_headroom = float(get_val("torque_headroom", self.DEFAULT_TORQUE_HEADROOM, "torqueHeadroom"))
+        self.speed_headroom = float(get_val("speed_headroom", self.DEFAULT_SPEED_HEADROOM, "speedHeadroom"))
+
+        # Drivetrain friction constants
+        self.rolling_resistance = float(get_val("rolling_resistance", self.DEFAULT_ROLLING_RESISTANCE, "rollingResistance"))
+        self.gearbox_coulomb_nm = float(get_val("gearbox_coulomb_nm", self.DEFAULT_GEARBOX_COULOMB_NM, "gearboxCoulombNm"))
+        self.gearbox_viscous_nm_s = float(get_val("gearbox_viscous_nm_s", self.DEFAULT_GEARBOX_VISCOUS_NM_S, "gearboxViscousNmS"))
+        self.reflected_inertia_kg_m2 = float(get_val("reflected_inertia_kg_m2", self.DEFAULT_REFLECTED_INERTIA, "reflectedInertia"))
+
+        # Chassis footprint and sensor geometry
+        self.width_m = float(get_val("width_m", self.DEFAULT_WIDTH_M, "width"))
+        self.length_m = float(get_val("length_m", self.DEFAULT_LENGTH_M, "length"))
+        self.front_bumper_m = float(get_val("front_bumper_m", self.DEFAULT_FRONT_BUMPER_M, "frontBumper"))
+        self.back_bumper_m = float(get_val("back_bumper_m", self.DEFAULT_BACK_BUMPER_M, "backBumper"))
+        self.lever_arm_m = float(get_val("lever_arm_m", self.DEFAULT_LEVER_ARM_M, "leverArm"))
+
+        def _parse_offset(val: Any, default: Tuple[float, float]) -> Tuple[float, float]:
+            if isinstance(val, (list, tuple)) and len(val) == 2:
+                return (float(val[0]), float(val[1]))
+            if isinstance(val, dict) and "x" in val and "y" in val:
+                return (float(val["x"]), float(val["y"]))
+            return default
+
+        cs_cfg = robot_cfg.get("color_sensors") or robot_cfg.get("color_sensor_offsets") or {}
+        if not isinstance(cs_cfg, dict):
+            cs_cfg = {}
+
+        self.color_sensor_left_offset_m = _parse_offset(
+            cs_cfg.get("left") or robot_cfg.get("color_sensor_left_offset_m") or robot_cfg.get("colorSensorLeftOffset"),
+            self.DEFAULT_COLOR_SENSOR_LEFT_OFFSET,
+        )
+        self.color_sensor_right_offset_m = _parse_offset(
+            cs_cfg.get("right") or robot_cfg.get("color_sensor_right_offset_m") or robot_cfg.get("colorSensorRightOffset"),
+            self.DEFAULT_COLOR_SENSOR_RIGHT_OFFSET,
+        )
+        self.color_sensor_offsets = {
+            "left": self.color_sensor_left_offset_m,
+            "right": self.color_sensor_right_offset_m,
+        }
+
+        # Hub hardware & port mapping
+        hw_cfg = robot_cfg.get("hardware") or robot_cfg.get("ports") or {}
+        if not isinstance(hw_cfg, dict):
+            hw_cfg = {}
+
+        def _get_hw(key: str, default: str, alt_keys: Tuple[str, ...] = ()) -> str:
+            item = hw_cfg.get(key)
+            if item is None:
+                item = robot_cfg.get(key)
+            if item is None:
+                for alt in alt_keys:
+                    item = hw_cfg.get(alt) or robot_cfg.get(alt)
+                    if item is not None:
+                        break
+            if item is None:
+                return default
+            return str(item).strip()
+
+        self.hub_top_side = _get_hw("hub_top_side", self.DEFAULT_HUB_TOP_SIDE, ("top_side", "hubTopSide"))
+        self.hub_front_side = _get_hw("hub_front_side", self.DEFAULT_HUB_FRONT_SIDE, ("front_side", "hubFrontSide"))
+        self.motor_left_port = _get_hw("motor_left_port", self.DEFAULT_MOTOR_LEFT_PORT, ("motorLeft", "left_motor_port"))
+        self.motor_left_dir = _get_hw("motor_left_dir", self.DEFAULT_MOTOR_LEFT_DIR, ("motorLeftDir", "left_motor_dir"))
+        self.motor_right_port = _get_hw("motor_right_port", self.DEFAULT_MOTOR_RIGHT_PORT, ("motorRight", "right_motor_port"))
+        self.motor_right_dir = _get_hw("motor_right_dir", self.DEFAULT_MOTOR_RIGHT_DIR, ("motorRightDir", "right_motor_dir"))
+        self.motor_front_port = _get_hw("motor_front_port", self.DEFAULT_MOTOR_FRONT_PORT, ("motorFront", "front_motor_port"))
+        self.motor_front_dir = _get_hw("motor_front_dir", self.DEFAULT_MOTOR_FRONT_DIR, ("motorFrontDir", "front_motor_dir"))
+        self.motor_back_port = _get_hw("motor_back_port", self.DEFAULT_MOTOR_BACK_PORT, ("motorBack", "back_motor_port"))
+        self.motor_back_dir = _get_hw("motor_back_dir", self.DEFAULT_MOTOR_BACK_DIR, ("motorBackDir", "back_motor_dir"))
+        self.color_sensor_left_port = _get_hw("color_sensor_left_port", self.DEFAULT_COLOR_SENSOR_LEFT_PORT, ("colorSensorLeft", "left_color_sensor_port"))
+        self.color_sensor_right_port = _get_hw("color_sensor_right_port", self.DEFAULT_COLOR_SENSOR_RIGHT_PORT, ("colorSensorRight", "right_color_sensor_port"))
+
+        self.hardware = {
+            "hub_top_side": self.hub_top_side,
+            "hub_front_side": self.hub_front_side,
+            "motor_left_port": self.motor_left_port,
+            "motor_left_dir": self.motor_left_dir,
+            "motor_right_port": self.motor_right_port,
+            "motor_right_dir": self.motor_right_dir,
+            "motor_front_port": self.motor_front_port,
+            "motor_front_dir": self.motor_front_dir,
+            "motor_back_port": self.motor_back_port,
+            "motor_back_dir": self.motor_back_dir,
+            "color_sensor_left_port": self.color_sensor_left_port,
+            "color_sensor_right_port": self.color_sensor_right_port,
+        }
 
         # Normalize the uncertainty block once so validation and JAX models use
         # the same ranges as the optimizer. Canonical configs nest these under
@@ -129,6 +243,13 @@ class RobotConfig:
                 (self.inertia * 0.90, self.inertia * 1.10)),
             "t_max_range": get_range(
                 ("t_max_range",), (self.t_max_nm * 0.75, self.t_max_nm * 0.95)),
+            "initial_x_m": get_range(
+                ("initial_x_m", "initial_x", "dx0"), (-0.005, 0.005)),
+            "initial_y_m": get_range(
+                ("initial_y_m", "initial_y", "dy0"), (-0.005, 0.005)),
+            "initial_theta_rad": get_range(
+                ("initial_theta_rad", "initial_theta", "dtheta0", "initial_heading_rad"),
+                (-math.radians(1.0), math.radians(1.0))),
         }
 
         # Whether the config declared the stall-torque range itself. A
@@ -139,6 +260,181 @@ class RobotConfig:
 
         # Store multiverse config if present
         self.multiverse_config = config_dict.get("multiverse", {})
+
+    def chassis_radius_m(self) -> float:
+        """Effective body radius covering front/back bumper and width."""
+        return max(
+            math.hypot(self.front_bumper_m, self.width_m / 2.0),
+            math.hypot(self.back_bumper_m, self.width_m / 2.0),
+            self.width_m / 2.0,
+            self.track_width / 2.0,
+        )
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert RobotConfig to dictionary format."""
+        return {
+            "mass": self.mass,
+            "inertia": self.inertia,
+            "track_width": self.track_width,
+            "wheel_radius": self.wheel_radius,
+            "v_max_rad_s": self.v_max_rad_s,
+            "t_max_nm": self.t_max_nm,
+            "gearing": self.gearing,
+            "cof": self.cof,
+            "gravity": self.g,
+            "torque_headroom": self.torque_headroom,
+            "speed_headroom": self.speed_headroom,
+            "rolling_resistance": self.rolling_resistance,
+            "gearbox_coulomb_nm": self.gearbox_coulomb_nm,
+            "gearbox_viscous_nm_s": self.gearbox_viscous_nm_s,
+            "reflected_inertia_kg_m2": self.reflected_inertia_kg_m2,
+            "width_m": self.width_m,
+            "length_m": self.length_m,
+            "front_bumper_m": self.front_bumper_m,
+            "back_bumper_m": self.back_bumper_m,
+            "lever_arm_m": self.lever_arm_m,
+            "color_sensor_offsets": {
+                "left": list(self.color_sensor_left_offset_m),
+                "right": list(self.color_sensor_right_offset_m),
+            },
+            "hardware": dict(self.hardware),
+            "uncertainties": {k: list(v) for k, v in self.uncertainties.items()},
+        }
+
+    def as_dict(self) -> Dict[str, Any]:
+        return self.to_dict()
+
+    def sync_pybricks_robot_config(self, path: Optional[Union[str, Path]] = None) -> bool:
+        """Sync pybricks_code/robot_config.py from this RobotConfig.
+
+        Ensures WHEEL_DIAMETER_MM, AXLE_TRACK_MM, motor ports & directions,
+        attachment ports, sensor ports, and hub IMU axes match this config exactly.
+        """
+        if path is None:
+            repo_root = Path(__file__).resolve().parent
+            path = repo_root / "pybricks_code" / "robot_config.py"
+        else:
+            path = Path(path)
+
+        if not path.parent.is_dir():
+            return False
+
+        wheel_diam_mm = round(self.wheel_radius * 2000.0, 2)
+        wheel_diam_str = f"{int(wheel_diam_mm)}" if wheel_diam_mm.is_integer() else f"{wheel_diam_mm}"
+        axle_track_mm = round(self.track_width * 1000.0, 2)
+        axle_track_str = f"{int(axle_track_mm)}" if axle_track_mm.is_integer() else f"{axle_track_mm}"
+
+        def _fmt_axis(a: str) -> str:
+            return a if a.startswith("Axis.") else f"Axis.{a}"
+
+        def _fmt_port(p: str) -> str:
+            return p if p.startswith("Port.") else f"Port.{p}"
+
+        def _fmt_dir(d: str) -> str:
+            return d if d.startswith("Direction.") else f"Direction.{d}"
+
+        top_axis = _fmt_axis(self.hub_top_side)
+        front_axis = _fmt_axis(self.hub_front_side)
+        left_port = _fmt_port(self.motor_left_port)
+        left_dir = _fmt_dir(self.motor_left_dir)
+        right_port = _fmt_port(self.motor_right_port)
+        right_dir = _fmt_dir(self.motor_right_dir)
+        front_port = _fmt_port(self.motor_front_port)
+        front_dir = _fmt_dir(self.motor_front_dir)
+        back_port = _fmt_port(self.motor_back_port)
+        back_dir = _fmt_dir(self.motor_back_dir)
+        cs_l_port = _fmt_port(self.color_sensor_left_port)
+        cs_r_port = _fmt_port(self.color_sensor_right_port)
+
+        try:
+            content = path.read_text(encoding="utf-8")
+        except OSError:
+            content = ""
+
+        if content:
+            content = re.sub(
+                r"^\s*WHEEL_DIAMETER_MM\s*=\s*[0-9.]+",
+                f"WHEEL_DIAMETER_MM = {wheel_diam_str}",
+                content,
+                flags=re.MULTILINE,
+            )
+            content = re.sub(
+                r"^\s*AXLE_TRACK_MM\s*=\s*[0-9.]+",
+                f"AXLE_TRACK_MM = {axle_track_str}",
+                content,
+                flags=re.MULTILINE,
+            )
+            content = re.sub(
+                r"^\s*hub\s*=\s*PrimeHub\([^)]*\)",
+                f"hub = PrimeHub(top_side={top_axis}, front_side={front_axis})",
+                content,
+                flags=re.MULTILINE,
+            )
+            content = re.sub(
+                r"^\s*motorLeft\s*=\s*Motor\([^)]*\)",
+                f"motorLeft = Motor({left_port}, {left_dir})",
+                content,
+                flags=re.MULTILINE,
+            )
+            content = re.sub(
+                r"^\s*motorRight\s*=\s*Motor\([^)]*\)",
+                f"motorRight = Motor({right_port}, {right_dir})",
+                content,
+                flags=re.MULTILINE,
+            )
+            content = re.sub(
+                r"^\s*motorFront\s*=\s*Motor\([^)]*\)",
+                f"motorFront = Motor({front_port}, {front_dir})",
+                content,
+                flags=re.MULTILINE,
+            )
+            content = re.sub(
+                r"^\s*motorBack\s*=\s*Motor\([^)]*\)",
+                f"motorBack = Motor({back_port}, {back_dir})",
+                content,
+                flags=re.MULTILINE,
+            )
+            content = re.sub(
+                r"^\s*colorSensorLeft\s*=\s*ColorSensor\([^)]*\)",
+                f"colorSensorLeft = ColorSensor({cs_l_port})",
+                content,
+                flags=re.MULTILINE,
+            )
+            content = re.sub(
+                r"^\s*colorSensorRight\s*=\s*ColorSensor\([^)]*\)",
+                f"colorSensorRight = ColorSensor({cs_r_port})",
+                content,
+                flags=re.MULTILINE,
+            )
+        else:
+            content = f'''"""
+ROBOT CONFIGURATION
+-------------------
+Auto-generated from RobotConfig.
+"""
+from pybricks.hubs import PrimeHub
+from pybricks.pupdevices import Motor, ColorSensor
+from pybricks.parameters import Axis, Direction, Port
+from pybricks.robotics import DriveBase
+
+hub = PrimeHub(top_side={top_axis}, front_side={front_axis})
+motorLeft = Motor({left_port}, {left_dir})
+motorRight = Motor({right_port}, {right_dir})
+motorFront = Motor({front_port}, {front_dir})
+motorBack = Motor({back_port}, {back_dir})
+colorSensorLeft = ColorSensor({cs_l_port})
+colorSensorRight = ColorSensor({cs_r_port})
+
+WHEEL_DIAMETER_MM = {wheel_diam_str}
+AXLE_TRACK_MM = {axle_track_str}
+drivebase = DriveBase(motorLeft, motorRight,
+                      wheel_diameter=WHEEL_DIAMETER_MM,
+                      axle_track=AXLE_TRACK_MM)
+drivebase.use_gyro(True)
+'''
+
+        path.write_text(content, encoding="utf-8")
+        return True
 
     def get_max_force_at_velocity(self, v_wheel: float, apply_headroom: bool = True) -> float:
         """
@@ -313,6 +609,95 @@ class RobotConfig:
                     "measured": value,
                 }
                 self.v_max_rad_s = value
+
+        return changes
+
+    def apply_sysid_fit(self, twin: Any) -> Dict[str, Any]:
+        """Complete merge of a digital-twin fit into this RobotConfig.
+
+        Updates effective wheel_radius, track_width, gear_backlash_m,
+        motor curve (t_max_nm, v_max_rad_s, t_max_range), rolling resistance,
+        and 95% confidence intervals simultaneously so that the optimizer,
+        CPU validator, and Immrax validator plan and validate against the same
+        calibrated model.
+        """
+        if isinstance(twin, dict):
+            from digital_twin import DigitalTwinConfig
+            twin = DigitalTwinConfig.from_dict(twin)
+
+        changes: Dict[str, Any] = {}
+
+        # 1. Motor curve merge (stall torque & no-load speed)
+        motor_kwargs = twin.measured_motor(gearing=self.gearing)
+        motor_changes = self.apply_measured_motor(**motor_kwargs)
+        changes.update(motor_changes)
+
+        # 2. DriveBase geometry and Odometry scale merge
+        drivebase = getattr(twin, "drivebase", {}) or {}
+        new_r = drivebase.get("wheel_radius_m")
+        new_track = drivebase.get("track_width_m")
+
+        base_r = float(new_r) if (new_r is not None and float(new_r) > 0.0) else float(self.wheel_radius)
+        base_track = float(new_track) if (new_track is not None and float(new_track) > 0.0) else float(self.track_width)
+
+        odometry = getattr(twin, "odometry", None)
+        if odometry is not None and getattr(odometry, "calibrated", False):
+            dist_scale = float(getattr(odometry, "distance_scale", 1.0))
+            head_scale = float(getattr(odometry, "heading_scale", 1.0))
+            effective_r = base_r * dist_scale
+            effective_track = base_track / head_scale if head_scale > 0.0 else base_track
+        else:
+            effective_r = base_r
+            effective_track = base_track
+
+        if abs(effective_r - self.wheel_radius) > 1e-9:
+            changes["wheel_radius"] = {
+                "declared": float(self.wheel_radius),
+                "measured": effective_r,
+            }
+            self.wheel_radius = effective_r
+            self.uncertainties["wheel_radius_range"] = (effective_r * 0.99, effective_r * 1.01)
+
+        if abs(effective_track - self.track_width) > 1e-9:
+            changes["track_width"] = {
+                "declared": float(self.track_width),
+                "measured": effective_track,
+            }
+            self.track_width = effective_track
+            self.uncertainties["track_width_range"] = (effective_track * 0.99, effective_track * 1.01)
+
+        # 3. Gear backlash merge
+        backlash_dict = getattr(twin, "backlash", {}) or {}
+        if isinstance(backlash_dict, dict) and backlash_dict.get("calibrated", False):
+            b_val = backlash_dict.get("backlash_m") or backlash_dict.get("gear_backlash_m")
+            if b_val is not None and float(b_val) > 0.0:
+                b_m = float(b_val)
+                self.uncertainties["gear_backlash_m"] = (b_m * 0.8, b_m * 1.2)
+                changes["gear_backlash_m"] = list(self.uncertainties["gear_backlash_m"])
+            elif "reverse_delay_s" in backlash_dict:
+                delay = float(backlash_dict["reverse_delay_s"] or 0.0)
+                changes["backlash_reverse_delay_s"] = delay
+
+        # 4. Rolling resistance / braking slip merge
+        slip = getattr(twin, "slip", None)
+        if slip is not None and getattr(slip, "calibrated", False):
+            median_slip = getattr(slip, "brake_ratio_median", None)
+            if median_slip is not None:
+                self.rolling_resistance = float(median_slip)
+                changes["rolling_resistance"] = float(median_slip)
+
+        # 5. Actuator gain confidence interval
+        actuator = getattr(twin, "actuator_straight", None)
+        if actuator is not None and getattr(actuator, "calibrated", False):
+            gain_range = twin.actuator_gain_range()
+            self.uncertainties["actuator_gain_range"] = gain_range
+            changes["actuator_gain_range"] = list(gain_range)
+
+        # 6. Drift confidence interval
+        drift = getattr(twin, "drift", None)
+        if drift is not None and getattr(drift, "calibrated", False):
+            self.uncertainties["drift_deg_per_m"] = tuple(drift.drift_range)
+            changes["drift_deg_per_m"] = list(drift.drift_range)
 
         return changes
 

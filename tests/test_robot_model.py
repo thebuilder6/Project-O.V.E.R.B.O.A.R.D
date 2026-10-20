@@ -414,3 +414,128 @@ class TestMeasuredMotorConfig(unittest.TestCase):
         changes = config.apply_measured_motor()
         self.assertEqual(changes, {})
         self.assertAlmostEqual(config.t_max_nm, 0.138)
+
+
+class TestUniversalRobotConfig(unittest.TestCase):
+    """Test consolidated RobotConfig: geometry, footprint, hardware, sysid merge, pybricks sync."""
+
+    def test_consolidated_parameters_defaults(self):
+        cfg = RobotConfig({})
+        self.assertEqual(cfg.rolling_resistance, RobotConfig.DEFAULT_ROLLING_RESISTANCE)
+        self.assertEqual(cfg.gearbox_coulomb_nm, RobotConfig.DEFAULT_GEARBOX_COULOMB_NM)
+        self.assertEqual(cfg.gearbox_viscous_nm_s, RobotConfig.DEFAULT_GEARBOX_VISCOUS_NM_S)
+        self.assertEqual(cfg.reflected_inertia_kg_m2, RobotConfig.DEFAULT_REFLECTED_INERTIA)
+
+        self.assertEqual(cfg.width_m, RobotConfig.DEFAULT_WIDTH_M)
+        self.assertEqual(cfg.length_m, RobotConfig.DEFAULT_LENGTH_M)
+        self.assertEqual(cfg.front_bumper_m, RobotConfig.DEFAULT_FRONT_BUMPER_M)
+        self.assertEqual(cfg.back_bumper_m, RobotConfig.DEFAULT_BACK_BUMPER_M)
+        self.assertEqual(cfg.lever_arm_m, RobotConfig.DEFAULT_LEVER_ARM_M)
+        self.assertEqual(cfg.color_sensor_left_offset_m, RobotConfig.DEFAULT_COLOR_SENSOR_LEFT_OFFSET)
+        self.assertEqual(cfg.color_sensor_right_offset_m, RobotConfig.DEFAULT_COLOR_SENSOR_RIGHT_OFFSET)
+
+        self.assertEqual(cfg.hub_top_side, "Axis.Z")
+        self.assertEqual(cfg.hub_front_side, "Axis.Y")
+        self.assertEqual(cfg.motor_left_port, "Port.F")
+        self.assertEqual(cfg.motor_left_dir, "Direction.COUNTERCLOCKWISE")
+        self.assertEqual(cfg.motor_right_port, "Port.B")
+        self.assertEqual(cfg.motor_right_dir, "Direction.CLOCKWISE")
+
+        self.assertIn("initial_x_m", cfg.uncertainties)
+        self.assertIn("initial_y_m", cfg.uncertainties)
+        self.assertIn("initial_theta_rad", cfg.uncertainties)
+
+    def test_custom_footprint_and_hardware(self):
+        data = {
+            "robot": {
+                "width_m": 0.17,
+                "length_m": 0.20,
+                "front_bumper_m": 0.12,
+                "back_bumper_m": 0.08,
+                "lever_arm_m": 0.11,
+                "rolling_resistance": 0.015,
+                "gearbox_coulomb_nm": 0.02,
+                "gearbox_viscous_nm_s": 0.0003,
+                "reflected_inertia_kg_m2": 5e-5,
+                "color_sensors": {
+                    "left": [0.07, -0.04],
+                    "right": [0.07, 0.04],
+                },
+                "hardware": {
+                    "hub_top_side": "Axis.X",
+                    "hub_front_side": "Axis.Z",
+                    "motor_left_port": "Port.A",
+                    "motor_left_dir": "Direction.CLOCKWISE",
+                    "motor_right_port": "Port.B",
+                    "motor_right_dir": "Direction.COUNTERCLOCKWISE",
+                },
+                "uncertainties": {
+                    "initial_x_m": [-0.003, 0.003],
+                    "initial_y_m": [-0.003, 0.003],
+                    "initial_theta_rad": [-0.02, 0.02],
+                },
+            }
+        }
+        cfg = RobotConfig(data)
+        self.assertEqual(cfg.width_m, 0.17)
+        self.assertEqual(cfg.front_bumper_m, 0.12)
+        self.assertEqual(cfg.rolling_resistance, 0.015)
+        self.assertEqual(cfg.color_sensor_left_offset_m, (0.07, -0.04))
+        self.assertEqual(cfg.hub_top_side, "Axis.X")
+        self.assertEqual(cfg.motor_left_port, "Port.A")
+        self.assertEqual(cfg.uncertainties["initial_x_m"], (-0.003, 0.003))
+        self.assertGreater(cfg.chassis_radius_m(), 0.12)
+
+    def test_apply_sysid_fit_complete_merge(self):
+        from digital_twin import DigitalTwinConfig, OdometryFit, StallTorqueFit, DrivetrainFit, ActuatorFit, SlipFit
+        cfg = RobotConfig({"robot": {"wheel_radius": 0.028, "track_width": 0.0965, "t_max_nm": 0.04}})
+        twin = DigitalTwinConfig(
+            drivebase={"wheel_radius_m": 0.0275, "track_width_m": 0.0960},
+            odometry=OdometryFit(calibrated=True, distance_scale=1.01, heading_scale=0.99),
+            stall_torque=StallTorqueFit(calibrated=True, t_max_nm=0.125, t_max_range=(0.115, 0.130)),
+            drivetrain=DrivetrainFit(calibrated=True, no_load_speed_rad_s=21.0),
+            actuator_straight=ActuatorFit(calibrated=True, gain_range=(0.98, 1.02)),
+            slip=SlipFit(calibrated=True, brake_ratio_min=0.010, brake_ratio_median=0.012, brake_ratio_max=0.015),
+            backlash={"calibrated": True, "backlash_m": 0.0003},
+        )
+        changes = cfg.apply_sysid_fit(twin)
+        self.assertIn("wheel_radius", changes)
+        self.assertIn("track_width", changes)
+        self.assertIn("t_max_nm", changes)
+        self.assertIn("gear_backlash_m", changes)
+        self.assertIn("rolling_resistance", changes)
+        self.assertIn("actuator_gain_range", changes)
+
+        self.assertAlmostEqual(cfg.wheel_radius, 0.0275 * 1.01)
+        self.assertAlmostEqual(cfg.track_width, 0.0960 / 0.99)
+        self.assertEqual(cfg.uncertainties["gear_backlash_m"], (0.0003 * 0.8, 0.0003 * 1.2))
+        self.assertEqual(cfg.rolling_resistance, 0.012)
+        self.assertEqual(cfg.uncertainties["actuator_gain_range"], (0.98, 1.02))
+
+    def test_sync_pybricks_robot_config(self):
+        import tempfile
+        from pathlib import Path
+        cfg = RobotConfig({
+            "robot": {
+                "wheel_radius": 0.030,
+                "track_width": 0.100,
+                "hardware": {
+                    "motor_left_port": "Port.C",
+                    "motor_right_port": "Port.D",
+                }
+            }
+        })
+        with tempfile.TemporaryDirectory() as tmpdir:
+            target = Path(tmpdir) / "robot_config.py"
+            target.write_text(
+                "WHEEL_DIAMETER_MM = 56\nAXLE_TRACK_MM = 96.5\n"
+                "motorLeft = Motor(Port.F, Direction.COUNTERCLOCKWISE)\n"
+                "motorRight = Motor(Port.B, Direction.CLOCKWISE)\n"
+                "hub = PrimeHub(top_side=Axis.Z, front_side=Axis.Y)\n"
+            )
+            cfg.sync_pybricks_robot_config(target)
+            synced = target.read_text()
+            self.assertIn("WHEEL_DIAMETER_MM = 60", synced)
+            self.assertIn("AXLE_TRACK_MM = 100", synced)
+            self.assertIn("motorLeft = Motor(Port.C, Direction.COUNTERCLOCKWISE)", synced)
+            self.assertIn("motorRight = Motor(Port.D, Direction.CLOCKWISE)", synced)

@@ -133,6 +133,16 @@ def main(argv=None):
     if not os.path.exists(args.script):
         parser.error(f"collector script '{args.script}' not found")
 
+    if args.profile and os.path.exists(args.profile):
+        try:
+            import json
+            from robot_model import RobotConfig
+            with open(args.profile, "r", encoding="utf-8") as pf:
+                cfg_dict = json.load(pf)
+            RobotConfig(cfg_dict).sync_pybricks_robot_config()
+        except Exception:
+            pass
+
     print(f"Pushing {os.path.basename(args.script)} to the hub over {args.conn}.")
     print("Press the hub button when each test asks for it. Do not close this "
           "window; the session is written as it arrives.")

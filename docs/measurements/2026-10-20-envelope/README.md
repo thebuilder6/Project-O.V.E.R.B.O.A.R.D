@@ -84,16 +84,25 @@ declared uncertainty:
 | mission | plant | tick (jac) | tick (mjac) | reachable set | contains |
 |---|---:|---:|---:|---:|---|
 | straight | 1.19 cm | 0.64 cm | 0.61 cm | 0.45 cm | yes |
-| S-curve | 5.36 cm, cut off | 2.53 cm | **1.88 cm** | 0.33 cm | yes |
-| first four | 1.31 cm | 0.92 cm | 0.79 cm | 0.27 cm | yes |
-| events | 5.37 cm, cut off | 5.40 cm | 4.45 cm | 0.37 cm | yes |
-| stops | 5.31 cm, cut off | 1.94 cm | **1.30 cm** | 0.39 cm | yes |
-| complex | 5.07 cm, cut off | 3.17 cm | **1.83 cm** | 0.26 cm | yes |
+| S-curve | 5.40 cm, cut off | 2.56 cm | **1.89 cm** | 0.33 cm | yes |
+| first four | 1.27 cm | 0.90 cm | 0.77 cm | 0.28 cm | yes |
+| events | 5.10 cm, cut off | 5.45 cm | 4.41 cm | 0.40 cm | yes |
+| stops | 5.32 cm, cut off | 1.96 cm | **1.31 cm** | 0.39 cm | yes |
+| complex | 5.00 cm, cut off | 3.34 cm | **1.84 cm** | 0.31 cm | yes |
 
 Every tube contains the sampled reachable set, with 0.000 mm of overshoot.
 The tick propagation with the mixed-Jacobian turns three of the four
 cut-off missions into passes of the 20 mm gate, and it costs 7-10x the
 validation time.
+
+**Re-measured on the current planner** (the self-consistent collocation, the
+path split at the timing boundaries, and the sample count following the path
+all landed after the first run of this table). The envelope numbers moved by
+at most 0.04 cm: the tube's width is a property of the *validator* and the
+uncertainty, not of the plan it is applied to. The *tracking* errors did
+move - the S-curve's from 1.55 cm to 2.24 cm - because that is the
+discretisation mismatch, which the collocation change touches. The envelope
+figures are therefore still good; the tracking ones are the planner's.
 
 **With the digital twin it is worse**, and that is the finding that keeps
 it off by default: the map has to carry the robot's own pose estimate,

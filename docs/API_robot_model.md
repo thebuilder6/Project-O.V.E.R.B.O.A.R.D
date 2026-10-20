@@ -48,6 +48,17 @@ The canonical and legacy key names are normalized (`track_width`/`differentialTr
 | `g` | 9.81 | m/s² |
 | `torque_headroom` | 0.85 | — |
 | `speed_headroom` | 0.90 | — |
+| `rolling_resistance` | 0.0 | — |
+| `gearbox_coulomb_nm` | 0.0 | N·m |
+| `gearbox_viscous_nm_s` | 0.0 | N·m·s/rad |
+| `reflected_inertia_kg_m2` | 0.0 | kg·m² |
+| `width_m` | 0.16 | m |
+| `length_m` | 0.18 | m |
+| `front_bumper_m` | 0.10 | m |
+| `back_bumper_m` | 0.08 | m |
+| `lever_arm_m` | 0.10 | m |
+| `color_sensor_offsets` | `{'left': (0.06, -0.03), 'right': (0.06, 0.03)}` | m |
+| `hardware` | hub axes & motor/sensor port mapping | — |
 | `uncertainties` | see below | — |
 | `multiverse_config` | `{}` | — |
 
@@ -64,6 +75,9 @@ The canonical and legacy key names are normalized (`track_width`/`differentialTr
 | `wheel_radius_range` | `(0.99 * wheel_radius, 1.01 * wheel_radius)` |
 | `inertia_kg_m2` | `(0.90 * inertia, 1.10 * inertia)` |
 | `t_max_range` | `(0.75 * t_max_nm, 0.95 * t_max_nm)` |
+| `initial_x_m` | `(-0.005, 0.005)` |
+| `initial_y_m` | `(-0.005, 0.005)` |
+| `initial_theta_rad` | `(-1.0 deg, 1.0 deg)` |
 
 `t_max_range` is parsed and stored, but the current optimizer, CPU validator, and Immrax path use `t_max_nm` plus `torque_headroom`; the JAX interval helper has an unused `use_intervals` branch that would read it.
 
@@ -100,6 +114,26 @@ Worst-case per-wheel force limit matching the lower bound used by Immrax.
 #### `get_max_force_symbolic_robust(v_wheel) -> casadi.MX`
 
 CasADi version of the robust limit.
+
+### Calibration and Hardware Sync
+
+#### `apply_sysid_fit(twin) -> dict`
+
+Performs a full merge of a digital-twin fit (`DigitalTwinConfig` or `dict`) into `RobotConfig`:
+- Updates effective `wheel_radius` (scaled by measured odometry `distance_scale`).
+- Updates effective `track_width` (scaled by measured odometry `heading_scale`).
+- Updates motor curve (`t_max_nm`, `v_max_rad_s`, and derived/measured `t_max_range`).
+- Updates `gear_backlash_m` from calibrated backlash tests.
+- Updates `rolling_resistance` from braking slip tests.
+- Updates 95% confidence intervals for actuator gain and heading drift.
+
+#### `sync_pybricks_robot_config(path=None) -> bool`
+
+Syncs `pybricks_code/robot_config.py` from this `RobotConfig`, ensuring `WHEEL_DIAMETER_MM`, `AXLE_TRACK_MM`, motor ports and directions, attachment ports, sensor ports, and hub IMU axes never drift apart between host and robot firmware.
+
+#### `chassis_radius_m() -> float`
+
+Effective body radius covering front and back bumpers and chassis width.
 
 ## `DifferentialDriveModel`
 

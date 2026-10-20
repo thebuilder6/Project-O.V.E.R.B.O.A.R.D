@@ -11,15 +11,15 @@
 ## Findings at a glance
 
 1. **The heuristic layer is small.** Five deterministic seeds, two timing models, a candidate set, and a selection rule. There is **no geometric path family** anywhere in the tree — no splines, clothoids, béziers or quintics — and the objective has no term that prefers one path over another.
-2. **The seeds do not rescue the baseline, but they do win on speed.** Over the 60-candidate matrix the `baseline` seed is the fastest passing candidate in 3 of the 7 cells that produce a trajectory at all; a non-baseline seed wins the other 4 (first4 and complex under per-segment timing, both by 10 % or more, and the straight path, where all five seeds tie). The baseline fails in 6 of the 12 cells, and **exactly one of them is rescued by a seed**: the complex mission under per-segment timing, where the baseline overshoots the motor-force limit (0.074 N) and four other seeds pass. In the other 5 — the S-curve, the stops mission, and the events mission under equal-duration timing — no seed passes either.
-3. **The tracking gate is the binding constraint; the reachability envelope never binds.** Of 29 failing candidates, 25 failed on the 5 mm tracking gate, 6 on motor force and 13 on the forward-integration check. **Zero** failed on the 2 cm envelope threshold. The largest envelope measured anywhere was 1.75 cm.
-4. **Two of the six example missions still produce no output at all.** The S-curve and the stops mission fail **every candidate** in the full sweep — 0 of 9 each, across both timing models and the whole accuracy-weight grid. Their tracking error is 1.30–1.75 cm and 0.90–3.70 cm against a 0.50 cm gate. RQ-A says what is left of it: the plan's own deviation at the default density, which the self-consistent collocation halves (the S-curve: 1.47 → 0.88 cm) but does not remove. The reference's velocity half ([RQ-A finding F8](research/RQ-A_tracking_error.md)) is what would.
-5. **The timing model is a bigger lever than any seed.** Per-segment timing is 4.8–23.4 % faster on four of the six missions (complex 23.4 %, stops 17.7 %, first4 15.7 %, events 4.8 %), and it is what makes the events mission solvable at all. The seeds changed the outcome on 2 missions; the timing model changed it on 4. The per-segment model also had to be made legitimate at the waypoints the robot drives through (KI-024, [5.5](#55-where-the-time-allocation-may-change-ki-024)); the matrix in [Section 9](#9-measured-heuristic-comparison) was re-measured after that change.
-6. **The accuracy weight is the cheapest lever of all.** On the events mission, the *same* `baseline` seed fails at weight 0 (0.52 cm tracking) and passes at weight 0.001 (0.37 cm). The sweep grid is the only candidate-set change that has ever produced a new best trajectory, and it works because it adds a genuinely different parameter.
+2. **The seeds do not rescue the baseline often, but they do win on speed.** Over the 60-candidate matrix the `baseline` seed is the fastest passing candidate in 1 of the 7 cells that produce a trajectory at all; a non-baseline seed wins the other 6. The baseline fails in 9 of the 12 cells, and **four** of them are rescued by another seed: first4 under both timing models, the complex mission under equal-duration, and the events mission under per-segment. In the other 5 — the S-curve and the stops mission, under both models — no seed passes either.
+3. **The tracking gate is the binding constraint; the reachability envelope never binds.** Of 34 failing candidates, 28 failed on the 5 mm tracking gate and 11 on motor force. **Zero** failed on the forward-integration check — it went with the self-consistent collocation — and **zero** on the 2 cm envelope threshold. The largest envelope measured anywhere was 1.72 cm.
+4. **Two of the six example missions still produce no output at all.** The S-curve and the stops mission fail **every candidate** in the full sweep — 0 of 9 each, across both timing models and the whole accuracy-weight grid. Their best tracking errors are 1.27 cm and 0.75 cm against a 0.50 cm gate. The self-consistent collocation removed the plan's own deviation from the picture, and what is left of the error is the reference's velocity half ([RQ-A finding F8](research/RQ-A_tracking_error.md)).
+5. **The timing model is a bigger lever than any seed, but not on every path.** Per-segment timing is 1.9x faster on the complex mission (4.812 s against 9.249 s) and it is what makes the events mission solvable at all; on the two paths whose segments are short and even (first4, the stops mission) the equal-duration model is the faster one. The seeds changed the outcome on 3 missions; the timing model on 1. The per-segment model also had to be made legitimate at the waypoints the robot drives through (KI-024, [5.5](#55-where-the-time-allocation-may-change-ki-024)); the matrix in [Section 9](#9-measured-heuristic-comparison) was re-measured after that change.
+6. **The accuracy weight is the cheapest lever of all.** On the first-four-waypoints mission, the *same* `baseline` seed fails at weight 0 (it misses the motor-force limit by 0.006 N) and passes at weight 0.001 (0.26 cm tracking). The sweep grid is the only candidate-set change that has ever produced a new best trajectory, and it works because it adds a genuinely different parameter.
 7. **The Multi-Verse pipeline was dead weight; it is repaired, and it is not worth much.** Its JAX-refined guess used to converge to 8.1473 s against the trivial baseline's 6.0677 s. Four defects were behind that - the refinement moved the waypoints, the JAX cost graded a different motion than IPOPT produces, the intervals were hard-coded, and the refined timing was discarded - and with them fixed the probe wins (4.617 s against 6.049 s) and the pipeline is reproducible. But measured over 30 missions as a *seed provider*, the refined seed is **not** better than the stock seeds (it is faster on 2 of the 9 missions where both pass, slower on 6) and it **rescues nothing**; it is a cheaper way to reach the stock set's speed on some missions (KI-004).
 8. **The measurement base is six hand-written paths.** The random benchmark that was supposed to supply a mission suite is fixed (KI-015), and a mission-suite harness exists under [`research/`](../../research/). The six paths are still what [Section 9](#9-measured-heuristic-comparison) quotes; the wider suite is measured in `docs/research/pq_b/`.
 9. **Twelve research questions are listed in Part IV**, ordered so that the cheapest decisive experiment comes first. The first two are measurements, not experiments.
-10. **RQ-A is done, and it reorders the agenda.** [`docs/research/RQ-A_tracking_error.md`](research/RQ-A_tracking_error.md) identifies why the tracking gate binds: the optimizer's trapezoidal collocation, the controller's linear reference and the plant's integration are three different discretisations of the same trajectory, and on a curved path they disagree by about a centimetre. The tracking error is **not** an uncertainty problem and **not** a physical tracking problem. Fix the discretisation before reaching for reachability in the objective. RQ-A also finds that with a *calibrated* model the binding gate flips to the **envelope**, because the measured actuator-gain band widens the reachable set.
+10. **RQ-A is done, and it reorders the agenda.** [`docs/research/RQ-A_tracking_error.md`](research/RQ-A_tracking_error.md) identifies why the tracking gate binds: the optimizer's collocation, the controller's linear reference and the plant's integration are three different discretisations of the same trajectory, and on a curved path they disagree by about a centimetre. The optimizer's half of that disagreement is closed - the self-consistent collocation is the default ([5.7](#57-the-collocation-where-a-sample-is-placed)) - and the reference's half is not. The tracking error is **not** an uncertainty problem and **not** a physical tracking problem. Fix the discretisation before reaching for reachability in the objective. RQ-A also finds that with a *calibrated* model the binding gate flips to the **envelope**, because the measured actuator-gain band widens the reachable set.
 
 > **Read RQ-A before changing the tracking gate, the reference interpolation, or the optimizer's kinematics.** It contains the measurements, the refuted hypotheses, and the four instrument bugs that produced convincing nonsense along the way.
 
@@ -131,20 +131,23 @@ Two kinds of numbers appear here, and they are always marked:
 - **Measured 2026-10-19** — produced by the sweep in [Section 9](#9-measured-heuristic-comparison) against this tree. The raw logs are in `docs/measurements/2026-10-19/`, and the exact commands are in [Appendix A](#appendix-a--reproducing-every-table).
 - **Quoted** — copied from an earlier run, with the source document and date given. These are historical and may not reproduce exactly.
 
-**Provenance.** The sweep was run against this tree state:
+**Provenance.** The sweep in [Section 9](#9-measured-heuristic-comparison) was run against this tree state:
 
 ```text
-optimizer.py          MD5 E0D3E212C8E8D1C6F1166A0623DC9BE0
-main.py               MD5 3F0325ADEAF492D48D0E724FF48482B0
-immrax_validator.py   MD5 39819213DD8C83A53E56F90DDA73C581
-validator.py          MD5 70950A6FAAB297AEF734FD67A67B8068
-robot_model.py        MD5 2B798C532F02BAE7F77DBA0A7CBE9C81
-multiverse_optimizer.py MD5 D67E88CEA2A2B072B5B60F3CF52354F2
-jax_optimizer.py      MD5 B6F2DD0ABAED18482A26F81F635D1ADF
-path_planning.py      MD5 8E9D030AD66453295F7E22F898CD6B4E
+optimizer.py          MD5 C357F8E4CE33337558853E2DAA5899A5
+main.py               MD5 B72F080AB806290114CD314914CFEC1D
+immrax_validator.py   MD5 BC59667CB010C9C4A1C3B8EC92971157
+validator.py          MD5 D7374FAE647300C6A3ACD85CAAD4D38D
+robot_model.py        MD5 6748938B0E26034B3641FE9386ACA9ED
+pybricks_code/ramsete_fast.py         MD5 D9095DFCDABAA54DF419A8339A398DFB
+pybricks_code/ramsete.py              MD5 3ED998C1D8C69897F24D03469E68F7DC
+pybricks_code/ramsete_compact.py      MD5 E60C4BFEF3113CB0259FCCD3C1F3865D
+pybricks_code/ramsete_compact_events.py MD5 F2020A07297A1D554C947211CC84EF7E
 ```
 
-Environment: Windows 11, Python 3.12.10, `casadi`, `jax`, `immrax`, `jaxopt`, `rsplan`, `numpy`, `scipy`, `pandas` all installed. Test suite state at the time of writing: `python run_tests.py` → **242 tests, 242 successes, 0 failures, 0 errors, 0 skipped**, exit code 0.
+The list is generated, not copied: `docs/measurements/2026-10-20-variable-samples/TREE.md5` holds it, and the runner writes it from the tree it measured. The runner also takes the fingerprint **before and after** the run and refuses a measurement whose tree changed underneath it, so a run that straddles two planners cannot be quoted as one.
+
+Environment: Windows 11, Python 3.12.10, `casadi`, `jax`, `immrax`, `jaxopt`, `rsplan`, `numpy`, `scipy` all installed. Test suite state at the time of writing: `python run_tests.py` → **623 tests**, 0 skipped.
 
 ---
 
@@ -703,16 +706,16 @@ and `main.py --refine` puts the refined trajectory into the candidate set as a s
 
 ## 9. Measured heuristic comparison
 
-**Measured 2026-10-20**, against the tree with KI-025 (the backlash), KI-026 (the self-consistent collocation), KI-027 (the turn rate as the derivative of the heading) and KI-028 (the validator modelling the controller that runs) in place. 60 candidate solves - 6 missions x 2 timing models x 5 seeds - plus the timing-mode x accuracy-weight grid. The raw logs are in `docs/measurements/2026-10-20-post-ki028/`, and the exact commands are in [Appendix A](#appendix-a--reproducing-every-table). The provenance (source hashes, environment, test state) is in [S0.4](#04-measurement-conventions).
+**Measured 2026-10-20**, against the tree with the arc-length sample layout, the self-consistent collocation on by default (KI-026, KI-051, KI-052) and the consolidated firmware (KI-028) in place. 60 candidate solves - 6 missions x 2 timing models x 5 seeds - plus the timing-mode x accuracy-weight grid. The raw logs are in `docs/measurements/2026-10-20-variable-samples/`, and the exact commands are in [Appendix A](#appendix-a--reproducing-every-table). The provenance (source hashes, environment, test state) is in [S0.4](#04-measurement-conventions).
 
-**Which collocation these numbers describe: the trapezoidal one.** They were measured when the self-consistent rule was opt-in, and the command line has since been switched the other way: `--self-consistent/--no-self-consistent` now defaults to **on** (KI-051), so a run from the command line plans the self-consistent rule and not the one these tables describe. `--no-self-consistent` still produces the trapezoidal plan, and the difference is measured in [RQ-A finding F10](research/RQ-A_tracking_error.md) (the S-curve's tracking error halves, 1.47 → 0.88 cm). **The tables have not been re-measured under the new default**, so read them as the trapezoidal plan's numbers and not as the command line's; the runner for that re-measurement is `docs/measurements/2026-10-20-variable-samples/run_sweep.py`, and it refuses to report a run whose tree changed underneath it.
+**These numbers describe the shipped planner**, and they are **not comparable** with the 2026-10-20-post-ki028 evidence, which was taken with the trapezoidal collocation and a uniform sample count. The two changes and what they cost are in [5.7](#57-the-collocation-where-a-sample-is-placed) and [5.8](#58-the-sample-layout-how-many-samples-a-segment-gets); the measurement that produced this section is in `docs/measurements/2026-10-20-variable-samples/`, and the runner takes the tree's fingerprint before and after the run, so a run whose tree changed underneath it is refused rather than quoted.
 
 **The tables in this section are generated**, not typed in: `python docs/research/rq_a/sync_tables.py` rewrites them from the measurement JSON and `--check` verifies that every number still matches.
 
 ### 9.1 Method
 
 - Robot config `examples/fll_choreo.json`, `-n 10` samples per segment, `accuracy_weight = 0` unless stated.
-- **The trapezoidal collocation** (the command line's `--no-self-consistent`), because that is what these numbers were measured with.
+- The **self-consistent collocation** (the default) and the **arc-length sample layout** (the sample budget split across the segments by their lengths).
 - Every candidate is solved, validated through the full gate chain, and scored independently.
 - "Gate" is the pass/fail of the whole chain. The failure reason is quoted from the `reasons` field of the machine-readable report.
 - Durations are the trajectory duration; the envelope is the maximum reachability radius over the path; tracking is the maximum closed-loop tracking error. The tracking gate is 0.50 cm, the transit envelope gate is 2 cm.
@@ -721,36 +724,36 @@ and `main.py --refine` puts the refined trajectory into the candidate set as a s
 
 | Mission | Seed | Duration s | Envelope cm | Tracking cm | Gate |
 |---|---|---:|---:|---:|---|
-| straight | baseline | 2.377 | 0.30 | 0.34 | **PASS** |
-| straight | rolling | 2.377 | 0.30 | 0.34 | **PASS** |
-| straight | bow_left | 2.377 | 0.30 | 0.34 | **PASS** |
-| straight | bow_right | 2.377 | 0.30 | 0.34 | **PASS** |
-| straight | turn_first | 2.377 | 0.30 | 0.34 | **PASS** |
-| s_curve | baseline | 3.696 | 0.78 | 1.55 | fail — tracking 1.55 cm; integration 1.33 cm |
-| s_curve | rolling | 3.788 | 0.75 | 1.73 | fail — tracking 1.73 cm; integration 1.14 cm |
-| s_curve | bow_left | 3.758 | 0.72 | 1.71 | fail — tracking 1.71 cm; integration 1.19 cm |
-| s_curve | bow_right | 3.793 | 0.75 | 1.73 | fail — tracking 1.73 cm; integration 1.17 cm |
-| s_curve | turn_first | 3.718 | 1.08 | 1.30 | fail — tracking 1.30 cm |
-| first4 | baseline | 2.176 | 0.32 | 0.24 | **PASS** |
-| first4 | rolling | 2.567 | 0.33 | 0.29 | **PASS** |
-| first4 | bow_left | 2.723 | 0.35 | 0.48 | **PASS** |
-| first4 | bow_right | 2.593 | 0.34 | 0.28 | **PASS** |
-| first4 | turn_first | 2.723 | 0.35 | 0.47 | **PASS** |
-| complex | baseline | 6.068 | 1.19 | 0.30 | **PASS** |
-| complex | rolling | 8.377 | 1.68 | 0.45 | **PASS** |
-| complex | bow_left | 8.634 | 1.75 | 0.41 | fail — motor force 0.007 N |
-| complex | bow_right | 8.662 | 1.71 | 0.41 | **PASS** |
-| complex | turn_first | 8.118 | 1.52 | 0.31 | **PASS** |
-| stops | baseline | 6.246 | 0.92 | 0.98 | fail — tracking 0.98 cm |
-| stops | rolling | 6.246 | 0.92 | 0.96 | fail — tracking 0.96 cm; integration 1.04 cm |
-| stops | bow_left | 6.246 | 0.92 | 0.93 | fail — tracking 0.93 cm |
-| stops | bow_right | 6.246 | 0.89 | 0.90 | fail — tracking 0.90 cm |
-| stops | turn_first | 6.274 | 0.94 | 1.25 | fail — tracking 1.25 cm; integration 1.10 cm |
-| events | baseline | 4.637 | 0.90 | 0.68 | fail — tracking 0.68 cm |
-| events | rolling | 4.636 | 0.90 | 0.68 | fail — tracking 0.68 cm |
-| events | bow_left | 4.637 | 0.91 | 0.66 | fail — tracking 0.66 cm |
-| events | bow_right | 4.636 | 0.90 | 0.68 | fail — tracking 0.68 cm |
-| events | turn_first | 4.637 | 0.90 | 0.65 | fail — tracking 0.65 cm |
+| straight | baseline | 2.377 | 0.30 | 0.00 | **PASS** |
+| straight | rolling | 2.377 | 0.30 | 0.00 | **PASS** |
+| straight | bow_left | 2.377 | 0.30 | 0.00 | **PASS** |
+| straight | bow_right | 2.377 | 0.30 | 0.00 | **PASS** |
+| straight | turn_first | 2.377 | 0.30 | 0.00 | **PASS** |
+| s_curve | baseline | 3.725 | 0.78 | 1.49 | fail — tracking 1.49 cm |
+| s_curve | rolling | 3.786 | 0.72 | 1.42 | fail — tracking 1.42 cm |
+| s_curve | bow_left | 3.697 | 0.70 | 1.27 | fail — tracking 1.27 cm |
+| s_curve | bow_right | 3.728 | 0.71 | 1.44 | fail — tracking 1.44 cm |
+| s_curve | turn_first | 3.738 | 1.07 | 1.53 | fail — tracking 1.53 cm |
+| first4 | baseline | 1.666 | 0.30 | 0.19 | fail — motor force 0.006 N |
+| first4 | rolling | 1.676 | 0.30 | 0.19 | **PASS** |
+| first4 | bow_left | 1.852 | 0.32 | 0.43 | fail — motor force 0.082 N |
+| first4 | bow_right | 1.847 | 0.32 | 0.40 | **PASS** |
+| first4 | turn_first | 1.674 | 0.30 | 0.20 | **PASS** |
+| complex | baseline | 6.401 | 1.25 | 0.24 | fail — motor force 0.014 N |
+| complex | rolling | 9.250 | 1.72 | 0.44 | **PASS** |
+| complex | bow_left | 9.239 | 1.63 | 0.58 | fail — motor force 0.082 N; tracking 0.58 cm |
+| complex | bow_right | 9.238 | 1.64 | 0.58 | fail — tracking 0.58 cm |
+| complex | turn_first | 9.249 | 1.72 | 0.44 | **PASS** |
+| stops | baseline | 4.978 | 0.85 | 0.75 | fail — tracking 0.75 cm |
+| stops | rolling | 5.690 | 0.97 | 1.60 | fail — tracking 1.60 cm |
+| stops | bow_left | 5.690 | 0.97 | 1.60 | fail — motor force 0.002 N; tracking 1.60 cm |
+| stops | bow_right | 5.730 | 0.98 | 1.76 | fail — tracking 1.76 cm |
+| stops | turn_first | 5.729 | 0.97 | 1.76 | fail — tracking 1.76 cm |
+| events | baseline | 4.654 | 0.89 | 0.63 | fail — tracking 0.63 cm |
+| events | rolling | 4.658 | 0.89 | 0.60 | fail — tracking 0.60 cm |
+| events | bow_left | 4.666 | 0.88 | 0.56 | fail — tracking 0.56 cm |
+| events | bow_right | 4.666 | 0.88 | 0.56 | fail — tracking 0.56 cm |
+| events | turn_first | 4.656 | 0.89 | 0.62 | fail — tracking 0.62 cm |
 
 **14 passing, 16 failing.**
 
@@ -760,36 +763,36 @@ Re-measured after the merge conditions went in (KI-024). The per-segment model n
 
 | Mission | Seed | Duration s | Envelope cm | Tracking cm | Gate |
 |---|---|---:|---:|---:|---|
-| straight | baseline | 2.377 | 0.30 | 0.34 | **PASS** |
-| straight | rolling | 2.377 | 0.30 | 0.34 | **PASS** |
-| straight | bow_left | 2.377 | 0.30 | 0.34 | **PASS** |
-| straight | bow_right | 2.377 | 0.30 | 0.34 | **PASS** |
-| straight | turn_first | 2.377 | 0.30 | 0.34 | **PASS** |
-| s_curve | baseline | 3.667 | 0.73 | 1.47 | fail — tracking 1.47 cm; integration 1.19 cm |
-| s_curve | rolling | 3.759 | 0.81 | 1.76 | fail — tracking 1.76 cm; integration 1.27 cm |
-| s_curve | bow_left | 3.723 | 0.79 | 1.78 | fail — tracking 1.78 cm; integration 1.13 cm |
-| s_curve | bow_right | 3.725 | 0.79 | 1.76 | fail — tracking 1.76 cm; integration 1.11 cm |
-| s_curve | turn_first | 3.720 | 1.06 | 1.39 | fail — tracking 1.39 cm; integration 1.21 cm |
-| first4 | baseline | 1.833 | 0.31 | 0.24 | **PASS** |
-| first4 | rolling | 1.796 | 0.31 | 0.24 | **PASS** |
-| first4 | bow_left | 1.715 | 0.30 | 0.40 | fail — motor force 0.071 N |
-| first4 | bow_right | 1.663 | 0.30 | 0.26 | **PASS** |
-| first4 | turn_first | 1.694 | 0.30 | 0.26 | fail — motor force 0.008 N |
-| complex | baseline | 4.650 | 0.98 | 0.43 | fail — motor force 0.074 N |
-| complex | rolling | 5.395 | 1.25 | 0.34 | **PASS** |
-| complex | bow_left | 5.878 | 1.35 | 0.35 | **PASS** |
-| complex | bow_right | 4.877 | 1.11 | 0.32 | **PASS** |
-| complex | turn_first | 5.795 | 1.38 | 0.36 | **PASS** |
-| stops | baseline | 5.138 | 0.94 | 2.19 | fail — tracking 2.19 cm; integration 1.24 cm |
-| stops | rolling | 4.788 | 0.79 | 0.94 | fail — tracking 0.94 cm |
-| stops | bow_left | 4.791 | 0.79 | 0.94 | fail — motor force 0.007 N; tracking 0.94 cm |
-| stops | bow_right | 4.784 | 0.79 | 0.93 | fail — motor force 0.001 N; tracking 0.93 cm |
-| stops | turn_first | 5.257 | 0.87 | 1.34 | fail — tracking 1.34 cm; integration 1.18 cm |
-| events | baseline | 4.416 | 0.82 | 0.46 | **PASS** |
-| events | rolling | 4.415 | 0.82 | 0.46 | **PASS** |
-| events | bow_left | 4.416 | 0.82 | 0.46 | **PASS** |
-| events | bow_right | 4.415 | 0.82 | 0.46 | **PASS** |
-| events | turn_first | 4.415 | 0.82 | 0.46 | **PASS** |
+| straight | baseline | 2.377 | 0.30 | 0.00 | **PASS** |
+| straight | rolling | 2.377 | 0.30 | 0.00 | **PASS** |
+| straight | bow_left | 2.377 | 0.30 | 0.00 | **PASS** |
+| straight | bow_right | 2.377 | 0.30 | 0.00 | **PASS** |
+| straight | turn_first | 2.377 | 0.30 | 0.00 | **PASS** |
+| s_curve | baseline | 3.636 | 0.71 | 1.42 | fail — tracking 1.42 cm |
+| s_curve | rolling | 3.757 | 0.83 | 1.56 | fail — tracking 1.56 cm |
+| s_curve | bow_left | 3.759 | 0.83 | 1.47 | fail — tracking 1.47 cm |
+| s_curve | bow_right | 3.776 | 0.79 | 1.63 | fail — tracking 1.63 cm |
+| s_curve | turn_first | 3.766 | 1.05 | 1.32 | fail — tracking 1.32 cm |
+| first4 | baseline | 1.687 | 0.30 | 0.19 | fail — motor force 0.006 N |
+| first4 | rolling | 1.713 | 0.30 | 0.19 | **PASS** |
+| first4 | bow_left | 1.870 | 0.32 | 0.43 | **PASS** |
+| first4 | bow_right | 1.843 | 0.33 | 0.40 | **PASS** |
+| first4 | turn_first | 1.664 | 0.30 | 0.19 | fail — motor force 0.062 N |
+| complex | baseline | 4.812 | 1.01 | 0.34 | **PASS** |
+| complex | rolling | 5.000 | 1.12 | 0.38 | **PASS** |
+| complex | bow_left | 4.864 | 1.10 | 0.36 | **PASS** |
+| complex | bow_right | 4.843 | 1.09 | 0.36 | **PASS** |
+| complex | turn_first | 4.952 | 1.11 | 0.38 | fail — motor force 0.062 N |
+| stops | baseline | 5.150 | 0.94 | 1.59 | fail — tracking 1.59 cm |
+| stops | rolling | 5.250 | 0.87 | 1.97 | fail — motor force 0.032 N; tracking 1.97 cm |
+| stops | bow_left | 5.251 | 0.86 | 1.91 | fail — motor force 0.022 N; tracking 1.91 cm |
+| stops | bow_right | 4.767 | 0.78 | 0.98 | fail — tracking 0.98 cm |
+| stops | turn_first | 4.766 | 0.78 | 0.98 | fail — motor force 0.011 N; tracking 0.98 cm |
+| events | baseline | 4.991 | 0.94 | 2.28 | fail — tracking 2.28 cm |
+| events | rolling | 4.410 | 0.81 | 0.45 | **PASS** |
+| events | bow_left | 4.411 | 0.81 | 0.45 | **PASS** |
+| events | bow_right | 4.411 | 0.81 | 0.45 | **PASS** |
+| events | turn_first | 4.411 | 0.81 | 0.45 | **PASS** |
 
 **17 passing, 13 failing.**
 
@@ -800,11 +803,11 @@ The rule is `min(tube, then duration)` among the passing candidates (`main.py:10
 | Mission | Equal-duration | Per-segment | Note |
 |---|---|---|---|
 | straight | **rolling** 2.377 s | **rolling** 2.377 s | **seed-insensitive**: the path has no turn, so the geometric seeds degenerate to the same guess |
-| s_curve | **no passing candidate** | **no passing candidate** | tracking 1.30-1.73 cm (equal-duration) and 1.39-1.78 cm (per-segment) on every seed |
-| first4 | **baseline** 2.176 s | **bow_right** 1.663 s | 5 of 5 equal-duration and 3 of 5 per-segment seeds pass |
-| complex | **baseline** 6.068 s | **bow_right** 4.877 s | 4 of 5 equal-duration and 4 of 5 per-segment seeds pass |
-| stops | **no passing candidate** | **no passing candidate** | tracking 0.90-1.25 cm (equal-duration) and 0.93-2.19 cm (per-segment) on every seed |
-| events | **no passing candidate** | **baseline** 4.416 s | equal-duration misses the gate (tracking 0.65-0.68 cm); 5 of 5 per-segment seeds pass |
+| s_curve | **no passing candidate** | **no passing candidate** | tracking 1.27-1.53 cm (equal-duration) and 1.32-1.63 cm (per-segment) on every seed |
+| first4 | **turn_first** 1.674 s | **rolling** 1.713 s | 3 of 5 equal-duration and 3 of 5 per-segment seeds pass |
+| complex | **turn_first** 9.249 s | **baseline** 4.812 s | 2 of 5 equal-duration and 4 of 5 per-segment seeds pass |
+| stops | **no passing candidate** | **no passing candidate** | tracking 0.75-1.76 cm (equal-duration) and 0.98-1.97 cm (per-segment) on every seed |
+| events | **no passing candidate** | **rolling** 4.410 s | equal-duration misses the gate (tracking 0.56-0.63 cm); 4 of 5 per-segment seeds pass |
 
 **7 of the 12 cells produce a trajectory at all.** The baseline is selected in 3 of them and a non-baseline seed in 4.
 
@@ -812,63 +815,73 @@ The rule is `min(tube, then duration)` among the passing candidates (`main.py:10
 
 Run with `--per-segment-dt --sweep`, so the grid adds the `baseline` seed at five weights on top of the five per-segment seeds.
 
-
-
-### 9.6 Table E — the full sweep: what the tool can actually deliver
-
-The default candidate set plus the timing-mode × accuracy-weight grid, both timing modes: **13 candidates per mission, 78 in total**. This is `--candidates 5 --sweep`, the most thorough configuration the CLI offers.
-
-**`example_mission_first4`** (wall 18.2 s, exit 0)
-
-| Mission | Wall | Passing | Selected | Duration s | Envelope cm | Tracking cm | Fastest passing |
-|---|---:|---:|---|---:|---:|---:|---|
-| straight | 18.6 s | 9/9 | `rolling` (equal-duration) | 2.377 | 0.30 | 0.34 | `baseline` 2.377 s |
-| s_curve | 28.7 s | **0/9** | *nothing passes* | — | — | — | — |
-| first4 | 22.8 s | 9/9 | `baseline` (equal-duration) | 2.176 | 0.32 | 0.24 | `baseline` 2.176 s |
-| complex | 76.7 s | 8/9 | `baseline` (equal-duration) | 6.068 | 1.19 | 0.30 | `baseline` 6.068 s |
-| stops | 40.4 s | **0/9** | *nothing passes* | — | — | — | — |
-| events | 25.0 s | 1/9 | `baseline` (equal-duration) | 4.721 | 0.89 | 0.49 | `baseline` 4.721 s |
-
-**`example_complex_mission`** (wall 48.6 s, exit 0)
+**`example_mission_first4`** (wall 29.2 s, exit 0)
 
 | # | Seed | Timing | Weight | Duration s | Envelope cm | Tracking cm | Gate |
 |---|---|---|---:|---:|---:|---:|---|
-| 1 | baseline | per-segment | 0 | 4.650 | 0.98 | 0.43 | fail — motor force 0.074 N |
-| 2 | rolling | per-segment | 0 | 5.395 | 1.25 | 0.34 | **PASS** |
-| 3 | bow_left | per-segment | 0 | 5.878 | 1.35 | 0.35 | **PASS** |
-| 4 | bow_right | per-segment | 0 | 4.877 | 1.11 | 0.32 | **PASS** |
-| 5 | turn_first | per-segment | 0 | 5.795 | 1.38 | 0.36 | **PASS** |
-| 6 | baseline | per-segment | 0.001 | 6.800 | 1.50 | 0.91 | fail — tracking 0.91 cm |
-| 7 | baseline | per-segment | 0.002 | 8.604 | 1.57 | 0.67 | fail — tracking 0.67 cm |
-| 8 | baseline | per-segment | 0.005 | 7.250 | 1.57 | 0.71 | fail — tracking 0.71 cm |
-| 9 | baseline | per-segment | 0.01 | 6.985 | 1.58 | 0.79 | fail — tracking 0.79 cm |
+| 1 | baseline | per-segment | 0 | 1.687 | 0.30 | 0.19 | fail — motor force 0.006 N |
+| 2 | rolling | per-segment | 0 | 1.713 | 0.30 | 0.19 | **PASS** |
+| 3 | bow_left | per-segment | 0 | 1.870 | 0.32 | 0.43 | **PASS** |
+| 4 | bow_right | per-segment | 0 | 1.843 | 0.33 | 0.40 | **PASS** |
+| 5 | turn_first | per-segment | 0 | 1.664 | 0.30 | 0.19 | fail — motor force 0.062 N |
+| 6 | baseline | per-segment | 0.001 | 1.742 | 0.31 | 0.26 | **PASS** |
+| 7 | baseline | per-segment | 0.002 | 1.791 | 0.31 | 0.26 | **PASS** |
+| 8 | baseline | per-segment | 0.005 | 1.875 | 0.32 | 0.27 | **PASS** |
+| 9 | baseline | per-segment | 0.01 | 1.948 | 0.32 | 0.28 | **PASS** |
 
-**54 of 108 candidates pass (50 %).**
+**`example_complex_mission`** (wall 52.1 s, exit 0)
+
+| # | Seed | Timing | Weight | Duration s | Envelope cm | Tracking cm | Gate |
+|---|---|---|---:|---:|---:|---:|---|
+| 1 | baseline | per-segment | 0 | 4.812 | 1.01 | 0.34 | **PASS** |
+| 2 | rolling | per-segment | 0 | 5.000 | 1.12 | 0.38 | **PASS** |
+| 3 | bow_left | per-segment | 0 | 4.864 | 1.10 | 0.36 | **PASS** |
+| 4 | bow_right | per-segment | 0 | 4.843 | 1.09 | 0.36 | **PASS** |
+| 5 | turn_first | per-segment | 0 | 4.952 | 1.11 | 0.38 | fail — motor force 0.062 N |
+| 6 | baseline | per-segment | 0.001 | 6.401 | 1.51 | 1.44 | fail — tracking 1.44 cm |
+| 7 | baseline | per-segment | 0.002 | 5.749 | 1.29 | 0.61 | fail — tracking 0.61 cm |
+| 8 | baseline | per-segment | 0.005 | 5.109 | 1.09 | 0.39 | **PASS** |
+| 9 | baseline | per-segment | 0.01 | 7.072 | 1.54 | 1.38 | fail — tracking 1.38 cm |
+
+### 9.6 Table E — the full sweep: what the tool can actually deliver
+
+The default candidate set plus the timing-mode x accuracy-weight grid, both timing modes: **13 candidates per mission, 78 in total**. This is `--candidates 5 --sweep`, the most thorough configuration the CLI offers.
+
+| Mission | Wall | Passing | Selected | Duration s | Envelope cm | Tracking cm | Fastest passing |
+|---|---:|---:|---|---:|---:|---:|---|
+| straight | 33.4 s | 9/9 | `rolling` (equal-duration) | 2.377 | 0.30 | 0.00 | `bow_right` 2.377 s |
+| s_curve | 49.8 s | **0/9** | *nothing passes* | — | — | — | — |
+| first4 | 30.0 s | 7/9 | `turn_first` (equal-duration) | 1.674 | 0.30 | 0.20 | `turn_first` 1.674 s |
+| complex | 59.3 s | 5/9 | `baseline` (equal-duration) | 6.457 | 1.50 | 0.27 | `baseline` 6.457 s |
+| stops | 69.0 s | **0/9** | *nothing passes* | — | — | — | — |
+| events | 61.2 s | 3/9 | `baseline` (equal-duration) | 4.673 | 0.88 | 0.49 | `baseline` 4.673 s |
 
 ### 9.7 Why the timing models behave so differently
 
 The segment-time readout in the logs makes the difference concrete. For the complex mission:
 
 ```text
-baseline, equal-duration:  0.67 0.67 0.67 0.67 0.67 0.67 0.67 0.67 0.67 s
-baseline, per-segment:     0.62 0.39 0.76 0.57 0.41 0.46 0.92 0.66 0.66 s
+baseline, equal-duration:  one dt for the whole path, and the sample count
+                          follows the length, so the long segments get the time
+baseline, per-segment:    one dt per segment, and the time lands where the
+                          path needs it
 ```
 
-Equal-duration gives **every segment the same time**, whatever its length, because one shared `dt` and a fixed sample count per segment means each segment is allotted `samples_per_segment * dt`. The per-segment model allocates time where the path needs it.
+The two models are not peers because the **sample count is not uniform any more**: a segment's duration is `s_i * dt` under the equal-duration model, and `s_i` follows the arc length, so the long segments get more of the time - but still the same *interval*, so the robot is sampled finely and driven slowly there. The per-segment model gives each segment its own interval, and the time lands where the path needs it. On the complex mission the two are 9.249 s and 4.812 s.
 
 ### 9.8 What the tables say
 
-**Finding 1 — the seeds win on speed in 4 of the 7 cells that produce a trajectory.** straight under equal-duration (`rolling`, 2.377 s); straight under per-segment (`rolling`, 2.377 s); first4 under per-segment (`bow_right`, 1.663 s); complex under per-segment (`bow_right`, 4.877 s). Everywhere else the `baseline` seed is the fastest passing candidate.
+**Finding 1 — the seeds win on speed in 6 of the 7 cells that produce a trajectory.** The `baseline` seed is selected in one of them (the complex mission under per-segment timing, 4.812 s); a non-baseline seed in the other six: straight under both timing models (`rolling`, 2.377 s), first4 under both (`turn_first` 1.674 s and `rolling` 1.713 s), the complex mission under equal-duration (`turn_first`, 9.249 s) and the events mission under per-segment (`rolling`, 4.410 s).
 
-**Finding 2 — the seeds rescue almost nothing: one cell.** The baseline fails in 6 of the 12 cells. In one of them — the complex mission under per-segment timing, where the baseline overshoots the motor-force limit by 0.074 N — four non-baseline seeds pass. In the other 5 (the S-curve, the stops mission, and the events mission under equal-duration timing) no seed passes either. The seeds buy insurance against a *bad* baseline, and in this tree the baseline is rarely bad on its own: it is either the fastest passing candidate or it fails so hard that nothing passes.
+**Finding 2 — the seeds rescue four cells, and the baseline fails in 9 of the 12.** The baseline is the fastest passing candidate in only one cell, and it is rescued in four: first4 under both timing models (it misses the motor-force limit by 0.006 N), the complex mission under equal-duration (0.014 N) and the events mission under per-segment (it misses the tracking gate at 0.63 cm). The other five failures are the S-curve and the stops mission, where no seed passes either. The seeds are doing more work than they used to, and the work is in the **equal-duration** model - the per-segment model is where the baseline is enough.
 
-**Finding 3 — the tracking gate is the binding constraint, and the envelope gate never binds.** Of the 29 failing candidates: 25 cite the tracking error, 6 the motor force, 13 the forward-integration check and **0** the envelope radius. The largest envelope measured anywhere in the matrix is 1.75 cm against a 2 cm threshold. The reachability tube — the thing the whole interval-propagation machinery exists to compute — is never the reason a candidate is rejected.
+**Finding 3 — the tracking gate is still the binding constraint, and the envelope gate still never binds.** Of the 34 failing candidates: 28 cite the tracking error, 11 the motor force, **0** the forward-integration check and **0** the envelope radius. The largest envelope measured anywhere in the matrix is 1.72 cm against a 2 cm threshold. The reachability tube - the thing the whole interval-propagation machinery exists to compute - is never the reason a candidate is rejected. **The forward-integration failures are gone**, and they went with the self-consistent collocation: the plan no longer disagrees with its own integration, so the audit's check has nothing left to catch.
 
-**Finding 4 — the failures cluster by mission, not by seed.** The S-curve and the stops mission fail every configuration: both timing models, all five seeds, all five weights. That is a property of the path and the controller, not of the starting point. It is also the clearest signal that those two are a *planner* problem, not a *seed* problem.
+**Finding 4 — the failures still cluster by mission, not by seed.** The S-curve and the stops mission fail every configuration: both timing models, all five seeds, all five weights. Their best tracking errors are 1.27 cm and 0.75 cm against a 0.50 cm gate. That is a property of the path and the controller, not of the starting point, and it is the clearest signal that those two are a *planner* problem, not a *seed* problem.
 
-**Finding 5 — the weight is a search axis, not a dial.** On the complex mission the passing weights are not the largest ones and not the smallest one either, and the duration is not monotone in the weight. There is no weight that is "safest"; there are weights that happen to land well for a given path.
+**Finding 5 — the weight is a search axis, not a dial.** On the complex mission the passing weights are 0 and 0.005 (4.812 s and 5.109 s) and the failing ones are 0.001, 0.002 and 0.01; the duration is not monotone in the weight, and the weight that passes is neither the largest nor the smallest. There is no weight that is "safest"; there are weights that happen to land well for a given path.
 
-**Finding 6 — the two timing models are not peers.** Per-segment is faster on the missions it can still pass (first4 1.663 s against 2.176 s, complex 4.877 s against 6.068 s, events 4.416 s against 4.637 s) and it fails the tracking gate more often. That is exactly the trade the candidate set exists to arbitrate, and it is why both modes are in the default set.
+**Finding 6 — the two timing models are not peers, and the gap widened.** The complex mission is 9.249 s under equal-duration timing and 4.812 s under per-segment (1.9x), and the events mission is 0.56-0.63 cm under equal-duration (failing on the tracking gate) and 0.45 cm under per-segment (passing). The equal-duration model now spends its time badly on a path with unequal segments: the sample count follows the length, so a long segment gets more samples and, with one shared `dt`, more time. On the two paths whose segments are short and even (first4, the stops mission) the equal-duration model is the faster one, which is the shape of the trade the candidate set exists to arbitrate.
 
 ---
 
@@ -1757,51 +1770,51 @@ Every symbol this document mentions, with its location in the tree that was meas
 
 | Symbol | Line | Role |
 |---|---|---|
-| `GUESS_STYLES` | 8 | The five seed names |
-| `TrajectoryOptimizer` | 11 | The optimizer |
-| `TrajectoryOptimizer.solve` | 17 | The public entry point; `guess_style`, `per_segment_dt`, `initial_guess`, `fast_polish` |
-| `TrajectoryOptimizer.guess_from_samples` | 128 | Rebuild a guess array from a sample list (used by the refine probe) |
-| `TrajectoryOptimizer._solve_once` | 148 | One IPOPT pass |
-| `interval_dt` | 183 | The interval length for interval `k` |
-| `dt` bounds | 241-242 | `dt_i` in `[0.001, 1.0]` |
-| `dt_ref` | 219, 484 | The jerk normalising interval (KI-022) |
-| `TrajectoryOptimizer._compute_cost` | 469 | The objective |
-| `TrajectoryOptimizer._build_initial_guess` | 499 | The seed builder |
-| `TrajectoryOptimizer._guess_point` | 551 | The baseline geometry |
-| `TrajectoryOptimizer._offset_segment_interiors` | 586 | `bow_left` / `bow_right` |
-| bow amplitude | 599 | `min(0.10 * length, 0.03)` |
-| `TrajectoryOptimizer._rotate_before_driving` | 608 | `turn_first` |
-| spin fraction / threshold | 616, 623 | `0.30 * s`, `0.4 rad` |
-| `TrajectoryOptimizer._set_rolling_speeds` | 641 | `rolling` |
-| `TrajectoryOptimizer._sample_times` | 668 | Timestamps from the per-segment `dt` |
-| `TrajectoryOptimizer.format_output` | 677 | Samples with forces and events |
+| `GUESS_STYLES` | 10 | The five seed names |
+| `TrajectoryOptimizer` | 24 | The optimizer |
+| `TrajectoryOptimizer.solve` | 86 | The public entry point; `guess_style`, `per_segment_dt`, `initial_guess`, `fast_polish` |
+| `TrajectoryOptimizer.guess_from_samples` | 353 | Rebuild a guess array from a sample list (used by the refine probe) |
+| `TrajectoryOptimizer._solve_once` | 373 | One IPOPT pass |
+| `interval_dt` | 418 | The interval length for interval `k` |
+| `dt` bounds | 461-462 | `dt_i` in `[0.001, 1.0]` |
+| `dt_ref` | 444, 575, 706 | The jerk normalising interval (KI-022) |
+| `TrajectoryOptimizer._compute_cost` | 684 | The objective |
+| `TrajectoryOptimizer._build_initial_guess` | 720 | The seed builder |
+| `TrajectoryOptimizer._guess_point` | 780 | The baseline geometry |
+| `TrajectoryOptimizer._offset_segment_interiors` | 806 | `bow_left` / `bow_right` |
+| bow amplitude | 829 | the circular-arc sagitta, `0.5 * L * tan(abs(dtheta) / 4)`, capped at `0.35 * L` |
+| `TrajectoryOptimizer._rotate_before_driving` | 841 | `turn_first` |
+| spin fraction / threshold | 873, 866-868 | `0.30 * s_i`, and the threshold from the track width |
+| `TrajectoryOptimizer._set_rolling_speeds` | 889 | `rolling` |
+| `TrajectoryOptimizer._sample_times` | 932 | Timestamps from the per-segment `dt` |
+| `TrajectoryOptimizer.format_output` | 953 | Samples with forces and events |
 
 ## `main.py`
 
 | Symbol | Line | Role |
 |---|---|---|
-| `VALIDATION_MARKER` | 35 | The `##OVERBOARD-VALIDATION## ` prefix |
-| `HAS_JAX` | 48 | JAX + Immrax availability |
+| `VALIDATION_MARKER` | 43 | The `##OVERBOARD-VALIDATION## ` prefix |
+| `HAS_JAX` | 56 | JAX + Immrax availability |
 | `ImmraxValidator`, `JAXRobotConfig` | 50, 51 | Module-level handles, patchable by tests |
-| `PRESETS` | 55 | `fast` / `balanced` / `safe` |
-| `_ensure_jax_classes` | 80 | The lazy import |
-| `_select_attempt` | 92 | The selection rule |
-| `CANDIDATE_WEIGHT_STEP` | 107 | The legacy ladder step |
-| `SWEEP_WEIGHTS` | 116 | The sweep grid |
-| `_THREAD_ENV_VARS` | 120 | The per-worker BLAS limits |
-| `_candidate_specs` | 124 | The candidate set |
-| `_solve_candidate_worker` | 199 | One candidate in a worker process |
-| `_solve_candidates` | 222 | The parallel solve |
-| `_export_block_reason` | 272 | The export gate |
-| `_immrax_failure_reasons` | 281 | Human-readable failures |
-| `_finite` | 303 | JSON-safe floats |
-| `_segment_report` | 314 | The per-segment breakdown |
-| `_emit_validation_report` | 376 | The machine-readable report |
-| `_cpu_failure_reasons` | 396 | The CPU audit failures |
-| `_apply_preset` | 419 | The presets |
-| `_load_waypoints` | 480 | The waypoint parser; thresholds at 527-535 |
-| `_print_summary` | 636 | The console table |
-| `main` | 766 | The CLI |
+| `PRESETS` | 63 | `fast` / `balanced` / `safe` |
+| `_ensure_jax_classes` | 88 | The lazy import |
+| `_select_attempt` | 100 | The selection rule |
+| `CANDIDATE_WEIGHT_STEP` | 115 | The legacy ladder step |
+| `SWEEP_WEIGHTS` | 124 | The sweep grid |
+| `_THREAD_ENV_VARS` | 128 | The per-worker BLAS limits |
+| `_candidate_specs` | 193 | The candidate set |
+| `_solve_candidate_worker` | 317 | One candidate in a worker process |
+| `_solve_candidates` | 358 | The parallel solve |
+| `_export_block_reason` | 436 | The export gate |
+| `_immrax_failure_reasons` | 445 | Human-readable failures |
+| `_finite` | 467 | JSON-safe floats |
+| `_segment_report` | 536 | The per-segment breakdown |
+| `_emit_validation_report` | 608 | The machine-readable report |
+| `_cpu_failure_reasons` | 659 | The CPU audit failures |
+| `_apply_preset` | 682 | The presets |
+| `_load_waypoints` | 747 | The waypoint parser; thresholds at 527-535 |
+| `_print_summary` | 914 | The console table |
+| `main` | 1073 | The CLI |
 | the candidate loop | 1000-1167 | Solve → validate → score |
 | the local threshold | 1114 | 2 cm for transit |
 | the per-candidate score | 1130-1140 | `ok`, `violation`, `tube`, `tracking_m` |
@@ -1815,10 +1828,10 @@ Every symbol this document mentions, with its location in the tree that was meas
 |---|---|---|
 | `forward_integrate` | 7 | RK4 re-integration at 1 ms |
 | `audit_constraints` | 122 | Per-wheel force, slip, traction, speed |
-| `compute_metrics` | 212 | Duration, jerk, tortuosity, chattering |
-| `check_final_waypoint` | 300 | 2 cm / 0.02 rad |
-| `validate_samples` | 321 | The in-memory gate |
-| `validate_trajectory` | 348 | The CLI/report entry point |
+| `compute_metrics` | 211 | Duration, jerk, tortuosity, chattering |
+| `check_final_waypoint` | 299 | 2 cm / 0.02 rad |
+| `validate_samples` | 320 | The in-memory gate |
+| `validate_trajectory` | 347 | The CLI/report entry point |
 
 ## `immrax_validator.py`
 
@@ -1826,19 +1839,19 @@ Every symbol this document mentions, with its location in the tree that was meas
 |---|---|---|
 | `unroll_trajectory_headings` | 14 | The ±π fix |
 | `REACHABILITY_SUBSTEPS` | 38 | 20 |
-| `CONTROL_DT` | 42 | 0.02 s |
-| `PLANT_SUBSTEPS` | 43 | 4 |
-| `_interpolated_reference` | 46 | The linear reference + the Ramsete gain |
-| `RobotOpenLoop` | 92 | The default plant |
-| `DigitalTwinOpenLoop` | 139 | The fitted 5-state plant |
-| `MIN_TAU_S` | 157 | 0.01 s |
-| `RamseteController` | 217 | `b = 2.0`, `zeta = 0.7` |
-| `ClosedLoopRobotSystem` | 259 | The Immrax system |
-| `ImmraxValidator` | 279 | The validator |
-| `_advance_belief` | 349 | The robot's own pose estimate |
-| `validate_trajectory` | 420 | The entry point; `safety_threshold_m = 0.005` at 427 |
-| `check_sample_interval` | 444 | The per-sample interval physics |
-| `compute_reachability` | 537 | The interval propagation |
+| `CONTROL_DT` | 59 | 0.02 s |
+| `PLANT_SUBSTEPS` | 60 | 4 |
+| `_interpolated_reference` | 207 | The linear reference + the Ramsete gain |
+| `RobotOpenLoop` | 264 | The default plant |
+| `DigitalTwinOpenLoop` | 334 | The fitted 5-state plant |
+| `MIN_TAU_S` | 352 | 0.01 s |
+| `RamseteController` | 496 | `b = 2.0`, `zeta = 0.7` |
+| `ClosedLoopRobotSystem` | 543 | The Immrax system |
+| `ImmraxValidator` | 737 | The validator |
+| `_advance_belief` | 717 | The robot's own pose estimate |
+| `validate_trajectory` | 980 | The entry point; `safety_threshold_m = 0.005` at 427 |
+| `check_sample_interval` | 1010 | The per-sample interval physics |
+| `compute_reachability` | 1273 | The interval propagation |
 | the divergence radius | 714 | 0.05 m |
 
 ## `multiverse_optimizer.py`
@@ -1858,34 +1871,34 @@ Every symbol this document mentions, with its location in the tree that was meas
 | `TrajectoryCritic` | 180 | The six metrics |
 | `evaluate` | 192 | The window detection |
 | `MasterTrajectoryOptimizer` | 252 | The pipeline |
-| `solve` | 274 | The five phases |
-| `_profile_kinematics` | 379 | Phase 2 |
-| `_global_solve` | 454 | Phase 5 and the probe |
-| `_probe_refined_guess` | 487 | The bounded probe |
+| `solve` | 281 | The five phases |
+| `_profile_kinematics` | 492 | Phase 2 |
+| `_global_solve` | 567 | Phase 5 and the probe |
+| `_probe_refined_guess` | 600 | The bounded probe |
 
 ## `jax_optimizer.py`
 
 | Symbol | Line | Role |
 |---|---|---|
 | `local_trajectory_cost` | 11 | The proxy cost |
-| `local_trajectory_projection` | 39 | The bounds projection |
-| `generate_candidates_jax` | 52 | 4 topologies × 3 velocities + 50 STOMP |
-| `perturb` | 80 | The STOMP noise |
-| `get_jax_refiner` | 105 | The `jaxopt.ProjectedGradient` refiner |
+| `local_trajectory_projection` | 52 | The bounds projection |
+| `generate_candidates_jax` | 65 | 4 topologies × 3 velocities + 50 STOMP |
+| `perturb` | 102 | The STOMP noise |
+| `get_jax_refiner` | 127 | The `jaxopt.ProjectedGradient` refiner |
 
 ## `robot_model.py`
 
 | Symbol | Line | Role |
 |---|---|---|
-| `wheel_normal_forces` | 10 | The one weight-transfer model |
-| `RobotConfig` | 38 | The config abstraction |
-| `uncertainties` | 116-133 | The seven intervals |
-| `get_max_force_at_velocity` | 138 | The motor curve |
-| `get_robust_force_params` | 183 | The worst case for the optimizer |
-| `DifferentialDriveModel` | 227 | The force model |
-| `get_max_wheel_force_symbolic` | 312 | The per-wheel limit |
-| `get_traction_limit_symbolic` | 334 | The per-wheel traction limit |
-| `check_constraints` | 357 | The CPU-side check |
+| `wheel_normal_forces` | 13 | The one weight-transfer model |
+| `RobotConfig` | 41 | The config abstraction |
+| `uncertainties` | 229 | The seven intervals |
+| `get_max_force_at_velocity` | 439 | The motor curve |
+| `get_robust_force_params` | 506 | The worst case for the optimizer |
+| `DifferentialDriveModel` | 705 | The force model |
+| `get_max_wheel_force_symbolic` | 790 | The per-wheel limit |
+| `get_traction_limit_symbolic` | 812 | The per-wheel traction limit |
+| `check_constraints` | 835 | The CPU-side check |
 
 ## `path_planning.py`
 
@@ -1893,20 +1906,20 @@ Every symbol this document mentions, with its location in the tree that was meas
 |---|---|---|
 | `ReedsSheppPath` | 11 | The wrapper |
 | `plan` | 28 | The path; returns `None` on failure |
-| `linear_interpolation_waypoints` | 58 | The fallback |
+| `linear_interpolation_waypoints` | 93 | The fallback |
 
 ## `digital_twin.py`
 
 | Symbol | Line | Role |
 |---|---|---|
-| `ActuatorFit` | 81 | gain, tau, delay, accel limit |
-| `OdometryFit` | 107 | Distance and heading scale |
-| `SlipFit` | 126 | The braking shortfall |
-| `SensorFit` | 151 | The gyro and accel biases |
-| `DigitalTwinConfig` | 258 | The whole fitted model |
-| `actuator_gain_range` | 325 | The interval that goes into Immrax |
-| `brake_shortfall` | 380 | Loaded, reported, not applied by default |
-| `load_sysid_fit` | 444 | The loader |
+| `ActuatorFit` | 56 | gain, tau, delay, accel limit |
+| `OdometryFit` | 82 | Distance and heading scale |
+| `SlipFit` | 101 | The braking shortfall |
+| `SensorFit` | 126 | The gyro and accel biases |
+| `DigitalTwinConfig` | 412 | The whole fitted model |
+| `actuator_gain_range` | 488 | The interval that goes into Immrax |
+| `brake_shortfall` | 602 | Loaded, reported, not applied by default |
+| `load_sysid_fit` | 676 | The loader |
 
 ---
 

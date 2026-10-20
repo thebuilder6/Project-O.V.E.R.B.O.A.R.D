@@ -191,12 +191,13 @@ class FieldModel:
     def collisions(
         self,
         samples: List[Dict[str, Any]],
-        robot_radius_m: float = 0.0,
+        robot_radius_m: Any = 0.0,
     ) -> List[Collision]:
         """Where the planned path runs into something.
 
         The robot is treated as a disc of ``robot_radius_m`` centred on the
-        path, which is the axle-to-axle width of a differential drive.
+        path, which is the axle-to-axle width of a differential drive, or
+        computed from a ``RobotConfig`` footprint.
 
         The path *between* the samples is checked too. The samples are ten
         per waypoint segment, so their spacing is set by the length of the
@@ -213,12 +214,19 @@ class FieldModel:
         Args:
             samples: the planned samples, each with ``x``, ``y`` and
                 optionally ``t``.
-            robot_radius_m: the radius of the robot's body.
+            robot_radius_m: the radius of the robot's body, or a RobotConfig.
 
         Returns:
             The collisions, in the order the samples appear. One entry per
             obstacle: the deepest overlap wins.
         """
+        if hasattr(robot_radius_m, "chassis_radius_m"):
+            eff_radius = float(robot_radius_m.chassis_radius_m())
+        elif hasattr(robot_radius_m, "track_width"):
+            eff_radius = float(robot_radius_m.track_width) / 2.0
+        else:
+            eff_radius = float(robot_radius_m or 0.0)
+
         found: Dict[str, Collision] = {}
         for index, sample in enumerate(samples):
             try:
@@ -228,7 +236,7 @@ class FieldModel:
                 continue
             self._check_point(found, index, x, y,
                               float(sample.get("t", 0.0) or 0.0),
-                              robot_radius_m)
+                              eff_radius)
 
         # The path between the samples.
         for index in range(len(samples) - 1):
@@ -240,15 +248,57 @@ class FieldModel:
                 continue
             t0 = float(first.get("t", 0.0) or 0.0)
             t1 = float(second.get("t", 0.0) or 0.0)
-            steps = _steps_between(x0, y0, x1, y1, robot_radius_m)
+            steps = _steps_between(x0, y0, x1, y1, eff_radius)
             for step in range(1, steps):
                 frac = step / steps
                 self._check_point(
                     found, index,
                     x0 + (x1 - x0) * frac, y0 + (y1 - y0) * frac,
                     t0 + (t1 - t0) * frac,
-                    robot_radius_m)
+                    eff_radius)
         return sorted(found.values(), key=lambda item: item.index)
+
+    def sensor_hits(
+        self,
+        samples: List[Dict[str, Any]],
+        sensor_offsets: Dict[str, Tuple[float, float]],
+    ) -> Dict[str, List[Dict[str, Any]]]:
+        """Check where robot sensors pass over obstacles on the field.
+
+        Args:
+            samples: trajectory samples with 'x', 'y', and 'heading'.
+            sensor_offsets: mapping of sensor name to (x_offset, y_offset) in
+                the robot frame (metres).
+
+        Returns:
+            Dictionary mapping sensor name to list of hit obstacle dictionaries.
+        """
+        results: Dict[str, List[Dict[str, Any]]] = {name: [] for name in sensor_offsets}
+        for name, (dx, dy) in sensor_offsets.items():
+            seen_obstacles = set()
+            for sample in samples:
+                try:
+                    x = float(sample["x"])
+                    y = float(sample["y"])
+                except (KeyError, TypeError, ValueError):
+                    continue
+                theta = float(sample.get("heading", 0.0) or 0.0)
+                cos_t = math.cos(theta)
+                sin_t = math.sin(theta)
+                sx = x + dx * cos_t - dy * sin_t
+                sy = y + dx * sin_t + dy * cos_t
+                for obs in self.obstacles:
+                    if obs.contains_point(sx, sy):
+                        if obs.id not in seen_obstacles:
+                            seen_obstacles.add(obs.id)
+                            results[name].append({
+                                "id": obs.id,
+                                "name": obs.name,
+                                "t": float(sample.get("t", 0.0) or 0.0),
+                                "sensor_x": sx,
+                                "sensor_y": sy,
+                            })
+        return results
 
     def _check_point(self, found, index, x, y, t, robot_radius_m):
         """Record the deepest overlap at one point of the path."""

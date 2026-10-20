@@ -27,6 +27,19 @@ class JAXRobotConfig:
         self.torque_headroom = float(rc.torque_headroom)
         self.speed_headroom = float(rc.speed_headroom)
 
+        # Drivetrain friction constants
+        self.rolling_resistance = float(rc.rolling_resistance)
+        self.gearbox_coulomb_nm = float(rc.gearbox_coulomb_nm)
+        self.gearbox_viscous_nm_s = float(rc.gearbox_viscous_nm_s)
+        self.reflected_inertia_kg_m2 = float(rc.reflected_inertia_kg_m2)
+
+        # Chassis footprint and sensor geometry
+        self.width_m = float(rc.width_m)
+        self.length_m = float(rc.length_m)
+        self.front_bumper_m = float(rc.front_bumper_m)
+        self.back_bumper_m = float(rc.back_bumper_m)
+        self.lever_arm_m = float(rc.lever_arm_m)
+
         # Uncertainty Intervals (normalized by RobotConfig, including the
         # nested robot.uncertainties block used by canonical configs).
         self.track_width_range = tuple(rc.uncertainties["track_width_range"])
@@ -36,6 +49,9 @@ class JAXRobotConfig:
         self.cof_range = tuple(rc.uncertainties["cof"])
         self.torque_headroom_range = tuple(rc.uncertainties["torque_headroom"])
         self.backlash_range = tuple(rc.uncertainties["gear_backlash_m"])
+        self.initial_x_range = tuple(rc.uncertainties["initial_x_m"])
+        self.initial_y_range = tuple(rc.uncertainties["initial_y_m"])
+        self.initial_theta_range = tuple(rc.uncertainties["initial_theta_rad"])
 
     def no_load_wheel_speed_worst_case(self) -> float:
         """The wheel speed at which the motor makes no torque (m/s).
@@ -75,7 +91,7 @@ class JAXRobotConfig:
             return force
 
     def max_linear_speed(self, apply_headroom: bool = True) -> jnp.ndarray:
-        speed = self.v_max_rad_s * self.wheel_radius
+        speed = self.v_max_rad_s * self.wheel_radius / jnp.maximum(self.gearing, 1e-9)
         if apply_headroom:
             speed *= self.speed_headroom
         return speed

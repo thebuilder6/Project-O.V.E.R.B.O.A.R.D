@@ -1,0 +1,102 @@
+# command: C:\Users\jumpi\AppData\Local\Microsoft\WindowsApps\PythonSoftwareFoundation.Python.3.12_qbz5n2kfra8p0\python.exe main.py -c examples/fll_choreo.json -w examples/example_with_events.json -o C:\Users\jumpi\AppData\Local\Temp\tmpkrflafk8\example_with_events.traj --validate --candidates 5 --per-segment-dt --sweep
+# wall_seconds: 55.7
+# exit_code: 0
+
+Using the example robot config (examples/fll_choreo.json). Pass -c/--config with your own robot to plan for your build.
+Using the simple CasADi optimizer
+Solving 4 waypoints (samples=10, accuracy_weight=0.0, candidates=5, per-segment dt)...
+Solving 9 candidates (in parallel)...
+Candidate 1/9 (guess_style=baseline, per-segment dt, a=0)...
+  Running the Immrax robustness check...
+  FAILED: tracking error 2.28 cm > 0.50 cm.
+Candidate 2/9 (guess_style=rolling, per-segment dt, a=0)...
+  Running the Immrax robustness check...
+  Passed! envelope 0.81 cm, all segments within thresholds.
+Candidate 3/9 (guess_style=bow_left, per-segment dt, a=0)...
+  Running the Immrax robustness check...
+  Passed! envelope 0.81 cm, all segments within thresholds.
+Candidate 4/9 (guess_style=bow_right, per-segment dt, a=0)...
+  Running the Immrax robustness check...
+  Passed! envelope 0.81 cm, all segments within thresholds.
+Candidate 5/9 (guess_style=turn_first, per-segment dt, a=0)...
+  Running the Immrax robustness check...
+  Passed! envelope 0.81 cm, all segments within thresholds.
+Candidate 6/9 (guess_style=baseline, per-segment dt, a=0.001)...
+  Running the Immrax robustness check...
+  Passed! envelope 0.81 cm, all segments within thresholds.
+Candidate 7/9 (guess_style=baseline, per-segment dt, a=0.002)...
+  Running the Immrax robustness check...
+  Passed! envelope 0.81 cm, all segments within thresholds.
+Candidate 8/9 (guess_style=baseline, per-segment dt, a=0.005)...
+  Running the Immrax robustness check...
+  FAILED: tracking error 2.11 cm > 0.50 cm.
+Candidate 9/9 (guess_style=baseline, per-segment dt, a=0.01)...
+  Running the Immrax robustness check...
+  FAILED: tracking error 2.10 cm > 0.50 cm.
+  Candidate 1 (baseline, per-seg, a=0):  4.991 s, envelope 0.94 cm (failed)
+      segment times: 1.40 1.45 2.15 s
+  Candidate 2 (rolling, per-seg, a=0):  4.410 s, envelope 0.81 cm (ok)
+      segment times: 1.39 1.42 1.59 s
+  Candidate 3 (bow_left, per-seg, a=0):  4.411 s, envelope 0.81 cm (ok)
+      segment times: 1.40 1.42 1.59 s
+  Candidate 4 (bow_right, per-seg, a=0):  4.411 s, envelope 0.81 cm (ok)
+      segment times: 1.40 1.42 1.59 s
+  Candidate 5 (turn_first, per-seg, a=0):  4.411 s, envelope 0.81 cm (ok)
+      segment times: 1.40 1.42 1.59 s
+  Candidate 6 (baseline, per-seg, a=0.001):  4.413 s, envelope 0.81 cm (ok)
+      segment times: 1.39 1.43 1.59 s
+  Candidate 7 (baseline, per-seg, a=0.002):  4.417 s, envelope 0.81 cm (ok)
+      segment times: 1.39 1.43 1.59 s
+  Candidate 8 (baseline, per-seg, a=0.005):  5.141 s, envelope 1.02 cm (failed)
+      segment times: 1.42 1.53 2.19 s
+  Candidate 9 (baseline, per-seg, a=0.01):  5.221 s, envelope 1.02 cm (failed)
+      segment times: 1.44 1.55 2.24 s
+  Selected candidate 2.
+##OVERBOARD-VALIDATION## {"selected": 2, "candidates": [{"index": 1, "style": "baseline", "guess": "baseline", "timing": "per-segment", "accuracy_weight": 0.0, "duration_s": 4.9906493871085065, "envelope_cm": 0.9449944704188381, "envelope_truncated": false, "propagation": "plant", "inclusion": {"plant": "nat", "controller": "nat", "tick": "mjac"}, "tracking_cm": 2.276291511952877, "max_excess_cm": -1.0797375603001764, "peak_jerk_m_s3": 24.988492618007346, "heading_error_deg": 0.6325711397915609, "ok": false, "converged": true, "reasons": ["tracking error 2.28 cm > 0.50 cm"], "segments": [{"from": 0, "to": 1, "limit_m": 0.02, "envelope_m": 0.0026566395059284295, "drift_m": 0.00022372887856374413, "violations": 0, "slip_points": 0, "ok": true}, {"from": 1, "to": 2, "limit_m": 0.02, "envelope_m": 0.004812884254352614, "drift_m": 0.00018267889772152193, "violations": 0, "slip_points": 0, "ok": true}, {"from": 2, "to": 3, "limit_m": 0.02, "envelope_m": 0.009202624396998236, "drift_m": 0.00020249976404852226, "violations": 0, "slip_points": 0, "ok": true}]}, {"index": 2, "style": "rolling", "guess": "rolling", "timing": "per-segment", "accuracy_weight": 0.0, "duration_s": 4.410325513062388, "envelope_cm": 0.8131924178069229, "envelope_truncated": false, "propagation": "plant", "inclusion": {"plant": "nat", "controller": "nat", "tick": "mjac"}, "tracking_cm": 0.4538862966001034, "max_excess_cm": -1.2015169907925072, "peak_jerk_m_s3": 24.28533465343465, "heading_error_deg": 0.08536370424681936, "ok": true, "converged": true, "reasons": [], "segments": [{"from": 0, "to": 1, "limit_m": 0.02, "envelope_m": 0.0026564367442865576, "drift_m": 0.00020854747051616879, "violations": 0, "slip_points": 0, "ok": true}, {"from": 1, "to": 2, "limit_m": 0.02, "envelope_m": 0.00477773967196631, "drift_m": 0.00023004765027597222, "violations": 0, "slip_points": 0, "ok": true}, {"from": 2, "to": 3, "limit_m": 0.02, "envelope_m": 0.007984830092074928, "drift_m": 0.00018247348172042703, "violations": 0, "slip_points": 0, "ok": true}]}, {"index": 3, "style": "bow_left", "guess": "bow_left", "timing": "per-segment", "accuracy_weight": 0.0, "duration_s": 4.411116394784234, "envelope_cm": 0.8133583157819837, "envelope_truncated": false, "propagation": "plant", "inclusion": {"plant": "nat", "controller": "nat", "tick": "mjac"}, "tracking_cm": 0.45316945761442184, "max_excess_cm": -1.2013564128089773, "peak_jerk_m_s3": 24.271751260806678, "heading_error_deg": 0.08515879857171899, "ok": true, "converged": true, "reasons": [], "segments": [{"from": 0, "to": 1, "limit_m": 0.02, "envelope_m": 0.0026564834162568106, "drift_m": 0.00020957683917867542, "violations": 0, "slip_points": 0, "ok": true}, {"from": 1, "to": 2, "limit_m": 0.02, "envelope_m": 0.004778419184917309, "drift_m": 0.00020985839519271993, "violations": 0, "slip_points": 0, "ok": true}, {"from": 2, "to": 3, "limit_m": 0.02, "envelope_m": 0.007986435871910226, "drift_m": 0.0001744138106538646, "violations": 0, "slip_points": 0, "ok": true}]}, {"index": 4, "style": "bow_right", "guess": "bow_right", "timing": "per-segment", "accuracy_weight": 0.0, "duration_s": 4.4109305697834325, "envelope_cm": 0.813287974840598, "envelope_truncated": false, "propagation": "plant", "inclusion": {"plant": "nat", "controller": "nat", "tick": "mjac"}, "tracking_cm": 0.4533511120826006, "max_excess_cm": -1.2014380482861946, "peak_jerk_m_s3": 24.275701406584087, "heading_error_deg": 0.08522710046341911, "ok": true, "converged": true, "reasons": [], "segments": [{"from": 0, "to": 1, "limit_m": 0.02, "envelope_m": 0.0026565943367111667, "drift_m": 0.0002253536510015031, "violations": 0, "slip_points": 0, "ok": true}, {"from": 1, "to": 2, "limit_m": 0.02, "envelope_m": 0.004778577051627548, "drift_m": 0.00020512913614031646, "violations": 0, "slip_points": 0, "ok": true}, {"from": 2, "to": 3, "limit_m": 0.02, "envelope_m": 0.007985619517138054, "drift_m": 0.00023814008269515608, "violations": 0, "slip_points": 0, "ok": true}]}, {"index": 5, "style": "turn_first", "guess": "turn_first", "timing": "per-segment", "accuracy_weight": 0.0, "duration_s": 4.411390256084887, "envelope_cm": 0.8133223663154869, "envelope_truncated": false, "propagation": "plant", "inclusion": {"plant": "nat", "controller": "nat", "tick": "mjac"}, "tracking_cm": 0.452909292653203, "max_excess_cm": -1.2013559586894025, "peak_jerk_m_s3": 24.269301942851058, "heading_error_deg": 0.0851178174366989, "ok": true, "converged": true, "reasons": [], "segments": [{"from": 0, "to": 1, "limit_m": 0.02, "envelope_m": 0.0026569262294104425, "drift_m": 0.0002040727853213862, "violations": 0, "slip_points": 0, "ok": true}, {"from": 1, "to": 2, "limit_m": 0.02, "envelope_m": 0.004778968650193192, "drift_m": 0.00020963735406671354, "violations": 0, "slip_points": 0, "ok": true}, {"from": 2, "to": 3, "limit_m": 0.02, "envelope_m": 0.007986440413105976, "drift_m": 0.00021023150610905965, "violations": 0, "slip_points": 0, "ok": true}]}, {"index": 6, "style": "baseline", "guess": "baseline", "timing": "per-segment", "accuracy_weight": 0.001, "duration_s": 4.413118152820799, "envelope_cm": 0.8143021150313204, "envelope_truncated": false, "propagation": "plant", "inclusion": {"plant": "nat", "controller": "nat", "tick": "mjac"}, "tracking_cm": 0.44672642834484577, "max_excess_cm": -1.2004032924562016, "peak_jerk_m_s3": 24.343950443973274, "heading_error_deg": 0.0847353268431782, "ok": true, "converged": true, "reasons": [], "segments": [{"from": 0, "to": 1, "limit_m": 0.02, "envelope_m": 0.002655143614494804, "drift_m": 0.00019768828141366763, "violations": 0, "slip_points": 0, "ok": true}, {"from": 1, "to": 2, "limit_m": 0.02, "envelope_m": 0.004775879875192337, "drift_m": 0.00020333497771176905, "violations": 0, "slip_points": 0, "ok": true}, {"from": 2, "to": 3, "limit_m": 0.02, "envelope_m": 0.007995967075437984, "drift_m": 0.00021258399507573638, "violations": 0, "slip_points": 0, "ok": true}]}, {"index": 7, "style": "baseline", "guess": "baseline", "timing": "per-segment", "accuracy_weight": 0.002, "duration_s": 4.417380948751091, "envelope_cm": 0.8148503712074928, "envelope_truncated": false, "propagation": "plant", "inclusion": {"plant": "nat", "controller": "nat", "tick": "mjac"}, "tracking_cm": 0.4465530626475811, "max_excess_cm": -1.1998703967319915, "peak_jerk_m_s3": 24.200743592963963, "heading_error_deg": 0.08453042116807781, "ok": true, "converged": true, "reasons": [], "segments": [{"from": 0, "to": 1, "limit_m": 0.02, "envelope_m": 0.002653337246802891, "drift_m": 0.00021966522486867313, "violations": 0, "slip_points": 0, "ok": true}, {"from": 1, "to": 2, "limit_m": 0.02, "envelope_m": 0.004773619431598884, "drift_m": 0.00021102761966296484, "violations": 0, "slip_points": 0, "ok": true}, {"from": 2, "to": 3, "limit_m": 0.02, "envelope_m": 0.008001296032680086, "drift_m": 0.00023309352801169686, "violations": 0, "slip_points": 0, "ok": true}]}, {"index": 8, "style": "baseline", "guess": "baseline", "timing": "per-segment", "accuracy_weight": 0.005, "duration_s": 5.140619322727963, "envelope_cm": 1.0151817109553358, "envelope_truncated": false, "propagation": "plant", "inclusion": {"plant": "nat", "controller": "nat", "tick": "mjac"}, "tracking_cm": 2.105570212006569, "max_excess_cm": -1.0180917448903004, "peak_jerk_m_s3": 13.284039408517906, "heading_error_deg": 0.47085958100233904, "ok": false, "converged": true, "reasons": ["tracking error 2.11 cm > 0.50 cm"], "segments": [{"from": 0, "to": 1, "limit_m": 0.02, "envelope_m": 0.00265983979681283, "drift_m": 0.00019823409079190192, "violations": 0, "slip_points": 0, "ok": true}, {"from": 1, "to": 2, "limit_m": 0.02, "envelope_m": 0.0049123636716551355, "drift_m": 0.00018764793241650922, "violations": 0, "slip_points": 0, "ok": true}, {"from": 2, "to": 3, "limit_m": 0.02, "envelope_m": 0.009819082551096996, "drift_m": 0.00018898040136549208, "violations": 0, "slip_points": 0, "ok": true}]}, {"index": 9, "style": "baseline", "guess": "baseline", "timing": "per-segment", "accuracy_weight": 0.01, "duration_s": 5.221235002892014, "envelope_cm": 1.0208775207486092, "envelope_truncated": false, "propagation": "plant", "inclusion": {"plant": "nat", "controller": "nat", "tick": "mjac"}, "tracking_cm": 2.1036701276898384, "max_excess_cm": -1.014150289023783, "peak_jerk_m_s3": 12.305733416727524, "heading_error_deg": 0.4549452402362093, "ok": false, "converged": true, "reasons": ["tracking error 2.10 cm > 0.50 cm"], "segments": [{"from": 0, "to": 1, "limit_m": 0.02, "envelope_m": 0.0026658821071704054, "drift_m": 0.00015078767191193903, "violations": 0, "slip_points": 0, "ok": true}, {"from": 1, "to": 2, "limit_m": 0.02, "envelope_m": 0.004944090406338875, "drift_m": 0.0002037333417872547, "violations": 0, "slip_points": 0, "ok": true}, {"from": 2, "to": 3, "limit_m": 0.02, "envelope_m": 0.00985849710976217, "drift_m": 0.0001912794647688785, "violations": 0, "slip_points": 0, "ok": true}]}], "propagation": "plant"}
+
+=== Validation Report: C:\Users\jumpi\AppData\Local\Temp\tmpkrflafk8\example_with_events.traj ===
+Samples: 31 | Config: examples/fll_choreo.json
+Safety margins: torque_headroom=0.85, speed_headroom=0.90
+
+-- Metrics --
+  total_time_s: 4.4103
+  path_length_m: 1.7989
+  max_linear_speed_m_s: 0.4725
+  avg_linear_speed_m_s: 0.3964
+  max_wheel_speed_m_s: 0.4725
+  max_accel_m_s2: 3.3874
+  max_jerk_m_s3: 24.2853
+  avg_jerk_m_s3: 2.2995
+  tortuosity: 1.1760
+  velocity_chattering: 2
+  avg_force_utilization: 0.1252
+  max_force_utilization: 0.7982
+
+-- Constraint Audit --
+  Violating samples: 0
+  Max left_motor_force violation: 0.000000 N
+  Max right_motor_force violation: 0.000000 N
+  Max traction_total violation: 0.000000 N
+  Max wheel speed: 0.4725 m/s (limit 0.5209 m/s)
+
+-- Wheel Slip Detection --
+  Slip points: 0
+  Max left wheel slip: 0.000000 N
+  Max right wheel slip: 0.000000 N
+
+-- Forward Integration (1 ms RK4) --
+  max_pos_error_m: 0.000471
+  rms_pos_error_m: 0.000264
+  max_heading_error_rad: 0.002806
+  final_pos_error_m: 0.000013
+  final_heading_error_rad: 0.000004
+
+-- Waypoint Check --
+  Final position error: 0.000000 m
+  Final heading error: 0.000000 rad
+
+PASS — trajectory is safe to run.
+
+Trajectory written to C:\Users\jumpi\AppData\Local\Temp\tmpkrflafk8\example_with_events.traj
+  duration 4.410 s | path 1.799 m | peak wheel speed 0.47 m/s | 31 samples
+  validation: passed (envelope 0.81 cm)

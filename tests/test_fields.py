@@ -277,6 +277,36 @@ class TestServerPayload(unittest.TestCase):
         self.assertEqual(field_collisions(samples, {}, ""), [])
         self.assertEqual(field_collisions(samples, {}, "no-such-season"), [])
 
+    def test_sensor_hits_and_robot_config_collisions(self):
+        from fields import load_field
+        from robot_model import RobotConfig
+        field = load_field("2026-27")
+        self.assertIsNotNone(field)
+
+        cfg = RobotConfig({
+            "robot": {
+                "track_width": 0.10,
+                "front_bumper_m": 0.12,
+                "color_sensors": {
+                    "left": [0.06, -0.03],
+                    "right": [0.06, 0.03],
+                }
+            }
+        })
+        # Test collision using RobotConfig directly
+        samples = [{"x": 0.084, "y": 0.657, "heading": 0.0, "t": 1.0}]
+        hits = field.collisions(samples, cfg)
+        self.assertEqual(len(hits), 1)
+        self.assertEqual(hits[0].obstacle.id, "m03")
+
+        # Test sensor hits
+        # At (0.024, 0.687) with heading 0, sensor left at [0.06, -0.03] sits at (0.084, 0.657)
+        sample_for_sensor = [{"x": 0.024, "y": 0.687, "heading": 0.0, "t": 2.0}]
+        s_hits = field.sensor_hits(sample_for_sensor, cfg.color_sensor_offsets)
+        self.assertEqual(len(s_hits["left"]), 1)
+        self.assertEqual(s_hits["left"][0]["id"], "m03")
+        self.assertEqual(len(s_hits["right"]), 0)
+
 
 if __name__ == "__main__":
     unittest.main()
