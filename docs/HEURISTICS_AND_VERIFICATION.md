@@ -111,8 +111,8 @@ Two files hold most of the subject matter:
 | Symbol | Meaning | Unit |
 |---|---|---|
 | `dt` | Sample interval. One value for the whole path, or one per segment | s |
-| `N` | Number of samples: `segments * samples_per_segment + 1` | – |
-| `s` | `samples_per_segment`, the number of intervals per waypoint segment | – |
+| `N` | Number of samples: `1 + sum_i(s_i)` | – |
+| `s` | `samples_per_segment`: the **budget** for the whole path's intervals. It is split across the segments by arc length, and `s_i` is what segment `i` actually gets | – |
 | `vl`, `vr` | Left/right wheel linear speed | m/s |
 | `omega` | Yaw rate, `(vr - vl) / track_width` | rad/s |
 | `theta` | Heading | rad |
@@ -280,7 +280,7 @@ All five seeds start from the same geometry, produced by `_guess_point` (`optimi
 | Only `p2` | Blend from the path direction toward the constrained end heading |
 | Neither | Blend from the direction to `p2` toward the direction to `p3` — a one-segment look-ahead |
 
-The wheel speeds start at zero for every seed (`optimizer.py:556`), and the interval length starts at a flat `0.1 s` for every segment (`optimizer.py:543`).
+The wheel speeds start at zero for every seed. The **initial interval** is not flat: it is proportional to the segment's length (PQ-B's Q2, finding F9), so every segment is allotted time in proportion to the distance it has to cover. The total is the same as the old flat guess - `0.1 s` per interval over the whole path - and each segment's share is spread over its own samples, so `dt_i = (0.1 * total_intervals) * (L_i / L) / s_i`, clipped to `[0.01, 1.0] s` (`_build_initial_guess`). The measured trade-off is the one PQ-B measured: it converges **more slowly** than the flat guess (40 iterations against 25) and finds a **faster trajectory** on 18 of 32 missions, so it changes which local optimum the solver reaches, not how fast it gets there.
 
 **Invariant:** the samples that sit on a waypoint are exactly on the waypoint. The seed never moves a constrained waypoint. `tests/test_optimizer.py:295` asserts this for all five styles, and also asserts that all five styles are mutually distinct.
 
@@ -314,10 +314,13 @@ Baseline geometry, then `_set_rolling_speeds` (`optimizer.py:641`) fills in whee
 `_offset_segment_interiors` (`optimizer.py:586`) pushes the *interior* samples of each segment sideways along the segment's left normal:
 
 ```
-amplitude = min(0.10 * segment_length, 0.03)     # metres
+amplitude = 0.5 * L * tan(|dtheta| / 4)           # the circular-arc sagitta
+amplitude = min(amplitude, 0.35 * L)              # metres
 bump(frac) = 4 * frac * (1 - frac)               # zero at both waypoints
 offset = sign * normal * amplitude * bump(frac)
 ```
+
+The amplitude is the **sagitta of the circular arc** that connects the two waypoints with the turn `dtheta` the segment asks for, so the guess bows as much as the arc it is imitating. A segment with no turn keeps the old flat rule (`min(0.10 * L, 0.03)`).
 
 The bump is parabolic: zero at both waypoints, maximum in the middle. `bow_left` uses `sign = +1`, `bow_right` uses `sign = -1`.
 
@@ -325,11 +328,19 @@ The bump is parabolic: zero at both waypoints, maximum in the middle. `bow_left`
 
 **Cost:** one pass over the samples.
 
-**Weakness:** the bow is a fixed 10 % of the segment, capped at 3 cm. It does not know anything about the turn angle. For a 90° turn on a 1 m segment it bows 3 cm to one side, which is a very slight curve, not a quarter circle. For a 10° turn on a 2 m segment it bows 3 cm, which is a large relative deviation. The amplitude is uncorrelated with the geometry it is supposed to approximate.
+**Weakness:** the bow is a single bump, not an arc: it is zero at both waypoints and parabolic in between, so it approximates the arc's shape rather than reproducing it. The amplitude is capped at 35 % of the segment, which binds on a sharp turn, and the bump cannot follow a path that curves twice. The amplitude is now *related* to the geometry it approximates, which is what the flat 10 % rule was not.
 
 ### 4.5 `turn_first`
 
-`_rotate_before_driving` (`optimizer.py:608`) changes the *topology* of the guess on segments with a heading change of at least 0.4 rad (`optimizer.py:623`):
+`_rotate_before_driving` changes the *topology* of the guess on the segments whose heading change is too sharp to be driven as an arc at the robot's own minimum radius. The threshold is derived from the track width `r_min` and the segment's length `L`:
+
+```
+ratio = L / (2 * r_min)
+threshold = max(0.2, 2 * asin(ratio))   if ratio < 1   (the segment is short)
+threshold = 0.4                        otherwise
+```
+
+`2 * asin(ratio)` is the turn an arc of radius `r_min` subtends over that segment, so a turn smaller than that can be driven as an arc and does not need a turn on the spot. A segment longer than `2 * r_min` falls back to the old 0.4 rad constant.
 
 - The first `spin_samples = max(1, round(0.30 * s))` samples hold the position at `p1` and rotate the heading from the start heading to the end heading — a turn in place.
 - The remaining samples drive straight to `p2` with a constant `theta_end`.
@@ -338,7 +349,7 @@ The bump is parabolic: zero at both waypoints, maximum in the middle. `bow_left`
 
 **Cost:** one pass over the samples.
 
-**Weakness:** it commits to a topology with no evidence about which one is right, and the 0.4 rad threshold is a hard-coded constant. With `s <= 1` the seed keeps the baseline geometry instead, because one interval cannot hold both a spin and a drive (`optimizer.py:611-614`).
+**Weakness:** it commits to a topology with no evidence about which one is right. The threshold now comes from the robot's geometry, but only for a short segment; a long one still uses the flat 0.4 rad constant. With `s_i <= 1` the seed keeps the baseline geometry instead, because one interval cannot hold both a spin and a drive.
 
 **Known result:** the seeds are *not* uniformly worse than the baseline. On the complex mission under equal-duration timing all four non-baseline seeds converge to **slower and wider** paths (8.12–8.66 s, 1.52–1.75 cm envelope, 0.31–0.45 cm tracking) than the baseline (6.068 s / 1.19 cm / 0.30 cm) — and three of the four pass, `bow_left` being the one that fails, on the motor force (0.007 N). Under per-segment timing on `example_mission_first4`, `bow_right` is the **selected** candidate at 1.663 s, ahead of the baseline at 1.833 s, while `bow_left` and `turn_first` fail there on the motor force (0.071 N and 0.008 N). See [Section 9](#9-measured-heuristic-comparison).
 
@@ -362,13 +373,13 @@ A second, orthogonal axis multiplies the five seeds into the candidate set: the 
 
 One scalar `dt` for the whole path (`optimizer.py:179`). Total time is `dt * (N - 1)`.
 
-Because every segment has exactly `samples_per_segment` intervals, one shared `dt` means **every segment takes the same time**. On a path whose segments have very different lengths, the short segment inherits the long segment's duration. The model is not "one time step for the whole path" in spirit; it is "every segment is allotted the same duration".
+Because the interval is shared and the segments do not have the same number of samples, one shared `dt` does **not** mean every segment takes the same time any more: a segment's duration is `s_i * dt`, and the sample counts follow the arc length, so the long segments get more time. The model is still "one time step for the whole path" in spirit - the samples are all the same distance apart in time - but it is no longer "every segment is allotted the same duration".
 
 On the example missions this is the model that has the most validated results, because it is the historical one. It is also the model the default candidate 1 uses.
 
 ### 5.2 Per-segment (`per_segment_dt = True`)
 
-One `dt_i` per waypoint segment (`optimizer.py:176`), each bounded to `[0.001, 1.0] s` (`optimizer.py:241-242`). Total time is `samples_per_segment * sum(dt_i)`. The interval starting at sample `k` uses `dt[k // samples_per_segment]` (`optimizer.py:183` `interval_dt`).
+One `dt_i` per waypoint segment, each bounded to `[0.001, 1.0] s`. Total time is `sum_i(s_i * dt_i)`: the segment's own interval times its own number of samples. The interval starting at sample `k` is the one of the segment that sample belongs to, which the code keeps as a `sample_to_segment` table rather than computing it from a division.
 
 **This is the general model.** Setting every `dt_i` equal reproduces the equal-duration solution exactly. The reverse is not true.
 
@@ -407,7 +418,7 @@ The per-segment model gives every waypoint segment its own interval, so the time
 
 The path is one NLP over one shared variable set, so the state agreement is automatic: position, heading and the wheel velocities at a waypoint are single variables that both pieces see. A decomposed solver (solve the pieces separately, then merge) would have to impose these conditions explicitly; the joint NLP gets them for free.
 
-What the per-segment timing *could* break is the reading of the motion profile. The acceleration on the interval before waypoint `j` is `(vl[k]-vl[k-1])/dt[j-1]` and the one after it is `(vl[k+1]-vl[k])/dt[j]`, with `k = j*samples_per_segment`. When `dt` changes across the waypoint, the same velocity ramp is read as two different accelerations, so the wheel force profile gets a step exactly at the point the path is supposed to run through smoothly. The per-segment model therefore constrains the acceleration, and so the wheel force, to be continuous through every waypoint the robot does not stop at. The equal-duration model needs no counterpart: it never changes `dt`, so it reads the ramp the same way on both sides.
+What the per-segment timing *could* break is the reading of the motion profile. The acceleration on the interval before waypoint `j` is `(vl[k]-vl[k-1])/dt[j-1]` and the one after it is `(vl[k+1]-vl[k])/dt[j]`, with `k` the sample that waypoint `j` sits on. When `dt` changes across the waypoint, the same velocity ramp is read as two different accelerations, so the wheel force profile gets a step exactly at the point the path is supposed to run through smoothly. The per-segment model therefore constrains the acceleration, and so the wheel force, to be continuous through every waypoint the robot does not stop at. The equal-duration model needs no counterpart: it never changes `dt`, so it reads the ramp the same way on both sides.
 
 The residual is scaled by the reference interval squared so that it reads in m/s², the quantity the wheel force follows. The raw residual is in metres, where IPOPT's absolute constraint tolerance of `1e-2` would have allowed a centimetre of velocity ramp. The scaling also fixed the solver's behaviour: the complex mission's per-segment candidate went from 6.836 s in 41 iterations to 4.650 s in 203.
 
@@ -427,7 +438,9 @@ Two candidates that the merge conditions used to reject now pass: `example_missi
 
 ### 5.6 A segment-wise solver: the strategy that is not needed yet
 
-The merge conditions in [5.5](#55-where-the-time-allocation-may-change-ki-024) are written as if the pieces were solved separately and then joined, because that is how a decomposed solver has to work. The current solver does not do that: the whole path is one NLP over one shared variable set, so the state agreement is automatic and the pieces can never disagree. The joint solve is also a global optimum of the same objective, which a sequential decomposition cannot promise.
+The merge conditions in [5.5](#55-where-the-time-allocation-may-change-ki-024) are written as if the pieces were solved separately and then joined, because that is how a decomposed solver has to work. **The solver now does that**, for the paths where the pieces are genuinely separate: `TrajectoryOptimizer.solve` splits the path at the waypoints where the robot stops *and* the heading is pinned - the boundaries the merge conditions call full timing boundaries - and solves each piece as its own NLP, keeping the cheapest of the five seeds per piece and stitching the pieces back together. Inside a piece the path is still one NLP over one shared variable set, so the state agreement is automatic and the pieces of one piece can never disagree.
+
+The split is what the merge conditions were written for, and it is opt-out (`split_at_boundaries`). It buys two things: the pieces are short, so each is better conditioned, and the piece boundaries are places where the time allocation is free anyway, so nothing is lost by solving them apart. What it costs is the joint optimum: the pieces are optimised separately, so the exit state of a piece is the entry state of the next rather than a shared variable, and the result is a local optimum of the decomposed problem, not of the whole.
 
 The decomposition is worth writing down because it is the only way to make long missions tractable, and because it turns the merge conditions into something testable.
 
@@ -443,6 +456,8 @@ The decomposition is worth writing down because it is the only way to make long 
 
 **What to measure first.** The cheap question is whether the decomposition is needed at all: the joint solve's iteration count against the number of waypoints. If it grows faster than linearly, the decomposition has a case; if the missions that matter stay under ten waypoints, it does not. That measurement is not in this document.
 
+**What the split is not.** It is not the decomposition this section proposes: the proposed one is a global pass followed by a piece-wise pass with the pieces warm-started from it, and the merge conditions are re-imposed at the joins. The shipped split is simpler - each piece is solved on its own, with all five seeds tried, and the pieces are concatenated. It also splits only where the merge conditions say the state is determined, so the joins need no extra conditions at all.
+
 ### 5.7 The collocation: where a sample is placed
 
 The timing model says *when* a sample is; the collocation says *where* it is. It is the other half of the discretisation, and it is the half RQ-A found to be wrong: the plan's samples were not on the path the plan's own `(v, omega)` profile traces, so the controller was told to be somewhere the plan never goes.
@@ -456,7 +471,24 @@ Two rules are in the tree. The CLI plans the second one by default, and `--no-se
 
 The self-consistent rule is worth roughly half the tracking error on a curved path: the S-curve goes from 1.47 cm to 0.88 cm, and the events mission's forward-integration error goes away. The heading rule is unchanged either way, so the headings are the tangents of the path the plan traces. The measurement is [RQ-A finding F10](research/RQ-A_tracking_error.md).
 
-**Which one you get depends on where you start (KI-052).** The CLI plans the self-consistent rule by default and `--no-self-consistent` restores the trapezoid; the studio's "Self-consistent samples" box is ticked by default, so it agrees with the CLI. The **library** is the other way round: `TrajectoryOptimizer.solve` has `self_consistent=False`, so a library caller gets the trapezoidal plan for the same mission unless it passes `self_consistent=True`. `research/harness.py` follows the library, so its numbers are the trapezoidal ones unless it is told otherwise.
+**Which one you get is a switch, and the default is the same everywhere (KI-051, KI-052).** The CLI plans the self-consistent rule by default and `--no-self-consistent` restores the trapezoid; the studio's "Self-consistent samples" box is ticked by default and unticking it is `--no-self-consistent`; and `TrajectoryOptimizer.solve` defaults to the self-consistent rule as well, so a library caller gets the same plan the command line does. `research/harness.py` follows the library.
+
+### 5.8 The sample layout: how many samples a segment gets
+
+The planner does not give every waypoint segment the same number of samples. `TrajectoryOptimizer.get_segment_sample_counts` splits the budget `segments * samples_per_segment` across the segments **in proportion to their arc length**, with a floor of three samples per segment:
+
+```
+total_budget = segments * samples_per_segment
+m            = min(samples_per_segment, 3)          # the floor
+rem_budget   = total_budget - segments * m
+raw_i        = rem_budget * (L_i / sum(L))          # the proportional part
+```
+
+Each segment gets `m` samples plus its share of `rem_budget`, rounded down, and the samples left over by the rounding go to the segments with the largest remainders. The total is unchanged - `N = 1 + sum_i(s_i) = 1 + segments * samples_per_segment` - so the **number** of samples is the same as before and only their **distribution** changes. A path with one segment, a path of zero length, or a budget too small for the floor falls back to the uniform allocation.
+
+**What it buys.** A long segment gets more samples, so the path is sampled finely where it is long and coarsely where it is short; the sample-to-waypoint mapping becomes a table (`waypoint_sample_indices`) instead of `k * samples_per_segment`, and `stats["segment_samples"]` reports the counts so a reader can map a sample back to its waypoint. The equal-duration model's old penalty - one shared `dt` over equal counts gives every segment the same time, so a short segment inherits the long one's duration - is gone, because a segment's duration is now `s_i * dt` and `s_i` follows the length.
+
+**What it costs.** The duration term of the objective is `sum_i(s_i * dt_i)` rather than `samples_per_segment * sum_i(dt_i)`, the wheel-jerk normalisation is over a mean interval that is no longer a per-segment constant, and the seeds that count samples per segment (`bow_left`, `turn_first`, `rolling`) have to work from the table rather than from a division. It is also a change of *discretisation*, so every measurement taken before it describes a different planner: that is why [Section 9](#9-measured-heuristic-comparison) says which layout its numbers were taken on.
 
 ## 6. Candidate set construction
 
@@ -1897,7 +1929,7 @@ Every symbol this document mentions, with its location in the tree that was meas
 | KI-022 | Solver / timing | The per-segment timing model was a jerk-penalty loophole | [5.3](#53-the-jerk-discipline-ki-022), [22.1](#221-the-per-segment-timing-model-was-a-jerk-penalty-loophole-ki-022) |
 | KI-024 | Solver / timing | The timing model had no rule for where the time allocation may change | [5.5](#55-where-the-time-allocation-may-change-ki-024) |
 | KI-051 | CLI / solver | ~~`--self-consistent` was a no-op: the switch could not change the plan and the trapezoidal collocation could not be reached from the CLI~~ (fixed; the flag is two-way now) | [5.7](#57-the-collocation-where-a-sample-is-placed) |
-| KI-052 | CLI / solver | The CLI and the library plan different trajectories for the same mission: the CLI is self-consistent by default, the library is not | [5.7](#57-the-collocation-where-a-sample-is-placed) |
+| KI-052 | CLI / solver | ~~The CLI and the library plan different trajectories for the same mission~~ (fixed; both default to the self-consistent rule now). The numbers in §9 were measured with the trapezoidal rule and have not been re-measured since | [5.7](#57-the-collocation-where-a-sample-is-placed), [9](#9-measured-heuristic-comparison) |
 
 **Not referenced, and not relevant here:** KI-005, KI-006, KI-007, KI-008, KI-011, KI-012, KI-013, KI-016, KI-017, KI-023.
 

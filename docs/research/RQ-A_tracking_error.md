@@ -643,7 +643,7 @@ The open part of RQ-A is therefore narrower than it was: **not** "find a formula
 | # | Question | Why it matters | Next step |
 |---|---|---|---|
 | **OQ1** | What sets the floor of ~0.5–1.1 cm at n=40–80 on the S-curve? The plan/profile deviation is 0.063 cm there, so 95 % of the error is unexplained. | Until this is answered, no fix can be shown to work. | **CLOSED (F6).** It is the 20 ms command hold: refining the tick to 2 ms takes the error from 0.271 cm to 0.071 cm at n=40. At coarse sampling the floor is the plan/profile mismatch instead, and the error is U-shaped in the density. The mechanism is the distance covered per interval: giving the controller the interval-average velocity removes the hold without touching the tick (F6, F8) |
-| **OQ2** | Can the optimizer be reformulated so that consistency is structural? | It is the only fix that addresses the root cause. | **CLOSED (KI-026, F10).** The trapezoidal collocation was replaced with a four-node Gauss-Legendre quadrature over the *integrated* heading, so the samples lie on the path by construction and the headings are the tangents. The CLI plans it **by default** and `--no-self-consistent` restores the trapezoid; the library's default is the trapezoid (KI-051) |
+| **OQ2** | Can the optimizer be reformulated so that consistency is structural? | It is the only fix that addresses the root cause. | **CLOSED (KI-026, F10).** The trapezoidal collocation was replaced with a four-node Gauss-Legendre quadrature over the *integrated* heading, so the samples lie on the path by construction and the headings are the tangents. It is the **default** on both sides, and `--no-self-consistent` restores the trapezoid (KI-051, KI-052) |
 | **OQ3** | Should the reference become a spline in the validator **and** the firmware? | The firmware and the validator must agree, or the parity is lost. | The controllers in use interpolate linearly today. Any change there is a firmware change and needs the plan fix to be in place everywhere first. The spline on its own is catastrophic (F8's variant 3) |
 | **OQ4** | Does the tracking metric need a heading term? | The metric is position-only (`immrax_validator.py:1112-1114`). A plan can be followed in position while the heading is off by up to Δθ/2 — 9.4° on the S-curve at n=10. | Measure the heading error the closed loop actually shows, and decide whether it is a gate, a reported metric, or both. The heading error is reported now (Fix 2) but not gated |
 | **OQ5** | What is the stops mission's extra 0.6 cm? (1.15 cm of deviation but 2.19 cm of tracking error on the current tree.) | Stops are where the discretisations interact worst: the robot reverses, the backlash sign flips, the chord degenerates. | Separate the reversals from the curvature. Build a variant of the stops mission with the stops removed but the same geometry |
@@ -658,9 +658,9 @@ structural. It can: replace the trapezoidal position rule with a quadrature
 over the *integrated* heading, and the samples land on the path the plan's own
 (v, omega) profile traces, with the heading samples as its tangents.
 
-The command line plans it by default (`--self-consistent/--no-self-consistent`,
-default on) and `--no-self-consistent` restores the trapezoidal rule; the
-library's default is the trapezoid (KI-052). The position rule integrates the interval's
+It is the default on both sides (`--self-consistent/--no-self-consistent`,
+default on, and `TrajectoryOptimizer.solve` defaults to it as well), and
+`--no-self-consistent` restores the trapezoidal rule (KI-051, KI-052). The position rule integrates the interval's
 velocity along the heading the robot will hold - the turn rate integrated, not
 the two endpoints - with a four-node Gauss-Legendre rule, O(dt^7) per interval
 against the trapezoid's O(dt^3). The heading rule is unchanged, so the headings
