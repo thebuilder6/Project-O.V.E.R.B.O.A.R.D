@@ -37,6 +37,15 @@ env/
 output*.json
 convergence_*.png
 benchmark_results.json
+examples/*_controller.json
+examples/*_stats.json
+examples/test_*.json
+examples/complex_mission_optimized*.json
+complex_mission_optimized*
+straight_controller.json
+test_output*
+random_suite/
+benchmarks/
 
 # Temporary files
 *.tmp
