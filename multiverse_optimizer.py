@@ -11,7 +11,6 @@ A hybrid trajectory generation architecture combining:
 from typing import List, Dict, Tuple, Any, Optional
 import numpy as np
 import casadi as ca
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from robot_model import RobotConfig, DifferentialDriveModel
 from path_planning import ReedsSheppPath, linear_interpolation_waypoints
 from live_visualizer import get_visualizer
@@ -67,6 +66,7 @@ class OptimizationStats:
         self.heuristic_wins = []  # List of dicts with window, heuristic, improvement
         self.initial_cost = 0.0
         self.final_cost = 0.0
+        self.converged = False
 
     def to_dict(self):
         return {
@@ -78,6 +78,7 @@ class OptimizationStats:
             "heuristic_wins": self.heuristic_wins,
             "initial_cost": self.initial_cost,
             "final_cost": self.final_cost,
+            "converged": self.converged,
             "improvement_pct": (1 - self.final_cost / self.initial_cost) * 100 if self.initial_cost > 0 else 0
         }
 
@@ -274,7 +275,7 @@ class MasterTrajectoryOptimizer:
         if verbose: print("Phase 2: Kinematic Profiling (Replaces Global CasADi)...")
         global_traj = self._profile_kinematics(guess, num_samples_per_segment, stop_waypoint_indices, waypoint_events, apply_headroom)
         self.stats.phase_times["kinematic_profile"] = time.time() - phase2_start
-        if global_traj: self.stats.initial_cost = (global_traj[1]['t']-global_traj[0]['t']) * (len(global_traj)-1)
+        if global_traj: self.stats.initial_cost = float(global_traj[-1]['t'])
 
         # Phase 3: Critic
         phase3_start = time.time()
@@ -342,11 +343,12 @@ class MasterTrajectoryOptimizer:
         phase5_start = time.time()
         if verbose: print("Phase 5: Final global polish (CasADi/IPOPT)...")
         # Warm start CasADi using the fully JAX-refined trajectory!
-        final_traj = self._global_solve(waypoints, num_samples_per_segment, None, accuracy_weight, stop_waypoint_indices, waypoint_events, apply_headroom, fast_mode=False, initial_samples=global_traj, capture_iterations=capture_iterations, live_viz=live_viz)
+        final_traj, polish_stats = self._global_solve(waypoints, num_samples_per_segment, None, accuracy_weight, stop_waypoint_indices, waypoint_events, apply_headroom, fast_mode=False, initial_samples=global_traj, capture_iterations=capture_iterations, live_viz=live_viz)
         self.stats.phase_times["polish"] = time.time() - phase5_start
+        self.stats.converged = bool(polish_stats.get("converged", False))
         
         self.stats.total_time = time.time() - total_start_time
-        if final_traj: self.stats.final_cost = (final_traj[1]['t']-final_traj[0]['t']) * (len(final_traj)-1)
+        if final_traj: self.stats.final_cost = float(final_traj[-1]['t'])
         if verbose: print(f"\nOptimization complete in {self.stats.total_time:.2f}s. Final cost: {self.stats.final_cost:.4f}s")
         return final_traj, self.stats.to_dict()
 
@@ -433,5 +435,5 @@ class MasterTrajectoryOptimizer:
             new_guess = [dt]
             for s in initial_samples: new_guess.extend([s['x'], s['y'], s['heading'], s['vl'], s['vr']])
             guess = np.array(new_guess)
-        samples, _ = optimizer.solve(waypoints, num_samples, accuracy, stops, events, headroom, self.verbose, capture_iterations=capture_iterations, live_viz=live_viz)
-        return samples
+        samples, inner_stats = optimizer.solve(waypoints, num_samples, accuracy, stops, events, headroom, self.verbose, capture_iterations=capture_iterations, live_viz=live_viz)
+        return samples, inner_stats

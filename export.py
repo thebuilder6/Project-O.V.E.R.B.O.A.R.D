@@ -1,6 +1,164 @@
 from typing import List, Dict, Any
 import json
+import math
+import struct
 import numpy as np
+
+from robot_model import RobotConfig
+
+
+# Compact Python export for Pybricks MicroPython.
+#
+# Pybricks disables the array module (MICROPY_PY_ARRAY=0), so the trajectory is
+# packed into a single bytes object and decoded on the hub with ustruct. A
+# bytes blob is also far smaller than a list of dicts: 24 bytes per sample.
+#
+# Layout, little-endian:
+#   header: <HH  version, count
+#   sample: <6f  t, x, y, heading, v, omega
+COMPACT_VERSION = 1
+COMPACT_HEADER = struct.Struct("<HH")
+COMPACT_RECORD = struct.Struct("<6f")
+COMPACT_HEADER_SIZE = COMPACT_HEADER.size
+COMPACT_RECORD_SIZE = COMPACT_RECORD.size
+
+
+def encode_compact_trajectory(samples: List[Dict[str, Any]]):
+    """Pack trajectory samples into the Pybricks controller format.
+
+    Returns (blob, events) where events is ((sample_index, name), ...).
+    """
+    count = len(samples)
+    if count > 0xFFFF:
+        raise ValueError("compact export supports at most 65535 samples")
+
+    blob = bytearray(COMPACT_HEADER_SIZE + count * COMPACT_RECORD_SIZE)
+    COMPACT_HEADER.pack_into(blob, 0, COMPACT_VERSION, count)
+    events = []
+    offset = COMPACT_HEADER_SIZE
+
+    for index, sample in enumerate(samples):
+        try:
+            t = float(sample["t"])
+            x = float(sample["x"])
+            y = float(sample["y"])
+            heading = float(sample["heading"])
+            omega = float(sample["omega"])
+            if "vl" in sample and "vr" in sample:
+                v = (float(sample["vl"]) + float(sample["vr"])) * 0.5
+            else:
+                v = float(sample["v"])
+        except (KeyError, TypeError, ValueError, OverflowError) as exc:
+            raise ValueError(
+                f"compact export: sample {index} has a missing or invalid numeric field"
+            ) from exc
+
+        for name, value in (
+            ("t", t), ("x", x), ("y", y),
+            ("heading", heading), ("v", v), ("omega", omega),
+        ):
+            if not math.isfinite(value):
+                raise ValueError(
+                    f"compact export: sample {index} field {name} is not finite"
+                )
+
+        try:
+            COMPACT_RECORD.pack_into(blob, offset, t, x, y, heading, v, omega)
+        except (OverflowError, struct.error) as exc:
+            raise ValueError(
+                f"compact export: sample {index} does not fit in float32"
+            ) from exc
+
+        if "event" in sample:
+            events.append((index, str(sample["event"])))
+        offset += COMPACT_RECORD_SIZE
+
+    return bytes(blob), tuple(events)
+
+
+def _format_bytes_literal(blob: bytes, chunk_size: int = 32) -> str:
+    """Format a blob as adjacent bytes literals, which MicroPython folds."""
+    if not blob:
+        return "samples = b''\n"
+
+    lines = ["samples = ("]
+    for start in range(0, len(blob), chunk_size):
+        parts = []
+        for byte in blob[start:start + chunk_size]:
+            if byte == 39:          # single quote
+                parts.append("\\'")
+            elif byte == 92:        # backslash
+                parts.append("\\\\")
+            elif 32 <= byte <= 126:
+                parts.append(chr(byte))
+            else:
+                parts.append("\\x%02x" % byte)
+        lines.append("    b'" + "".join(parts) + "'")
+    lines.append(")")
+    return "\n".join(lines) + "\n"
+
+
+def _format_events_literal(events) -> str:
+    """Format ((sample_index, name), ...) as Python source."""
+    if not events:
+        return "events = ()\n"
+    lines = ["events = ("]
+    for index, name in events:
+        lines.append("    (%d, %r)," % (index, name))
+    lines.append(")")
+    return "\n".join(lines) + "\n"
+
+
+def write_compact_python_file(input_traj_file: str, output_file: str) -> None:
+    """Write a Pybricks ramsete_compact trajectory module."""
+    with open(input_traj_file, "r", encoding="utf-8") as f:
+        traj_data = json.load(f)
+
+    samples = traj_data["trajectory"]["samples"]
+    rc = RobotConfig(traj_data["trajectory"])
+    config_dict = {
+        "mass": rc.mass,
+        "inertia": rc.inertia,
+        "track_width": rc.track_width,
+        "wheel_radius": rc.wheel_radius,
+        "v_max_rad_s": rc.v_max_rad_s,
+        "t_max_nm": rc.t_max_nm,
+        "gearing": rc.gearing,
+        "cof": rc.cof,
+    }
+
+    blob, events = encode_compact_trajectory(samples)
+
+    lines = [
+        "# Trajectory exported from FLL Trajectory Optimizer (compact v1)",
+        f"# Source: {input_traj_file}",
+        f"# Number of samples: {len(samples)}",
+        f"# Packed size: {len(blob)} bytes ({COMPACT_RECORD_SIZE} bytes/sample)",
+        "",
+        "# Robot configuration parameters",
+        "config = {",
+    ]
+    for key, value in config_dict.items():
+        if isinstance(value, float):
+            lines.append(f'    "{key}": {value:.6f},')
+        else:
+            lines.append(f'    "{key}": {value},')
+    lines.append("}")
+    lines.append("")
+    lines.append("# Packed trajectory: <HH version,count> + count * <6f")
+    lines.append("# (t, x, y, heading, v, omega), little-endian")
+    lines.append(_format_bytes_literal(blob).rstrip("\n"))
+    lines.append("")
+    lines.append("# Events: (sample_index, name)")
+    lines.append(_format_events_literal(events).rstrip("\n"))
+
+    with open(output_file, "w", encoding="utf-8") as f:
+        f.write("\n".join(lines) + "\n")
+
+    print(
+        f"Exported {len(samples)} samples as a packed blob "
+        f"({len(blob)} bytes) to {output_file}"
+    )
 
 
 def resample_to_fixed_dt(samples: List[Dict[str, Any]], target_dt: float = 0.02, track_width: float = 0.0965) -> List[Dict[str, Any]]:
@@ -112,52 +270,34 @@ def write_controller_file(
     print(f"Exported {ctrl['num_samples']} controller samples at dt={target_dt}s to {output_file}")
 
 
-def write_python_file(input_traj_file: str, output_file: str) -> None:
+def write_python_file(input_traj_file: str, output_file: str, compact: bool = False) -> None:
     """
-    Export trajectory samples and robot config as a Python file.
+    Export a trajectory as a Python module.
 
-    Output format:
-        # Robot configuration
-        config = {
-            "mass": 0.723,
-            "inertia": 0.0024,
-            "track_width": 0.0965,
-            "wheel_radius": 0.028,
-            "v_max_rad_s": 15.7,
-            "t_max_nm": 0.04,
-            "gearing": 1.0,
-            "cof": 0.65
-        }
-
-        # Trajectory samples
-        samples = [
-            {"t": 0.0, "x": 0.0, "y": 0.0, "heading": 0.0, "vl": 0.0, "vr": 0.0, "omega": 0.0},
-            {"t": 0.02, "x": 0.01, "y": 0.0, "heading": 0.0, "vl": 0.5, "vr": 0.5, "omega": 0.0},
-            # ... more samples
-        ]
+    The default (compact=False) is the legacy list-of-dicts format used by
+    ramsete_fast.py and ramsete.py. compact=True writes the packed blob used
+    by ramsete_compact.py and ramsete_compact_events.py.
     """
+    if compact:
+        write_compact_python_file(input_traj_file, output_file)
+        return
+
     with open(input_traj_file, "r") as f:
         traj_data = json.load(f)
 
     samples = traj_data["trajectory"]["samples"]
-    cfg = traj_data["trajectory"].get("robot", traj_data["trajectory"].get("config", {}))
 
-    # Extract robot config parameters robustly
-    def get_val(key, default):
-        val = cfg.get(key, default)
-        if isinstance(val, dict):
-            return val.get("val", default)
-        return val
-
+    # Parse the robot parameters the same way the optimizer did (handles old and new key names)
+    rc = RobotConfig(traj_data["trajectory"])
     config_dict = {
-        "mass": get_val("mass", 0.8),
-        "inertia": get_val("inertia", 0.001),
-        "track_width": get_val("differentialTrackWidth", 0.0965),
-        "wheel_radius": get_val("radius", 0.028),
-        "v_max_rad_s": get_val("vmax", 15.7),
-        "t_max_nm": get_val("tmax", 0.04),
-        "gearing": get_val("gearing", 1.0),
-        "cof": get_val("cof", 1.0),
+        "mass": rc.mass,
+        "inertia": rc.inertia,
+        "track_width": rc.track_width,
+        "wheel_radius": rc.wheel_radius,
+        "v_max_rad_s": rc.v_max_rad_s,
+        "t_max_nm": rc.t_max_nm,
+        "gearing": rc.gearing,
+        "cof": rc.cof,
     }
 
     # Build Python code string

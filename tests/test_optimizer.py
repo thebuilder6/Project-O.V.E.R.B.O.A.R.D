@@ -5,7 +5,7 @@ Unit tests for optimizer.py and benchmark dry-run smoke tests.
 import unittest
 import numpy as np
 from robot_model import RobotConfig
-from optimizer import TrajectoryOptimizer
+from optimizer import TrajectoryOptimizer, GUESS_STYLES
 
 
 class TestTrajectoryOptimizer(unittest.TestCase):
@@ -233,21 +233,29 @@ class TestTrajectoryOptimizer(unittest.TestCase):
         config = RobotConfig(config_dict)
         optimizer = TrajectoryOptimizer(config)
         
-        # Create simple trajectory parameters
-        N = 11
-        dt = 0.1
+        # Create a two-segment trajectory with different interval lengths
+        N = 21
+        dt_values = np.array([0.1, 0.2])
         states = np.zeros((N, 5))
         states[:, 0] = np.linspace(0, 1, N)  # x
         states[:, 3] = 0.5  # vl
         states[:, 4] = 0.5  # vr
-        params = np.concatenate([[dt], states.flatten()])
+        params = np.concatenate([dt_values, states.flatten()])
         
-        waypoints = [(0.0, 0.0, 0.0), (1.0, 0.0, 0.0)]
+        waypoints = [(0.0, 0.0, 0.0), (0.5, 0.0, 0.0), (1.0, 0.0, 0.0)]
         
         cost = optimizer._compute_cost(params, N, 10, 0.0, waypoints)
         
-        # Cost should be positive (time cost)
-        self.assertGreater(cost, 0)
+        # 10 intervals per segment: 10 * (0.1 + 0.2) = 3.0
+        self.assertAlmostEqual(cost, 3.0)
+
+    def test_sample_times_are_per_segment(self):
+        """Timestamps accumulate each segment's own interval length."""
+        times = TrajectoryOptimizer._sample_times(np.array([0.1, 0.2]), 10, 21)
+        self.assertAlmostEqual(times[0], 0.0)
+        self.assertAlmostEqual(times[10], 1.0)
+        self.assertAlmostEqual(times[11], 1.2)
+        self.assertAlmostEqual(times[20], 3.0)
 
     def test_build_initial_guess(self):
         """Test initial guess generation."""
@@ -266,17 +274,93 @@ class TestTrajectoryOptimizer(unittest.TestCase):
         config = RobotConfig(config_dict)
         optimizer = TrajectoryOptimizer(config)
         
-        waypoints = [(0.0, 0.0, 0.0), (1.0, 0.0, 0.0)]
+        waypoints = [(0.0, 0.0, 0.0), (0.5, 0.0, 0.0), (1.0, 0.0, 0.0)]
         
-        guess = optimizer._build_initial_guess(waypoints, num_samples_per_segment=5, N=6)
+        guess = optimizer._build_initial_guess(waypoints, num_samples_per_segment=5, N=11)
         
-        self.assertEqual(len(guess), 1 + 6 * 5)  # dt + N * 5 states
-        self.assertGreater(guess[0], 0)  # dt should be positive
-        # Check that start and end positions match waypoints
-        self.assertAlmostEqual(guess[1], 0.0, places=6)  # x[0]
-        self.assertAlmostEqual(guess[2], 0.0, places=6)  # y[0]
-        self.assertAlmostEqual(guess[1 + 5 * 5], 1.0, places=6)  # x[5]
-        self.assertAlmostEqual(guess[2 + 5 * 5], 0.0, places=6)  # y[5]
+        self.assertEqual(len(guess), 2 + 11 * 5)  # one dt per segment + N * 5 states
+        self.assertTrue(np.all(guess[:2] > 0))  # segment intervals are positive
+        states = guess[2:].reshape((11, 5))
+        # Check that start, midpoint, and end positions match waypoints
+        self.assertAlmostEqual(states[0, 0], 0.0, places=6)
+        self.assertAlmostEqual(states[0, 1], 0.0, places=6)
+        self.assertAlmostEqual(states[5, 0], 0.5, places=6)
+        self.assertAlmostEqual(states[5, 1], 0.0, places=6)
+        self.assertAlmostEqual(states[10, 0], 1.0, places=6)
+        self.assertAlmostEqual(states[10, 1], 0.0, places=6)
+
+    def test_build_initial_guess_styles_are_distinct_and_keep_waypoints(self):
+        """Seed styles change the interior guess but never the waypoints."""
+        config_dict = {
+            "robot": {
+                "mass": 0.8,
+                "inertia": 0.002,
+                "track_width": 0.1,
+                "wheel_radius": 0.03,
+                "v_max_rad_s": 15.0,
+                "t_max_nm": 0.05,
+                "gearing": 1.0,
+                "cof": 0.5
+            }
+        }
+        config = RobotConfig(config_dict)
+        optimizer = TrajectoryOptimizer(config)
+
+        waypoints = [(0.0, 0.0, 0.0), (0.6, 0.0, 1.2), (1.0, 0.5, None)]
+        samples = 5
+        N = 2 * samples + 1
+        stops = [0, 1]
+        guesses = {}
+
+        for style in GUESS_STYLES:
+            guess = optimizer._build_initial_guess(
+                waypoints, num_samples_per_segment=samples, N=N,
+                style=style, stop_waypoint_indices=stops)
+            self.assertEqual(len(guess), 2 + N * 5)
+            states = guess[2:].reshape((N, 5))
+            self.assertTrue(np.all(np.isfinite(states)))
+
+            # Waypoint positions are exact for every seed.
+            for i, (x, y, heading) in enumerate(waypoints):
+                self.assertAlmostEqual(states[i * samples, 0], x, places=6)
+                self.assertAlmostEqual(states[i * samples, 1], y, places=6)
+                if heading is not None:
+                    self.assertAlmostEqual(states[i * samples, 2], heading, places=6)
+
+            # Rest is required at the endpoints and at declared stops.
+            for k in (0, samples, N - 1):
+                self.assertEqual(states[k, 3], 0.0)
+                self.assertEqual(states[k, 4], 0.0)
+            guesses[style] = guess
+
+        # Each seed must start IPOPT somewhere different.
+        for i, style_a in enumerate(GUESS_STYLES):
+            for style_b in GUESS_STYLES[i + 1:]:
+                self.assertFalse(np.allclose(guesses[style_a], guesses[style_b]),
+                                 f"{style_a} and {style_b} produced the same guess")
+
+    def test_build_initial_guess_rejects_unknown_style(self):
+        config = RobotConfig({"robot": {"mass": 0.8, "inertia": 0.002,
+                                        "track_width": 0.1, "wheel_radius": 0.03,
+                                        "v_max_rad_s": 15.0, "t_max_nm": 0.05,
+                                        "gearing": 1.0, "cof": 0.5}})
+        optimizer = TrajectoryOptimizer(config)
+        with self.assertRaises(ValueError):
+            optimizer._build_initial_guess(
+                [(0.0, 0.0, 0.0), (1.0, 0.0, 0.0)], 5, 6, style="nope")
+
+    def test_turn_first_guess_with_one_sample_per_segment_keeps_endpoint(self):
+        config = RobotConfig({"robot": {"mass": 0.8, "inertia": 0.002,
+                                        "track_width": 0.1, "wheel_radius": 0.03,
+                                        "v_max_rad_s": 15.0, "t_max_nm": 0.05,
+                                        "gearing": 1.0, "cof": 0.5}})
+        optimizer = TrajectoryOptimizer(config)
+        waypoints = [(0.0, 0.0, 0.0), (0.5, 0.0, 1.2), (1.0, 0.5, None)]
+        guess = optimizer._build_initial_guess(
+            waypoints, num_samples_per_segment=1, N=3, style="turn_first")
+        states = guess[2:].reshape((3, 5))
+        self.assertAlmostEqual(states[-1, 0], waypoints[-1][0], places=6)
+        self.assertAlmostEqual(states[-1, 1], waypoints[-1][1], places=6)
 
     def test_format_output(self):
         """Test output formatting."""
@@ -295,18 +379,27 @@ class TestTrajectoryOptimizer(unittest.TestCase):
         config = RobotConfig(config_dict)
         optimizer = TrajectoryOptimizer(config)
         
-        # Create simple trajectory parameters
-        N = 11
-        dt = 0.1
+        # Create a two-segment trajectory with different interval lengths
+        N = 21
+        dt_values = np.array([0.1, 0.2])
         states = np.zeros((N, 5))
         states[:, 0] = np.linspace(0, 1, N)  # x
-        states[:, 3] = 0.5  # vl
-        states[:, 4] = 0.5  # vr
-        params = np.concatenate([[dt], states.flatten()])
+        states[:, 3] = 0.5 + 0.01 * np.arange(N)  # vl
+        states[:, 4] = 0.5 + 0.01 * np.arange(N)  # vr
+        params = np.concatenate([dt_values, states.flatten()])
         
         samples = optimizer.format_output(params, N, num_samples_per_segment=10)
         
         self.assertEqual(len(samples), N)
+        self.assertAlmostEqual(samples[0]["t"], 0.0)
+        self.assertAlmostEqual(samples[10]["t"], 1.0)
+        self.assertAlmostEqual(samples[11]["t"], 1.2)
+        self.assertAlmostEqual(samples[20]["t"], 3.0)
+        # Accelerations use the interval length of their own segment. Interval
+        # 9 is the last of segment 0; interval 10 is the first of segment 1.
+        self.assertAlmostEqual(samples[9]["al"], 0.01 / 0.1)
+        self.assertAlmostEqual(samples[10]["al"], 0.01 / 0.2)
+        self.assertAlmostEqual(samples[20]["al"], 0.0)
         # Check required fields
         self.assertIn("t", samples[0])
         self.assertIn("x", samples[0])
@@ -378,6 +471,42 @@ class TestTrajectoryOptimizer(unittest.TestCase):
         self.assertAlmostEqual(samples[5]["x"], 0.5, places=6)
         self.assertAlmostEqual(samples[10]["x"], 1.0, places=6)
         self.assertAlmostEqual(samples[10]["y"], 0.5, places=6)
+
+    def test_uniform_dt_keeps_one_interval_for_all_segments(self):
+        """Default mode ties every segment to the same interval length."""
+        config = RobotConfig({"robot": {
+            "mass": 0.8, "inertia": 0.002, "track_width": 0.1,
+            "wheel_radius": 0.03, "v_max_rad_s": 15.0, "t_max_nm": 0.05,
+            "gearing": 1.0, "cof": 0.5,
+        }})
+        optimizer = TrajectoryOptimizer(config)
+        waypoints = [(0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (1.2, 0.0, 0.0)]
+
+        samples, stats = optimizer.solve(
+            waypoints, num_samples_per_segment=5, accuracy_weight=0.0,
+            per_segment_dt=False, verbose=False)
+
+        self.assertEqual(len(stats["segment_dt"]), 2)
+        self.assertAlmostEqual(stats["segment_dt"][0], stats["segment_dt"][1], places=9)
+        self.assertAlmostEqual(samples[-1]["t"], 10 * stats["segment_dt"][0], places=6)
+
+    def test_per_segment_dt_allocates_time_by_segment(self):
+        """Opt-in per-segment timing gives each segment its own interval."""
+        config = RobotConfig({"robot": {
+            "mass": 0.8, "inertia": 0.002, "track_width": 0.1,
+            "wheel_radius": 0.03, "v_max_rad_s": 15.0, "t_max_nm": 0.05,
+            "gearing": 1.0, "cof": 0.5,
+        }})
+        optimizer = TrajectoryOptimizer(config)
+        waypoints = [(0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (1.2, 0.0, 0.0)]
+
+        samples, stats = optimizer.solve(
+            waypoints, num_samples_per_segment=5, accuracy_weight=0.0,
+            per_segment_dt=True, verbose=False)
+
+        self.assertEqual(len(stats["segment_dt"]), 2)
+        self.assertGreater(max(stats["segment_dt"]) / min(stats["segment_dt"]), 1.2)
+        self.assertAlmostEqual(samples[-1]["t"], 5 * sum(stats["segment_dt"]), places=6)
 
 
 # ---------------------------------------------------------------------------
