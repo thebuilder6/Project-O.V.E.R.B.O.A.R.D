@@ -153,7 +153,10 @@ async def follow_trajectory(drivebase, samples, config=None, b=2.0, zeta=0.7):
             dh = (h2 - h1 + _PI) % _TWO_PI - _PI
             tr = (h1 + alpha * dh + _PI) % _TWO_PI - _PI
             vr = v1 + alpha * (v2 - v1)
-            wr = w1 + alpha * (w2 - w1)
+            # The turn rate is the derivative of the heading, not an
+            # independent line: interpolating both separately makes them
+            # describe different motions (KI-027).
+            wr = dh / dt_traj if dt_traj > 0 else 0.0
 
             # Precompute the gain per sample, then interpolate, matching the
             # ramsete_fast.py / validator reference model for any b.

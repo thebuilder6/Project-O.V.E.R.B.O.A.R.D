@@ -49,26 +49,34 @@ def _interpolated_reference(s0: Dict[str, Any], s1: Dict[str, Any],
                             ramsete_b: float = 2.0
                             ) -> Tuple[float, float, float, float, float, float]:
     """
-    Linear reference interpolation matching pybricks_code/ramsete_fast.py.
+    Reference interpolation matching pybricks_code/ramsete_fast.py.
 
-    The deployed controller linearly interpolates x, y, heading, v and omega
-    between samples, and interpolates the precomputed Ramsete gain
-    ``sqrt(omega^2 + b*v^2)``. It does not use a Hermite curve.
+    The deployed controller linearly interpolates x, y, heading and v between
+    samples, and takes the turn rate as the *derivative* of the interpolated
+    heading. It does not use a Hermite curve.
 
-    Samples passed here are expected to have unrolled headings. The controller
-    therefore receives a continuous heading error, which is the same angle the
-    robot sees after its own shortest-angle interpolation.
+    Samples passed here are expected to have unrolled headings, so the
+    controller's continuous heading error is the same angle the robot sees
+    after its own shortest-angle interpolation. The heading difference itself
+    is taken the short way, exactly as the firmware does, so the two agree
+    even when a sample interval turns more than 180 degrees (KI-027).
     """
     v0 = (s0["vl"] + s0["vr"]) / 2.0
     v1 = (s1["vl"] + s1["vr"]) / 2.0
     omega0 = s0.get("omega", (s0["vr"] - s0["vl"]) / track_width)
     omega1 = s1.get("omega", (s1["vr"] - s1["vl"]) / track_width)
 
+    # The shortest-angle difference, like the firmware's. The unrolled
+    # headings differ by the same amount for any turn below 180 degrees.
+    dh = (s1["heading"] - s0["heading"] + math.pi) % (2.0 * math.pi) - math.pi
+
     ref_x = s0["x"] + (s1["x"] - s0["x"]) * s
     ref_y = s0["y"] + (s1["y"] - s0["y"]) * s
-    ref_heading = s0["heading"] + (s1["heading"] - s0["heading"]) * s
+    ref_heading = s0["heading"] + dh * s
     ref_v = v0 + (v1 - v0) * s
-    ref_omega = omega0 + (omega1 - omega0) * s
+    # The turn rate is the derivative of the interpolated heading, so the
+    # heading and the turn rate describe the same motion.
+    ref_omega = dh / dt if dt > 0 else omega0
 
     # ramsete_fast.py precomputes this per sample and linearly interpolates it.
     kr0 = math.sqrt(omega0**2 + ramsete_b * v0**2)

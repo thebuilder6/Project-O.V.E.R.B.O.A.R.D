@@ -87,7 +87,10 @@ async def follow_trajectory(drivebase, samples, config=None, b=2.0, zeta=0.7):
             dh = (data[p2+3] - data[p1+3] + _PI) % _2PI - _PI
             tr = (data[p1+3] + alpha * dh + _PI) % _2PI - _PI
             vr = data[p1+4] + alpha * (data[p2+4] - data[p1+4])
-            wr = data[p1+5] + alpha * (data[p2+5] - data[p1+5])
+            # The turn rate is the derivative of the heading, not an
+            # independent line: interpolating both separately makes them
+            # describe different motions (KI-027).
+            wr = dh / dt_traj if dt_traj > 0 else 0.0
             kr = data[p1+6] + alpha * (data[p2+6] - data[p1+6])
 
             # 4. SYNCHRONOUS ODOMETRY

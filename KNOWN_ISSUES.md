@@ -4,7 +4,7 @@ Last reviewed: 2026-10-19
 
 Scope: whole repository, reviewed as a single-user, offline desktop tool for one FLL robot. This is not a multi-user or server-scale review.
 
-Status: KI-001, KI-002, KI-003, KI-005, KI-006, KI-007, KI-008, KI-009, KI-010, KI-011, KI-012, KI-013, KI-014, KI-016, KI-019, KI-021, KI-022, KI-023, KI-024, and KI-025 are **fixed in the working tree** (uncommitted). All other items are open; KI-015 and KI-017 are partially fixed. KI-020 records the remaining digital-twin and optimization work. The user-facing docs were reconciled with this tree on 2026-10-19; the code remains the authority if they diverge again.
+Status: KI-001, KI-002, KI-003, KI-005, KI-006, KI-007, KI-008, KI-009, KI-010, KI-011, KI-012, KI-013, KI-014, KI-016, KI-019, KI-021, KI-022, KI-023, KI-024, KI-025, KI-026, and KI-027 are **fixed in the working tree** (uncommitted). All other items are open; KI-015 and KI-017 are partially fixed. KI-020 records the remaining digital-twin and optimization work. The user-facing docs were reconciled with this tree on 2026-10-19; the code remains the authority if they diverge again.
 
 How to use this list: refer to an item by its ID, for example “fix KI-003”.
 
@@ -38,6 +38,7 @@ How to use this list: refer to an item by its ID, for example “fix KI-003”.
 | KI-024 | P1 | Solver / timing | ~~The timing model had no rule for where the time allocation may change~~ (fixed) |
 | KI-025 | P1 | Safety model | ~~The backlash was subtracted from the commanded wheel speed, and the tracking metric ignored the heading~~ (fixed) |
 | KI-026 | P1 | Solver / kinematics | ~~The plan's samples were not on the path its own profile traces~~ (fixed) |
+| KI-027 | P1 | Robot runtime / model | ~~The reference interpolated the heading and the turn rate as independent lines~~ (fixed) |
 
 ## P0 — fix first
 
@@ -454,7 +455,21 @@ A real gear backlash is a *position* dead-band: it is taken up once at a directi
 
 ---
 
+### KI-027 - The reference interpolated the heading and the turn rate as independent lines
 
+**Status:** Fixed in the working tree (uncommitted). The turn rate is the derivative of the interpolated heading, in the four firmware controllers and in the validator together.
+
+**Files:** `pybricks_code/ramsete_fast.py`, `pybricks_code/ramsete_compact.py`, `pybricks_code/ramsete_compact_events.py`, `pybricks_code/ramsete.py`, `immrax_validator.py` (`_interpolated_reference`), `tests/test_jax_ramsete.py`
+
+**Problem:** The reference interpolated the heading, the speed, the turn rate and the Ramsete gain as four independent lines between the samples. They are coupled: the turn rate is the derivative of the heading. A line for the turn rate means the heading is a parabola, and the two disagree by up to `domega*dt/8` mid-interval - 8.7 degrees of contradictory heading on the S-curve at the default density. The robot was handed a heading target and a turn rate that described different motions, and the validator modelled the same mistake, which is why the model and the robot agreed on the bug.
+
+**Evidence:** See `docs/research/RQ-A_tracking_error.md` finding F7. Measured after the fix, per-segment timing: the S-curve at n=40 goes from 0.98 cm to 0.27 cm (pass), the stops mission at n=40 from 1.29 cm to 0.41 cm (pass), the complex mission at n=10 from 0.86 cm to 0.41 cm (pass) and at n=20 from 1.05 cm to 0.39 cm (pass). The S-curve at the default density gets worse (1.25 cm to 1.51 cm), which is F7's own finding: the coupling cannot be fixed in isolation, the plan has to be self-consistent too (KI-026), and the two together are what the candidate sweep is for.
+
+**Fix (implemented):** The turn rate is now `dh / dt` - the derivative of the interpolated heading - in `ramsete_fast.py`, `ramsete_compact.py`, `ramsete_compact_events.py`, `ramsete.py` and in the validator's `_interpolated_reference`. The model takes the heading difference the short way, exactly as the firmware does, so the two agree even when a sample interval turns more than 180 degrees. The gain was left alone: F7 measured it as worth nothing.
+
+**Workaround:** None needed. The firmware and the validator changed together, so the parity holds; the parity test in `tests/test_jax_ramsete.py` was updated to the coupled reference and a wrap case was added.
+
+---
 
 ### KI-026 - The plan's samples were not on the path its own profile traces
 
@@ -474,7 +489,9 @@ A real gear backlash is a *position* dead-band: it is taken up once at a directi
 
 ---
 
-1. KI-001, KI-002, KI-003, KI-005, KI-006, KI-007, KI-008, KI-009, KI-010, KI-011, KI-012, KI-013, KI-014, KI-016, KI-019, KI-021, KI-022, KI-023, KI-024, and KI-025: done in the working tree; never save or ship a failed or unvalidated run, keep validation on the configured robot, use both uncertainty bounds, keep the reference tube aligned with the samples, keep the optimizer and Immrax on the same per-wheel force model, hold both timing models to the same wheel-jerk discipline, keep the wheel force profile continuous through every waypoint the robot does not stop at, keep the backlash in the reachable set rather than in the wheel speed, never take a port from another program, and keep the firmware compilable for MicroPython.
+
+
+1. KI-001, KI-002, KI-003, KI-005, KI-006, KI-007, KI-008, KI-009, KI-010, KI-011, KI-012, KI-013, KI-014, KI-016, KI-019, KI-021, KI-022, KI-023, KI-024, KI-025, KI-026, and KI-027: done in the working tree; never save or ship a failed or unvalidated run, keep validation on the configured robot, use both uncertainty bounds, keep the reference tube aligned with the samples, keep the optimizer and Immrax on the same per-wheel force model, hold both timing models to the same wheel-jerk discipline, keep the wheel force profile continuous through every waypoint the robot does not stop at, keep the backlash in the reachable set rather than in the wheel speed, derive the turn rate from the interpolated heading in the firmware and the model together, place the plan's samples on the path its own profile traces, never take a port from another program, and keep the firmware compilable for MicroPython.
 2. KI-020: controller split, log/fit tooling, and the optional `--sysid-fit` actuator/odometry path are done, and the log and pose capture now run over Bluetooth from the host; collect hardware data, compare fitted predictions with measured poses, add integrated odometry/slip, then use reachability in optimization.
 3. KI-004: either make Multi-Verse real or remove it.
 4. KI-015: restore trustworthy benchmarks.

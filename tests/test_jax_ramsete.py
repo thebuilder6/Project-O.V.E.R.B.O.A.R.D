@@ -97,7 +97,7 @@ class TestJAXRamsete(unittest.TestCase):
         self.assertLess(float(jnp.max(jnp.abs(_sinc_poly(grid) - exact))), 1e-5)
 
     def test_reference_interpolation_matches_ramsete_fast(self):
-        """Linear pose/velocity and gain interpolation, not Hermite."""
+        """Linear pose/velocity interpolation, with the turn rate derived."""
         from immrax_validator import _interpolated_reference
 
         b = 2.0
@@ -110,16 +110,36 @@ class TestJAXRamsete(unittest.TestCase):
         v1 = (s1["vl"] + s1["vr"]) / 2.0
         kr0 = math.sqrt(s0["omega"]**2 + b * v0**2)
         kr1 = math.sqrt(s1["omega"]**2 + b * v1**2)
+        # The turn rate is the derivative of the interpolated heading, not an
+        # independent line: the heading and the turn rate have to describe
+        # the same motion (KI-027).
+        dh = (s1["heading"] - s0["heading"] + math.pi) % (2 * math.pi) - math.pi
+        ref_omega = dh / (s1["t"] - s0["t"])
 
         for frac in (0.0, 0.25, 0.5, 1.0):
             ref = _interpolated_reference(
                 s0, s1, s1["t"] - s0["t"], track_width, frac, b)
             self.assertAlmostEqual(ref[0], s0["x"] + (s1["x"] - s0["x"]) * frac)
             self.assertAlmostEqual(ref[1], s0["y"] + (s1["y"] - s0["y"]) * frac)
-            self.assertAlmostEqual(ref[2], s0["heading"] + (s1["heading"] - s0["heading"]) * frac)
+            self.assertAlmostEqual(ref[2], s0["heading"] + dh * frac)
             self.assertAlmostEqual(ref[3], v0 + (v1 - v0) * frac)
-            self.assertAlmostEqual(ref[4], s0["omega"] + (s1["omega"] - s0["omega"]) * frac)
+            self.assertAlmostEqual(ref[4], ref_omega)
             self.assertAlmostEqual(ref[5], kr0 + (kr1 - kr0) * frac)
+
+    def test_turn_rate_is_the_heading_derivative_across_the_wrap(self):
+        """The heading difference is the short way, like the firmware's."""
+        from immrax_validator import _interpolated_reference
+
+        s0 = {"t": 0.0, "x": 0.0, "y": 0.0, "heading": 3.0,
+              "vl": 0.2, "vr": 0.2, "omega": 0.0}
+        s1 = {"t": 0.1, "x": 0.01, "y": 0.0, "heading": -3.0,
+              "vl": 0.2, "vr": 0.2, "omega": 0.0}
+
+        ref = _interpolated_reference(s0, s1, 0.1, 0.0965, 0.5, 2.0)
+
+        # A 0.283 rad turn the short way, not 6.0 rad the long way.
+        self.assertAlmostEqual(ref[4], (0.28318530717958623) / 0.1, places=6)
+        self.assertLess(abs(ref[2]), 2.0 * math.pi)
 
     def test_ramsete_step_still_returns_commands(self):
         pose = jnp.array([0.0, 0.0, 0.0])

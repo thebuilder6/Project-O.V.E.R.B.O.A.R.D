@@ -303,8 +303,14 @@ async def follow_trajectory(drivebase, samples, config=None, b=2.0, zeta=0.7, de
         v1 = (s1['vl'] + s1['vr']) / 2.0
         v2 = (s2['vl'] + s2['vr']) / 2.0
         ref_v = v1 + alpha * (v2 - v1)
-        
-        ref_omega = s1['omega'] + alpha * (s2['omega'] - s1['omega'])
+
+        # The turn rate is the derivative of the heading, not an independent
+        # line: interpolating both separately makes them describe different
+        # motions (KI-027).
+        if s2['t'] == s1['t']:
+            ref_omega = 0.0
+        else:
+            ref_omega = dh / (s2['t'] - s1['t'])
 
         # Update current robot pose
         odom.update()

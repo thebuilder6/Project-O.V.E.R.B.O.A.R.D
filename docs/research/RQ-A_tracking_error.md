@@ -346,9 +346,32 @@ The metric is position-only (`immrax_validator.py:740-741`), so a trajectory cou
 
 It is **reported, not gated**: the heading behaviour is not calibrated against hardware, so it must not become a pass/fail criterion on its own. It is the measurement OQ4 needs.
 
-### Not fixed — the structural mismatch
+### Fix 3 - the turn rate is the derivative of the heading
 
-The three-way discretisation inconsistency is untouched. It needs the package fix described above, and the open item (OQ1) has to be closed first.
+F7 found that the reference interpolated the heading, the speed, the turn rate and the gain as four independent lines, so the heading and the turn rate described different motions: a line for `omega` means the heading is a parabola, and the two disagree by up to `domega*dt/8` mid-interval. The firmware and the model did it in the same way, which is why they agreed on the bug.
+
+The turn rate is now the **derivative of the interpolated heading**, in the four places that did it, and in the model with the firmware's own shortest-angle convention so the parity holds even above 180 degrees per sample interval:
+
+- `pybricks_code/ramsete_fast.py`, `ramsete_compact.py`, `ramsete_compact_events.py` (the deployed one) and `ramsete.py` (the event reference): `wr = dh / dt`.
+- `immrax_validator.py` (`_interpolated_reference`): the same, with the heading difference taken the short way.
+
+The gain was left alone: F7 measured it as worth nothing (0.98-1.08x everywhere).
+
+Measured after the fix, per-segment timing, the five cells F7 tabulated:
+
+| cell | as shipped | now | gate |
+|---|---:|---:|---|
+| s_curve n=10 | 1.248 cm | 1.51 cm | fail (worse, as F7 predicted) |
+| s_curve n=40 | 0.979 cm | **0.27 cm** | **pass** |
+| stops n=40 | 1.294 cm | **0.41 cm** | **pass** |
+| complex n=10 | 0.864 cm | **0.41 cm** | **pass** |
+| complex n=20 | 1.046 cm | **0.39 cm** | **pass** |
+
+Four of the five failing cells now pass, and the complex mission halves its error at the default density. The S-curve at the default density gets *worse*, which is F7's own finding: the coupling cannot be fixed in isolation, the plan has to be self-consistent too (KI-026), and the two together are what the sweep is for.
+
+### Not fixed - the structural mismatch
+
+Two of the three sides of the three-way discretisation inconsistency are now closed: the plan's own collocation (KI-026) and the reference's coupling (Fix 3). What is left is the *shape* of the reference - the controller still follows the chord between the samples rather than the curve, which is the second half of the package and needs the plan fix to be in place everywhere, and the 20 ms sample-and-hold, which is the remaining floor (OQ1).
 
 ---
 
