@@ -714,10 +714,16 @@ function renderValidationReport(report) {
         // assignment used to overwrite the first, so the tooltip never
         // showed the style or the weight.
         const reasons = (entry.reasons || []).join('; ');
+        /* A cut-off propagation reports the width the tube had when it
+           crossed the validator's 50 mm guard, not the width it would have
+           reached, so the number is a property of the guard. Say so, or the
+           operator reads a truncation as a measurement (KI-049). */
+        const truncated = entry.envelope_truncated
+            ? ' (cut off at the guard, so it is a lower bound)' : '';
         chip.title = `${entry.style || 'baseline'}, ${timing}, `
             + `weight ${entry.accuracy_weight === null ? '-' : entry.accuracy_weight}`
             + (entry.envelope_cm === null || entry.envelope_cm === undefined
-                ? '' : `, envelope ${entry.envelope_cm.toFixed(2)} cm`)
+                ? '' : `, envelope ${entry.envelope_cm.toFixed(2)} cm${truncated}`)
             + (reasons ? `: ${reasons}` : '');
         chip.addEventListener('click', () => {
             state.reportCandidate = i;

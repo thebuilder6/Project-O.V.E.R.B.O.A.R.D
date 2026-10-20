@@ -54,6 +54,7 @@ How to use this list: refer to an item by its ID, for example “fix KI-003”.
 | KI-040 | P1 | Robot runtime | ~~`--push-hub --hub-log` lost the whole hub log when the link dropped~~ (fixed) |
 | KI-044 | P1 | Studio | ~~The studio kept the last run's verdict, and a reload could not cancel a solve~~ (fixed) |
 | KI-045 | P2 | Cleanup | `sysid_solver.py` is a superseded prototype (open) |
+| KI-049 | P1 | Validation | ~~The reachability envelope reported a 54 mm width that was the divergence guard's fingerprint, and the tube behind it was blown up by a dependency the interval arithmetic could not see~~ (fixed) |
 
 ## P0 — fix first
 
@@ -568,6 +569,41 @@ On the nine missions where both have a passing candidate, the refined family is 
 **Fix (implemented):** `renderValidationReport` is the one owner of the verdict and handles "no report" by clearing the table, the chips, the failing-segment set and the red marks on the field; `solve()` calls it with nothing, so a new run starts with no verdict. The Push button and the push itself both refuse a mission that has changed since the solve, and the reason is said plainly. `init()` always asks `/api/jobs/current` and adopts a running solve, so a reload attaches to it and Cancel works.
 
 **Workaround:** None needed. `tests/test_studio_honesty.py` pins the three rules.
+
+---
+
+### KI-049 — The reachability envelope reported a truncation as a width, and the tube behind it was blown up by a dependency
+
+**Status:** Fixed in the working tree (uncommitted).
+
+**Files:** `immrax_validator.py` (`RobotOpenLoop.f`, `DigitalTwinOpenLoop`, `ImmraxValidator.__init__`, `compute_reachability`), `docs/research/rq_a/exp19_envelope_scatter.py`, `tests/test_envelope_soundness.py`, `requirements-optional.txt`
+
+**Problem:** Two separate faults, and they hid each other.
+
+The first was in the *number*. The validator stops the propagation when the tube's half-diagonal passes 50 mm and reports the radius it had at that moment, so the reported "width" is a property of the guard and not of the path: the same 54.561 mm came out for a 0.5 m path, a 1 m path and a 2 m path, and 53.081 mm for two other combinations. The reachability envelope was quoted as 54 mm against a 20 mm threshold, as if it were a measurement. It was a truncation.
+
+The second was in the *model*. The plant computes the turn rate as `(vr - vl) / track_width`, and both wheel speeds are the **same** command times the **same** gain, so the true turn rate does not depend on the gain at all. The natural extension cannot see that, so it reported a turn rate of `+/- (the width of the wheel speed interval) / track` where the truth says zero. That phantom rate integrates into a heading drift and then into a lateral drift, and the tube grows with the square of the time until it crosses the guard. The digital twin made it worse: it carries the two wheel speeds as *states*, so the lost correlation was in the state and not in the expression, and no inclusion function could recover it.
+
+**Evidence.** A 1 m straight at 0.5 m/s with a +/-1 % gain band, the reachable set sampled over the declared uncertainty with the corners included (`exp19_envelope_scatter.py`):
+
+| plant and inclusion | reported | truncated | reachable set | contains it |
+|---|---:|---|---:|---|
+| plain plant, natural inclusion | 54.03 mm | yes | 4.51 mm | yes |
+| plain plant, Jacobian inclusion | 11.83 mm | no | 4.51 mm | yes |
+| plain plant, natural inclusion, **after the fix** | 11.77 mm | no | 4.51 mm | yes |
+| digital twin, wheel speeds as states | 53.61 mm | yes | 4.55 mm | yes |
+| digital twin, **mean and difference** | 11.76 mm | no | 4.55 mm | yes |
+
+The reachable set the robot can actually reach is 4.5 mm wide. Everything above that was the model's own doing.
+
+**Fix (implemented):** Two exact reformulations, and no threshold was moved.
+
+1. The wheel-speed difference is taken from the **commands** and the gain is applied afterwards. `(u_r - u_l) * gain` is the same motion as `u_r * gain - u_l * gain`, but the command difference is one number, so one number times the gain is an exact interval, while the difference of two gain-scaled commands is not. On a straight the command difference is exactly zero, so the turn rate is exactly zero.
+2. The digital twin carries the wheel speeds as the **mean** and the **difference** instead of the two wheel speeds. The difference is what the turn rate is read from, and the two are perfectly correlated, which an interval box cannot express. The change of variables is a linear bijection and the dynamics are transformed exactly, so the enclosure is still a bound of the same reachable set.
+
+The report now also carries `envelope_truncated`, so a cut-off propagation says so, and the inclusion functions are behind a switch (`PLANT_INCLUSION`, `CONTROLLER_INCLUSION`) with the Jacobian and the mixed-Jacobian both implemented and checked against the sampled set. The default stayed on the natural inclusion because the measurement says it is now the better one: on the six example missions the Jacobian is 0.00-0.08 mm **wider** and 5-15 % slower, because the reformulation already removed the dependency it would have exploited.
+
+**Workaround:** None needed. The 20 mm envelope threshold and the 5 mm tracking threshold are unchanged (`docs/DIGITAL_TWIN_PLAN.md`). What is left of the calibrated-model problem is the width of the reachable set itself, which on a curve is physics: with a +/-1 % gain band the turn rate of a curve is uncertain by 1 %, and the lateral spread that follows is larger than 50 mm on the example missions. That is the gain band, not the model.
 
 ---
 

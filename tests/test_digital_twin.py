@@ -315,11 +315,16 @@ class TestDigitalTwinMechanisms(unittest.TestCase):
         return ImmraxValidator(JAXRobotConfig(_TEST_ROBOT), digital_twin=twin)
 
     def _flat(self, state_len, vl=0.0, vr=0.0):
-        """A flat state array with the given wheel speeds in both bounds."""
+        """A flat state array with the given wheel speeds in both bounds.
+
+        The plant carries the wheel speeds as the mean wheel speed and the
+        difference between the wheels, so a robot driving straight has a
+        difference of zero. The caller says which wheel speeds it means.
+        """
         lower = np.zeros(state_len)
         upper = np.zeros(state_len)
-        lower[3] = upper[3] = vl
-        lower[4] = upper[4] = vr
+        lower[3] = upper[3] = (vl + vr) / 2.0
+        lower[4] = upper[4] = (vr - vl)
         return jnp.concatenate([jnp.array(lower), jnp.array(upper)])
 
     def test_belief_uses_the_odometry_scale_and_gyro_bias(self):
@@ -361,7 +366,9 @@ class TestDigitalTwinMechanisms(unittest.TestCase):
         """A robot whose wheels are not parallel leaves a straight plan."""
         validator = self._validator(self._twin())
         w = jnp.array([1.37, 0.85, 0.0004, 0.0965, 0.028, 0.001, 1.0])
-        state = jnp.array([0.0, 0.0, 0.0, 0.4, 0.4])
+        # The plant's state is (x, y, heading, mean wheel speed, wheel-speed
+        # difference), so a robot going straight has a difference of zero.
+        state = jnp.array([0.0, 0.0, 0.0, 0.4, 0.0])
         command = jnp.array([0.4, 0.4])
 
         curving = validator.plant.f(0.0, state, command, w)

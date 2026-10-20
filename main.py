@@ -531,6 +531,9 @@ def _emit_validation_report(attempts, selected_index):
             "accuracy_weight": _finite(attempt.get("accuracy_weight")),
             "duration_s": _finite(attempt.get("duration")),
             "envelope_cm": _finite(attempt.get("tube", 0.0) * 100.0),
+            # True when the propagation was cut off, so envelope_cm is a
+            # lower bound and a property of the 50 mm guard (KI-049).
+            "envelope_truncated": bool(attempt.get("envelope_truncated")),
             "tracking_cm": _finite(attempt.get("tracking_m", 0.0) * 100.0),
             "max_excess_cm": _finite(excess * 100.0),
             "peak_jerk_m_s3": _finite(attempt.get("peak_jerk_m_s3")),

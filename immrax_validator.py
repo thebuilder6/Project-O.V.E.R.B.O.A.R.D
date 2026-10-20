@@ -3,7 +3,7 @@ import jax.numpy as jnp
 from jax import vmap
 import immrax
 from immrax import Interval, interval
-from immrax.inclusion import natif
+from immrax.inclusion import natif, jacif, mjacif
 from jax_robot_model import JAXRobotConfig, JAXDifferentialDriveModel
 from robot_model import CG_HEIGHT_M, wheel_normal_forces
 from jax_ramsete import JAXRamseteController, quantize_drive_command
@@ -58,6 +58,79 @@ REACHABILITY_SUBSTEPS = 20
 # the loop's own compute time.
 CONTROL_DT = 0.02
 PLANT_SUBSTEPS = 4
+
+# Which inclusion function embeds the plant and the controller.
+#
+# "nat" is the natural extension: the interval-arithmetic range of the
+# expression, with the sharing inside one expression preserved but not the
+# sharing between two *equal* quantities. The plant has exactly that
+# dependency. It computes the turn rate as (vr - vl) / track_width, and both
+# wheel speeds are the SAME command times the SAME gain, so the true turn
+# rate does not depend on the gain at all. The natural extension cannot see
+# that and reports a phantom turn rate of v * band / track, which integrates
+# into a heading drift and then into a lateral drift: the reachable tube grows
+# with the square of the time and crosses the validator's 50 mm guard long
+# before the path ends. Measured on a 1 m straight with a +/-1 % gain band,
+# that is the difference between a tube that diverges and a tube that is
+# 11.8 mm wide (docs/research/RQ-A_tracking_error.md, finding F5 and the
+# envelope finding that follows it).
+#
+# "jac" is the Jacobian (mean-value) inclusion, f(c) + J(X)(X - c) with the
+# interval Jacobian: the partial derivatives are bounded over the whole box,
+# so the result is a valid enclosure of f(X). It computes
+# d(turn rate)/d(gain) = (vr_cmd - vl_cmd) / track, which is exactly zero
+# for a straight, and the phantom disappears.
+#
+# "mjac" is the mixed-Jacobian inclusion: it relaxes one input coordinate at
+# a time from the centre to its bound and hulls the results. On this plant it
+# is 0.01-0.06 mm tighter than "jac" and about 1.3x the cost, so it is not
+# worth the time.
+#
+# The default is "nat", and that is a measurement, not a preference. The
+# dependency that used to blow the tube up is removed at the source, by
+# taking the wheel-speed difference from the commands before the gain
+# multiplies it (see RobotOpenLoop.f and DigitalTwinOpenLoop), so the
+# inclusion function has nothing left to win: on the six example missions
+# "jac" is 0.00-0.08 mm WIDER than "nat" and costs 5-15 % more time. The
+# switch is kept because the Jacobian is the right tool for a dependency the
+# algebra cannot remove, and because it is the only way to see the
+# difference for yourself.
+#
+# Both "jac" and "mjac" were checked against the reachable set the robot
+# can actually reach, sampled over the declared uncertainty with the corners
+# included (docs/research/rq_a/exp19_envelope_scatter.py): the tighter box
+# still contains it, so the tighter box is sound and not merely smaller.
+PLANT_INCLUSION = "nat"
+CONTROLLER_INCLUSION = "nat"
+
+# The inclusion functions that may be named above.
+PLANT_INCLUSIONS = ("nat", "jac", "mjac")
+CONTROLLER_INCLUSIONS = ("nat", "jac", "mjac")
+
+
+def _plant_embedding(plant, kind: str):
+    """Embed the plant with the requested inclusion function."""
+    if kind == "nat":
+        return immrax.natemb(plant)
+    if kind == "jac":
+        return immrax.jacemb(plant)
+    if kind == "mjac":
+        return immrax.mjacemb(plant)
+    raise ValueError(
+        f"plant inclusion must be one of {PLANT_INCLUSIONS}, got {kind!r}")
+
+
+def _controller_inclusion(fn, kind: str):
+    """Inclusion function for the controller's command, per control tick."""
+    if kind == "nat":
+        return natif(fn)
+    if kind == "jac":
+        return jacif(fn)
+    if kind == "mjac":
+        return mjacif(fn)
+    raise ValueError(
+        f"controller inclusion must be one of {CONTROLLER_INCLUSIONS}, "
+        f"got {kind!r}")
 
 
 def _interpolated_reference(s0: Dict[str, Any], s1: Dict[str, Any],
@@ -139,7 +212,6 @@ class RobotOpenLoop(immrax.system.OpenLoopSystem):
         u: Control inputs (Commanded wheel velocities) [vl_cmd, vr_cmd]
         """
         gain = _wheel_gain(w)
-        vl_cmd, vr_cmd = u[0] * gain, u[1] * gain
         track_width = w[3]
 
         # Gear backlash is a POSITION dead-band, not a velocity offset.
@@ -158,8 +230,18 @@ class RobotOpenLoop(immrax.system.OpenLoopSystem):
         # total uncertainty at each sample is unchanged: the same magnitude,
         # moved from the tracking metric into the envelope, and symmetric
         # instead of a one-sided bias.
-        vl_act = vl_cmd
-        vr_act = vr_cmd
+        #
+        # The MEAN and the DIFFERENCE of the two wheel speeds are taken from
+        # the commands and the gain is applied afterwards. It is the same
+        # motion and a much better enclosure. The command difference is one
+        # number, so one number times the gain is an exact interval, while
+        # the difference of two gain-scaled commands is not: the natural
+        # extension then reports a turn rate of +/- (the width of the wheel
+        # speed interval) / track where the truth says zero, and that
+        # phantom rate integrates into a lateral drift the reachable tube
+        # cannot tell apart from the physics. On a straight the command
+        # difference is exactly zero, so the turn rate is exactly zero.
+        vl_cmd, vr_cmd = u[0], u[1]
 
         # Kinematics
         #
@@ -168,8 +250,8 @@ class RobotOpenLoop(immrax.system.OpenLoopSystem):
         # command, which the controller cannot recover and which shows up as
         # a false tracking lag (KI-019). The optimizer already bounds planned
         # wheel speeds; validate_trajectory() checks the planned samples too.
-        v_act = (vl_act + vr_act) / 2.0
-        omega_act = (vr_act - vl_act) / track_width
+        v_act = (vl_cmd + vr_cmd) / 2.0 * gain
+        omega_act = (vr_cmd - vl_cmd) * gain / track_width
 
         dx = v_act * jnp.cos(x[2])
         dy = v_act * jnp.sin(x[2])
@@ -203,8 +285,34 @@ class DigitalTwinOpenLoop(immrax.system.OpenLoopSystem):
     # natural inclusion cannot compare or select.
     BRAKE_SPEED_M_S = 0.05
 
+    # How the two wheel speeds are carried in the state.
+    #
+    # "wheels"   - state[3] is the left wheel speed, state[4] the right one.
+    # "mean_diff" - state[3] is the MEAN wheel speed and state[4] is the
+    #   DIFFERENCE (right minus left).
+    #
+    # The second one exists because the two wheel speeds are perfectly
+    # correlated: on a straight they are equal, so their difference is
+    # exactly zero, and the turn rate - which is that difference over the
+    # track width - is exactly zero. An interval box cannot express that
+    # correlation, because it treats its coordinates as independent, so the
+    # natural extension reports a turn rate of +/- (the width of the wheel
+    # speed interval) / track where the truth says zero. That phantom rate
+    # integrates into a heading drift and then into a lateral drift, and it
+    # is what blows the reachable tube past the validator's 50 mm guard.
+    #
+    # Carrying the mean and the difference makes the correlation explicit:
+    # the difference's target is (vr_cmd - vl_cmd) * gain, and the command
+    # difference is a point, so on a straight the difference's target is
+    # exactly zero and the phantom never appears. The change of variables is
+    # a linear bijection and the dynamics are transformed exactly, so the
+    # enclosure is still a valid bound of the same reachable set.
+    WHEEL_STATES = ("wheels", "mean_diff")
+    WHEEL_STATE = "mean_diff"
+
     def __init__(self, config: JAXRobotConfig,
-                 digital_twin: DigitalTwinConfig):
+                 digital_twin: DigitalTwinConfig,
+                 wheel_state: Optional[str] = None):
         self.evolution = 'continuous'
         self.xlen = 5
         self.config = config
@@ -216,6 +324,11 @@ class DigitalTwinOpenLoop(immrax.system.OpenLoopSystem):
         # to drive straight. The plan's straight segments are straight, so
         # the curvature is a tracking error that grows with the distance.
         self.drift_rad_per_m = digital_twin.drift_rad_per_m()
+        self.wheel_state = wheel_state or self.WHEEL_STATE
+        if self.wheel_state not in self.WHEEL_STATES:
+            raise ValueError(
+                f"wheel_state must be one of {self.WHEEL_STATES}, "
+                f"got {self.wheel_state!r}")
 
     def f(self, t, x, u, w):
         gain = _wheel_gain(w)
@@ -228,9 +341,59 @@ class DigitalTwinOpenLoop(immrax.system.OpenLoopSystem):
         vl_target = vl_cmd
         vr_target = vr_cmd
 
-        vl_actual, vr_actual = x[3], x[4]
-        v_actual = (vl_actual + vr_actual) / 2.0
-        omega_actual = (vr_actual - vl_actual) / track_width
+        if self.wheel_state == "mean_diff":
+            # The state's two numbers are the mean wheel speed and the
+            # difference between the wheels, so the turn rate is read off
+            # the difference directly and the correlation between the two
+            # wheels is carried by the state instead of being lost.
+            #
+            # The difference of the TARGETS is taken at the command level,
+            # before the gain multiplies it: (vr_cmd - vl_cmd) is a point,
+            # and a point times the gain is an exact interval. Multiplying
+            # first and subtracting afterwards would put the dependency
+            # back, because the two products would each carry the whole
+            # gain band.
+            v_mean, v_diff = x[3], x[4]
+            v_actual = v_mean
+            omega_actual = v_diff / track_width
+
+            v_mean_target = (u[0] + u[1]) / 2.0 * gain
+            v_diff_target = (u[1] - u[0]) * gain
+
+            d_mean_raw = (v_mean_target - v_mean) / self.tau_s
+            d_diff_raw = (v_diff_target - v_diff) / self.tau_s
+            if self.accel_limit is None:
+                # The two rates are the state's own coordinates. They are
+                # not recovered by differencing two wheel-level rates,
+                # because that would put the correlation back.
+                d_mean, d_diff = d_mean_raw, d_diff_raw
+            else:
+                # The acceleration limit is a property of a single wheel, so
+                # it is applied at the wheel level and the result is
+                # transformed back. The transform is linear, so the wheel
+                # level rates are exact linear combinations of the state's
+                # own two rates.
+                limit = self.accel_limit
+                dvl = d_mean_raw - d_diff_raw / 2.0
+                dvr = d_mean_raw + d_diff_raw / 2.0
+                dvl = limit * jnp.tanh(dvl / limit)
+                dvr = limit * jnp.tanh(dvr / limit)
+                d_mean = (dvl + dvr) / 2.0
+                d_diff = dvr - dvl
+        else:
+            vl_actual, vr_actual = x[3], x[4]
+            v_actual = (vl_actual + vr_actual) / 2.0
+            omega_actual = (vr_actual - vl_actual) / track_width
+
+            dvl = (vl_target - vl_actual) / self.tau_s
+            dvr = (vr_target - vr_actual) / self.tau_s
+
+            if self.accel_limit is not None:
+                # A soft limit: tanh is monotone, so the natural inclusion
+                # of it is exact, and it keeps the rate below the limit.
+                dvl = self.accel_limit * jnp.tanh(dvl / self.accel_limit)
+                dvr = self.accel_limit * jnp.tanh(dvr / self.accel_limit)
+            d_mean, d_diff = dvl, dvr
 
         # Braking slip: the wheels turn without gripping, so the robot covers
         # less than its encoders report. The factor goes to one at speed, so
@@ -251,16 +414,8 @@ class DigitalTwinOpenLoop(immrax.system.OpenLoopSystem):
             # rate proportional to the speed. A positive drift turns the
             # robot to the left, the same way as a positive heading.
             dtheta = dtheta + self.drift_rad_per_m * grip * v_actual
-        dvl = (vl_target - vl_actual) / self.tau_s
-        dvr = (vr_target - vr_actual) / self.tau_s
 
-        if self.accel_limit is not None:
-            # A soft limit: tanh is monotone, so the natural inclusion of it
-            # is exact, and it keeps the rate below the measured limit.
-            dvl = self.accel_limit * jnp.tanh(dvl / self.accel_limit)
-            dvr = self.accel_limit * jnp.tanh(dvr / self.accel_limit)
-
-        return jnp.array([dx, dy, dtheta, dvl, dvr])
+        return jnp.array([dx, dy, dtheta, d_mean, d_diff])
 
 #irx.natemb
 
@@ -339,7 +494,10 @@ class ImmraxValidator:
                  ramsete_b: float = 2.0, ramsete_zeta: float = 0.7,
                  control_dt: float = CONTROL_DT,
                  feedback_mode: str = "nominal",
-                 digital_twin: Optional[DigitalTwinConfig] = None):
+                 digital_twin: Optional[DigitalTwinConfig] = None,
+                 plant_inclusion: Optional[str] = None,
+                 controller_inclusion: Optional[str] = None,
+                 wheel_state: Optional[str] = None):
         self.cfg = config
         self.model = JAXDifferentialDriveModel(config)
         self.ramsete_b = float(ramsete_b)
@@ -357,6 +515,25 @@ class ImmraxValidator:
         if feedback_mode not in ("nominal", "interval"):
             raise ValueError("feedback_mode must be 'nominal' or 'interval'")
         self.feedback_mode = feedback_mode
+
+        # Which inclusion function embeds the plant and the controller. The
+        # defaults are the module constants, so a run is reproducible and the
+        # choice can be overridden per validator for an A/B measurement.
+        self.plant_inclusion = plant_inclusion or PLANT_INCLUSION
+        self.controller_inclusion = controller_inclusion or CONTROLLER_INCLUSION
+        self.wheel_state = wheel_state or DigitalTwinOpenLoop.WHEEL_STATE
+        if self.wheel_state not in DigitalTwinOpenLoop.WHEEL_STATES:
+            raise ValueError(
+                f"wheel_state must be one of {DigitalTwinOpenLoop.WHEEL_STATES}, "
+                f"got {self.wheel_state!r}")
+        if self.plant_inclusion not in PLANT_INCLUSIONS:
+            raise ValueError(
+                f"plant_inclusion must be one of {PLANT_INCLUSIONS}, "
+                f"got {self.plant_inclusion!r}")
+        if self.controller_inclusion not in CONTROLLER_INCLUSIONS:
+            raise ValueError(
+                f"controller_inclusion must be one of {CONTROLLER_INCLUSIONS}, "
+                f"got {self.controller_inclusion!r}")
 
         self.digital_twin_gain_range = (
             digital_twin.actuator_gain_range()
@@ -393,19 +570,24 @@ class ImmraxValidator:
 
         self.sys = ClosedLoopRobotSystem(
             config, self.ramsete_b, self.ramsete_zeta)
-        self.emb_sys = immrax.natemb(self.sys)
+        self.emb_sys = _plant_embedding(self.sys, self.plant_inclusion)
 
         # Sampled-data path: hold the controller command for one 20 ms tick,
         # then integrate the physical plant. This mirrors ramsete_fast.py
         # instead of evaluating the controller continuously.
         if self._digital_twin_active and digital_twin.actuator_tau_s() > 0.0:
-            self.plant = DigitalTwinOpenLoop(config, digital_twin)
+            self.plant = DigitalTwinOpenLoop(config, digital_twin,
+                                             wheel_state=wheel_state)
         else:
             self.plant = RobotOpenLoop(config)
-        self.plant_emb_sys = immrax.natemb(self.plant)
+        # The live embedding: the plant alone, propagated by the sampled-data
+        # loop below. The controller is evaluated outside it, at the tube
+        # midpoint, so the controller is not part of what gets embedded.
+        self.plant_emb_sys = _plant_embedding(self.plant, self.plant_inclusion)
         self.controller = RamseteController(
             self.ramsete_b, self.ramsete_zeta, track_width=config.track_width)
-        self._controller_if = natif(self._controller_command_interval)
+        self._controller_if = _controller_inclusion(
+            self._controller_command_interval, self.controller_inclusion)
         self._sampled_control = True
 
     def _controller_command_interval(self, x, u_ref, w):
@@ -424,12 +606,23 @@ class ImmraxValidator:
         robot's estimate, not a physical quantity, so it does not belong in
         the reachable tube; it only decides what the controller believes.
         """
-        vl = float((x_flat[3] + x_flat[state_len + 3]) / 2.0)
-        vr = float((x_flat[4] + x_flat[state_len + 4]) / 2.0)
+        # The plant's two wheel-speed numbers, read in the coordinates the
+        # plant carries them in. "mean_diff" holds the mean wheel speed and
+        # the difference between the wheels; "wheels" holds the two wheel
+        # speeds. The belief's speed and turn rate are the same either way.
+        v_mean = float((x_flat[3] + x_flat[state_len + 3]) / 2.0)
+        v_diff = float((x_flat[4] + x_flat[state_len + 4]) / 2.0)
         track_width = self.cfg.track_width
+        if self.wheel_state == "mean_diff":
+            odo_v = v_mean
+            odo_w = v_diff / track_width
+        else:
+            vl, vr = v_mean, v_diff
+            odo_v = (vl + vr) / 2.0
+            odo_w = (vr - vl) / track_width
 
-        odo_v = (vl + vr) / 2.0 * self.digital_twin_distance_scale
-        odo_w = ((vr - vl) / track_width) * self.digital_twin_heading_scale
+        odo_v = odo_v * self.digital_twin_distance_scale
+        odo_w = odo_w * self.digital_twin_heading_scale
         odo_w += self.digital_twin_gyro_bias_rad_s
 
         x, y, heading = belief
@@ -600,6 +793,10 @@ class ImmraxValidator:
             "wheel_speed_limit_m_s": wheel_speed_limit,
             "speed_violation_m_s": speed_violation,
             "reachability": reach_report,
+            "inclusion": {
+                "plant": self.plant_inclusion,
+                "controller": self.controller_inclusion,
+            },
             "digital_twin": (
                 self.digital_twin.summary()
                 if self.digital_twin is not None else None
@@ -623,6 +820,7 @@ class ImmraxValidator:
                 "max_envelope_radius_m": 0.0,
                 "envelope": [],
                 "diverged": False,
+                "envelope_truncated": False,
             }
 
         # Pass the uncertainty as an Interval, not a flat lower/upper array.
@@ -835,6 +1033,14 @@ class ImmraxValidator:
             "max_envelope_radius_m": max_envelope_radius,
             "envelope": envelope,
             "diverged": diverged,
+            # When the propagation was cut off, the reported radius is the
+            # width the tube had when it crossed the guard, NOT the width it
+            # would have reached. It is a lower bound on the true width, and
+            # the number it produces is a property of the guard rather than
+            # of the path: the same value comes out for paths of different
+            # lengths. A caller that quotes the radius without this flag is
+            # quoting a truncation as if it were a measurement.
+            "envelope_truncated": bool(diverged),
         }
 
 

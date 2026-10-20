@@ -15,3 +15,7 @@ jaxopt
 immrax
 pandas
 pybricksdev
+# scipy is imported by immrax.utils, which the envelope experiment uses for
+# the Monte-Carlo check against the reachable set. Immrax declares shapely,
+# pypoman and matplotlib but not scipy, so it is named here (KI-049).
+scipy

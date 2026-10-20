@@ -180,20 +180,20 @@ The digital twin adds a seventh uncertainty: the measured steady-state **actuato
 | path | gain band | tracking | envelope | tracking gate (5 mm) | envelope gate (20 mm) |
 |---:|---|---:|---:|---|---|
 | 0.5 m | none | 0.000 mm | 2.2 mm | pass | pass |
-| 0.5 m | ±1 % | 0.363 mm | 28.6 mm | pass | **fail** |
+| 0.5 m | ±1 % | 0.000 mm | 6.5 mm | pass | pass |
 | 1.0 m | none | 0.001 mm | 2.9 mm | pass | pass |
-| 1.0 m | ±0.1 % | 0.026 mm | 13.1 mm | pass | pass |
-| 1.0 m | ±0.5 % | 0.598 mm | 55.0 mm | pass | **fail** |
-| 1.0 m | ±1 % | 0.910 mm | 54.0 mm | pass | **fail** |
-| 1.0 m | ±5 % | 2.003 mm | 53.1 mm | pass | **fail** |
+| 1.0 m | ±0.1 % | 0.001 mm | 3.5 mm | pass | pass |
+| 1.0 m | ±0.5 % | 0.000 mm | 7.0 mm | pass | pass |
+| 1.0 m | ±1 % | 0.000 mm | 11.8 mm | pass | pass |
+| 1.0 m | ±5 % | 0.001 mm | 51.6 mm | pass | **fail** |
 | 2.0 m | none | 0.001 mm | 4.5 mm | pass | pass |
-| 2.0 m | ±0.1 % | 0.143 mm | 45.7 mm | pass | **fail** |
-| 2.0 m | ±1 % | 1.302 mm | 69.9 mm | pass | **fail** |
-| 2.0 m | ±5 % | 4.542 mm | 91.3 mm | pass | **fail** |
+| 2.0 m | ±0.1 % | 0.001 mm | 5.6 mm | pass | pass |
+| 2.0 m | ±1 % | 0.001 mm | 22.4 mm | pass | **fail** |
+| 2.0 m | ±5 % | 0.001 mm | 51.6 mm | pass | **fail** |
 
-The tracking error stays two orders of magnitude below the gate even at ±5 %, because the Ramsete controller sees the position lag and corrects it. What the gain band destroys is the **reachability envelope**: the interval propagation has to carry the whole speed uncertainty, and the tube blows past 20 mm at a gain band of 0.5 % over 1 m.
+The tracking error stays two orders of magnitude below the gate even at ±5 %, because the Ramsete controller sees the position lag and corrects it. What the gain band widens is the **reachability envelope**: the interval propagation has to carry the whole speed uncertainty, and the tube grows with the square of the time.
 
-*(Re-measured 2026-10-20. The old numbers read 0.041 / 0.573 / 0.878 mm and 4.568 mm on the same rows; the reference fix moved the tracking error by a few tenths of a millimetre and left the envelope alone.)*
+*(Re-measured 2026-10-20, and again after KI-049, which removed a dependency the interval arithmetic could not see. The old table read 0.000 / 0.363 / 0.026 / 0.598 / 0.910 / 2.003 / 0.143 / 1.302 / 4.542 mm of tracking and 28.6 / 13.1 / 55.0 / 54.0 / 53.1 / 45.7 / 54.99 / 53.6 / 91.3 mm of envelope. Those envelope numbers were not widths: the propagation had been cut off at the validator's 50 mm guard, and the same value came out for paths of different lengths. See F12.)*
 
 **So the two gates measure two different things, and which one binds depends on the configuration:**
 
@@ -204,7 +204,7 @@ The tracking error stays two orders of magnitude below the gate even at ±5 %, b
 
 This also explains the measurement-suite result that the envelope was 27 % of the failures there and 0 % on the six example missions: the example missions are easy, and the suite includes hard ones.
 
-**Practical consequence.** A calibrated model makes most paths fail validation — but on the envelope, not on the tracking error, and the open-loop "10 mm over 1 m" arithmetic is not the reason. The reachable set cannot be shrunk by making the trajectory smoother; it can only be shrunk by a narrower gain band, a shorter path, or by deciding that the envelope gate and the tracking gate are measuring overlapping things and merging them.
+**Practical consequence.** A calibrated model makes the envelope the gate that binds — not the tracking error, and not for the open-loop "10 mm over 1 m" reason. The reachable set cannot be shrunk by making the trajectory smoother; it can only be shrunk by a narrower gain band, a shorter path, or by deciding that the envelope gate and the tracking gate are measuring overlapping things and merging them. What F12 adds is that the reachable set was also being *inflated* by the model, and that part is now gone: a 1 m straight with a ±1 % band is 11.8 mm wide and holds a 4.5 mm reachable set, where it used to report 54 mm and hold the same 4.5 mm.
 
 ### F6 — The tracking error is U-shaped in the sampling density, and the default is on the wrong side of the optimum
 
@@ -714,6 +714,36 @@ What that says:
 - At fine sampling this changes little: the floor there is the command hold,
   not the plan (OQ1).
 
+### F12 — The envelope was a truncation, and the tube behind it was inflated by a dependency the interval arithmetic cannot see
+
+This is about the *envelope* gate, not the tracking gate, and it is the other half of F5. Two faults, one hiding the other.
+
+**The number was a truncation.** The validator stops the propagation when the tube's half-diagonal passes 50 mm, and it reports the radius the tube had at that moment. So the "54 mm" that F5 quotes was not a width: it was the guard's fingerprint. The proof is in the table F5 used to carry: 54.561 mm appears for a 0.5 m path, a 1 m path and a 2 m path at the same band, and 53.081 mm for two other combinations. A width cannot be identical for paths of different lengths; a truncation can. The report now carries `envelope_truncated`, so a cut-off propagation says so.
+
+**The tube behind it was inflated.** The plant computes the turn rate as `(vr - vl) / track_width`, and both wheel speeds are the **same** command times the **same** gain, so the true turn rate does not depend on the gain at all. The natural extension cannot see that: it evaluates `u_r * gain` and `u_l * gain` as two separate intervals and then subtracts them, so it reports a turn rate of `± (the width of the wheel speed interval) / track` where the truth says zero. That phantom rate integrates into a heading drift and then into a lateral drift, and the tube grows with the square of the time.
+
+The reachable set the robot can actually reach is **4.5 mm** wide on a 1 m straight with a ±1 % band. Everything the validator reported above that was the model's own doing.
+
+Measured (`rq_a/exp19_envelope_scatter.py`, which samples the reachable set over the declared uncertainty with the corners of the box included):
+
+| plant and inclusion | reported | truncated | reachable set | contains it |
+|---|---:|---|---:|---|
+| plain plant, natural inclusion | 54.03 mm | yes | 4.51 mm | yes |
+| plain plant, Jacobian inclusion | 11.83 mm | no | 4.51 mm | yes |
+| plain plant, natural inclusion, **after the fix** | 11.77 mm | no | 4.51 mm | yes |
+| digital twin, the two wheel speeds as states | 53.61 mm | yes | 4.55 mm | yes |
+| digital twin, **the mean and the difference** | 11.76 mm | no | 4.55 mm | yes |
+
+Three things came out of that table.
+
+- **The Jacobian inclusion is sound.** It is the mean-value form with the interval Jacobian, so it is a valid enclosure, and the tighter box still contains the sampled set. It is also *not needed*: the dependency is removable exactly, by taking the wheel-speed difference from the commands before the gain multiplies it. `(u_r - u_l) * gain` is the same motion as `u_r * gain - u_l * gain`, but the command difference is one number, and one number times the gain is an exact interval.
+- **The digital twin needed a different fix.** It carries the two wheel speeds as *states*, so there the lost correlation is in the state and not in the expression, and no inclusion function can recover it. Carrying the **mean** and the **difference** instead makes the correlation explicit: the difference is what the turn rate is read from, and the change of variables is a linear bijection, so the enclosure is still a bound of the same reachable set. 53.61 mm → 11.76 mm.
+- **The envelope now scales the way the physics says.** Before the fix the width saturated at 53-55 mm whatever the band; after it, the width is linear in the band and in the length (1 m: 3.5 mm at ±0.1 %, 7.0 mm at ±0.5 %, 11.8 mm at ±1 %; 2 m: 5.6, 12.6, 22.4 mm). A width that does not respond to the uncertainty it is supposed to carry is a symptom, and it is gone.
+
+**The default inclusion function stayed on the natural extension**, because the measurement says that is now the better one: on the six example missions the Jacobian is 0.00-0.08 mm **wider** and 5-15 % slower, because the reformulation already removed the dependency it would have exploited. The Jacobian and the mixed-Jacobian are both implemented and both behind a switch (`PLANT_INCLUSION`, `CONTROLLER_INCLUSION`), and `tests/test_envelope_soundness.py` checks that the tighter box still contains the sampled set.
+
+**What is left of the calibrated-model problem is physics, not the model.** On a *curve* the turn rate is not zero, so a gain band makes it uncertain by the same 1 %, and the lateral spread that follows is larger than 50 mm on the example missions: the tube is cut off there, and that is the reachable set being genuinely wide. The lever for that is a narrower gain band (better calibration), not a tighter inclusion function.
+
 ## What this changes in the research agenda
 In [`../HEURISTICS_AND_VERIFICATION.md`](../HEURISTICS_AND_VERIFICATION.md) Part IV:
 
@@ -733,11 +763,11 @@ In [`../HEURISTICS_AND_VERIFICATION.md`](../HEURISTICS_AND_VERIFICATION.md) Part
 | Question | Answered: the cause is identified. Three of the four things that stood between the plan and the robot are closed in the tree; what is open is the *shape* of the reference and the velocity it reports |
 | Root cause | The optimizer's discretisation, the controller's reference and the plant's integration are three different discretisations of the same trajectory; on a curved path they disagree by ~1 cm |
 | OQ1 (the floor at fine sampling) | **Answered.** Two mechanisms, at opposite ends of the density range: at coarse sampling the plan's positions are off the path its own profile traces; at fine sampling the control loop's hold of the drive command is the floor. The error is U-shaped in the density (F6) |
-| Fixes landed | **KI-025** the backlash dimensional error. **KI-026** the optimizer's self-consistent collocation (`--self-consistent`). **KI-027** the turn rate as the derivative of the interpolated heading, in the firmware and the validator together. **KI-028** the validator models the controller that runs. The structural fix is therefore **in the tree** |
+| Fixes landed | **KI-025** the backlash dimensional error. **KI-026** the optimizer's self-consistent collocation (`--self-consistent`). **KI-027** the turn rate as the derivative of the interpolated heading, in the firmware and the validator together. **KI-028** the validator models the controller that runs. **KI-049** the envelope's phantom turn rate, and the truncation reported as a width. The structural fix is therefore **in the tree** |
 | Measured effect | On the example matrix, re-measured after those fixes: **31 of 60 candidates pass** (was 24), **7 of the 12 (mission, timing model) cells produce a trajectory** (was 6), and a non-baseline seed is selected in 4 of them (was 2). The envelope still never binds: **0 of 29 failures** cite it, and the largest envelope is 1.75 cm against a 2 cm threshold |
 | Confidence | High on the diagnosis (four independent measurements agree, with synthetic controls) |
 | Safety | The KI-025 fix changed no gate outcome on its own: 0 of 60 candidates on the example matrix and 0 of 231 on the mission suite changed pass flag, with the worst-case uncertainty per run moving by at most 0.065 cm |
-| Which gate binds | **Tracking** in the default configuration (25 of 29 failures). **Envelope** once a calibrated model is fitted, because the measured gain band widens the reachable set (F5) |
+| Which gate binds | **Tracking** in the default configuration (25 of 29 failures). **Envelope** once a calibrated model is fitted, because the measured gain band widens the reachable set (F5) - and after F12 that width is the reachable set itself and not an artefact of the model |
 | Hardware | **None.** Every number here is a model prediction. No hardware logs exist in this repository, and the uncertainty ranges in `examples/fll_choreo.json` are declared test assumptions. The *relative* findings (which term dominates, how the error scales) are properties of the model and hold regardless; the absolute numbers do not |
 | Re-measured | **Every table in this note was re-taken on 2026-10-20**, against the working tree that carries KI-025 to KI-028, because the model changed under them: the backlash moved into the reachable set, the plan's collocation became optional, the reference's turn rate became the derivative of the heading, and the control period became the firmware's own. The conclusions did not change; the numbers did. The raw output is in [`../../measurements/2026-10-20-post-ki028/rq_a/`](../../measurements/2026-10-20-post-ki028/rq_a/), one file per script |
 
