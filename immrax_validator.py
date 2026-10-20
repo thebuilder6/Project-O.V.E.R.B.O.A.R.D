@@ -587,7 +587,7 @@ class ClosedLoopTickMap(immrax.system.System):
                  carry_belief: bool = False,
                  belief_scale=(1.0, 1.0), gyro_bias: float = 0.0,
                  delay_ticks: int = 0, wheel_state: str = "wheels",
-                 belief_mode: str = "error"):
+                 belief_mode: str = "estimate"):
         self.evolution = "discrete"
         self.plant = plant
         self.controller = controller

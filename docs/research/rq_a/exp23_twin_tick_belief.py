@@ -73,7 +73,8 @@ def _build(twin, propagation, inclusion, carry_belief=None):
             belief_scale=(val.digital_twin_distance_scale,
                           val.digital_twin_heading_scale),
             gyro_bias=val.digital_twin_gyro_bias_rad_s,
-            delay_ticks=val._tick_delay_ticks, wheel_state=val.wheel_state)
+            delay_ticks=val._tick_delay_ticks, wheel_state=val.wheel_state,
+            belief_mode=val.belief_mode)
         val.tick_map = tick
         val.tick_emb_sys = IV._plant_embedding(tick, inclusion)
     return val

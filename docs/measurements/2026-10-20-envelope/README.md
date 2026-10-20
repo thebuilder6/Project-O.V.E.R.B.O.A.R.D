@@ -107,8 +107,8 @@ correlation to be made explicit first.
 
 **But the belief is not the reason, and the control says so.** Feeding the
 controller the *truth* instead of the estimate (`exp23_twin_tick_belief.txt`)
-is **not** smaller (12.48 cm against 9.54 cm on the S-curve), and it is
-**unsound** while it is at it: it misses reachable poses by 1-2 mm, which is
+is **not** smaller (12.48 cm against 12.08 cm on the S-curve), and it is
+**unsound** while it is at it: it misses reachable poses by 1 mm, which is
 the size of the estimate's initial offset. The reason is the twin's *plant
 state*: the two wheel speeds are interval coordinates whose spread feeds the
 command, and the interval arithmetic counts that growth twice.
