@@ -425,6 +425,51 @@ It is not a free win, and it is not the whole fix:
 - At fine sampling this changes little: the floor there is the 20 ms
   sample-and-hold, not the plan (OQ1).
 
+### F10 — the self-consistent collocation, implemented (OQ2, half 1)
+
+OQ2 asked whether the optimizer can be reformulated so the consistency is
+structural. It can: replace the trapezoidal position rule with a quadrature
+over the *integrated* heading, and the samples land on the path the plan's own
+(v, omega) profile traces, with the heading samples as its tangents.
+
+`optimizer.py` now has it behind `--self-consistent` (off by default, so the
+measured plans stay reproducible). The position rule integrates the interval's
+velocity along the heading the robot will hold - the turn rate integrated, not
+the two endpoints - with a four-node Gauss-Legendre rule, O(dt^7) per interval
+against the trapezoid's O(dt^3). The heading rule is unchanged, so the headings
+are the tangents by construction. Nothing on the robot changes: the firmware
+still follows the chord, and the chord is now within the sagitta of the path.
+
+| S-curve, n=10 (default) | plan/profile deviation | tracking | gate |
+|---|---:|---:|---|
+| trapezoid, candidate 1 | 11.5 mm | 1.31 cm | fail |
+| trapezoid, candidate 2 | 11.5 mm | 1.32 cm | fail |
+| self-consistent, candidate 1 | < 0.1 mm | 0.59 cm | fail |
+| self-consistent, candidate 2 | < 0.1 mm | 0.55 cm | fail (0.05 cm over) |
+
+| events, n=10 (default) | tracking | gate |
+|---|---:|---|
+| trapezoid, candidate 1 / 2 | 0.52 / 2.08 cm | fail / fail |
+| **self-consistent, candidate 1 / 2** | **0.32 / 0.40 cm** | **PASS / PASS** |
+
+The validator's own forward-integration check stops reporting its 1.3 cm
+error, because the plan now agrees with itself.
+
+It is not a free win, and it is not the whole fix:
+
+- The S-curve still misses the 5 mm gate by 0.05 cm.
+- The complex mission moves from 0.49 cm to 0.51 cm, so it now fails the gate
+  by 0.01 cm. The candidate set has to be re-tuned under the new formulation.
+- The stops mission gets slower (6.2 s to 7.8 s): a direction reversal is
+  where a self-consistent plan is hardest (OQ5).
+- The first-four-waypoints mission is unchanged.
+- These numbers are measured with F7 already in the tree. Before F7 landed,
+  the S-curve's self-consistent candidate measured 0.47 cm and passed, so the
+  two changes interact and have to be tuned together.
+- At fine sampling this changes little: the floor there is the 20 ms
+  sample-and-hold, not the plan (OQ1).
+
+
 ## What this changes in the research agenda
 In [`../HEURISTICS_AND_VERIFICATION.md`](../HEURISTICS_AND_VERIFICATION.md) Part IV:
 

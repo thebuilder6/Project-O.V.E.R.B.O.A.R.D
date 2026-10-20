@@ -730,6 +730,10 @@ def _print_summary(output, samples_data, robot_cfg, validate, attempt_passed, tu
               help='Search the timing model and the accuracy weight for the fastest trajectory that '
                    'passes the gates (simple solver only). Adds candidates to the set instead of '
                    'replacing them, so it costs more solves and more validation passes.')
+@click.option('--self-consistent', is_flag=True,
+              help='Plan a self-consistent trajectory: the samples are placed on the path the '
+                   'trajectory\'s own (v, omega) profile traces, so the headings are its tangents '
+                   '(simple solver only). Off by default; it changes every plan it is used on.')
 
 # --- Export & Validation ---
 @click.option('--validate/--no-validate', default=False,
@@ -770,7 +774,7 @@ def _print_summary(output, samples_data, robot_cfg, validate, attempt_passed, tu
 @click.pass_context
 def main(ctx, config, waypoints, output, gui, gui_port, doctor, multiverse, simple, preset,
          samples, accuracy_weight, candidates, stop_waypoints, events, per_segment_dt, uniform_dt,
-         no_parallel, workers, fast_polish, sweep, validate, sysid_fit, export_format, controller_dt, benchmark,
+         no_parallel, workers, fast_polish, sweep, self_consistent, validate, sysid_fit, export_format, controller_dt, benchmark,
          push_hub, hub_conn, hub_name, hub_log,
          plot, animate, live, show_convergence, convergence_mode, verbose, quiet):
     """
@@ -806,6 +810,10 @@ def main(ctx, config, waypoints, output, gui, gui_port, doctor, multiverse, simp
     if sweep and multiverse:
         raise click.ClickException(
             "--sweep is only supported by the simple solver."
+        )
+    if self_consistent and multiverse:
+        raise click.ClickException(
+            "--self-consistent is only supported by the simple solver."
         )
 
     if doctor:
@@ -1018,6 +1026,8 @@ def main(ctx, config, waypoints, output, gui, gui_port, doctor, multiverse, simp
         )
         if not multiverse:
             solve_kwargs["guess_style"] = spec["guess_style"]
+            if self_consistent:
+                solve_kwargs["self_consistent"] = True
             solve_kwargs["per_segment_dt"] = spec.get("per_segment_dt", False)
         if fast_polish:
             solve_kwargs["fast_polish"] = True

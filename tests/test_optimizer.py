@@ -3,6 +3,7 @@ Unit tests for optimizer.py and benchmark dry-run smoke tests.
 """
 
 import json
+import math
 import os
 import time
 import unittest
@@ -10,6 +11,39 @@ import numpy as np
 from robot_model import RobotConfig
 from optimizer import TrajectoryOptimizer, GUESS_STYLES
 
+
+def _plan_deviation(samples, track_width, steps=400):
+    """How far the plan is from the path its own (v, omega) profile traces.
+
+    The profile inside one sample interval is the linear wheel speeds and the
+    linear turn rate, so the heading is
+    theta_k + omega_k*s + (omega_{k+1} - omega_k)*s^2/(2*dt) and the position
+    is its integral. The deviation is the largest gap between the integrated
+    profile and the plan's own sample positions.
+    """
+    x, y = samples[0]["x"], samples[0]["y"]
+    worst = 0.0
+    for k in range(len(samples) - 1):
+        s, nxt = samples[k], samples[k + 1]
+        dt = nxt["t"] - s["t"]
+        if dt <= 0:
+            continue
+        v0 = 0.5 * (s["vl"] + s["vr"])
+        v1 = 0.5 * (nxt["vl"] + nxt["vr"])
+        w0 = (s["vr"] - s["vl"]) / track_width
+        w1 = (nxt["vr"] - nxt["vl"]) / track_width
+        sub = dt / steps
+        for i in range(steps):
+            f = (i + 0.5) / steps
+            v = v0 + (v1 - v0) * f
+            w = w0 + (w1 - w0) * f
+            # the heading is the integral of the linear turn rate
+            theta = s["heading"] + w0 * (f * dt) \
+                + (w1 - w0) * (f * dt) ** 2 / (2.0 * dt)
+            x += v * math.cos(theta) * sub
+            y += v * math.sin(theta) * sub
+        worst = max(worst, math.hypot(x - nxt["x"], y - nxt["y"]))
+    return worst
 
 class TestTrajectoryOptimizer(unittest.TestCase):
     """Test cases for TrajectoryOptimizer class."""
@@ -809,3 +843,58 @@ class TestBenchmarkDryRun(unittest.TestCase):
 if __name__ == "__main__":
     unittest.main()
 
+
+class TestSelfConsistentPlan(unittest.TestCase):
+    """The plan must lie on the path its own (v, omega) profile traces.
+
+    The trapezoidal collocation places the samples off that path, and the
+    deployed controller is then told to be somewhere its own profile never
+    goes. The self-consistent collocation integrates the profile instead, so
+    the samples lie on the path and the headings are its tangents.
+    """
+
+    CONFIG = {
+        "robot": {
+            "mass": 0.8,
+            "inertia": 0.002,
+            "track_width": 0.1,
+            "wheel_radius": 0.03,
+            "v_max_rad_s": 15.0,
+            "t_max_nm": 0.05,
+            "gearing": 1.0,
+            "cof": 0.5,
+        }
+    }
+
+    WAYPOINTS = [(0.0, 0.0, 0.0), (0.5, 0.3, 0.4), (1.0, 0.0, 0.0)]
+
+    def _solve(self, self_consistent):
+        config = RobotConfig(self.CONFIG)
+        optimizer = TrajectoryOptimizer(config)
+        samples, _ = optimizer.solve(
+            self.WAYPOINTS, num_samples_per_segment=6, verbose=False,
+            self_consistent=self_consistent)
+        return samples
+
+    def test_self_consistent_plan_lies_on_its_own_profile(self):
+        samples = self._solve(True)
+        deviation = _plan_deviation(samples, self.CONFIG["robot"]["track_width"])
+        self.assertLess(deviation, 1e-4,
+                        msg="plan deviates from its own profile by "
+                            f"{deviation * 1000:.3f} mm")
+
+    def test_trapezoidal_plan_does_not(self):
+        """The control: the default collocation really is inconsistent."""
+        samples = self._solve(False)
+        deviation = _plan_deviation(samples, self.CONFIG["robot"]["track_width"])
+        self.assertGreater(deviation, 1e-3,
+                           msg="expected the trapezoidal plan to deviate, got "
+                               f"{deviation * 1000:.3f} mm")
+
+    def test_both_plans_reach_the_waypoints(self):
+        for flag in (False, True):
+            samples = self._solve(flag)
+            self.assertAlmostEqual(samples[-1]["x"], 1.0, places=2)
+            self.assertAlmostEqual(samples[-1]["y"], 0.0, places=2)
+            self.assertAlmostEqual(samples[0]["vl"], 0.0, places=3)
+            self.assertAlmostEqual(samples[-1]["vr"], 0.0, places=3)

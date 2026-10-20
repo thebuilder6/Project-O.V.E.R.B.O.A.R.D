@@ -8,6 +8,18 @@ from live_visualizer import get_visualizer
 # only guesses: IPOPT still enforces every waypoint, stop, and force limit.
 GUESS_STYLES = ("baseline", "rolling", "bow_left", "bow_right", "turn_first")
 
+# Gauss-Legendre nodes and weights on [-1, 1] for the self-consistent
+# collocation. Four nodes integrate one interval's velocity profile to
+# O(dt^7); the trapezoid rule, which samples only the two endpoints, is
+# O(dt^3) and leaves the plan off the path its own profile traces.
+_GAUSS_LEGENDRE_4 = (
+    (-0.8611363115940526, 0.3478548451374538),
+    (-0.3399810435848563, 0.6521451548625461),
+    (0.3399810435848563, 0.6521451548625461),
+    (0.8611363115940526, 0.3478548451374538),
+)
+
+
 
 class TrajectoryOptimizer:
     def __init__(self, config: RobotConfig) -> None:
@@ -15,7 +27,7 @@ class TrajectoryOptimizer:
         self.model = DifferentialDriveModel(config)
         self.iteration_history: List[Dict[str, Any]] = []  # Store convergence data
 
-    def solve(self, waypoints: List[Tuple[float, float, Optional[float]]], num_samples_per_segment: int = 10, accuracy_weight: float = 0.0, stop_waypoint_indices: Optional[List[int]] = None, waypoint_events: Optional[Dict[int, str]] = None, apply_headroom: bool = True, verbose: bool = True, capture_iterations: bool = False, live_viz: bool = False, guess_style: str = "baseline", per_segment_dt: bool = False, initial_guess: Optional[np.ndarray] = None, fast_polish: bool = False, polish_iter_budget: int = 200, solver_options: Optional[Dict[str, Any]] = None) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
+    def solve(self, waypoints: List[Tuple[float, float, Optional[float]]], num_samples_per_segment: int = 10, accuracy_weight: float = 0.0, stop_waypoint_indices: Optional[List[int]] = None, waypoint_events: Optional[Dict[int, str]] = None, apply_headroom: bool = True, verbose: bool = True, capture_iterations: bool = False, live_viz: bool = False, guess_style: str = "baseline", per_segment_dt: bool = False, initial_guess: Optional[np.ndarray] = None, fast_polish: bool = False, polish_iter_budget: int = 200, solver_options: Optional[Dict[str, Any]] = None, self_consistent: bool = False) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
         """
         waypoints: list of (x, y, heading)
         heading is in radians. None means unconstrained.
@@ -48,6 +60,13 @@ class TrajectoryOptimizer:
         polish_iter_budget: iteration budget for the warm pass in the fast
                    path. Missions that need more iterations than this are
                    finished with a cold pass instead.
+        self_consistent: if True, place the samples on the path the
+                    trajectory's own (v, omega) profile traces, by
+                    integrating that profile with a Gauss-Legendre rule
+                    instead of the trapezoid rule. The plan is then
+                    self-consistent by construction: the samples lie on the
+                    path and the headings are its tangents. Off by default
+                    so the measured plans stay reproducible.
         solver_options: extra IPOPT options that override the defaults.
         """
         num_segments = len(waypoints) - 1
@@ -67,6 +86,7 @@ class TrajectoryOptimizer:
             verbose=verbose,
             capture_iterations=capture_iterations,
             live_viz=live_viz,
+            self_consistent=self_consistent,
             guess_style=guess_style,
             per_segment_dt=per_segment_dt,
         )
@@ -148,7 +168,7 @@ class TrajectoryOptimizer:
             dts[i] = max(times[k + 1] - times[k], 1e-3)
         return np.concatenate([dts, states.flatten()])
 
-    def _solve_once(self, waypoints: List[Tuple[float, float, Optional[float]]], num_samples_per_segment: int = 10, accuracy_weight: float = 0.0, stop_waypoint_indices: Optional[List[int]] = None, waypoint_events: Optional[Dict[int, str]] = None, apply_headroom: bool = True, verbose: bool = True, capture_iterations: bool = False, live_viz: bool = False, guess_style: str = "baseline", per_segment_dt: bool = False, initial_guess: Optional[np.ndarray] = None, warm_start: bool = True, stage_label: Optional[str] = None, solver_options: Optional[Dict[str, Any]] = None) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
+    def _solve_once(self, waypoints: List[Tuple[float, float, Optional[float]]], num_samples_per_segment: int = 10, accuracy_weight: float = 0.0, stop_waypoint_indices: Optional[List[int]] = None, waypoint_events: Optional[Dict[int, str]] = None, apply_headroom: bool = True, verbose: bool = True, capture_iterations: bool = False, live_viz: bool = False, guess_style: str = "baseline", per_segment_dt: bool = False, initial_guess: Optional[np.ndarray] = None, warm_start: bool = True, stage_label: Optional[str] = None, solver_options: Optional[Dict[str, Any]] = None, self_consistent: bool = False) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
         """Run one IPOPT pass over the trajectory NLP.
 
         warm_start=True asks IPOPT to treat the initial point as a previous
@@ -273,16 +293,38 @@ class TrajectoryOptimizer:
             omega2 = (vr[k + 1] - vl[k + 1]) / self.config.track_width
 
             # Kinematic integration
-            opti.subject_to(
-                x[k + 1]
-                == x[k]
-                + 0.5 * (v1 * ca.cos(theta[k]) + v2 * ca.cos(theta[k + 1])) * dt_k
-            )
-            opti.subject_to(
-                y[k + 1]
-                == y[k]
-                + 0.5 * (v1 * ca.sin(theta[k]) + v2 * ca.sin(theta[k + 1])) * dt_k
-            )
+            if self_consistent:
+                # Place the samples on the path the trajectory's own
+                # (v, omega) profile traces, by integrating that profile
+                # instead of sampling only the two endpoints. The heading
+                # along the interval is the one the robot will hold: the
+                # turn rate integrated, theta_k + omega1*s + domega*s^2/2dt.
+                # With that, the samples lie on the path by construction and
+                # the heading samples are its tangents.
+                dx = 0.0
+                dy = 0.0
+                d_omega = omega2 - omega1
+                for xi, weight in _GAUSS_LEGENDRE_4:
+                    s = 0.5 * dt_k * (1.0 + xi)
+                    w_s = 0.5 * dt_k * weight
+                    v_s = v1 + (v2 - v1) * s / dt_k
+                    theta_s = (theta[k] + omega1 * s
+                               + d_omega * s * s / (2.0 * dt_k))
+                    dx = dx + w_s * v_s * ca.cos(theta_s)
+                    dy = dy + w_s * v_s * ca.sin(theta_s)
+                opti.subject_to(x[k + 1] == x[k] + dx)
+                opti.subject_to(y[k + 1] == y[k] + dy)
+            else:
+                opti.subject_to(
+                    x[k + 1]
+                    == x[k]
+                    + 0.5 * (v1 * ca.cos(theta[k]) + v2 * ca.cos(theta[k + 1])) * dt_k
+                )
+                opti.subject_to(
+                    y[k + 1]
+                    == y[k]
+                    + 0.5 * (v1 * ca.sin(theta[k]) + v2 * ca.sin(theta[k + 1])) * dt_k
+                )
             opti.subject_to(
                 theta[k + 1] == theta[k] + 0.5 * (omega1 + omega2) * dt_k
             )

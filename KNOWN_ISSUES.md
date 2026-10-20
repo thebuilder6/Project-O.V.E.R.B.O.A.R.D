@@ -37,6 +37,7 @@ How to use this list: refer to an item by its ID, for example “fix KI-003”.
 | KI-023 | P1 | Robot runtime | ~~The SysId collector could not be pushed to a hub and its metadata did not parse~~ (fixed) |
 | KI-024 | P1 | Solver / timing | ~~The timing model had no rule for where the time allocation may change~~ (fixed) |
 | KI-025 | P1 | Safety model | ~~The backlash was subtracted from the commanded wheel speed, and the tracking metric ignored the heading~~ (fixed) |
+| KI-026 | P1 | Solver / kinematics | ~~The plan's samples were not on the path its own profile traces~~ (fixed) |
 
 ## P0 — fix first
 
@@ -454,6 +455,24 @@ A real gear backlash is a *position* dead-band: it is taken up once at a directi
 ---
 
 
+
+### KI-026 - The plan's samples were not on the path its own profile traces
+
+**Status:** Fixed in the working tree (uncommitted), behind `--self-consistent` (off by default, so the measured plans stay reproducible).
+
+**Files:** `optimizer.py` (`solve`, `_solve_once`, `_GAUSS_LEGENDRE_4`), `main.py` (`--self-consistent`), `tests/test_optimizer.py` (`TestSelfConsistentPlan`), `docs/research/RQ-A_tracking_error.md`
+
+**Problem:** The collocation placed the samples with the trapezoidal rule, which samples only the two endpoints of an interval. The result is a plan whose positions are not where the trajectory's own (v, omega) profile takes it, so the deployed controller is told to be somewhere its own profile never goes. The heading samples are free variables, so they are not the path's tangents either. That is the mismatch the tracking gate measures (KI-020, `docs/research/RQ-A_tracking_error.md`).
+
+**Evidence:** On the S-curve at the default sampling the plan sits 11.5 mm off its own profile and the tracking error is 1.31-1.32 cm. With the self-consistent collocation the plan sits on its own profile (under 0.1 mm) and the tracking error falls to 0.55-0.59 cm, a 58 % reduction. The events mission, which failed both candidates, passes both (0.32 cm and 0.40 cm). The validator's own forward-integration check stops reporting its 1.3 cm error, because the plan now agrees with itself. See RQ-A finding F10.
+
+**Fix (implemented):** The position rule integrates the interval's velocity along the heading the robot will hold - the turn rate integrated, not the endpoints - with a four-node Gauss-Legendre rule (O(dt^7) per interval, against the trapezoid's O(dt^3)). The heading rule is unchanged, so the heading samples are the path's tangents by construction. Nothing on the robot changes: the firmware still follows the chord between the samples, and the chord is now within the sagitta of the path.
+
+**Also measured:** The change is not a free win, and it is not the whole fix. The S-curve still misses the 5 mm gate by 0.05 cm. The complex mission's passing candidate moves from 0.49 cm to 0.51 cm, so it now fails by 0.01 cm. The stops mission gets slower (6.2 s to 7.8 s) because a direction reversal is where a self-consistent plan is hardest (RQ-A OQ5). The first-four-waypoints mission is unchanged. These numbers are measured with RQ-A's F7, the coupled reference interpolation, already in the tree; before F7 landed the S-curve's self-consistent candidate measured 0.47 cm and passed, so the two changes interact and have to be tuned together.
+
+**Workaround:** The default is unchanged; the candidate set has to be re-tuned under the new formulation (the sweep and the seed conclusions), and the stops mission needs its own treatment before the flag can be the default. The tracking gate still measures a discretisation mismatch until the control tick is re-measured (RQ-A OQ1).
+
+---
 
 1. KI-001, KI-002, KI-003, KI-005, KI-006, KI-007, KI-008, KI-009, KI-010, KI-011, KI-012, KI-013, KI-014, KI-016, KI-019, KI-021, KI-022, KI-023, KI-024, and KI-025: done in the working tree; never save or ship a failed or unvalidated run, keep validation on the configured robot, use both uncertainty bounds, keep the reference tube aligned with the samples, keep the optimizer and Immrax on the same per-wheel force model, hold both timing models to the same wheel-jerk discipline, keep the wheel force profile continuous through every waypoint the robot does not stop at, keep the backlash in the reachable set rather than in the wheel speed, never take a port from another program, and keep the firmware compilable for MicroPython.
 2. KI-020: controller split, log/fit tooling, and the optional `--sysid-fit` actuator/odometry path are done, and the log and pose capture now run over Bluetooth from the host; collect hardware data, compare fitted predictions with measured poses, add integrated odometry/slip, then use reachability in optimization.
