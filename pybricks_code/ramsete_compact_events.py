@@ -75,6 +75,8 @@ async def follow_trajectory(
     config: robot configuration for KinematicLimiter (same shape as ramsete.py).
     events: ((sample_index, name), ...) from the generated module.
     event_map: dict mapping event name to a callable, as in ramsete.py.
+
+    Returns the final odometry pose as (x, y, heading) in metres and radians.
     """
     num_pts = _check_blob(samples)
 
@@ -215,3 +217,8 @@ async def follow_trajectory(
         print("Avg Math Calc Time (ms):", total_calc / loop_count)
         print("Max Math Calc Time (ms):", max_calc)
         print("-----------------------------")
+
+    # The robot stopped just above, so one more integration step gives the
+    # pose the host reads back.
+    odom.update()
+    return odom.x, odom.y, odom.heading

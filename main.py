@@ -23,6 +23,13 @@ REPO_ROOT = Path(__file__).resolve().parent
 DEFAULT_CONFIG = "examples/fll_choreo.json"
 JAX_HINT = "Install the optional dependencies with: pip install -r requirements-optional.txt"
 
+# Where the hub side of a push lives. The runner imports the trajectory from
+# hub_mission.py next to it, and pybricksdev bundles both plus the robot
+# config when it pushes.
+HUB_CODE_DIR = REPO_ROOT / "pybricks_code"
+HUB_MISSION_MODULE = HUB_CODE_DIR / "hub_mission.py"
+HUB_RUNNER = HUB_CODE_DIR / "hub_runner.py"
+
 # A machine-readable validation summary on one line. The browser studio reads
 # it to show which part of the path failed; a human never has to look at it.
 VALIDATION_MARKER = "##OVERBOARD-VALIDATION## "
@@ -99,13 +106,23 @@ def _select_attempt(attempts):
 
 CANDIDATE_WEIGHT_STEP = 2.0  # legacy ladder for the Multi-Verse path
 
+# Accuracy weights the sweep tries. The weight trades time against the
+# wheel-jerk discipline, and which value is best depends on the path: a
+# mission with long straight segments wants a low weight, an uneven path
+# wants a little more. Measured on the example missions: the sweep finds
+# 18 % on examples/example_mission_first4.json and a passing trajectory on
+# examples/example_with_events.json, which the default candidate set cannot
+# solve at all.
+SWEEP_WEIGHTS = (0.0, 0.001, 0.002, 0.005, 0.01)
+
 # Thread limits handed to the candidate worker processes. Several candidates
 # solve at the same time, so each one keeps a single compute thread.
 _THREAD_ENV_VARS = ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS",
                     "NUMEXPR_NUM_THREADS")
 
 
-def _candidate_specs(base_accuracy_weight, count, use_styles=True, dt_mode="auto"):
+def _candidate_specs(base_accuracy_weight, count, use_styles=True, dt_mode="auto",
+                     sweep=False):
     """Definitions for the candidate set.
 
     With the simple solver, each candidate is a distinct initial-guess seed at
@@ -120,6 +137,12 @@ def _candidate_specs(base_accuracy_weight, count, use_styles=True, dt_mode="auto
     segment to take the SAME time; on a path with unequal segment lengths that
     is a large, artificial penalty. "per-segment" gives each segment its own
     dt and is the general model (KI-022).
+
+    sweep=True adds the timing-mode x accuracy-weight grid to the set. It adds
+    candidates, it never replaces them, so the default candidates stay in the
+    comparison and the usual rule (the passing candidate with the smallest
+    envelope, the shortest one breaking the tie) still decides. A sweep costs
+    more solves and more validation passes.
 
     The Multi-Verse path has no seed or timing plumbing yet, so it keeps the
     historical accuracy-weight ladder.
@@ -148,6 +171,28 @@ def _candidate_specs(base_accuracy_weight, count, use_styles=True, dt_mode="auto
             "guess_style": style,
             "per_segment_dt": modes[k % len(modes)],
         })
+
+    if sweep:
+        # The timing-mode x accuracy-weight grid. The base weight is always
+        # in the set, so a sweep can only add options. A combination the
+        # default set already covers is not solved twice.
+        seen = {(spec["accuracy_weight"], spec["guess_style"], spec["per_segment_dt"])
+                for spec in specs}
+        weights = []
+        for weight in (base_accuracy_weight,) + SWEEP_WEIGHTS:
+            if weight not in weights:
+                weights.append(weight)
+        for weight in weights:
+            for per_segment_dt in modes:
+                key = (weight, "baseline", per_segment_dt)
+                if key in seen:
+                    continue
+                seen.add(key)
+                specs.append({
+                    "accuracy_weight": weight,
+                    "guess_style": "baseline",
+                    "per_segment_dt": per_segment_dt,
+                })
     return specs
 
 
@@ -339,6 +384,8 @@ def _emit_validation_report(attempts, selected_index):
             "duration_s": _finite(attempt.get("duration")),
             "envelope_cm": _finite(attempt.get("tube", 0.0) * 100.0),
             "tracking_cm": _finite(attempt.get("tracking_m", 0.0) * 100.0),
+            "heading_error_deg": _finite(
+                (attempt.get("heading_rad", 0.0) or 0.0) * 180.0 / math.pi),
             "ok": bool(attempt.get("ok")),
             "converged": bool(attempt.get("converged")),
             "reasons": list(attempt.get("reasons", [])),
@@ -380,6 +427,25 @@ def _apply_preset(ctx, preset, values):
         if source is not None and source.name in ("DEFAULT", "DEFAULT_MAP"):
             values[name] = value
     return values
+
+
+def _studio_options(samples, accuracy_weight, candidates, dt_mode, validate,
+                    export_format, controller_dt, fast_polish, sysid_fit=None,
+                    hub_conn=None, hub_name=None):
+    """The options the studio starts with, so --live reproduces this run."""
+    return {
+        "samples": samples,
+        "accuracy_weight": accuracy_weight,
+        "candidates": candidates,
+        "timing": dt_mode,
+        "validate": validate,
+        "export_format": export_format,
+        "controller_dt": controller_dt,
+        "fast_polish": fast_polish,
+        "sysid_fit": sysid_fit,
+        "hub_conn": hub_conn,
+        "hub_name": hub_name,
+    }
 
 
 def _load_config(path):
@@ -548,13 +614,28 @@ def _parse_events(raw, count):
     return events
 
 
-def _open_live_page(port):
-    """Open the live viewer in the default browser."""
-    page = REPO_ROOT / "viz" / "index.html"
+def _push_to_hub(traj_file, connection, name, log_path, quiet):
+    """Push the written trajectory to the hub and run it there.
+
+    The hub entry point is pybricks_code/hub_runner.py; it imports the
+    trajectory from pybricks_code/hub_mission.py, so both files travel with
+    the push. Returns the lines the hub printed.
+    """
+    from hub_deploy import HUB_RUNNER, push_trajectory, write_session
+
+    if not quiet:
+        click.echo(f"Pushing {HUB_RUNNER.name} to the hub over {connection}...")
     try:
-        webbrowser.open(f"{page.as_uri()}?port={port}")
-    except Exception:
-        pass
+        lines = push_trajectory(traj_file, connection=connection, name=name,
+                                mission_module=HUB_MISSION_MODULE,
+                                runner=HUB_RUNNER)
+    except RuntimeError as exc:
+        raise click.ClickException(str(exc))
+    if log_path:
+        write_session(lines, log_path)
+        if not quiet:
+            click.echo(f"  wrote {len(lines)} lines of hub output to {log_path}")
+    return lines
 
 
 def _print_summary(output, samples_data, robot_cfg, validate, attempt_passed, tube, files):
@@ -645,6 +726,10 @@ def _print_summary(output, samples_data, robot_cfg, validate, attempt_passed, tu
                    'IPOPT iterations; this gives it an iteration budget and finishes from that point '
                    'with a cold pass. Missions that solve inside the budget return the same '
                    'trajectory as before.')
+@click.option('--sweep', is_flag=True,
+              help='Search the timing model and the accuracy weight for the fastest trajectory that '
+                   'passes the gates (simple solver only). Adds candidates to the set instead of '
+                   'replacing them, so it costs more solves and more validation passes.')
 
 # --- Export & Validation ---
 @click.option('--validate/--no-validate', default=False,
@@ -658,12 +743,23 @@ def _print_summary(output, samples_data, robot_cfg, validate, attempt_passed, tu
 @click.option('--benchmark', is_flag=True,
               help='Collect comprehensive benchmarking data for whitepaper.')
 
+# --- Hub Push ---
+@click.option('--push-hub', is_flag=True,
+              help='Push the trajectory to a Pybricks hub and run it there '
+                   '(needs pybricksdev and a hub with Pybricks firmware).')
+@click.option('--hub-conn', type=click.Choice(['ble', 'usb'], case_sensitive=False),
+              default='ble', help='How to reach the hub when pushing.')
+@click.option('--hub-name', default=None, type=str,
+              help='Bluetooth name or address of the hub to push to.')
+@click.option('--hub-log', default=None, type=click.Path(dir_okay=False),
+              help='Write the hub console output to this file. The runner '
+                   'reports the measured pose as a POSE line in it.')
+
 # --- Visualization ---
 @click.option('--plot', is_flag=True, help='Plot the resulting trajectory.')
 @click.option('--animate', is_flag=True, help='Animate the trajectory in real-time.')
-@click.option('--live', is_flag=True, help='Open the live browser view while solving (blocking).')
-@click.option('--port', default=8765, type=int,
-              help='Port for the live browser view.')
+@click.option('--live', is_flag=True,
+              help='Open the browser studio on this mission and solve it there (blocking).')
 @click.option('--show-convergence', is_flag=True, help='Show convergence visualization.')
 @click.option('--convergence-mode', type=click.Choice(['parallel', 'best', 'layered'], case_sensitive=False),
               default='best', help='Convergence visualization mode.')
@@ -674,8 +770,9 @@ def _print_summary(output, samples_data, robot_cfg, validate, attempt_passed, tu
 @click.pass_context
 def main(ctx, config, waypoints, output, gui, gui_port, doctor, multiverse, simple, preset,
          samples, accuracy_weight, candidates, stop_waypoints, events, per_segment_dt, uniform_dt,
-         no_parallel, workers, fast_polish, validate, sysid_fit, export_format, controller_dt, benchmark,
-         plot, animate, live, port, show_convergence, convergence_mode, verbose, quiet):
+         no_parallel, workers, fast_polish, sweep, validate, sysid_fit, export_format, controller_dt, benchmark,
+         push_hub, hub_conn, hub_name, hub_log,
+         plot, animate, live, show_convergence, convergence_mode, verbose, quiet):
     """
     FLL Trajectory Optimizer CLI.
     Generates time-optimal trajectories for Lego robots.
@@ -706,26 +803,16 @@ def main(ctx, config, waypoints, output, gui, gui_port, doctor, multiverse, simp
         raise click.ClickException(
             "--per-segment-dt/--uniform-dt are only supported by the simple solver."
         )
+    if sweep and multiverse:
+        raise click.ClickException(
+            "--sweep is only supported by the simple solver."
+        )
 
     if doctor:
         from diagnostics import run_doctor
         raise SystemExit(run_doctor(config_path=config))
 
-    if gui:
-        if multiverse:
-            raise click.ClickException(
-                "--multiverse is not available in the studio yet; use the command line."
-            )
-        if live or plot or animate:
-            raise click.ClickException(
-                "--gui cannot be combined with --live, --plot or --animate."
-            )
-        from gui_server import run_studio
-        run_studio(config_path=config, waypoints_path=waypoints,
-                   port=gui_port, presets=PRESETS)
-        return
-
-    if waypoints is None:
+    if waypoints is None and not (gui or live):
         raise click.UsageError(
             "Missing option '-w' / '--waypoints'. "
             "Example: python main.py -w examples/example_straight.json"
@@ -752,6 +839,33 @@ def main(ctx, config, waypoints, output, gui, gui_port, doctor, multiverse, simp
         )
 
     dt_mode = "per-segment" if per_segment_dt else "uniform" if uniform_dt else "auto"
+
+    if gui or live:
+        if multiverse:
+            raise click.ClickException(
+                "--multiverse is not available in the studio yet; use the command line."
+            )
+        if gui and live:
+            raise click.ClickException(
+                "--gui and --live both open the studio; use one of them."
+            )
+        if live and waypoints is None:
+            raise click.UsageError(
+                "Missing option '-w' / '--waypoints'. "
+                "Example: python main.py --live -w examples/example_straight.json"
+            )
+        if plot or animate:
+            raise click.ClickException(
+                "--gui and --live cannot be combined with --plot or --animate."
+            )
+        from gui_server import run_studio
+        run_studio(config_path=config, waypoints_path=waypoints,
+                   port=gui_port, presets=PRESETS, auto_solve=live,
+                   options=_studio_options(samples, accuracy_weight, candidates,
+                                           dt_mode, validate, export_format,
+                                           controller_dt, fast_polish, sysid_fit,
+                                           hub_conn, hub_name))
+        return
 
     config_data, robot_cfg = _load_config(config)
     if not quiet and os.path.abspath(config) == os.path.abspath(DEFAULT_CONFIG):
@@ -872,19 +986,6 @@ def main(ctx, config, waypoints, output, gui, gui_port, doctor, multiverse, simp
 
     capture_iterations = show_convergence
 
-    # Start live visualizer if requested
-    if live:
-        from live_visualizer import get_visualizer
-        try:
-            viz = get_visualizer(port=port)
-        except RuntimeError as exc:
-            raise click.ClickException(str(exc))
-        wp_dicts = [{"x": w[0], "y": w[1], "heading": w[2]} for w in wps]
-        viz.send_config(config_data, wp_dicts)
-        if not quiet:
-            click.echo(f"Live visualizer running on ws://127.0.0.1:{port}")
-            _open_live_page(port)
-
     # --- CANDIDATE LOOP (validate and select; KI-020) ---
     # Solve several candidates, score each with the same Immrax check, and let
     # _select_attempt pick the winner: passing first, then the smallest envelope,
@@ -893,7 +994,8 @@ def main(ctx, config, waypoints, output, gui, gui_port, doctor, multiverse, simp
     # weights: the old accuracy_weight ladder silently traded speed for a bound
     # that could get worse (longer trajectories accumulate more uncertainty).
     candidate_specs = _candidate_specs(accuracy_weight, candidates,
-                                       use_styles=not multiverse, dt_mode=dt_mode)
+                                       use_styles=not multiverse, dt_mode=dt_mode,
+                                       sweep=sweep)
     attempt_passed = False
     best_reasons = []
     all_attempts = []  # Each candidate: samples, stats, cost, ok, violation, tube, converged, reasons
@@ -901,7 +1003,7 @@ def main(ctx, config, waypoints, output, gui, gui_port, doctor, multiverse, simp
     # --- SOLVE PHASE ---
     # The candidates are independent, so they are solved first and scored
     # afterwards. Without validation only the first candidate is solved.
-    use_validation = HAS_JAX and (validate or live)
+    use_validation = HAS_JAX and validate
     specs_to_solve = candidate_specs if use_validation else candidate_specs[:1]
 
     solve_payloads = []
@@ -913,7 +1015,6 @@ def main(ctx, config, waypoints, output, gui, gui_port, doctor, multiverse, simp
             waypoint_events=waypoint_events,
             verbose=verbose and not quiet,
             capture_iterations=capture_iterations,
-            live_viz=live,
         )
         if not multiverse:
             solve_kwargs["guess_style"] = spec["guess_style"]
@@ -945,8 +1046,9 @@ def main(ctx, config, waypoints, output, gui, gui_port, doctor, multiverse, simp
                            f"(accuracy_weight={curr_accuracy_weight})...")
             else:
                 timing = "per-segment" if per_segment_dt else "equal-duration"
+                weight = f", a={curr_accuracy_weight:g}" if sweep else ""
                 click.echo(f"Candidate {cand_idx + 1}/{len(candidate_specs)} "
-                           f"(guess_style={guess_style}, {timing} dt)...")
+                           f"(guess_style={guess_style}, {timing} dt{weight})...")
 
         samples_data, stats = solve_result
 
@@ -961,6 +1063,7 @@ def main(ctx, config, waypoints, output, gui, gui_port, doctor, multiverse, simp
             "converged": bool(stats.get("converged", False)),
             "guess_style": guess_style,
             "per_segment_dt": per_segment_dt,
+            "accuracy_weight": curr_accuracy_weight,
             "reasons": [],
         }
         all_attempts.append(attempt_record)
@@ -1030,6 +1133,7 @@ def main(ctx, config, waypoints, output, gui, gui_port, doctor, multiverse, simp
         attempt_record["tube"] = float(max_err_all)
         attempt_record["diverged"] = bool(immrax_report['reachability'].get('diverged', False))
         attempt_record["tracking_m"] = float(immrax_report.get("max_tracking_error_m", 0.0))
+        attempt_record["heading_rad"] = float(immrax_report.get("max_heading_error_rad", 0.0))
         attempt_record["ok"] = (attempt_record["converged"] and not failed_threshold
                                 and bool(immrax_report['passed']))
         attempt_record["reasons"] = _immrax_failure_reasons(immrax_report, failed_threshold, max_vio_val)
@@ -1094,7 +1198,9 @@ def main(ctx, config, waypoints, output, gui, gui_port, doctor, multiverse, simp
                     # each, which is why they are slow on an uneven path
                     # (KI-022).
                     timing = "per-seg" if a.get("per_segment_dt") else "equal-dur"
-                    label = f"Candidate {k} ({a.get('guess_style', 'baseline')}, {timing})"
+                    weight = f", a={a.get('accuracy_weight', 0.0):g}" if sweep else ""
+                    label = (f"Candidate {k} ({a.get('guess_style', 'baseline')}, "
+                             f"{timing}{weight})")
                 click.echo(f"  {label}: {a.get('duration', float('inf')):6.3f} s, {score} ({state})")
                 seg_dt = (a.get("stats") or {}).get("segment_dt")
                 if seg_dt and len(seg_dt) > 1:
@@ -1187,6 +1293,9 @@ def main(ctx, config, waypoints, output, gui, gui_port, doctor, multiverse, simp
         _print_summary(output, samples_data, robot_cfg, validate, attempt_passed,
                        selected_tube, written[1:])
 
+    if push_hub:
+        _push_to_hub(output, hub_conn, hub_name, hub_log, quiet)
+
     if plot:
         from plotter import plot_trajectory, plot_reachability_envelope
         if not quiet:
@@ -1208,12 +1317,6 @@ def main(ctx, config, waypoints, output, gui, gui_port, doctor, multiverse, simp
         if hasattr(optimizer, 'iteration_history') and optimizer.iteration_history:
             from convergence_plotter import plot_convergence
             plot_convergence(optimizer.iteration_history, mode=convergence_mode, waypoints=wps, title=f"Convergence: {os.path.basename(output)}")
-
-    if live:
-        viz.send_trajectory(samples_data, phase="final")
-        click.echo("\nLive visualizer is active. Press Enter to stop and exit...")
-        input()
-        viz.stop()
 
 
 if __name__ == '__main__':

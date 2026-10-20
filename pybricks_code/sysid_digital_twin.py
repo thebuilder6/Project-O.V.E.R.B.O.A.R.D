@@ -30,6 +30,7 @@ from robot_config import (
     WHEEL_DIAMETER_MM,
     AXLE_TRACK_MM,
 )
+from ramsete import Odometry
 
 
 # --- CONFIGURATION ---------------------------------------------------------
@@ -37,6 +38,17 @@ from robot_config import (
 CONTROL_MS = 20          # ramsete_fast.py heartbeat
 SAMPLE_MS = 10           # raw plant logging; DriveBase commands stay at 20 ms
 DEG_TO_RAD = 0.017453292519943295
+
+# How many times each calibration-critical test is repeated. One run cannot
+# say how much the robot varies from day to day, and the spread of the steps
+# inside one run is not that: the steps are sequential, so a sagging battery
+# or a warming motor maps straight onto the step order. The repeats give
+# the between-run spread, which is the honest uncertainty of the fit.
+REPEATS = 3
+
+# The repeat number of the test that is running. It goes into the META line
+# so the host can group the repeats of one test.
+_REPEAT = 0
 
 RATE_HEADER = (
     "t_ms,loop_ms,v_cmd_mm_s,w_cmd_deg_s,l_deg,r_deg,"
@@ -71,34 +83,31 @@ def _read_optional(obj, name, method):
         return "unavailable"
 
 
-def _print_metadata(name, notes=""):
+def _print_metadata(name, notes="", poses=0):
     global _RUN_ID
     _RUN_ID += 1
+    # The META lines are "META,key,value": the host parses them that way, so
+    # the run id of a test can be matched to its measured poses. "poses" is
+    # how many end poses the operator has to measure for this test.
     print("TEST_START", name)
-    print("META,run_id", _RUN_ID)
-    print("META,test", name)
-    print("META,notes", notes.replace(",", ";"))
-    print("META,wheel_diameter_mm", WHEEL_DIAMETER_MM)
-    print("META,axle_track_mm", AXLE_TRACK_MM)
-    print("META,battery_mv", hub.battery.voltage())
-    print("META,mem_free", gc.mem_free())
-    print("META,settings", _fmt_tuple(drivebase.settings()))
-    print("META,distance_limits",
-          _read_optional(drivebase, "distance_control", "limits"))
-    print("META,distance_pid",
-          _read_optional(drivebase, "distance_control", "pid"))
-    print("META,heading_limits",
-          _read_optional(drivebase, "heading_control", "limits"))
-    print("META,heading_pid",
-          _read_optional(drivebase, "heading_control", "pid"))
-    print("META,left_limits",
-          _read_optional(motorLeft, "control", "limits"))
-    print("META,left_pid",
-          _read_optional(motorLeft, "control", "pid"))
-    print("META,right_limits",
-          _read_optional(motorRight, "control", "limits"))
-    print("META,right_pid",
-          _read_optional(motorRight, "control", "pid"))
+    print("META,run_id,%d" % _RUN_ID)
+    print("META,test,%s" % name)
+    print("META,repeat,%d" % _REPEAT)
+    print("META,notes,%s" % notes.replace(",", ";"))
+    print("META,poses,%d" % poses)
+    print("META,wheel_diameter_mm,%d" % WHEEL_DIAMETER_MM)
+    print("META,axle_track_mm,%d" % AXLE_TRACK_MM)
+    print("META,battery_mv,%d" % hub.battery.voltage())
+    print("META,mem_free,%d" % gc.mem_free())
+    print("META,settings,%s" % _fmt_tuple(drivebase.settings()))
+    print("META,distance_limits,%s" % _read_optional(drivebase, "distance_control", "limits"))
+    print("META,distance_pid,%s" % _read_optional(drivebase, "distance_control", "pid"))
+    print("META,heading_limits,%s" % _read_optional(drivebase, "heading_control", "limits"))
+    print("META,heading_pid,%s" % _read_optional(drivebase, "heading_control", "pid"))
+    print("META,left_limits,%s" % _read_optional(motorLeft, "control", "limits"))
+    print("META,left_pid,%s" % _read_optional(motorLeft, "control", "pid"))
+    print("META,right_limits,%s" % _read_optional(motorRight, "control", "limits"))
+    print("META,right_pid,%s" % _read_optional(motorRight, "control", "pid"))
     print("DATA")
 
 
@@ -147,6 +156,17 @@ def _wait_for_center(message):
         wait(10)
     hub.light.on(Color.RED)
 
+
+def _pose_line(odom):
+    """Report the measured pose in the format the host parses.
+
+    The pose is the hub's own odometry, integrated to 2D. Its heading is
+    counter-clockwise positive, the same convention as the planned
+    trajectory, so the host can compare the two directly. It is the robot's
+    estimate, not a tape measurement: the distance and heading scale of the
+    fit need a real measurement to be calibrated.
+    """
+    print("POSE,%.4f,%.4f,%.2f" % (odom.x, odom.y, math.degrees(odom.heading)))
 
 def _sequence(segments):
     """Return a command function for [(duration_ms, v_mm_s, w_deg_s), ...]."""
@@ -246,13 +266,14 @@ def run_rate_test(name, duration_ms, command, instructions, notes=""):
     drivebase.stop()
 
     def formatter(values, i):
+        # MicroPython cannot concatenate two f-strings, so this uses %.
         return (
-            f"{values[i]:.2f},{values[i+1]:.2f},"
-            f"{values[i+2]:.2f},{values[i+3]:.2f},"
-            f"{values[i+4]:.1f},{values[i+5]:.1f},"
-            f"{values[i+6]:.5f},{values[i+7]:.3f},{values[i+8]:.3f},"
-            f"{values[i+9]:.0f},{values[i+10]:.0f},"
-            f"{values[i+11]:.1f},{values[i+12]:.1f}"
+            "%.2f,%.2f,%.2f,%.2f,%.1f,%.1f,"
+            "%.5f,%.3f,%.3f,%.0f,%.0f,%.1f,%.1f"
+            % (values[i], values[i + 1], values[i + 2], values[i + 3],
+               values[i + 4], values[i + 5], values[i + 6], values[i + 7],
+               values[i + 8], values[i + 9], values[i + 10], values[i + 11],
+               values[i + 12])
         )
 
     print(RATE_HEADER)
@@ -296,20 +317,31 @@ def test_static():
     print("t_ms,loop_ms,l_deg,r_deg,gyro_x_deg_s,gyro_y_deg_s,gyro_z_deg_s,"
           "ax_mm_s2,ay_mm_s2,az_mm_s2,batt_mv,batt_ma")
     _dump(buf, 12, lambda values, i: (
-        f"{values[i]:.2f},{values[i+1]:.2f},"
-        f"{values[i+2]:.1f},{values[i+3]:.1f},"
-        f"{values[i+4]:.3f},{values[i+5]:.3f},{values[i+6]:.3f},"
-        f"{values[i+7]:.1f},{values[i+8]:.1f},{values[i+9]:.1f},"
-        f"{values[i+10]:.0f},{values[i+11]:.0f}"
+        "%.2f,%.2f,%.1f,%.1f,%.3f,%.3f,%.3f,%.1f,%.1f,%.1f,%.0f,%.0f"
+        % (values[i], values[i + 1], values[i + 2], values[i + 3],
+           values[i + 4], values[i + 5], values[i + 6], values[i + 7],
+           values[i + 8], values[i + 9], values[i + 10], values[i + 11])
     ))
 
 
 # --- TEST PROFILES ---------------------------------------------------------
 
+def _step_values(values):
+    """The step sizes, in the order this repeat runs them.
+
+    The order is reversed on every other repeat, so a drift over the run
+    (a sagging battery, a warming motor) cannot land on the step index and
+    make the steps look like they disagree.
+    """
+    if _REPEAT % 2:
+        return tuple(reversed(values))
+    return tuple(values)
+
+
 def test_straight_steps(direction):
     sign = 1 if direction > 0 else -1
     segments = []
-    for value in (50, 100, 200, 400, 600):
+    for value in _step_values((50, 100, 200, 400, 600)):
         segments.append((900, sign * value, 0))
         segments.append((600, 0, 0))
     name = "straight_steps_fwd" if sign > 0 else "straight_steps_rev"
@@ -325,7 +357,7 @@ def test_straight_steps(direction):
 def test_turn_steps(direction):
     sign = 1 if direction > 0 else -1
     segments = []
-    for value in (30, 60, 120, 240):
+    for value in _step_values((30, 60, 120, 240)):
         segments.append((900, 0, sign * value))
         segments.append((600, 0, 0))
     name = "turn_steps_cw" if sign > 0 else "turn_steps_ccw"
@@ -398,7 +430,8 @@ def test_chirp_turn():
 def run_odometry_test(name, duration_ms, v_cmd, w_cmd, instructions, notes=""):
     _wait_for_start(name, instructions)
     drivebase.reset(0, 0)
-    _print_metadata(name, notes)
+    odom = Odometry(drivebase)
+    _print_metadata(name, notes, poses=1)
 
     buf = bytearray()
     watch = StopWatch()
@@ -414,6 +447,9 @@ def run_odometry_test(name, duration_ms, v_cmd, w_cmd, instructions, notes=""):
 
         if now >= next_tick:
             state = drivebase.state()
+            # Integrate the pose every tick: a turn has to be integrated
+            # along the way, not as one chord at the end.
+            odom.update()
             drivebase.drive(v_cmd, w_cmd)
             buf.extend(ustruct.pack(
                 "<8f",
@@ -436,6 +472,8 @@ def run_odometry_test(name, duration_ms, v_cmd, w_cmd, instructions, notes=""):
 
     drivebase.drive(0, 0)
     wait(500)
+    odom.update()
+    _pose_line(odom)
     final_state = drivebase.state()
     buf.extend(ustruct.pack(
         "<8f",
@@ -452,10 +490,9 @@ def run_odometry_test(name, duration_ms, v_cmd, w_cmd, instructions, notes=""):
 
     def formatter(values, i):
         return (
-            f"{values[i]:.2f},{values[i+1]:.2f},{values[i+2]:.2f},"
-            f"{values[i+3]:.0f},{values[i+4]:.0f},"
-            f"{values[i+5]:.2f},{values[i+6]:.2f},"
-            f"{values[i+7]:.0f}"
+            "%.2f,%.2f,%.2f,%.0f,%.0f,%.2f,%.2f,%.0f"
+            % (values[i], values[i + 1], values[i + 2], values[i + 3],
+               values[i + 4], values[i + 5], values[i + 6], values[i + 7])
         )
 
     print(ODOM_HEADER)
@@ -490,7 +527,8 @@ def test_multi_stop():
         "2 m runway. Mark the start pose and a measuring spot at each stop.",
     )
     drivebase.reset(0, 0)
-    _print_metadata("multi_stop", "measure pose at 500/1000/1500 mm")
+    odom = Odometry(drivebase)
+    _print_metadata("multi_stop", "measure pose at 500/1000/1500 mm", poses=3)
 
     buf = bytearray()
     watch = StopWatch()
@@ -504,6 +542,8 @@ def test_multi_stop():
             wait(CONTROL_MS)
         drivebase.drive(0, 0)
         wait(500)
+        # The run is straight, so integrating once per stop is exact.
+        odom.update()
         state = drivebase.state()
         t = watch.time() - start
         buf.extend(ustruct.pack(
@@ -512,15 +552,16 @@ def test_multi_stop():
             hub.battery.voltage(),
         ))
         print("STOP_AT", target_mm, state)
+        _pose_line(odom)
         _wait_for_center("Measure the robot pose now, then press CENTER.")
 
     drivebase.stop()
 
     print("t_ms,target_mm,db_d_mm,db_v_mm_s,db_a_deg,db_w_deg_s,batt_mv")
     _dump(buf, 7, lambda values, i: (
-        f"{values[i]:.1f},{values[i+1]:.0f},{values[i+2]:.0f},"
-        f"{values[i+3]:.0f},{values[i+4]:.2f},{values[i+5]:.2f},"
-        f"{values[i+6]:.0f}"
+        "%.1f,%.0f,%.0f,%.0f,%.2f,%.2f,%.0f"
+        % (values[i], values[i + 1], values[i + 2], values[i + 3],
+           values[i + 4], values[i + 5], values[i + 6])
     ))
 
 
@@ -530,9 +571,11 @@ def test_brake_from_speed(speed_mm_s):
         "Mark the start and final pose. 2 m runway is required.",
     )
     drivebase.reset(0, 0)
+    odom = Odometry(drivebase)
     _print_metadata(
         "brake_from_" + str(speed_mm_s),
         "measure final pose after the stop",
+        poses=1,
     )
 
     watch = StopWatch()
@@ -544,15 +587,17 @@ def test_brake_from_speed(speed_mm_s):
     stop_t = watch.time() - start
     drivebase.drive(0, 0)
     wait(1000)
+    odom.update()
     state = drivebase.state()
 
     print("t_ms,stop_t_ms,v_cmd_mm_s,db_d_mm,db_v_mm_s,db_a_deg,db_w_deg_s,batt_mv")
     print(
-        f"{watch.time() - start:.1f},{stop_t:.1f},{speed_mm_s:.0f},"
-        f"{state[0]:.0f},{state[1]:.0f},{state[2]:.2f},{state[3]:.2f},"
-        f"{hub.battery.voltage():.0f}"
+        "%.1f,%.1f,%.0f,%.0f,%.0f,%.2f,%.2f,%.0f"
+        % (watch.time() - start, stop_t, speed_mm_s, state[0], state[1],
+           state[2], state[3], hub.battery.voltage())
     )
     print("FINAL_STATE", state)
+    _pose_line(odom)
     _wait_for_center("Measure the final pose, then press CENTER.")
     drivebase.stop()
     print("TEST_END", 1)
@@ -649,10 +694,9 @@ async def test_replay(module_name):
 
     def formatter(values, i):
         return (
-            f"{values[i]:.2f},{values[i+1]:.2f},{values[i+2]:.2f},"
-            f"{values[i+3]:.0f},{values[i+4]:.0f},"
-            f"{values[i+5]:.2f},{values[i+6]:.2f},"
-            f"{values[i+7]:.0f}"
+            "%.2f,%.2f,%.2f,%.0f,%.0f,%.2f,%.2f,%.0f"
+            % (values[i], values[i + 1], values[i + 2], values[i + 3],
+               values[i + 4], values[i + 5], values[i + 6], values[i + 7])
         )
 
     print(ODOM_HEADER)
@@ -662,26 +706,43 @@ async def test_replay(module_name):
 # --- MAIN ------------------------------------------------------------------
 
 async def main():
+    global _REPEAT
+
     hub.system.set_stop_button((Button.BLUETOOTH,))
     hub.light.on(Color.BLUE)
     print("Digital twin SysId collector")
     print("Save the complete console output as one .csv file.")
+    print("Calibration tests run %d times each." % REPEATS)
 
+    # The tests that feed the fitted numbers are repeated, so the fit has a
+    # between-run spread to report. The rest run once: they are diagnostics
+    # or a held-out check, and one run is enough for those.
     test_static()
-    test_straight_steps(+1)
-    test_straight_steps(-1)
-    test_turn_steps(+1)
-    test_turn_steps(-1)
+    for _REPEAT in range(REPEATS):
+        test_straight_steps(+1)
+        test_straight_steps(-1)
+    for _REPEAT in range(REPEATS):
+        test_turn_steps(+1)
+        test_turn_steps(-1)
+
+    # These run once, so they are all repeat zero.
+    _REPEAT = 0
     test_curvature(+1)
     test_curvature(-1)
     test_reversal()
     test_chirp_straight()
     test_chirp_turn()
-    test_odometry_straight()
-    test_odometry_turn()
-    test_multi_stop()
-    test_brake_from_speed(300)
-    test_brake_from_speed(600)
+
+    # The tests the operator has to measure, one repeat after another so the
+    # measurements are taken in one go.
+    for _REPEAT in range(REPEATS):
+        test_odometry_straight()
+        test_odometry_turn()
+        test_multi_stop()
+        test_brake_from_speed(300)
+        test_brake_from_speed(600)
+
+    _REPEAT = 0
     test_wall_stall()
     await test_replay("complex_mission")
 

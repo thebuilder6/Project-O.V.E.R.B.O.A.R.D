@@ -21,6 +21,20 @@ from tests.test_digital_twin import TestDigitalTwinConfig, TestDigitalTwinValida
 from tests.test_sysid_compare import TestSysIdCompare
 from tests.test_export_compact import TestCompactExport
 from tests.test_export import TestResampleHeading
+from tests.test_hub_deploy import (
+    TestSessionFile,
+    TestPushHubCli,
+    TestFirmwareCompiles,
+    TestHubRunnerContract,
+)
+from tests.test_sysid_collect import (
+    TestCollectorMetadata,
+    TestSessionPoses,
+    TestFittedScales,
+    TestMeasurementSheet,
+    TestRepeatStatistics,
+    TestCollectCommand,
+)
 from tests.test_firmware_events import (
     TestFinalWaypointEvent,
     TestFinalWaypointEventCompact,
@@ -98,6 +112,16 @@ def run_tests():
     suite.addTests(loader.loadTestsFromTestCase(TestResampleHeading))
     suite.addTests(loader.loadTestsFromTestCase(TestFinalWaypointEvent))
     suite.addTests(loader.loadTestsFromTestCase(TestFinalWaypointEventCompact))
+    suite.addTests(loader.loadTestsFromTestCase(TestSessionFile))
+    suite.addTests(loader.loadTestsFromTestCase(TestPushHubCli))
+    suite.addTests(loader.loadTestsFromTestCase(TestFirmwareCompiles))
+    suite.addTests(loader.loadTestsFromTestCase(TestHubRunnerContract))
+    suite.addTests(loader.loadTestsFromTestCase(TestCollectorMetadata))
+    suite.addTests(loader.loadTestsFromTestCase(TestSessionPoses))
+    suite.addTests(loader.loadTestsFromTestCase(TestFittedScales))
+    suite.addTests(loader.loadTestsFromTestCase(TestMeasurementSheet))
+    suite.addTests(loader.loadTestsFromTestCase(TestRepeatStatistics))
+    suite.addTests(loader.loadTestsFromTestCase(TestCollectCommand))
     suite.addTests(loader.loadTestsFromTestCase(TestCliBasics))
     suite.addTests(loader.loadTestsFromTestCase(TestLiveVisualizerPorts))
     suite.addTests(loader.loadTestsFromTestCase(TestParallelCandidates))

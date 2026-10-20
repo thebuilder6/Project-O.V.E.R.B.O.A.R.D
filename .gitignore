@@ -46,6 +46,18 @@ straight_controller.json
 test_output*
 random_suite/
 benchmarks/
+pybricks_code/hub_mission.py
+
+# Research measurement output (the committed copy lives in docs/measurements/)
+research/results/
+research/missions/
+
+# Calibration session artifacts
+session.csv
+calibration_sheet.csv
+poses.csv
+hub_poses.csv
+sysid_fit.json
 
 # Temporary files
 *.tmp

@@ -164,8 +164,20 @@ def _actuator_from_dict(payload: Dict[str, Any]) -> ActuatorFit:
     gain = _optional_float(payload.get("gain"), "actuator.gain")
     gain_min = _optional_float(payload.get("gain_min"), "actuator.gain_min")
     gain_max = _optional_float(payload.get("gain_max"), "actuator.gain_max")
+    # The 95% interval over the repeats of the test. It is the honest
+    # uncertainty of the gain, so the validator uses it as the band when the
+    # fit has it. The observed min/max are the fallback for a fit with a
+    # single run, where there is no interval.
+    gain_ci = payload.get("gain_ci95")
+    if isinstance(gain_ci, (list, tuple)) and len(gain_ci) == 2:
+        ci_low = _optional_float(gain_ci[0], "actuator.gain_ci95")
+        ci_high = _optional_float(gain_ci[1], "actuator.gain_ci95")
+    else:
+        ci_low = ci_high = None
 
-    if gain_min is not None and gain_max is not None:
+    if ci_low is not None and ci_high is not None:
+        gain_range = (ci_low, ci_high)
+    elif gain_min is not None and gain_max is not None:
         gain_range = (gain_min, gain_max)
     elif gain is not None:
         gain_range = (gain, gain)

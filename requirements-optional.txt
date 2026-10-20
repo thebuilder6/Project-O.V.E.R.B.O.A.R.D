@@ -4,6 +4,7 @@
 # These packages add:
 #   --validate    the Immrax reachability gate (needs jax + immrax)
 #   --multiverse  the experimental Multi-Verse pipeline (needs jax + jaxopt)
+#   --push-hub    pushing a trajectory to a Pybricks hub (needs pybricksdev)
 #   sysid_solver.py  the standalone pandas fitter
 #
 # Verified with JAX 0.6.2.
@@ -11,3 +12,4 @@ jax
 jaxopt
 immrax
 pandas
+pybricksdev

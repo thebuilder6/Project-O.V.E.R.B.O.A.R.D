@@ -19,41 +19,7 @@ import sys
 import types
 import unittest
 
-
-def _install_firmware_stubs():
-    """Make the firmware modules importable on the host."""
-    sys.modules.setdefault("umath", math)
-    sys.modules.setdefault("ustruct", struct)
-
-    if "micropython" not in sys.modules:
-        micropython = types.ModuleType("micropython")
-        micropython.const = lambda value: value
-        sys.modules["micropython"] = micropython
-
-    if "pybricks" not in sys.modules:
-        pybricks = types.ModuleType("pybricks")
-        tools = types.ModuleType("pybricks.tools")
-
-        class StopWatch:
-            def __init__(self):
-                self._start = None
-
-            def time(self):
-                import time
-                if self._start is None:
-                    self._start = time.monotonic()
-                return int((time.monotonic() - self._start) * 1000.0)
-
-        async def wait(_ms):
-            # Sleep for real so the loop advances at roughly the deployed rate
-            # instead of spinning on the host.
-            await asyncio.sleep(min(_ms, 20) / 1000.0)
-
-        tools.StopWatch = StopWatch
-        tools.wait = wait
-        pybricks.tools = tools
-        sys.modules["pybricks"] = pybricks
-        sys.modules["pybricks.tools"] = tools
+from tests.firmware_stubs import install_firmware_stubs as _install_firmware_stubs
 
 
 class _GcStub:
@@ -204,6 +170,22 @@ class TestFinalWaypointEventCompact(unittest.TestCase):
         ))
 
         self.assertEqual(fired, ["lower_arm"])
+
+    def test_follow_trajectory_reports_the_final_pose(self):
+        """The host reads the measured pose back from the hub."""
+        samples = _samples()
+        samples[0].update({"x": 0.25, "y": -0.1, "heading": 0.3})
+        blob, events = encode_compact_trajectory(samples)
+
+        pose = asyncio.run(ramsete_compact_events.follow_trajectory(
+            _FakeDriveBase(), blob, events=events,
+        ))
+
+        self.assertEqual(len(pose), 3)
+        x, y, heading = pose
+        self.assertAlmostEqual(x, 0.25, places=5)
+        self.assertAlmostEqual(y, -0.1, places=5)
+        self.assertAlmostEqual(heading, 0.3, places=5)
 
 
 if __name__ == "__main__":

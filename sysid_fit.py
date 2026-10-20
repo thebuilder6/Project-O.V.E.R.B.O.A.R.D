@@ -230,6 +230,129 @@ def poses_from_hub_session(lines, run_id="hub"):
     return rows, events
 
 
+# The measurement sheet is what the operator fills in by hand. It is keyed by
+# the name of the test and the repeat of it, so it does not depend on the
+# order the tests ran in:
+#
+#   test,repeat,stop,x_mm,y_mm,turn_right_deg
+#   odometry_straight,0,0,998,2,0
+#
+# x is forward from the start pose, y is to the left, and the turn is how far
+# the robot turned to the right. The heading the fitter wants is
+# counter-clockwise positive, so the turn is negated on the way in.
+SHEET_FIELDS = ["test", "repeat", "stop", "x_mm", "y_mm", "turn_right_deg"]
+
+
+def session_tests(runs):
+    """Map every run to its run id, keyed by its test name and repeat."""
+    index = {}
+    for run in runs:
+        name = (run["meta"].get("test") or run["name"] or "").strip()
+        if not name:
+            continue
+        key = (name, _run_repeat(run))
+        try:
+            poses = int(run["meta"].get("poses", 0))
+        except (TypeError, ValueError):
+            poses = 0
+        index[key] = (run["meta"].get("run_id"), poses)
+    return index
+
+
+def write_sheet(runs, path):
+    """Write a blank measurement sheet for the tests that need one."""
+    rows = []
+    for (name, repeat), (run_id, poses) in sorted(session_tests(runs).items()):
+        for stop in range(poses):
+            rows.append({"test": name, "repeat": repeat, "stop": stop})
+    with open(path, "w", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=SHEET_FIELDS)
+        writer.writeheader()
+        for row in rows:
+            writer.writerow({key: row.get(key, "") for key in SHEET_FIELDS})
+    return path
+
+
+def read_sheet(path):
+    """Read the operator's measurement sheet.
+
+    Rows the operator left empty are skipped, so a sheet can be filled in
+    part by part.
+    """
+    rows = []
+    with open(path, "r", encoding="utf-8", newline="") as handle:
+        for raw in csv.DictReader(handle):
+            name = (raw.get("test") or "").strip()
+            if not name:
+                continue
+            try:
+                repeat = int((raw.get("repeat") or "0").strip())
+                stop = int((raw.get("stop") or "0").strip())
+                x_mm = float((raw.get("x_mm") or "").strip())
+                y_mm = float((raw.get("y_mm") or "").strip())
+                turn_deg = float((raw.get("turn_right_deg") or "").strip())
+            except (TypeError, ValueError):
+                continue
+            rows.append({
+                "test": name,
+                "repeat": repeat,
+                "stop": stop,
+                "x_mm": x_mm,
+                "y_mm": y_mm,
+                "turn_right_deg": turn_deg,
+            })
+    return rows
+
+
+def sheet_to_poses(rows, runs):
+    """Turn the operator's sheet into measured-pose rows for the fitter.
+
+    Returns (pose_rows, problems). A problem is a line of plain text for the
+    operator: a row for a test that did not run, or a test that needs a
+    measurement and did not get one.
+    """
+    index = session_tests(runs)
+    problems = []
+    poses = []
+    seen = {}
+    for row in rows:
+        name = row["test"]
+        key = (name, row["repeat"])
+        if key not in index:
+            problems.append(
+                f"the sheet has '{name}' repeat {row['repeat']} but the "
+                f"session does not have that test and repeat")
+            continue
+        run_id, _poses = index[key]
+        seen_key = (name, row["repeat"], row["stop"])
+        if seen_key in seen:
+            problems.append(
+                f"the sheet has '{name}' repeat {row['repeat']} stop "
+                f"{row['stop']} twice")
+            continue
+        seen[seen_key] = True
+        poses.append({
+            "run_id": run_id,
+            "stop": row["stop"],
+            "x_m": row["x_mm"] / 1000.0,
+            "y_m": row["y_mm"] / 1000.0,
+            # The sheet counts a turn to the right; the trajectory counts a
+            # turn to the left.
+            "heading_deg": -row["turn_right_deg"],
+        })
+
+    measured = {(row["test"], row["repeat"], row["stop"]) for row in rows}
+    for (name, repeat), (_run_id, count) in index.items():
+        if count <= 0:
+            continue
+        for stop in range(count):
+            if (name, repeat, stop) not in measured:
+                problems.append(
+                    f"'{name}' repeat {repeat} stop {stop} was not measured, "
+                    f"so its scale will not be calibrated")
+    return poses, problems
+
+
 def write_poses_csv(rows, path):
     """Write measured-pose rows in the format load_poses() reads."""
     with open(path, "w", encoding="utf-8", newline="") as handle:
@@ -238,6 +361,49 @@ def write_poses_csv(rows, path):
         for row in rows:
             writer.writerow({key: row[key] for key in POSES_CSV_FIELDS})
     return path
+
+
+def _write_sheet(args, parser):
+    """CLI mode: write a blank measurement sheet for the session."""
+    files, runs = load_runs(args.logs)
+    if not runs:
+        print("No TEST_START blocks found.")
+        return 1
+    write_sheet(runs, args.write_sheet)
+    tests = session_tests(runs)
+    wanted = sum(1 for _run_id, count in tests.values() if count > 0)
+    print(f"Wrote a measurement sheet for {wanted} test run(s) to "
+          f"{args.write_sheet}.")
+    print("Fill in x_mm, y_mm and turn_right_deg, then run:")
+    print(f"  python sysid_fit.py {' '.join(args.logs)} --from-sheet "
+          f"{args.write_sheet} --out-poses poses.csv")
+    return 0
+
+
+def _convert_sheet(args, parser):
+    """CLI mode: turn the operator's sheet into a measured-pose CSV."""
+    if not args.out_poses:
+        parser.error("--from-sheet needs --out-poses")
+    _files, runs = load_runs(args.logs)
+    if not runs:
+        print("No TEST_START blocks found.")
+        return 1
+    try:
+        rows = read_sheet(args.from_sheet)
+    except OSError as exc:
+        print(f"error: cannot read {args.from_sheet}: {exc}")
+        return 1
+
+    poses, problems = sheet_to_poses(rows, runs)
+    for problem in problems:
+        print(f"warning: {problem}.")
+    if not poses:
+        print(f"No measurements in {args.from_sheet}.")
+        return 1
+
+    write_poses_csv(poses, args.out_poses)
+    print(f"Wrote {len(poses)} measured pose(s) to {args.out_poses}.")
+    return 0
 
 
 def _convert_hub_session(args, parser):
@@ -329,6 +495,52 @@ def _fit_first_order(times, measured, command):
     }
 
 
+# The two-sided 95% t multipliers, for the degrees of freedom of a mean over
+# n independent repeats. Beyond the table the normal value is close enough.
+_T95 = {
+    2: 12.706, 3: 4.303, 4: 3.182, 5: 2.776, 6: 2.571,
+    7: 2.447, 8: 2.365, 9: 2.306, 10: 2.262,
+}
+
+
+def repeat_statistics(values):
+    """The spread of one parameter over the repeats of a test.
+
+    ``values`` is one value per repeat. With fewer than two repeats there is
+    no interval, because a spread needs two points. The interval is a t
+    interval on the mean: it covers the run-to-run variation, and it is
+    deliberately wide, because three repeats is a small sample.
+    """
+    values = [float(v) for v in values]
+    count = len(values)
+    if count == 0:
+        return {"n": 0}
+    mean = float(np.mean(values))
+    if count < 2:
+        return {"n": count, "mean": mean, "std": None, "ci95": None}
+    std = float(np.std(values, ddof=1))
+    half = _T95.get(count, 1.96) * std / np.sqrt(count)
+    return {
+        "n": count,
+        "mean": mean,
+        "std": std,
+        "ci95": [float(mean - half), float(mean + half)],
+    }
+
+
+def _between_runs(pairs):
+    """The spread of one parameter over the repeats of a test.
+
+    ``pairs`` is (repeat, value). The values of one repeat are pooled first,
+    so a repeat that measured the parameter twice counts once.
+    """
+    groups = {}
+    for repeat, value in pairs:
+        groups.setdefault(repeat, []).append(float(value))
+    return repeat_statistics([float(np.median(group))
+                              for group in groups.values()])
+
+
 def _summary(fits):
     if not fits:
         return {"calibrated": False, "n_steps": 0}
@@ -343,9 +555,16 @@ def _summary(fits):
         return float(np.max([fit[key] for fit in fits]))
 
     gains = [fit["gain"] for fit in fits]
-    return {
+    # One value per repeat, so the between-repeat spread is the honest
+    # uncertainty. The steps inside a repeat are sequential and correlated,
+    # so their spread is only the within-run precision.
+    def per_repeat(key):
+        return [(fit.get("repeat", 0), fit[key]) for fit in fits]
+
+    summary = {
         "calibrated": True,
         "n_steps": len(fits),
+        "n_runs": len({fit.get("repeat", 0) for fit in fits}),
         "gain": median("gain"),
         "gain_min": minimum("gain"),
         "gain_max": maximum("gain"),
@@ -359,6 +578,14 @@ def _summary(fits):
         "accel_limit": median("accel_limit"),
         "rmse": median("rmse"),
     }
+    for key, name in (("gain", "gain"), ("tau_s", "tau_s"),
+                      ("delay_s", "delay_s")):
+        stats = _between_runs(per_repeat(key))
+        summary[f"{name}_between_runs"] = stats
+        if stats.get("ci95"):
+            summary[f"{name}_ci95"] = stats["ci95"]
+    return summary
+
 
 
 # ---------------------------------------------------------------------------
@@ -406,6 +633,14 @@ def _measured_column(run, name):
     return _column(run, name)
 
 
+def _run_repeat(run):
+    """The repeat number of a run. A session without the line is repeat 0."""
+    try:
+        return int(run["meta"].get("repeat", 0))
+    except (TypeError, ValueError):
+        return 0
+
+
 def _step_fits_measured(runs, prefixes, command_column, measured_key,
                         command_scale=1.0, command_threshold=0.005):
     fits = []
@@ -435,6 +670,9 @@ def _step_fits_measured(runs, prefixes, command_column, measured_key,
                 continue
             fit["run"] = run["name"]
             fit["command"] = segment_command
+            # The repeat the run belongs to, so the fit can tell the
+            # between-run spread from the within-run one.
+            fit["repeat"] = _run_repeat(run)
             fits.append(fit)
     return fits
 
@@ -566,50 +804,58 @@ def _fit_odometry(runs, poses, distance_scale_default=1.0):
             total_measured = float(np.sum(measured))
             total_odometry = float(np.sum(odometry))
             if total_odometry > 1e-6:
-                distance_candidates.append(total_measured / total_odometry)
+                distance_candidates.append((
+                    _run_repeat(run),
+                    total_measured / total_odometry,
+                ))
             continue
 
         if db_distance is None:
             continue
 
         measured_distance = _pose_distance(entries[-1])
+        repeat = _run_repeat(run)
         if "odometry_straight" in run["name"] and db_distance > 1e-6:
-            distance_candidates.append(
-                measured_distance / (db_distance / 1000.0)
-            )
+            distance_candidates.append((
+                repeat,
+                measured_distance / (db_distance / 1000.0),
+            ))
         elif "odometry_turn" in run["name"] and db_heading is not None:
             if abs(db_heading) > 1e-6:
                 # The measured heading is counter-clockwise positive, like
                 # the planned trajectory, but the odometry angle is
                 # clockwise positive. Flip one of them so the ratio is the
                 # scale between them and not its negative.
-                heading_candidates.append(
-                    entries[-1]["heading_deg"] / -db_heading
-                )
+                heading_candidates.append((
+                    repeat,
+                    entries[-1]["heading_deg"] / -db_heading,
+                ))
         elif run["name"].startswith("brake_from_") and db_distance > 1e-6:
             brake_pairs.append((
                 run["name"],
+                repeat,
                 db_distance / 1000.0,
                 measured_distance,
             ))
 
     distance_scale = (
-        float(np.median(distance_candidates))
+        float(np.median([value for _repeat, value in distance_candidates]))
         if distance_candidates
         else float(distance_scale_default)
     )
     heading_scale = (
-        float(np.median(heading_candidates))
+        float(np.median([value for _repeat, value in heading_candidates]))
         if heading_candidates
         else 1.0
     )
 
     slip = []
-    for name, odometry_distance, measured_distance in brake_pairs:
+    for name, repeat, odometry_distance, measured_distance in brake_pairs:
         expected = odometry_distance * distance_scale
         if expected > 1e-6:
             slip.append({
                 "run": name,
+                "repeat": repeat,
                 "ratio": float(1.0 - measured_distance / expected),
                 "odometry_m": odometry_distance,
                 "measured_m": measured_distance,
@@ -622,6 +868,8 @@ def _fit_odometry(runs, poses, distance_scale_default=1.0):
             "brake_ratio_median": float(np.median(ratios)),
             "brake_ratio_min": float(np.min(ratios)),
             "brake_ratio_max": float(np.max(ratios)),
+            "brake_ratio_between_runs": _between_runs(
+                [(entry["repeat"], entry["ratio"]) for entry in slip]),
             "runs": slip,
         }
     else:
@@ -633,6 +881,8 @@ def _fit_odometry(runs, poses, distance_scale_default=1.0):
         "calibrated": bool(distance_candidates or heading_candidates),
         "n_distance_sources": len(distance_candidates),
         "n_heading_sources": len(heading_candidates),
+        "distance_scale_between_runs": _between_runs(distance_candidates),
+        "heading_scale_between_runs": _between_runs(heading_candidates),
     }, slip_summary
 
 
@@ -850,6 +1100,17 @@ def read_drivebase_profile(path):
     }
 
 
+def _print_interval(summary, name):
+    """Print the 95% interval of a parameter over the repeats."""
+    stats = summary.get(f"{name}_between_runs")
+    if not stats or not stats.get("ci95"):
+        print(f"  {name}: one run only, no interval.")
+        return
+    low, high = stats["ci95"]
+    print(f"  {name}: 95% interval [{low:.4f}, {high:.4f}] over "
+          f"{stats['n']} repeats (std {stats['std']:.4f}).")
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(
         description="Fit a digital-twin model from Pybricks SysId CSV logs."
@@ -872,6 +1133,18 @@ def main(argv=None):
         help="fallback run id for poses in a session without META lines",
     )
     parser.add_argument(
+        "--from-sheet",
+        help=(
+            "the operator's measurement sheet; it is converted to "
+            "--out-poses using the test names in the session and nothing is "
+            "fitted"
+        ),
+    )
+    parser.add_argument(
+        "--write-sheet",
+        help="write a blank measurement sheet for the tests in the session",
+    )
+    parser.add_argument(
         "--profile",
         help="minimal drivebase profile JSON (wheel_radius_m, track_width_m)",
     )
@@ -890,6 +1163,12 @@ def main(argv=None):
 
     if args.from_hub_session:
         return _convert_hub_session(args, parser)
+
+    if args.write_sheet:
+        return _write_sheet(args, parser)
+
+    if args.from_sheet:
+        return _convert_sheet(args, parser)
 
     if args.profile and args.robot_config:
         parser.error("use either --profile or --robot-config, not both")
@@ -945,15 +1224,17 @@ def main(argv=None):
     if straight.get("calibrated"):
         print(
             "Straight: gain={gain:.3f}, tau={tau_s:.3f}s, delay={delay_s:.3f}s, "
-            "n={n_steps}".format(**straight)
+            "n={n_steps} steps in {n_runs} repeats".format(**straight)
         )
+        _print_interval(straight, "gain")
     else:
         print("Straight: no usable step data.")
     if turn.get("calibrated"):
         print(
             "Turn: gain={gain:.3f}, tau={tau_s:.3f}s, delay={delay_s:.3f}s, "
-            "n={n_steps}".format(**turn)
+            "n={n_steps} steps in {n_runs} repeats".format(**turn)
         )
+        _print_interval(turn, "gain")
     else:
         print("Turn: no usable step data.")
     if result["sensors"]["calibrated"]:
@@ -966,6 +1247,7 @@ def main(argv=None):
             "Odometry: distance_scale={distance_scale:.4f}, "
             "heading_scale={heading_scale:.4f}".format(**result["odometry"])
         )
+        _print_interval(result["odometry"], "distance_scale")
     else:
         print("Odometry: no measured poses supplied.")
     if result["slip"]["calibrated"]:
@@ -975,6 +1257,9 @@ def main(argv=None):
                 **result["slip"]
             )
         )
+    print("The intervals cover the run-to-run variation of the robot. They do "
+          "not cover the error of the tape measure, which is the same every "
+          "time and never averages out.")
     print(f"Wrote {args.out}")
     return 0
 
