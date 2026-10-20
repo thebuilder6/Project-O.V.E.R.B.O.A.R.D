@@ -407,6 +407,7 @@ With `--validate`, `--candidates N` (default 2, max 5) solves N trajectories. Wi
 | Stops | FAIL; selected 6.246 s, envelope 0.95 cm, tracking 0.52 cm (candidate 1 baseline: 6.246 s, 0.93 cm / 0.60 cm) |
 | Events | FAIL; selected 4.636 s, envelope 0.97 cm, tracking 0.53 cm (candidate 1 baseline: 4.637 s, 0.97 cm / 0.54 cm) |
 | Complex mission | PASS; selected 6.068 s, envelope 1.22 cm, tracking 0.49 cm; the other four seeds take 8.1-8.7 s with 1.55-1.76 cm envelopes |
+| Uneven test path (1.0 + 0.2 m), `--per-segment-dt` | PASS; 2.710 s, envelope 0.32 cm, tracking 0.36 cm; uniform: 4.463 s, 0.35 cm / 0.36 cm |
 
 All of the failing commands exit 1 and write no output. This is the gate working, not a crash. These results use the narrowed `track_width_range` and `gear_backlash_m` in `examples/fll_choreo.json`; those are test assumptions, not measured hardware values. Without a hardware fit the validator is still kinematic; `--sysid-fit` adds the measured actuator/odometry model, but the thresholds are unchanged. See KI-020.
 
