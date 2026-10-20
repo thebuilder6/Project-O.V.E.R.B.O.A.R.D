@@ -67,6 +67,9 @@ class OptimizationStats:
         self.initial_cost = 0.0
         self.final_cost = 0.0
         self.converged = False
+        # What the refined-guess probe did (KI-004) and how the polish ran.
+        self.refine_probe = None
+        self.polish_stats = None
 
     def to_dict(self):
         return {
@@ -79,6 +82,8 @@ class OptimizationStats:
             "initial_cost": self.initial_cost,
             "final_cost": self.final_cost,
             "converged": self.converged,
+            "refine_probe": self.refine_probe,
+            "polish_stats": self.polish_stats,
             "improvement_pct": (1 - self.final_cost / self.initial_cost) * 100 if self.initial_cost > 0 else 0
         }
 
@@ -97,6 +102,15 @@ DEFAULT_STOMP_VARIANTS = 50
 
 # JAX Constants
 JAX_TARGET_SAMPLES = 10
+
+# Iteration budget for the bounded probe of the refined trajectory (KI-004).
+# The probe must stay a fraction of the primary solve, so it gets its own
+# small budget instead of the solver default.
+REFINE_PROBE_MAX_ITER = 400
+
+# How much faster the refined guess has to be before it replaces the primary
+# solve. Below that the difference is solver noise, not a better trajectory.
+REFINE_PROBE_MARGIN = 0.001
 
 class PathBootstrapper:
     """Generates kinematically valid initial guesses using Reeds-Shepp paths."""
@@ -255,9 +269,11 @@ class MasterTrajectoryOptimizer:
         self.jax_config = JAXRobotConfig(config.__dict__)
         self.jax_refiner = get_jax_refiner(self.jax_config)
         self.prng_key = jax.random.PRNGKey(int(time.time()))
+        # What the refined-guess probe did in the last solve (KI-004).
+        self.refine_probe = None
 
     def solve(self, waypoints: List[Tuple[float, float, Optional[float]]], num_samples_per_segment: int = 10, accuracy_weight: float = 0.0,
-              stop_waypoint_indices: Optional[List[int]] = None, waypoint_events: Optional[Dict[int, str]] = None, apply_headroom: bool = True, verbose: bool = True, capture_iterations: bool = False, live_viz: bool = False) -> List[Dict[str, Any]]:
+              stop_waypoint_indices: Optional[List[int]] = None, waypoint_events: Optional[Dict[int, str]] = None, apply_headroom: bool = True, verbose: bool = True, capture_iterations: bool = False, live_viz: bool = False, fast_polish: bool = False) -> List[Dict[str, Any]]:
         self.stats = OptimizationStats()
         total_start_time = time.time()
         
@@ -343,9 +359,18 @@ class MasterTrajectoryOptimizer:
         phase5_start = time.time()
         if verbose: print("Phase 5: Final global polish (CasADi/IPOPT)...")
         # Warm start CasADi using the fully JAX-refined trajectory!
-        final_traj, polish_stats = self._global_solve(waypoints, num_samples_per_segment, None, accuracy_weight, stop_waypoint_indices, waypoint_events, apply_headroom, fast_mode=False, initial_samples=global_traj, capture_iterations=capture_iterations, live_viz=live_viz)
+        final_traj, polish_stats = self._global_solve(waypoints, num_samples_per_segment, None, accuracy_weight, stop_waypoint_indices, waypoint_events, apply_headroom, fast_mode=False, initial_samples=global_traj, capture_iterations=capture_iterations, live_viz=live_viz, fast_polish=fast_polish)
         self.stats.phase_times["polish"] = time.time() - phase5_start
         self.stats.converged = bool(polish_stats.get("converged", False))
+        self.stats.refine_probe = self.refine_probe
+        self.stats.polish_stats = {
+            "iterations": polish_stats.get("iter_count"),
+            "total_time": polish_stats.get("total_time"),
+            "final_cost": polish_stats.get("final_cost"),
+            "fast_polish": bool(polish_stats.get("fast_polish", False)),
+            "stage_iterations": polish_stats.get("stage_iterations"),
+            "stage_times": polish_stats.get("stage_times"),
+        }
         
         self.stats.total_time = time.time() - total_start_time
         if final_traj: self.stats.final_cost = float(final_traj[-1]['t'])
@@ -427,13 +452,53 @@ class MasterTrajectoryOptimizer:
             
         return trajectory
     
-    def _global_solve(self, waypoints, num_samples, guess, accuracy, stops, events, headroom, fast_mode, initial_samples=None, capture_iterations=False, live_viz=False):
+    def _global_solve(self, waypoints, num_samples, guess, accuracy, stops, events, headroom, fast_mode, initial_samples=None, capture_iterations=False, live_viz=False, fast_polish=False, probe_refined=True):
         from optimizer import TrajectoryOptimizer
         optimizer = TrajectoryOptimizer(self.config)
-        if initial_samples:
-            dt = initial_samples[1]['t'] - initial_samples[0]['t']
-            new_guess = [dt]
-            for s in initial_samples: new_guess.extend([s['x'], s['y'], s['heading'], s['vl'], s['vr']])
-            guess = np.array(new_guess)
-        samples, inner_stats = optimizer.solve(waypoints, num_samples, accuracy, stops, events, headroom, self.verbose, capture_iterations=capture_iterations, live_viz=live_viz)
+        samples, inner_stats = optimizer.solve(waypoints, num_samples, accuracy, stops, events, headroom, self.verbose, capture_iterations=capture_iterations, live_viz=live_viz, fast_polish=fast_polish)
+
+        # KI-004: the refined trajectory is a second starting point for the
+        # polish, not a dead value. Probe it with a bounded cold pass and keep
+        # it when it beats the primary solve. The probe is bounded on purpose:
+        # it must never cost more than a fraction of the primary solve.
+        if probe_refined and initial_samples and not capture_iterations:
+            probe = self._probe_refined_guess(optimizer, waypoints, num_samples, accuracy,
+                                              stops, events, headroom, initial_samples)
+            if probe is not None:
+                probe_samples, probe_stats = probe
+                probe_cost = float(probe_stats.get("final_cost", float("inf")))
+                primary_cost = float(inner_stats.get("final_cost", float("inf")))
+                # Only a real gain replaces the primary solve. A difference in
+                # the last digits is solver noise, not a better trajectory.
+                used = (probe_stats.get("converged", False)
+                        and probe_cost < primary_cost * (1.0 - REFINE_PROBE_MARGIN))
+                self.refine_probe = {
+                    "converged": bool(probe_stats.get("converged", False)),
+                    "cost": probe_cost,
+                    "iterations": probe_stats.get("iter_count"),
+                    "used": bool(used),
+                }
+                if used:
+                    samples, inner_stats = probe_samples, probe_stats
+
+        # Keep the convergence capture of the solve that was used.
+        self.iteration_history = optimizer.iteration_history
         return samples, inner_stats
+
+    def _probe_refined_guess(self, optimizer, waypoints, num_samples, accuracy, stops, events, headroom, initial_samples):
+        """Solve once from the refined trajectory with a bounded cold pass.
+
+        Returns (samples, stats) or None when the probe cannot run.
+        """
+        num_segments = len(waypoints) - 1
+        try:
+            guess = optimizer.guess_from_samples(initial_samples, num_segments, num_samples)
+        except (ValueError, KeyError, IndexError):
+            return None
+        try:
+            return optimizer.solve(
+                waypoints, num_samples, accuracy, stops, events, headroom, False,
+                initial_guess=guess,
+                solver_options={"max_iter": REFINE_PROBE_MAX_ITER, "warm_start_init_point": "no"})
+        except Exception:
+            return None

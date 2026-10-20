@@ -15,7 +15,7 @@ class TrajectoryOptimizer:
         self.model = DifferentialDriveModel(config)
         self.iteration_history: List[Dict[str, Any]] = []  # Store convergence data
 
-    def solve(self, waypoints: List[Tuple[float, float, Optional[float]]], num_samples_per_segment: int = 10, accuracy_weight: float = 0.0, stop_waypoint_indices: Optional[List[int]] = None, waypoint_events: Optional[Dict[int, str]] = None, apply_headroom: bool = True, verbose: bool = True, capture_iterations: bool = False, live_viz: bool = False, guess_style: str = "baseline", per_segment_dt: bool = False) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
+    def solve(self, waypoints: List[Tuple[float, float, Optional[float]]], num_samples_per_segment: int = 10, accuracy_weight: float = 0.0, stop_waypoint_indices: Optional[List[int]] = None, waypoint_events: Optional[Dict[int, str]] = None, apply_headroom: bool = True, verbose: bool = True, capture_iterations: bool = False, live_viz: bool = False, guess_style: str = "baseline", per_segment_dt: bool = False, initial_guess: Optional[np.ndarray] = None, fast_polish: bool = False, polish_iter_budget: int = 200, solver_options: Optional[Dict[str, Any]] = None) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
         """
         waypoints: list of (x, y, heading)
         heading is in radians. None means unconstrained.
@@ -32,6 +32,23 @@ class TrajectoryOptimizer:
         per_segment_dt: if True, each waypoint segment gets its own sample
                         interval. If False (default), all segments share one
                         interval, preserving the validated uniform-time behavior.
+        initial_guess: optional [dt..., states...] array (the layout
+                        _build_initial_guess returns) to start IPOPT from.
+                        None means build the guess from guess_style.
+        fast_polish: if True, use the fast solve path. The single pass asks
+                   IPOPT to treat the initial point as a previous iterate,
+                   which on a large mission makes it crawl through thousands
+                   of iterations for an answer a cold pass reaches in a
+                   fraction of the time. The fast path gives the warm pass an
+                   iteration budget, then finishes from that point with a
+                   cold pass. A mission that solves within the budget returns
+                   exactly the single-pass result, and a mission where the
+                   cold finish fails falls back to the unbudgeted pass, so
+                   the fast path never loses a mission that solves today.
+        polish_iter_budget: iteration budget for the warm pass in the fast
+                   path. Missions that need more iterations than this are
+                   finished with a cold pass instead.
+        solver_options: extra IPOPT options that override the defaults.
         """
         num_segments = len(waypoints) - 1
         N = num_segments * num_samples_per_segment + 1
@@ -40,7 +57,112 @@ class TrajectoryOptimizer:
             stop_waypoint_indices = []
         if waypoint_events is None:
             waypoint_events = {}
-        
+
+        common = dict(
+            num_samples_per_segment=num_samples_per_segment,
+            accuracy_weight=accuracy_weight,
+            stop_waypoint_indices=stop_waypoint_indices,
+            waypoint_events=waypoint_events,
+            apply_headroom=apply_headroom,
+            verbose=verbose,
+            capture_iterations=capture_iterations,
+            live_viz=live_viz,
+            guess_style=guess_style,
+            per_segment_dt=per_segment_dt,
+        )
+
+        if not fast_polish:
+            return self._solve_once(waypoints, initial_guess=initial_guess,
+                                    warm_start=True, stage_label=None,
+                                    solver_options=solver_options, **common)
+
+        # Fast path.
+        #
+        # 1. The warm pass with an iteration budget. A mission that converges
+        #    inside the budget returns exactly what the single pass returns.
+        # 2. If the budget ran out, finish from that point with a cold pass.
+        #    The cold pass starts on the warm pass's own trajectory, so it
+        #    refines the same solution instead of searching a new basin.
+        # 3. If the cold finish does not converge, run the unbudgeted warm
+        #    pass, so a mission that solves today still solves.
+        budget = max(1, int(polish_iter_budget))
+        warm_options = dict(solver_options or {})
+        warm_options["max_iter"] = budget
+        stage_a_samples, stage_a_stats = self._solve_once(
+            waypoints, initial_guess=initial_guess, warm_start=True,
+            stage_label="1/2", solver_options=warm_options, **common)
+
+        if stage_a_stats.get("converged", False):
+            stats = dict(stage_a_stats)
+            stats["fast_polish"] = True
+            stats["stage_count"] = 1
+            stats["stage_times"] = [stage_a_stats.get("total_time")]
+            stats["stage_iterations"] = [stage_a_stats.get("iter_count")]
+            stats["stage_costs"] = [stage_a_stats.get("final_cost")]
+            return stage_a_samples, stats
+
+        guess_b = self.guess_from_samples(
+            stage_a_samples, num_segments, num_samples_per_segment)
+        stage_b_samples, stage_b_stats = self._solve_once(
+            waypoints, initial_guess=guess_b, warm_start=False,
+            stage_label="2/2", solver_options=solver_options, **common)
+
+        if stage_b_stats.get("converged", False):
+            samples, stats = stage_b_samples, stage_b_stats
+            stage_stats = [stage_a_stats, stage_b_stats]
+        else:
+            # The cold finish failed. Fall back to the unbudgeted warm pass.
+            samples, stats = self._solve_once(
+                waypoints, initial_guess=initial_guess, warm_start=True,
+                stage_label=None, solver_options=solver_options, **common)
+            stage_stats = [stage_a_stats, stage_b_stats, stats]
+
+        stats = dict(stats)
+        stats["fast_polish"] = True
+        stats["stage_count"] = len(stage_stats)
+        stats["stage_times"] = [s.get("total_time") for s in stage_stats]
+        stats["stage_iterations"] = [s.get("iter_count") for s in stage_stats]
+        stats["stage_costs"] = [s.get("final_cost") for s in stage_stats]
+        stats["total_time"] = sum(float(s.get("total_time", 0.0))
+                                  for s in stage_stats)
+        return samples, stats
+
+    @staticmethod
+    def guess_from_samples(samples: List[Dict[str, Any]], num_segments: int,
+                           num_samples_per_segment: int) -> np.ndarray:
+        """Rebuild a [dt..., states...] guess array from formatted samples.
+
+        The layout matches _build_initial_guess: one sample interval per
+        segment, then the flattened (x, y, heading, vl, vr) states. Used to
+        restart IPOPT from a previous pass.
+        """
+        count = len(samples)
+        if count == 0:
+            raise ValueError("Cannot build a guess from an empty trajectory")
+        times = np.array([float(s["t"]) for s in samples], dtype=float)
+        states = np.array([[s["x"], s["y"], s["heading"], s["vl"], s["vr"]]
+                           for s in samples], dtype=float)
+        dts = np.zeros(num_segments, dtype=float)
+        for i in range(num_segments):
+            k = min(i * num_samples_per_segment, count - 2)
+            dts[i] = max(times[k + 1] - times[k], 1e-3)
+        return np.concatenate([dts, states.flatten()])
+
+    def _solve_once(self, waypoints: List[Tuple[float, float, Optional[float]]], num_samples_per_segment: int = 10, accuracy_weight: float = 0.0, stop_waypoint_indices: Optional[List[int]] = None, waypoint_events: Optional[Dict[int, str]] = None, apply_headroom: bool = True, verbose: bool = True, capture_iterations: bool = False, live_viz: bool = False, guess_style: str = "baseline", per_segment_dt: bool = False, initial_guess: Optional[np.ndarray] = None, warm_start: bool = True, stage_label: Optional[str] = None, solver_options: Optional[Dict[str, Any]] = None) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
+        """Run one IPOPT pass over the trajectory NLP.
+
+        warm_start=True asks IPOPT to treat the initial point as a previous
+        iterate. warm_start=False is a plain cold start, which converges in far
+        fewer iterations when no earlier iterate exists.
+        """
+        num_segments = len(waypoints) - 1
+        N = num_segments * num_samples_per_segment + 1
+
+        if stop_waypoint_indices is None:
+            stop_waypoint_indices = []
+        if waypoint_events is None:
+            waypoint_events = {}
+
         import time
         start_time = time.time()
 
@@ -73,14 +195,47 @@ class TrajectoryOptimizer:
         vr = X[:, 4]
 
         # Objective: minimize total time + smoothness penalty.
+        #
+        # The penalty is on the wheel jerk J = (a[k+1] - a[k]) / dt, where a
+        # is the interval-average acceleration, charged with a path-wide
+        # reference interval so every boundary costs the same per unit of
+        # physical jerk.
+        #
+        # Without that normalisation the raw acceleration jump (a[k+1]-a[k])
+        # is proportional to J*dt, so a segment with a short dt is charged
+        # dt^2 less per unit jerk and can buy violent wheel motion almost for
+        # free. That let the per-segment model reach 68.9 m/s^3 of wheel jerk
+        # where the uniform model reached 9.5 m/s^3 at the same weight
+        # (KI-022).
+        #
+        # The reference interval is the mean interval over the whole path, so
+        # when every dt is equal the scale is exactly 1 and the per-segment
+        # objective reduces to the uniform one. The per-segment model is then
+        # a strict generalisation of the uniform model, not a different
+        # objective. The uniform branch keeps its original expression so the
+        # validated uniform results stay bit-identical.
         smoothness_cost = 0
         if accuracy_weight > 0 and N > 2:
+            if per_segment_dt:
+                # time_cost is samples_per_segment * sum(dt) over N-1
+                # intervals, so this is the mean interval over the path.
+                dt_ref = time_cost / (N - 1)
             for k in range(N - 2):
                 al_k = (vl[k + 1] - vl[k]) / interval_dt(k)
                 al_k1 = (vl[k + 2] - vl[k + 1]) / interval_dt(k + 1)
                 ar_k = (vr[k + 1] - vr[k]) / interval_dt(k)
                 ar_k1 = (vr[k + 2] - vr[k + 1]) / interval_dt(k + 1)
-                smoothness_cost += (al_k1 - al_k)**2 + (ar_k1 - ar_k)**2
+                if per_segment_dt:
+                    # Time between the midpoints of the two intervals: the
+                    # acceleration jump happens over that span. Scaling by
+                    # (dt_ref/dt_span)^2 makes the term dt_ref^2 * J^2, so
+                    # every boundary pays the same per unit of physical jerk.
+                    dt_span = 0.5 * (interval_dt(k) + interval_dt(k + 1))
+                    scale = dt_ref / dt_span
+                    smoothness_cost += ((al_k1 - al_k)**2
+                                        + (ar_k1 - ar_k)**2) * scale**2
+                else:
+                    smoothness_cost += (al_k1 - al_k)**2 + (ar_k1 - ar_k)**2
         opti.minimize(time_cost + accuracy_weight * smoothness_cost)
 
         # Bounds on the interval length(s)
@@ -182,10 +337,20 @@ class TrajectoryOptimizer:
             opti.subject_to(vl[sample_idx] == 0)
             opti.subject_to(vr[sample_idx] == 0)
 
-        # Initial guess (seeded by guess_style; baseline is the old linear/zero-speed guess)
-        guess = self._build_initial_guess(
-            waypoints, num_samples_per_segment, N,
-            style=guess_style, stop_waypoint_indices=stop_waypoint_indices)
+        # Initial guess (seeded by guess_style; baseline is the old linear/zero-speed guess).
+        # An explicit guess (e.g. a previous pass's solution) wins over the seed.
+        if initial_guess is not None:
+            guess = np.asarray(initial_guess, dtype=float)
+            if guess.shape[0] != num_segments + N * 5:
+                raise ValueError(
+                    f"Initial guess has {guess.shape[0]} entries; expected "
+                    f"{num_segments + N * 5} ({num_segments} intervals + "
+                    f"{N} states x 5)"
+                )
+        else:
+            guess = self._build_initial_guess(
+                waypoints, num_samples_per_segment, N,
+                style=guess_style, stop_waypoint_indices=stop_waypoint_indices)
         guess_dt = guess[:num_segments]
         if per_segment_dt:
             opti.set_initial(dt, guess_dt)
@@ -206,7 +371,9 @@ class TrajectoryOptimizer:
             })
 
         # Solver setup
-        p_opts = {"expand": True}
+        # print_time=False silences the IPOPT statistics table CasADi prints
+        # on every solve; it belongs with the solver internals.
+        p_opts = {"expand": True, "print_time": bool(verbose)}
         s_opts = {
             "max_iter": 5000,
             "print_level": 0,
@@ -218,11 +385,19 @@ class TrajectoryOptimizer:
             "nlp_scaling_method": "gradient-based",
             "hessian_approximation": "limited-memory",
             "sb": "yes",  # Suppress Ipopt banner
-            # --- ADD THESE 3 LINES ---
             "mu_strategy": "adaptive",             # Massively speeds up Phase 2
-            "warm_start_init_point": "yes",        # Crucial for Phase 5 (Polish)
-            "warm_start_bound_push": 1e-6,         # Prevent boundary sticking
         }
+        if warm_start:
+            # Treat the initial point as a previous iterate. This is what a
+            # polish pass wants, but it is also what makes IPOPT crawl through
+            # thousands of iterations when there is no earlier iterate.
+            s_opts["warm_start_init_point"] = "yes"
+            s_opts["warm_start_bound_push"] = 1e-6  # Prevent boundary sticking
+        else:
+            s_opts["warm_start_init_point"] = "no"
+        if solver_options:
+            # Caller overrides win over the defaults above.
+            s_opts.update(solver_options)
         opti.solver("ipopt", p_opts, s_opts)
 
         if live_viz:
@@ -266,6 +441,7 @@ class TrajectoryOptimizer:
             
             opti.callback(callback)
 
+        stage_prefix = f"[stage {stage_label}] " if stage_label else ""
         try:
             sol = opti.solve()
             if per_segment_dt:
@@ -287,7 +463,8 @@ class TrajectoryOptimizer:
                     'phase': 'final_solution'
                 })
             
-            print("Optimization converged. Total time: {:.4f}s".format(total_time))
+            if verbose:
+                print(f"{stage_prefix}Optimization converged. Total time: {total_time:.4f}s")
             
             stats = sol.stats()
             stats["total_time"] = time.time() - start_time
@@ -298,7 +475,11 @@ class TrajectoryOptimizer:
             
             return self.format_output(params, N, num_samples_per_segment, waypoint_events), stats
         except Exception as e:
-            print("Optimization failed or timed out:", e)
+            if verbose:
+                if "Maximum_Iterations_Exceeded" in str(e):
+                    print(f"{stage_prefix}Optimization stopped at the iteration budget.")
+                else:
+                    print(f"{stage_prefix}Optimization failed or timed out:", e)
             # Return best-effort from debug values
             if per_segment_dt:
                 dt_val = np.asarray(opti.debug.value(dt), dtype=float).reshape(-1)
@@ -338,9 +519,13 @@ class TrajectoryOptimizer:
         # Time cost: every segment has exactly num_samples_per_segment intervals
         time_cost = float(num_samples_per_segment * np.sum(dt_values))
         
-        # Smoothness cost
+        # Smoothness cost. Mirrors the solver's objective: the wheel jerk
+        # charged with a path-wide reference interval, so the per-segment
+        # model is held to the same jerk discipline as the uniform one
+        # (KI-022). With all dt equal the scale is exactly 1.
         smoothness_cost = 0
         if accuracy_weight > 0 and N > 2:
+            dt_ref = time_cost / (N - 1)
             for k in range(N - 2):
                 dt_k = dt_values[k // num_samples_per_segment]
                 dt_k1 = dt_values[(k + 1) // num_samples_per_segment]
@@ -348,7 +533,9 @@ class TrajectoryOptimizer:
                 al_k1 = (states[k + 2, 3] - states[k + 1, 3]) / dt_k1
                 ar_k = (states[k + 1, 4] - states[k, 4]) / dt_k
                 ar_k1 = (states[k + 2, 4] - states[k + 1, 4]) / dt_k1
-                smoothness_cost += (al_k1 - al_k)**2 + (ar_k1 - ar_k)**2
+                dt_span = 0.5 * (dt_k + dt_k1)
+                scale = dt_ref / dt_span
+                smoothness_cost += ((al_k1 - al_k)**2 + (ar_k1 - ar_k)**2) * scale**2
         
         return time_cost + accuracy_weight * smoothness_cost
 

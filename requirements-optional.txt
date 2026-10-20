@@ -1,0 +1,13 @@
+# Optional dependencies.
+#
+# The core solver and the browser studio only need requirements.txt.
+# These packages add:
+#   --validate    the Immrax reachability gate (needs jax + immrax)
+#   --multiverse  the experimental Multi-Verse pipeline (needs jax + jaxopt)
+#   sysid_solver.py  the standalone pandas fitter
+#
+# Verified with JAX 0.6.2.
+jax
+jaxopt
+immrax
+pandas

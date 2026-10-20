@@ -13,7 +13,7 @@ project_root = Path(__file__).parent
 sys.path.insert(0, str(project_root))
 
 # Import test modules (non-JAX dependent)
-from tests.test_optimizer import TestTrajectoryOptimizer
+from tests.test_optimizer import TestTrajectoryOptimizer, TestFastPolish, TestSolverIterationBudget
 from tests.test_robot_model import TestRobotConfig, TestDifferentialDriveModel
 from tests.test_validator import TestForwardIntegrate, TestAuditConstraints, TestComputeMetrics, TestValidateTrajectory
 from tests.test_sysid_fit import TestSysIdFit
@@ -25,16 +25,29 @@ from tests.test_firmware_events import (
     TestFinalWaypointEvent,
     TestFinalWaypointEventCompact,
 )
+from tests.test_cli_ux import (
+    TestCliBasics,
+    TestLiveVisualizerPorts,
+    TestParallelCandidates,
+    TestValidationReport,
+)
+from tests.test_gui_server import (
+    TestStudioRoutes,
+    TestStudioSolve,
+    TestStudioHelpers,
+)
 
 # Regression tests (no JAX required)
 from tests.test_regressions import (
     TestExportConfig,
     TestAttemptSelection,
+    TestCandidateSpecs,
     TestReachabilityEnvelope,
     TestBenchmarkValidationConfig,
     TestExportGate,
     TestValidatorGates,
     TestWriteGateIntegration,
+    TestOpenLoopModel,
 )
 
 # JAX-dependent tests (skip if jax is not installed)
@@ -63,11 +76,13 @@ def run_tests():
         suite.addTests(loader.loadTestsFromTestCase(TestCriticMetrics))
     suite.addTests(loader.loadTestsFromTestCase(TestExportConfig))
     suite.addTests(loader.loadTestsFromTestCase(TestAttemptSelection))
+    suite.addTests(loader.loadTestsFromTestCase(TestCandidateSpecs))
     suite.addTests(loader.loadTestsFromTestCase(TestReachabilityEnvelope))
     suite.addTests(loader.loadTestsFromTestCase(TestBenchmarkValidationConfig))
     suite.addTests(loader.loadTestsFromTestCase(TestExportGate))
     suite.addTests(loader.loadTestsFromTestCase(TestValidatorGates))
     suite.addTests(loader.loadTestsFromTestCase(TestWriteGateIntegration))
+    suite.addTests(loader.loadTestsFromTestCase(TestOpenLoopModel))
     suite.addTests(loader.loadTestsFromTestCase(TestTrajectoryOptimizer))
     suite.addTests(loader.loadTestsFromTestCase(TestRobotConfig))
     suite.addTests(loader.loadTestsFromTestCase(TestDifferentialDriveModel))
@@ -83,6 +98,15 @@ def run_tests():
     suite.addTests(loader.loadTestsFromTestCase(TestResampleHeading))
     suite.addTests(loader.loadTestsFromTestCase(TestFinalWaypointEvent))
     suite.addTests(loader.loadTestsFromTestCase(TestFinalWaypointEventCompact))
+    suite.addTests(loader.loadTestsFromTestCase(TestCliBasics))
+    suite.addTests(loader.loadTestsFromTestCase(TestLiveVisualizerPorts))
+    suite.addTests(loader.loadTestsFromTestCase(TestParallelCandidates))
+    suite.addTests(loader.loadTestsFromTestCase(TestValidationReport))
+    suite.addTests(loader.loadTestsFromTestCase(TestFastPolish))
+    suite.addTests(loader.loadTestsFromTestCase(TestSolverIterationBudget))
+    suite.addTests(loader.loadTestsFromTestCase(TestStudioRoutes))
+    suite.addTests(loader.loadTestsFromTestCase(TestStudioSolve))
+    suite.addTests(loader.loadTestsFromTestCase(TestStudioHelpers))
     
     # Run tests
     runner = unittest.TextTestRunner(verbosity=2)

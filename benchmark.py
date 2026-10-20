@@ -118,7 +118,12 @@ class CLIBenchmarkRunner:
                 "-o", out_file,
                 "-n", str(samples),
             ]
-            cmd.append("--simple" if optimizer_type == "simple" else "--no-parallel")
+            if optimizer_type == "simple":
+                cmd.append("--simple")
+            else:
+                # The simple solver is the default now, so the Multi-Verse arm
+                # has to ask for it explicitly.
+                cmd.extend(["--multiverse", "--no-parallel"])
 
             t0 = time.time()
             proc = subprocess.run(cmd, capture_output=True, text=True)
@@ -281,6 +286,91 @@ def run_pipeline_benchmark(config_data: dict, cfg: RobotConfig) -> dict:
         result["multiverse"] = None
 
     return result
+
+
+# ---------------------------------------------------------------------------
+# Mode 4 - Solver  (per-mission solve cost, iterations and pass/fail)
+# ---------------------------------------------------------------------------
+
+SOLVER_BENCHMARK_MISSIONS = [
+    "examples/example_straight.json",
+    "examples/example_s_curve.json",
+    "examples/example_mission_first4.json",
+    "examples/example_with_stops.json",
+    "examples/example_with_events.json",
+    "examples/example_complex_segment.json",
+    "examples/example_complete.json",
+    "examples/example_complex_mission.json",
+]
+
+
+def _load_mission(path: str):
+    """Return (waypoints, stop_indices) for a waypoint file."""
+    with open(path, "r") as handle:
+        raw = json.load(handle)
+    waypoints = raw["waypoints"] if isinstance(raw, dict) and "waypoints" in raw else raw
+    wps, stops = [], []
+    for i, item in enumerate(waypoints):
+        if isinstance(item, dict):
+            wps.append((item["x"], item["y"], item.get("heading")))
+            if item.get("stop"):
+                stops.append(i)
+        else:
+            wps.append((item[0], item[1], item[2] if len(item) > 2 else None))
+    return wps, stops
+
+
+def run_solver_benchmark(config_data: dict, cfg: RobotConfig,
+                         missions: list[str] | None = None,
+                         fast_polish: bool = False,
+                         samples: int = 10) -> list[dict]:
+    """Solve every mission and report the cost of the solve itself.
+
+    Reports the wall time, the IPOPT iteration count and the trajectory
+    duration for each mission, so a solver change can be compared on the
+    missions that matter instead of on a three-waypoint toy path.
+    """
+    paths = missions or SOLVER_BENCHMARK_MISSIONS
+    results: list[dict] = []
+    print(f"\n=== Solver Benchmark  ({len(paths)} missions, "
+          f"fast_polish={fast_polish}) ===")
+    header = f"  {'mission':38s} {'wall':>8s} {'iters':>7s} {'traj':>9s}  result"
+    print(header)
+    print("  " + "-" * (len(header) - 2))
+
+    for path in paths:
+        if not os.path.exists(path):
+            print(f"  {os.path.basename(path):38s} skipped (file not found)")
+            continue
+        wps, stops = _load_mission(path)
+        if len(wps) < 2:
+            continue
+        optimizer = TrajectoryOptimizer(cfg)
+        t0 = time.time()
+        samples_out, stats = optimizer.solve(
+            wps, num_samples_per_segment=samples,
+            stop_waypoint_indices=stops, verbose=False,
+            fast_polish=fast_polish)
+        wall = time.time() - t0
+        iterations = stats.get("iter_count")
+        if fast_polish and stats.get("stage_iterations"):
+            iterations = sum(i or 0 for i in stats["stage_iterations"])
+        row = {
+            "mission": os.path.basename(path),
+            "waypoints": len(wps),
+            "solve_time": wall,
+            "iterations": iterations,
+            "traj_time": stats.get("final_cost"),
+            "converged": bool(stats.get("converged", False)),
+            "fast_polish": fast_polish,
+        }
+        results.append(row)
+        print(f"  {row['mission']:38s} {wall:7.2f}s {str(iterations):>7s} "
+              f"{row['traj_time']:8.4f}s  {'converged' if row['converged'] else 'FAILED'}")
+
+    total = sum(r["solve_time"] for r in results)
+    print(f"  {'total':38s} {total:7.2f}s")
+    return results
 
 
 # ---------------------------------------------------------------------------
@@ -476,7 +566,7 @@ def _parse_args():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__,
     )
-    parser.add_argument("--mode", choices=["cli", "pipeline", "random"], default="pipeline",
+    parser.add_argument("--mode", choices=["cli", "pipeline", "random", "solver"], default="pipeline",
                         help="Benchmark mode (default: pipeline)")
     parser.add_argument("--config", default="robot_config.json",
                         help="Robot config file")
@@ -484,6 +574,12 @@ def _parse_args():
                         help="Output JSON path")
     parser.add_argument("--runs", type=int, default=None,
                         help="Number of runs / iterations")
+
+    # Solver-mode
+    parser.add_argument("--fast-polish", action="store_true",
+                        help="[solver] Use the fast solve path (budgeted warm pass + cold finish)")
+    parser.add_argument("--missions", nargs="+",
+                        help="[solver] Waypoint JSON files to solve (default: the example missions)")
 
     # CLI-mode
     parser.add_argument("--samples", type=int, default=10,
@@ -527,6 +623,12 @@ def main():
         runner.run_suite(existing, samples=args.samples, runs=args.runs or 3, validate=args.validate)
         runner.print_summary()
         _save_results(runner.results, args.output)
+
+    elif args.mode == "solver":
+        results = run_solver_benchmark(config_data, cfg, missions=args.missions,
+                                       fast_polish=args.fast_polish,
+                                       samples=args.samples)
+        _save_results(results, args.output)
 
     elif args.mode == "random":
         profiles = [p.strip() for p in args.profiles.split(",")]

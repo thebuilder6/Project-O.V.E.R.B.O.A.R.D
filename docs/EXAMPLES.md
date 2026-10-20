@@ -2,7 +2,7 @@
 
 This document provides practical examples for using the FLL Trajectory Optimizer.
 
-> **Optimizer choice:** most examples work with either solver. Use `--simple` for the CasADi-only path, especially if you installed only `requirements.txt`. The default Multi-Verse path needs JAX and currently produces the same final trajectory (KI-004). `--validate` always needs JAX/Immrax. With `--validate`, `--candidates N` (default 2, max 5) solves N candidates and exports the passing one with the smallest envelope; with `--simple` the candidates are distinct initial-guess seeds, otherwise accuracy-weight variants. Use `--candidates 1` for a single solve. Without `--validate`, only the first candidate is solved.
+> **Optimizer choice:** the simple CasADi solver is the default, so every example below works with a core `requirements.txt` install. The Multi-Verse path is opt-in with `--multiverse`; it needs JAX and currently produces the same final trajectory (KI-004). `--validate` always needs JAX/Immrax. With `--validate`, `--candidates N` (default 2, max 5) solves N candidates and exports the passing one with the smallest envelope; with the simple solver the candidates combine initial-guess seeds with uniform or per-segment timing, on the Multi-Verse path they are accuracy-weight variants. Use `--candidates 1` for a single solve. Without `--validate`, only the first candidate is solved.
 
 ## Table of Contents
 
@@ -11,6 +11,7 @@ This document provides practical examples for using the FLL Trajectory Optimizer
 - [Python API Examples](#python-api-examples)
 - [Troubleshooting Examples](#troubleshooting-examples)
 - [Integration Examples](#integration-examples)
+- [Browser Studio](#browser-studio)
 - [Live Visualization](#live-visualization)
 
 ## Basic Examples
@@ -31,7 +32,7 @@ Generate a straight-line trajectory from (0, 0) to (1, 0):
 **Command:**
 
 ```bash
-python main.py --simple -c examples/fll_choreo.json -w waypoints.json -o straight.traj --plot
+python main.py -c examples/fll_choreo.json -w waypoints.json -o straight.traj --plot
 ```
 
 **Expected output:**
@@ -116,7 +117,7 @@ python main.py -c examples/fll_choreo.json -w examples/example_complete.json -o 
 python main.py -c examples/fll_choreo.json -w examples/example_complex_mission.json -o complex.traj --plot
 
 # First four waypoints of the complex mission (candidate-seed benchmark)
-python main.py --simple --validate -c examples/fll_choreo.json -w examples/example_mission_first4.json -o first4.traj --candidates 5
+python main.py --validate -c examples/fll_choreo.json -w examples/example_mission_first4.json -o first4.traj --candidates 5
 ```
 
 ---
@@ -342,11 +343,14 @@ python main.py -c examples/fll_choreo.json -w waypoints.json -o high_res.traj -n
 - `-n 10`: Good balance for most FLL paths
 - `-n 20`: Slower optimization, smoother curves, better for complex paths
 
-With `--simple`, `--per-segment-dt` lets each waypoint segment use its own sample interval instead of forcing one interval across the whole path:
+The candidate loop mixes uniform and per-segment timing by default: with `--validate`, candidate 1 is uniform baseline, candidate 2 is per-segment baseline, and selection keeps the passing candidate with the smallest envelope. To force one mode for an experiment:
 
 ```bash
-python main.py --simple --per-segment-dt \
+python main.py --per-segment-dt \
   -c examples/fll_choreo.json -w waypoints.json -o per_segment.traj
+
+python main.py --uniform-dt \
+  -c examples/fll_choreo.json -w waypoints.json -o uniform.traj
 ```
 
 This changes the optimization variables, not the waypoint constraints. It is not available on the Multi-Verse path.
@@ -355,7 +359,7 @@ This changes the optimization variables, not the waypoint constraints. It is not
 
 ### Example 13: Multi-Verse Refinement (experimental)
 
-The default optimizer is the Multi-Verse pipeline. It requires JAX and runs:
+The Multi-Verse pipeline is opt-in. It requires JAX and runs:
 
 ```text
 bootstrap -> kinematic profile -> critic -> JAX refinement -> CasADi polish
@@ -364,7 +368,7 @@ bootstrap -> kinematic profile -> critic -> JAX refinement -> CasADi polish
 Example:
 
 ```bash
-python main.py -c examples/fll_choreo.json -w complex_waypoints.json -o complex.traj \
+python main.py --multiverse -c examples/fll_choreo.json -w complex_waypoints.json -o complex.traj \
   -n 15 \
   -a 1.0 \
   --plot
@@ -372,17 +376,17 @@ python main.py -c examples/fll_choreo.json -w complex_waypoints.json -o complex.
 
 **Current behaviour:** the refinement phase updates an intermediate trajectory, but the final CasADi polish does not receive that refined guess (`multiverse_optimizer.py:_global_solve`, KI-004). The final trajectory is therefore the same as the simple solve, and `--workers`/`--no-parallel` do not change the result. A measured 3-waypoint pipeline benchmark produced 0.00 % cost improvement.
 
-**Use the simple optimizer for predictable results:**
+**The simple solver is the default, so it needs no flag:**
 
 ```bash
-python main.py --simple -c examples/fll_choreo.json -w waypoints.json -o output.traj
+python main.py -c examples/fll_choreo.json -w waypoints.json -o output.traj
 ```
 
 **Flags kept for compatibility:**
 
 ```bash
-python main.py -c examples/fll_choreo.json -w waypoints.json -o output.traj --no-parallel
-python main.py -c examples/fll_choreo.json -w waypoints.json -o output.traj --workers 16
+python main.py --multiverse -c examples/fll_choreo.json -w waypoints.json -o output.traj --no-parallel
+python main.py --multiverse -c examples/fll_choreo.json -w waypoints.json -o output.traj --workers 16
 ```
 
 Do not expect these to improve quality or speed up the final solve until KI-004 is fixed.
@@ -408,7 +412,7 @@ Generate a trajectory for a typical FLL mission:
 **Command:**
 
 ```bash
-python main.py --simple -c examples/fll_choreo.json -w mission_waypoints.json -o mission.traj \
+python main.py -c examples/fll_choreo.json -w mission_waypoints.json -o mission.traj \
   -n 10 \
   -a 0.5 \
   --validate \
@@ -419,11 +423,11 @@ python main.py --simple -c examples/fll_choreo.json -w mission_waypoints.json -o
 
 **Expected output:**
 
-- With `--simple`, solves are typically a few tenths of a second; the default Multi-Verse path adds JAX overhead without changing the result (KI-004)
+- Solves are typically a few tenths of a second; the Multi-Verse path adds JAX overhead without changing the result (KI-004)
 - The solve may converge while `--validate` still rejects the path; under the current test ranges the S-curve, stops, and events examples fail, while the complex mission passes (KI-020)
 - If validation passes, the controller profile has one sample per 20 ms of trajectory
 
-Run with `--simple` and without `--validate` for exploratory output, or use a path that passes the gate before exporting to the robot.
+Run without `--validate` for exploratory output, or use a path that passes the gate before exporting to the robot.
 
 ---
 
@@ -509,7 +513,7 @@ print(f"Number of samples: {len(samples)}")
 print(f"Refinement phase: {stats['phase_times']['refinement']:.4f}s")
 ```
 
-> **Current status:** the Multi-Verse `solve()` returns `(samples, stats)`, but the final polish ignores the refined guess (KI-004). For predictable output, use `TrajectoryOptimizer` and `--simple`.
+> **Current status:** the Multi-Verse `solve()` returns `(samples, stats)`, but the final polish ignores the refined guess (KI-004). For predictable output, use `TrajectoryOptimizer`, which is the default.
 
 ---
 
@@ -610,18 +614,18 @@ for w in weights:
 
 **Typical output:** exact values depend on the robot and path. The table is intentionally not hardcoded; record the output from your own run. Increasing the weight usually reduces jerk at the cost of a longer trajectory.
 
-### Example 19b: Comparing Initial-Guess Seeds
+### Example 19b: Comparing Initial-Guess Seeds and Timing Modes
 
-With `--simple`, `--candidates N` solves the same waypoints from N deterministic initial guesses and validates each one:
+Each candidate combines an initial-guess seed with a timing mode. By default candidate 1 is uniform baseline, candidate 2 is per-segment baseline, and the remaining seeds alternate modes. To compare only the five seeds with uniform timing, force the uniform mode:
 
 ```bash
-python main.py --simple --validate -c examples/fll_choreo.json \
+python main.py --uniform-dt --validate -c examples/fll_choreo.json \
   -w examples/example_mission_first4.json -o first4.traj --candidates 5
 ```
 
-The seeds are `baseline`, `rolling`, `bow_left`, `bow_right`, and `turn_first`. The candidate table prints each seed's duration and envelope, and selection keeps the passing one with the smallest envelope (shortest breaks ties). On the first four waypoints of the complex mission all five pass; `baseline` wins at 2.176 s / 0.27 cm. On the full mission the baseline also wins (6.068 s / 1.22 cm); the other seeds converge to slower, wider paths, so they are rejected.
+The seeds are `baseline`, `rolling`, `bow_left`, `bow_right`, and `turn_first`. The candidate table prints each candidate's duration and envelope, and selection keeps the passing one with the smallest envelope (shortest breaks ties). On the first four waypoints of the complex mission all five uniform seeds pass; `baseline` wins at 2.176 s / 0.27 cm. On the full mission the baseline also wins (6.068 s / 1.22 cm); the other uniform seeds converge to slower, wider paths (8.1-8.7 s), so they are rejected. Without `--uniform-dt`, the default candidate 2 is per-segment baseline; it is faster (1.661 s on first4, 5.447 s on the mission) but fails the local envelope/tracking gate.
 
-From Python, pass `guess_style` to `solve`:
+From Python, pass `guess_style` to `solve`; the default `per_segment_dt=False` reproduces the uniform seed comparison:
 
 ```python
 for style in ("baseline", "rolling", "bow_left", "bow_right", "turn_first"):
@@ -768,7 +772,7 @@ for wp_file in waypoint_files:
     print(f"Generated {output_file}")
 ```
 
-> **Note:** `MasterTrajectoryOptimizer.solve()` returns `(samples, stats)`, and the current refinement does not change the final trajectory (KI-004). For batch work, `TrajectoryOptimizer` with `--simple` is faster and predictable.
+> **Note:** `MasterTrajectoryOptimizer.solve()` returns `(samples, stats)`, and the current refinement does not change the final trajectory (KI-004). For batch work, `TrajectoryOptimizer` (the default) is faster and predictable.
 
 ---
 
@@ -820,7 +824,7 @@ Generate a comprehensive trajectory using all available features: stops, events,
 **Command:**
 
 ```bash
-python main.py --simple -c examples/fll_choreo.json -w complete_mission.json -o examples/complete_mission.traj \
+python main.py -c examples/fll_choreo.json -w complete_mission.json -o examples/complete_mission.traj \
   -a 1.0 \
   -n 15 \
   --validate \
@@ -852,6 +856,54 @@ python main.py --simple -c examples/fll_choreo.json -w complete_mission.json -o 
 
 ---
 
+## Browser Studio
+
+### Example 25: Draw a Mission in the Browser
+
+**Command:**
+
+```bash
+python main.py --gui
+```
+
+The browser opens at `http://127.0.0.1:8000` (use `--gui-port` for a different port).
+
+**Steps:**
+
+1. Click the field to add waypoints, drag them to move them, and use the right-hand panel to set a heading, a stop, an event name or an envelope limit.
+2. Pick a preset: **fast** (one candidate, no validation), **balanced** (the defaults) or **safe** (three candidates, validated, controller export).
+3. Press **Solve**. The solver log streams into the panel; the trajectory, the reachability envelope and the numbers appear on the field.
+4. Download the trajectory, the controller profile or the Python module from the result panel.
+5. **Save** writes the mission to `missions/<name>.json`; the file shows up in the mission list next time. **Download** gives you the same JSON as a file.
+
+**When a validation fails:**
+
+- The result panel shows a row per path segment: the reachability envelope, the local limit and the drift.
+- A segment over its limit is drawn in red on the field, and the segment where the path drifts most is drawn in amber.
+- The note under the table says which gate failed and by how much, and the candidates can be compared with the chips above the table.
+- Nothing is downloaded: the export gate stays closed.
+
+**Editing the robot:**
+
+- Open **Edit robot** under the robot facts. Mass, inertia, wheel radius, track width, motor speed and torque, gearing, friction and the two headrooms are editable; lengths are in millimetres.
+- The uncertainty ranges live under it. They are what the validator plans for, so keep them honest: a narrow range makes the check optimistic.
+- The edited robot is what the solver receives. **Download config** saves a copy as JSON.
+
+**Your work is never lost:**
+
+- Every edit is undoable with Ctrl+Z (redo with Ctrl+Shift+Z), and the Undo/Redo buttons sit next to New.
+- The mission is stored in the browser, so a reload or a crash brings it back exactly as you left it.
+- The panel under the mission name says whether the mission is saved to `missions/` or changed since the last save.
+- Ctrl+S saves to `missions/`, Space plays the trajectory, Delete removes the selected waypoint.
+
+**Notes:**
+
+- The studio runs the same command line in the background, so the export gate, the validation rules and the file formats are identical to the terminal path. A failed validation shows the reason and offers no download.
+- It needs no extra packages and no internet connection.
+- It always uses the simple solver; there is no Multi-Verse toggle.
+
+---
+
 ## Live Visualization
 
 ### Example 26: Live Visualization in Browser
@@ -861,21 +913,19 @@ Monitor the optimization process in real-time using a web browser:
 **Command:**
 
 ```bash
-python main.py --simple -c examples/fll_choreo.json -w waypoints.json --live
+python main.py -c examples/fll_choreo.json -w waypoints.json --live
 ```
 
 **Steps:**
 
 1. Run the command with the `--live` flag.
-2. The terminal prints: `Live visualizer started. Open viz/index.html in your browser.`
-3. Open `viz/index.html` in your browser.
-4. The final trajectory is broadcast when the solve completes.
+2. The browser opens by itself at the live view.
+3. The trajectory is broadcast when the solve completes, and a reload replays the robot config, the waypoints and the last trajectory.
 
 **Current limitations:**
 
-- The server kills whatever owns port 8765 before starting (KI-005). Do not use `--live` while another application needs that port.
-- The first browser client does not receive the robot config or waypoints because the initial broadcast happens before it connects (KI-016). The final trajectory still arrives.
-- The regenerate controls are dead code; `on_regenerate` is never assigned.
-- `--live` is blocking: the command waits for Enter before exiting.
+- The server is blocking: the command waits for Enter before exiting.
+- The live view needs a browser with a WebSocket connection; it is a viewer, not an editor. Use the studio (`--gui`) to draw and solve a mission.
+- The page loads its styles from a CDN, so it looks unstyled without an internet connection. The studio has no such dependency.
 
 **Use case:** Inspecting the final trajectory and any attached reachability envelopes. It is not currently a reliable live debugging tool for configuration or topology exploration.

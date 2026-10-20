@@ -1,9 +1,7 @@
 import asyncio
 import json
+import socket
 import threading
-import subprocess
-import os
-import time
 import websockets
 from typing import List, Dict, Any, Optional
 
@@ -19,39 +17,32 @@ class LiveVisualizer:
         self.thread = None
         self.stop_event = threading.Event()
         self._lock = threading.Lock()
-        
+        # Replayed to every client that connects after the solve has started
+        # (KI-016: the first client used to miss the config and waypoints).
+        self.last_config: Optional[Dict[str, Any]] = None
+        self.last_trajectory: Optional[Dict[str, Any]] = None
+
     def start(self):
-        """Start the WebSocket server in a separate thread, kicking any process already using the port."""
+        """Start the WebSocket server in a separate thread.
+
+        The port is checked first so a busy port gets a clear error instead of
+        killing whatever owns it (KI-005).
+        """
+        probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        try:
+            probe.bind((self.host, self.port))
+        except OSError as exc:
+            raise RuntimeError(
+                f"Port {self.port} is already in use. "
+                f"Pick another with --port or stop the other program."
+            ) from exc
+        finally:
+            probe.close()
+
         print(f"Live visualizer: Initializing on {self.host}:{self.port}...")
-        self._kill_process_on_port(self.port)
         self.thread = threading.Thread(target=self._run_server, daemon=True, name="VisualizerThread")
         self.thread.start()
-        
-    def _kill_process_on_port(self, port: int):
-        """Find and kill any process listening on our port."""
-        if os.name == 'nt':  # Windows
-            try:
-                # Get the process ID using the port
-                cmd = f"netstat -ano | findstr :{port} | findstr LISTENING"
-                output = subprocess.check_output(cmd, shell=True).decode()
-                for line in output.splitlines():
-                    if 'LISTENING' in line:
-                        parts = line.strip().split()
-                        if len(parts) >= 5:
-                            pid = parts[-1]
-                            if int(pid) != os.getpid():
-                                print(f"Live visualizer: Reclaiming port {port} (killing PID {pid})")
-                                subprocess.run(["taskkill", "/F", "/PID", pid], capture_output=True)
-                                time.sleep(0.5) # Give OS time to release port
-            except Exception:
-                pass 
-        else: # Linux / Mac
-            try:
-                cmd = f"fuser -k {port}/tcp"
-                subprocess.run(cmd, shell=True, capture_output=True)
-            except Exception:
-                pass
-        
+
     def _run_server(self):
         self.loop = asyncio.new_event_loop()
         asyncio.set_event_loop(self.loop)
@@ -65,9 +56,8 @@ class LiveVisualizer:
 
     async def _main(self):
         try:
-            async with websockets.serve(self._handler, self.host, self.port, reuse_address=True):
+            async with websockets.serve(self._handler, self.host, self.port):
                 print(f"Live visualizer: Server active at ws://{self.host}:{self.port}")
-                print(f"Live visualizer: Open viz/index.html in your browser to view.")
                 while not self.stop_event.is_set():
                     await asyncio.sleep(0.1)
         except Exception as e:
@@ -77,19 +67,16 @@ class LiveVisualizer:
         # Ensure thread-safe modification of clients set
         with self._lock:
             self.clients.add(websocket)
-            
+            replay = [m for m in (self.last_config, self.last_trajectory) if m]
+
         try:
+            for message in replay:
+                await websocket.send(json.dumps(message))
+
             async for message in websocket:
                 try:
                     data = json.loads(message)
-                    msg_type = data.get("type")
-                    if msg_type == "regenerate":
-                        window = data.get("window")
-                        print(f"Live visualizer: Received regenerate request for window: {window}")
-                        # Run callback in a separate thread to avoid blocking the event loop
-                        if hasattr(self, 'on_regenerate') and self.on_regenerate:
-                            threading.Thread(target=self.on_regenerate, args=(window,), daemon=True).start()
-                    elif msg_type == "ping":
+                    if data.get("type") == "ping":
                         await websocket.send(json.dumps({"type": "pong"}))
                 except json.JSONDecodeError:
                     pass
@@ -110,20 +97,24 @@ class LiveVisualizer:
 
     def send_trajectory(self, trajectory: List[Dict[str, Any]], phase: str = "solve", iteration: int = 0):
         """Send current trajectory state."""
-        self.broadcast({
+        message = {
             "type": "trajectory",
             "phase": phase,
             "iteration": iteration,
             "samples": trajectory
-        })
+        }
+        self.last_trajectory = message
+        self.broadcast(message)
 
     def send_config(self, robot_config: Dict[str, Any], waypoints: List[Any]):
         """Send initial configuration."""
-        self.broadcast({
+        message = {
             "type": "config",
             "robot": robot_config,
             "waypoints": waypoints
-        })
+        }
+        self.last_config = message
+        self.broadcast(message)
 
     async def _broadcast(self, message):
         # Snapshoting clients to avoid modification issues
@@ -149,9 +140,10 @@ class LiveVisualizer:
 # Global instance for easy access
 _global_visualizer = None
 
-def get_visualizer():
+def get_visualizer(port: int = 8765, host: str = "127.0.0.1"):
+    """Return the shared visualizer, starting it on first use."""
     global _global_visualizer
     if _global_visualizer is None:
-        _global_visualizer = LiveVisualizer()
+        _global_visualizer = LiveVisualizer(host=host, port=port)
         _global_visualizer.start()
     return _global_visualizer

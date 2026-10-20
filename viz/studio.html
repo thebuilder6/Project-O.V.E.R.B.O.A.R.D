@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>OVERBOARD Studio</title>
+<link rel="stylesheet" href="studio.css">
+</head>
+<body>
+
+<header class="topbar">
+  <div class="brand">OVERBOARD <span>Studio</span></div>
+  <div class="status" id="header-status" role="status" aria-live="polite">Loading...</div>
+  <div class="topbar-actions">
+    <button type="button" id="btn-solve" class="btn primary">Solve</button>
+    <button type="button" id="btn-cancel" class="btn" hidden>Cancel</button>
+  </div>
+</header>
+
+<main class="layout">
+
+  <!-- ------------------------------------------------------------------ -->
+  <aside class="panel" aria-label="Mission setup">
+
+    <section class="block">
+      <h2>Mission</h2>
+      <label class="field">
+        <span>Name</span>
+        <input type="text" id="mission-name" value="mission" autocomplete="off">
+      </label>
+      <label class="field">
+        <span>Load</span>
+        <select id="mission-list"></select>
+      </label>
+      <div class="row">
+        <button type="button" id="btn-new" class="btn small">New</button>
+        <button type="button" id="btn-undo" class="btn small" title="Undo (Ctrl+Z)">Undo</button>
+        <button type="button" id="btn-redo" class="btn small" title="Redo (Ctrl+Shift+Z)">Redo</button>
+      </div>
+      <div class="row">
+        <button type="button" id="btn-save" class="btn small" title="Save to missions/ (Ctrl+S)">Save</button>
+        <button type="button" id="btn-download" class="btn small">Download</button>
+        <button type="button" id="btn-upload-mission" class="btn small">Open file...</button>
+        <input type="file" id="file-mission" accept=".json,application/json" hidden>
+      </div>
+      <p class="hint" id="waypoint-count">0 waypoints</p>
+      <p class="hint" id="mission-state">Not saved to missions/ yet</p>
+      <p class="hint">Ctrl+Z undo &middot; Ctrl+S save &middot; Space play</p>
+    </section>
+
+    <section class="block">
+      <h2>Robot</h2>
+      <label class="field">
+        <span>Configuration</span>
+        <select id="config-list"></select>
+      </label>
+      <div class="row">
+        <button type="button" id="btn-upload-config" class="btn small">Open config...</button>
+        <input type="file" id="file-config" accept=".json,application/json" hidden>
+      </div>
+      <dl class="facts" id="robot-facts"></dl>
+      <p class="hint warn" id="robot-warning" hidden></p>
+
+      <details id="robot-editor">
+        <summary>Edit robot</summary>
+        <div class="grid2" id="robot-fields"></div>
+        <details>
+          <summary>Uncertainty ranges</summary>
+          <div class="grid2" id="robot-range-fields"></div>
+          <p class="hint">The validator plans for the worst case in these ranges. Keep them honest: a narrow range makes the check optimistic.</p>
+        </details>
+        <div class="row">
+          <button type="button" id="btn-download-config" class="btn small">Download config</button>
+        </div>
+        <p class="hint" id="robot-editor-note"></p>
+      </details>
+    </section>
+
+    <section class="block">
+      <h2>Preset</h2>
+      <div class="presets" id="presets" role="radiogroup" aria-label="Preset"></div>
+    </section>
+
+    <section class="block">
+      <details>
+        <summary>Advanced</summary>
+        <label class="field">
+          <span>Samples per segment</span>
+          <input type="number" id="opt-samples" min="2" max="200" step="1" value="10">
+        </label>
+        <label class="field">
+          <span>Accuracy weight</span>
+          <input type="number" id="opt-accuracy" min="0" step="0.005" value="0">
+        </label>
+        <label class="field">
+          <span>Candidates</span>
+          <input type="number" id="opt-candidates" min="1" max="5" step="1" value="2">
+        </label>
+        <label class="field">
+          <span>Timing mode</span>
+          <select id="opt-timing">
+            <option value="auto" selected>Auto (mixed)</option>
+            <option value="uniform">Uniform</option>
+            <option value="per-segment">Per segment</option>
+          </select>
+        </label>
+        <label class="field">
+          <span>Export format</span>
+          <select id="opt-export">
+            <option value="none" selected>None</option>
+            <option value="controller">Controller JSON</option>
+            <option value="python">Python module</option>
+            <option value="python-compact">Python module (compact)</option>
+          </select>
+        </label>
+        <label class="field">
+          <span>Controller timestep (s)</span>
+          <input type="number" id="opt-controller-dt" min="0.001" max="1" step="0.005" value="0.02">
+        </label>
+        <label class="check">
+          <input type="checkbox" id="opt-validate">
+          <span>Validate before export (needs JAX)</span>
+        </label>
+      </details>
+    </section>
+
+  </aside>
+
+  <!-- ------------------------------------------------------------------ -->
+  <section class="viewport" aria-label="Field">
+    <canvas id="canvas"></canvas>
+
+    <div class="viewport-tools">
+      <button type="button" id="btn-frame" class="btn small">Frame all</button>
+      <label class="check inline">
+        <input type="checkbox" id="toggle-envelope" checked>
+        <span>Envelope</span>
+      </label>
+      <label class="check inline">
+        <input type="checkbox" id="toggle-path" checked>
+        <span>Path</span>
+      </label>
+    </div>
+
+    <div class="viewport-playback">
+      <button type="button" id="btn-play" class="btn small" aria-label="Play or pause the trajectory">Play</button>
+      <input type="range" id="playback" min="0" max="1000" value="0" aria-label="Playback position">
+      <span class="mono" id="playback-time">0.00s / 0.00s</span>
+    </div>
+
+    <p class="hint canvas-hint" id="canvas-hint">Click the field to add a waypoint. Drag a waypoint to move it.</p>
+  </section>
+
+  <!-- ------------------------------------------------------------------ -->
+  <aside class="panel" aria-label="Waypoints and result">
+
+    <section class="block">
+      <h2>Waypoint</h2>
+      <div id="no-selection" class="hint">Select a waypoint on the field to edit it.</div>
+      <div id="waypoint-editor" hidden>
+        <label class="field">
+          <span>X (m)</span>
+          <input type="number" id="wp-x" step="0.01">
+        </label>
+        <label class="field">
+          <span>Y (m)</span>
+          <input type="number" id="wp-y" step="0.01">
+        </label>
+        <label class="field">
+          <span>Heading (deg)</span>
+          <input type="number" id="wp-heading" step="5">
+        </label>
+        <label class="check">
+          <input type="checkbox" id="wp-free-heading">
+          <span>Heading free</span>
+        </label>
+        <label class="check">
+          <input type="checkbox" id="wp-stop">
+          <span>Stop here</span>
+        </label>
+        <label class="field">
+          <span>Event name</span>
+          <input type="text" id="wp-event" placeholder="e.g. lower_arm" autocomplete="off">
+        </label>
+        <label class="check">
+          <input type="checkbox" id="wp-precision">
+          <span>Precision (0.5 cm envelope)</span>
+        </label>
+        <label class="field">
+          <span>Envelope limit (cm)</span>
+          <input type="number" id="wp-threshold" min="0" step="0.1" placeholder="default 2">
+        </label>
+        <div class="row">
+          <button type="button" id="btn-move-up" class="btn small">Move up</button>
+          <button type="button" id="btn-move-down" class="btn small">Move down</button>
+          <button type="button" id="btn-delete" class="btn small danger">Delete</button>
+        </div>
+      </div>
+    </section>
+
+    <section class="block">
+      <h2>Waypoint list</h2>
+      <ol class="wp-list" id="wp-list"></ol>
+    </section>
+
+    <section class="block">
+      <h2>Result</h2>
+      <p class="hint" id="result-status">No solve yet.</p>
+      <dl class="facts" id="result-facts"></dl>
+
+      <div id="validation-report" hidden>
+        <h3 class="sub">Validation detail</h3>
+        <div class="chips" id="validation-candidates"></div>
+        <table class="report" id="validation-table"></table>
+        <p class="hint" id="validation-note"></p>
+      </div>
+
+      <div class="row downloads" id="downloads"></div>
+      <details id="log-details">
+        <summary>Solver log</summary>
+        <pre class="log" id="log"></pre>
+      </details>
+    </section>
+
+  </aside>
+
+</main>
+
+<div class="toast" id="toast" role="alert" hidden></div>
+
+<script src="studio.js"></script>
+</body>
+</html>

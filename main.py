@@ -1,25 +1,85 @@
-import click
+"""
+FLL Trajectory Optimizer CLI.
+
+Generates time-optimal trajectories for LEGO differential-drive robots.
+"""
+
+import importlib.util
 import json
+import math
 import os
+import webbrowser
+from pathlib import Path
+
+import click
 import numpy as np
+
 from robot_model import RobotConfig
 from optimizer import TrajectoryOptimizer, GUESS_STYLES
-from multiverse_optimizer import MasterTrajectoryOptimizer
-from plotter import plot_trajectory, plot_reachability_envelope
-from animated_plotter import animate_trajectory
-from validator import validate_trajectory, validate_samples, check_final_waypoint
+from validator import validate_trajectory, validate_samples, check_final_waypoint, compute_metrics
 from export import write_controller_file, write_python_file
-from convergence_plotter import plot_convergence
-from live_visualizer import get_visualizer
-from digital_twin import load_sysid_fit
 
-# JAX/Immrax Imports
-try:
-    from immrax_validator import ImmraxValidator
-    from jax_robot_model import JAXRobotConfig
-    HAS_JAX = True
-except ImportError:
-    HAS_JAX = False
+REPO_ROOT = Path(__file__).resolve().parent
+DEFAULT_CONFIG = "examples/fll_choreo.json"
+JAX_HINT = "Install the optional dependencies with: pip install -r requirements-optional.txt"
+
+# A machine-readable validation summary on one line. The browser studio reads
+# it to show which part of the path failed; a human never has to look at it.
+VALIDATION_MARKER = "##OVERBOARD-VALIDATION## "
+
+
+def _module_available(name):
+    """True when a module can be imported, without importing it."""
+    try:
+        return importlib.util.find_spec(name) is not None
+    except (ImportError, ValueError):
+        return False
+
+
+# The JAX stack is slow to import and a simple solve does not need it, so it is
+# imported on demand. The names stay at module level so tests can patch them.
+HAS_JAX = _module_available("jax") and _module_available("immrax")
+HAS_MULTIVERSE = HAS_JAX and _module_available("jaxopt")
+ImmraxValidator = None
+JAXRobotConfig = None
+
+# Named starting points for the flags that matter. A preset only fills in
+# options the user did not set explicitly.
+PRESETS = {
+    "fast": {
+        "samples": 8,
+        "accuracy_weight": 0.0,
+        "candidates": 1,
+        "validate": False,
+        "export_format": "none",
+    },
+    "balanced": {
+        "samples": 10,
+        "accuracy_weight": 0.0,
+        "candidates": 2,
+        "validate": False,
+        "export_format": "none",
+    },
+    "safe": {
+        "samples": 14,
+        "accuracy_weight": 0.005,
+        "candidates": 3,
+        "validate": True,
+        "export_format": "controller",
+    },
+}
+
+
+def _ensure_jax_classes():
+    """Import the JAX validators on demand."""
+    global ImmraxValidator, JAXRobotConfig
+    if ImmraxValidator is None:
+        from immrax_validator import ImmraxValidator as _ImmraxValidator
+        ImmraxValidator = _ImmraxValidator
+    if JAXRobotConfig is None:
+        from jax_robot_model import JAXRobotConfig as _JAXRobotConfig
+        JAXRobotConfig = _JAXRobotConfig
+    return ImmraxValidator, JAXRobotConfig
 
 
 def _select_attempt(attempts):
@@ -39,21 +99,129 @@ def _select_attempt(attempts):
 
 CANDIDATE_WEIGHT_STEP = 2.0  # legacy ladder for the Multi-Verse path
 
+# Thread limits handed to the candidate worker processes. Several candidates
+# solve at the same time, so each one keeps a single compute thread.
+_THREAD_ENV_VARS = ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS",
+                    "NUMEXPR_NUM_THREADS")
 
-def _candidate_specs(base_accuracy_weight, count, use_styles=True):
+
+def _candidate_specs(base_accuracy_weight, count, use_styles=True, dt_mode="auto"):
     """Definitions for the candidate set.
 
-    With --simple, each candidate is a distinct initial-guess seed at the base
-    accuracy weight (KI-020: accuracy_weight is a time/smoothness knob, not a
-    candidate generator). The Multi-Verse path has no seed plumbing yet, so it
-    keeps the historical accuracy-weight ladder.
+    With the simple solver, each candidate is a distinct initial-guess seed at
+    the base accuracy weight (KI-020: accuracy_weight is a time/smoothness
+    knob, not a candidate generator) combined with a timing mode. The default
+    "auto" timing mode alternates the two modes for each seed, so validation can
+    choose the timing model that works on this path. "uniform" and "per-segment"
+    force one mode.
+
+    The two modes are not peers. "uniform" shares one dt across all segments,
+    which because every segment has the same sample count also forces every
+    segment to take the SAME time; on a path with unequal segment lengths that
+    is a large, artificial penalty. "per-segment" gives each segment its own
+    dt and is the general model (KI-022).
+
+    The Multi-Verse path has no seed or timing plumbing yet, so it keeps the
+    historical accuracy-weight ladder.
     """
     count = max(1, int(count))
-    if use_styles:
-        return [{"accuracy_weight": base_accuracy_weight, "guess_style": style}
-                for style in GUESS_STYLES[:count]]
-    return [{"accuracy_weight": base_accuracy_weight + CANDIDATE_WEIGHT_STEP * k,
-             "guess_style": "baseline"} for k in range(count)]
+    if not use_styles:
+        return [{"accuracy_weight": base_accuracy_weight + CANDIDATE_WEIGHT_STEP * k,
+                 "guess_style": "baseline", "per_segment_dt": False}
+                for k in range(count)]
+
+    if dt_mode == "uniform":
+        modes = [False]
+    elif dt_mode == "per-segment":
+        modes = [True]
+    elif dt_mode == "auto":
+        modes = [False, True]
+    else:
+        raise ValueError(f"Unknown dt_mode: {dt_mode}")
+
+    specs = []
+    for k in range(count):
+        # auto: baseline uniform, baseline per-segment, rolling uniform, ...
+        style = GUESS_STYLES[(k // len(modes)) % len(GUESS_STYLES)]
+        specs.append({
+            "accuracy_weight": base_accuracy_weight,
+            "guess_style": style,
+            "per_segment_dt": modes[k % len(modes)],
+        })
+    return specs
+
+
+def _solve_candidate_worker(payload):
+    """Solve one candidate. Runs in a worker process when candidates are parallel.
+
+    Returns (samples, stats). A candidate that raises is reported as a
+    non-converged attempt, so the export gate stays closed for it (KI-001).
+    """
+    robot_cfg, wps, spec, solve_kwargs, use_multiverse = payload
+    try:
+        if use_multiverse:
+            from multiverse_optimizer import MasterTrajectoryOptimizer
+            optimizer = MasterTrajectoryOptimizer(robot_cfg, enable_parallel=False,
+                                                  verbose=False)
+        else:
+            optimizer = TrajectoryOptimizer(robot_cfg)
+        samples, stats = optimizer.solve(wps, **solve_kwargs)
+        return samples, stats
+    except Exception as exc:
+        import traceback
+        traceback.print_exc()
+        return [], {"converged": False, "final_cost": float("inf"),
+                    "total_time": 0.0, "error": str(exc)}
+
+
+def _solve_candidates(payloads, workers, quiet, parallel, local_optimizer=None):
+    """Solve every candidate and return the results in candidate order.
+
+    Candidates are independent, so more than one can be solved in parallel
+    worker processes. Validation deliberately stays in the calling process:
+    the JAX validator is warm there, and every worker would pay the import
+    and the compile cost again.
+    """
+    if not payloads:
+        return []
+    if len(payloads) == 1 or not parallel:
+        if local_optimizer is not None:
+            # Solve here, with the optimizer this process already holds. The
+            # convergence capture stays available.
+            results = []
+            for robot_cfg, wps, spec, solve_kwargs, use_multiverse in payloads:
+                try:
+                    results.append(local_optimizer.solve(wps, **solve_kwargs))
+                except Exception as exc:
+                    import traceback
+                    traceback.print_exc()
+                    results.append(([], {"converged": False,
+                                         "final_cost": float("inf"),
+                                         "total_time": 0.0, "error": str(exc)}))
+            return results
+        return [_solve_candidate_worker(p) for p in payloads]
+
+    max_workers = max(1, min(len(payloads), int(workers)))
+    # Every worker is its own process. One BLAS thread per worker stops the
+    # candidates from oversubscribing the machine while they solve together.
+    saved_env = {name: os.environ.get(name) for name in _THREAD_ENV_VARS}
+    for name in _THREAD_ENV_VARS:
+        os.environ[name] = "1"
+    try:
+        from concurrent.futures import ProcessPoolExecutor
+        with ProcessPoolExecutor(max_workers=max_workers) as pool:
+            return list(pool.map(_solve_candidate_worker, payloads))
+    except Exception as exc:
+        # A pool that cannot start must not lose the run: solve here instead.
+        if not quiet:
+            click.echo(f"  Parallel solving unavailable ({exc}); solving sequentially.")
+        return [_solve_candidate_worker(p) for p in payloads]
+    finally:
+        for name, value in saved_env.items():
+            if value is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = value
 
 
 def _export_block_reason(stats, validate, attempt_passed):
@@ -87,6 +255,99 @@ def _immrax_failure_reasons(report, failed_threshold=False, max_violation=0.0):
     return reasons
 
 
+def _finite(value):
+    """A JSON-safe float: None instead of inf or nan."""
+    try:
+        value = float(value)
+    except (TypeError, ValueError):
+        return None
+    if math.isnan(value) or math.isinf(value):
+        return None
+    return value
+
+
+def _segment_report(samples_data, samples_per_segment, thresholds, immrax_report, cpu_summary):
+    """Per-segment validation detail: envelope radius, local limit, violations.
+
+    The gate checks sample i against the threshold of waypoint i // samples, so
+    a segment is judged by the threshold of the waypoint it starts from. The
+    report says the same thing, per segment, instead of one reason string.
+    The drift is the forward-integration error inside the segment: it shows
+    where the path drifts away from the plan.
+    """
+    segments = []
+    count = len(samples_data)
+    if count == 0 or samples_per_segment <= 0:
+        return segments
+
+    envelopes = []
+    if immrax_report:
+        envelopes = immrax_report.get("reachability", {}).get("envelope", []) or []
+    violating = set()
+    slip = set()
+    drift = [0.0] * count
+    if cpu_summary:
+        violating = set(cpu_summary["audit"].get("violating_sample_indices", []))
+        # slip_points is a list of detail dicts; the index is inside.
+        slip = {point.get("index") for point in cpu_summary["audit"].get("slip_points", [])}
+        integrated = cpu_summary.get("integrated") or []
+        if integrated:
+            times = np.array([point["t"] for point in integrated])
+            xs = np.array([point["x"] for point in integrated])
+            ys = np.array([point["y"] for point in integrated])
+            for i, sample in enumerate(samples_data):
+                j = int(np.clip(np.searchsorted(times, sample.get("t", 0.0)),
+                                0, len(times) - 1))
+                drift[i] = math.hypot(xs[j] - sample.get("x", xs[j]),
+                                       ys[j] - sample.get("y", ys[j]))
+
+    n_segments = max(1, (count - 1) // samples_per_segment)
+    for index in range(n_segments):
+        start = index * samples_per_segment
+        stop = min(start + samples_per_segment, count)
+        limit = float(thresholds.get(index, 0.02))
+        radius = 0.0
+        for i in range(start, stop):
+            env = envelopes[i] if i < len(envelopes) else None
+            if not env:
+                continue
+            radius = max(radius, math.hypot((env["x_max"] - env["x_min"]) / 2.0,
+                                             (env["y_max"] - env["y_min"]) / 2.0))
+        violations = sum(1 for i in range(start, stop) if i in violating)
+        slip_points = sum(1 for i in range(start, stop) if i in slip)
+        segments.append({
+            "from": index,
+            "to": index + 1,
+            "limit_m": limit,
+            "envelope_m": radius,
+            "drift_m": max(drift[start:stop]) if stop > start else 0.0,
+            "violations": violations,
+            "slip_points": slip_points,
+            "ok": radius <= limit and violations == 0 and slip_points == 0,
+        })
+    return segments
+
+
+def _emit_validation_report(attempts, selected_index):
+    """Print the machine-readable validation summary."""
+    candidates = []
+    for number, attempt in enumerate(attempts, 1):
+        candidates.append({
+            "index": number,
+            "style": attempt.get("guess_style"),
+            "timing": "per-segment" if attempt.get("per_segment_dt") else "equal-duration",
+            "duration_s": _finite(attempt.get("duration")),
+            "envelope_cm": _finite(attempt.get("tube", 0.0) * 100.0),
+            "tracking_cm": _finite(attempt.get("tracking_m", 0.0) * 100.0),
+            "ok": bool(attempt.get("ok")),
+            "converged": bool(attempt.get("converged")),
+            "reasons": list(attempt.get("reasons", [])),
+            "segments": attempt.get("segments", []),
+        })
+    payload = {"selected": selected_index, "candidates": candidates}
+    click.echo(VALIDATION_MARKER + json.dumps(payload))
+
+
 def _cpu_failure_reasons(summary, waypoint_check=None):
     """Explain a CPU-validator failure."""
     audit = summary["audit"]
@@ -110,88 +371,394 @@ def _cpu_failure_reasons(summary, waypoint_check=None):
     return reasons
 
 
-@click.command()
+def _apply_preset(ctx, preset, values):
+    """Fill in preset values for options the user did not set explicitly."""
+    for name, value in PRESETS[preset].items():
+        if name not in values:
+            continue
+        source = ctx.get_parameter_source(name)
+        if source is not None and source.name in ("DEFAULT", "DEFAULT_MAP"):
+            values[name] = value
+    return values
+
+
+def _load_config(path):
+    """Load a robot config and report problems in plain language."""
+    try:
+        with open(path, "r", encoding="utf-8") as handle:
+            data = json.load(handle)
+    except FileNotFoundError:
+        raise click.ClickException(
+            f"Robot config '{path}' not found. Pass -c/--config with your own robot file."
+        )
+    except json.JSONDecodeError as exc:
+        raise click.ClickException(
+            f"Robot config '{path}' is not valid JSON "
+            f"(line {exc.lineno}, column {exc.colno}): {exc.msg}."
+        )
+    try:
+        return data, RobotConfig(data)
+    except Exception as exc:
+        raise click.ClickException(f"Invalid robot config '{path}': {exc}")
+
+
+def _number(value, label, index, path):
+    """Read a finite number, or explain which waypoint field is wrong."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise click.ClickException(
+            f"Waypoint {index} in '{path}': '{label}' must be a number, got {value!r}."
+        )
+    value = float(value)
+    if value != value or value in (float("inf"), float("-inf")):
+        raise click.ClickException(
+            f"Waypoint {index} in '{path}': '{label}' must be a finite number."
+        )
+    return value
+
+
+def _load_waypoints(path):
+    """Load a waypoint file into (waypoints, events, thresholds, stop_indices)."""
+    try:
+        with open(path, "r", encoding="utf-8") as handle:
+            data = json.load(handle)
+    except FileNotFoundError:
+        raise click.ClickException(f"Waypoint file '{path}' not found.")
+    except json.JSONDecodeError as exc:
+        raise click.ClickException(
+            f"Waypoint file '{path}' is not valid JSON "
+            f"(line {exc.lineno}, column {exc.colno}): {exc.msg}."
+        )
+
+    if not isinstance(data, list):
+        raise click.ClickException(
+            f"Waypoint file '{path}' must contain a list of waypoints."
+        )
+    if len(data) < 2:
+        raise click.ClickException(
+            f"Waypoint file '{path}' needs at least two waypoints."
+        )
+
+    wps = []
+    events = {}
+    thresholds = {}
+    stop_indices = []
+    for index, item in enumerate(data):
+        if isinstance(item, dict):
+            if "x" not in item or "y" not in item:
+                raise click.ClickException(
+                    f"Waypoint {index} in '{path}' needs both 'x' and 'y'."
+                )
+            x = _number(item["x"], "x", index, path)
+            y = _number(item["y"], "y", index, path)
+            heading = item.get("heading")
+            if heading is not None:
+                heading = _number(heading, "heading", index, path)
+            wps.append((x, y, heading))
+            if "event" in item:
+                name = item["event"]
+                if not isinstance(name, str) or not name.strip():
+                    raise click.ClickException(
+                        f"Waypoint {index} in '{path}': 'event' must be a non-empty name."
+                    )
+                events[index] = name.strip()
+            if item.get("stop"):
+                stop_indices.append(index)
+            if "error_threshold" in item:
+                threshold = _number(item["error_threshold"], "error_threshold", index, path)
+                if threshold <= 0:
+                    raise click.ClickException(
+                        f"Waypoint {index} in '{path}': 'error_threshold' must be positive."
+                    )
+                thresholds[index] = threshold
+            elif item.get("precision_mode"):
+                thresholds[index] = 0.005  # 0.5 cm
+        elif isinstance(item, (list, tuple)):
+            if len(item) < 2:
+                raise click.ClickException(
+                    f"Waypoint {index} in '{path}' needs at least an x and a y value."
+                )
+            x = _number(item[0], "x", index, path)
+            y = _number(item[1], "y", index, path)
+            heading = item[2] if len(item) > 2 else None
+            if heading is not None:
+                heading = _number(heading, "heading", index, path)
+            wps.append((x, y, heading))
+        else:
+            raise click.ClickException(
+                f"Waypoint {index} in '{path}': expected an object or a [x, y] list, "
+                f"got {type(item).__name__}."
+            )
+    return wps, events, thresholds, stop_indices
+
+
+def _parse_stop_waypoints(raw, count):
+    """Parse --stop-waypoints and reject out-of-range indices."""
+    if not raw:
+        return []
+    try:
+        indices = [int(part.strip()) for part in raw.split(",") if part.strip()]
+    except ValueError:
+        raise click.BadParameter(
+            "expected comma-separated waypoint indices, for example '2,5,7'",
+            param_hint="'--stop-waypoints'",
+        )
+    for index in indices:
+        if not 0 <= index < count:
+            raise click.BadParameter(
+                f"waypoint index {index} is out of range (0..{count - 1})",
+                param_hint="'--stop-waypoints'",
+            )
+    return indices
+
+
+def _parse_events(raw, count):
+    """Parse --events and reject malformed pairs or out-of-range indices."""
+    if not raw:
+        return {}
+    events = {}
+    for pair in raw.split(","):
+        pair = pair.strip()
+        if not pair:
+            continue
+        if ":" not in pair:
+            raise click.BadParameter(
+                "expected 'index:event' pairs, for example '2:lower_arm,5:release'",
+                param_hint="'--events'",
+            )
+        index_text, name = pair.split(":", 1)
+        try:
+            index = int(index_text.strip())
+        except ValueError:
+            raise click.BadParameter(
+                f"'{index_text.strip()}' is not a waypoint index",
+                param_hint="'--events'",
+            )
+        if not 0 <= index < count:
+            raise click.BadParameter(
+                f"waypoint index {index} is out of range (0..{count - 1})",
+                param_hint="'--events'",
+            )
+        name = name.strip()
+        if not name:
+            raise click.BadParameter(
+                f"the event name for waypoint {index} is empty",
+                param_hint="'--events'",
+            )
+        events[index] = name
+    return events
+
+
+def _open_live_page(port):
+    """Open the live viewer in the default browser."""
+    page = REPO_ROOT / "viz" / "index.html"
+    try:
+        webbrowser.open(f"{page.as_uri()}?port={port}")
+    except Exception:
+        pass
+
+
+def _print_summary(output, samples_data, robot_cfg, validate, attempt_passed, tube, files):
+    """Print what was produced, in the units the user cares about."""
+    metrics = compute_metrics(samples_data, robot_cfg)
+    click.echo("")
+    click.secho(f"Trajectory written to {output}", fg="green", bold=True)
+    click.echo(
+        f"  duration {metrics['total_time_s']:.3f} s | "
+        f"path {metrics['path_length_m']:.3f} m | "
+        f"peak wheel speed {metrics['max_wheel_speed_m_s']:.2f} m/s | "
+        f"{len(samples_data)} samples"
+    )
+    if validate:
+        if attempt_passed:
+            detail = f"envelope {tube * 100:.2f} cm" if tube == tube else "envelope n/a"
+            click.secho(f"  validation: passed ({detail})", fg="green")
+        else:
+            click.secho("  validation: failed (nothing was written)", fg="red")
+    else:
+        click.secho(
+            "  validation: not run - add --validate before driving this robot",
+            fg="yellow",
+        )
+    for path in files:
+        click.echo(f"  also wrote {path}")
+
+
+@click.command(context_settings={"help_option_names": ["-h", "--help"]})
 # --- Input / Output Options ---
-@click.option('-c', '--config', required=True, type=click.Path(exists=True), 
+@click.option('-c', '--config', default=DEFAULT_CONFIG, type=click.Path(dir_okay=False),
               help='Path to the robot configuration file (.json).')
-@click.option('-w', '--waypoints', required=True, type=click.Path(exists=True), 
-              help='Path to waypoints JSON file.')
-@click.option('-o', '--output', default='output.traj', type=str, 
+@click.option('-w', '--waypoints', default=None, type=click.Path(dir_okay=False),
+              help='Path to waypoints JSON file. Required unless --gui or --doctor.')
+@click.option('-o', '--output', default='output.traj', type=str,
               help='Output trajectory file path.')
 
+# --- Modes ---
+@click.option('--gui', is_flag=True,
+              help='Open the browser studio: draw a mission, solve it, export it.')
+@click.option('--gui-port', default=8000, type=int,
+              help='Port for the browser studio.')
+@click.option('--doctor', is_flag=True,
+              help='Check the install, dependencies, examples and ports, then exit.')
+@click.option('--multiverse', is_flag=True,
+              help='Use the experimental Multi-Verse pipeline instead of the simple solver (needs JAX).')
+@click.option('--simple', is_flag=True,
+              help='Deprecated: the simple CasADi solver is now the default.')
+@click.option('--preset', type=click.Choice(['fast', 'balanced', 'safe'], case_sensitive=False),
+              default=None,
+              help='Named starting point. fast: 1 candidate, no validation. '
+                   'balanced: the defaults. safe: 3 candidates, --validate and a controller export. '
+                   'Options you set yourself always win.')
+
 # --- Solver Parameters ---
-@click.option('-n', '--samples', default=10, type=int, 
+@click.option('-n', '--samples', default=10, type=click.IntRange(2, 200),
               help='Samples per segment.')
-@click.option('-a', '--accuracy-weight', default=0.0, type=float, 
+@click.option('-a', '--accuracy-weight', default=0.0, type=click.FloatRange(min=0.0),
               help='Smoothness/accuracy weight (0 = pure time-optimal).')
 @click.option('--candidates', default=2, type=click.IntRange(1, len(GUESS_STYLES)),
-              help='Candidates to solve and compare. With --simple these are distinct '
-                   'initial-guess seeds (baseline, rolling, bow_left, bow_right, turn_first); '
-                   'the Multi-Verse path uses accuracy_weight steps of 2.0 instead. '
-                   'Validation picks the passing candidate with the smallest envelope, then the fastest. '
-                   'Use 1 for a single solve.')
-@click.option('--stop-waypoints', default=None, type=str, 
+              help='Candidates to solve and compare. With the simple solver these combine initial-guess '
+                   'seeds (baseline, rolling, bow_left, bow_right, turn_first) with the timing '
+                   'mode: by default candidate 1 is equal-duration baseline, candidate 2 is '
+                   'per-segment baseline, then the remaining seeds alternate. The Multi-Verse path uses '
+                   'accuracy_weight steps of 2.0 instead. Validation picks the passing candidate '
+                   'with the smallest envelope, then the fastest. Without --validate only the first '
+                   'candidate is solved. Use 1 for a single solve.')
+@click.option('--stop-waypoints', default=None, type=str,
               help='Comma-separated waypoint indices where robot must stop (e.g., "2,5,7").')
-@click.option('--events', default=None, type=str, 
+@click.option('--events', default=None, type=str,
               help='Comma-separated waypoint:event pairs (e.g., "2:lower_arm,5:release").')
 
 # --- Optimizer Strategy ---
-@click.option('--simple', is_flag=True, 
-              help='Use simple optimizer instead of Multi-Verse refinement.')
 @click.option('--per-segment-dt', is_flag=True,
-              help='Allow each waypoint segment its own sample interval (--simple only). '
-                   'Default keeps one uniform dt for the validated timing model.')
-@click.option('--no-parallel', is_flag=True, 
-              help='Disable parallel processing for Multi-Verse refinement.')
-@click.option('--workers', default=8, type=int, 
-              help='Number of parallel workers for Multi-Verse refinement.')
+              help='Force each waypoint segment to have its own sample interval (simple solver only). '
+                   'This is the general timing model. By default candidates mix both modes.')
+@click.option('--uniform-dt', is_flag=True,
+              help='Force one shared sample interval across all segments (simple solver only). '
+                   'This makes every waypoint segment take the SAME time, so a path with '
+                   'unequal segment lengths is slow. By default candidates mix both modes.')
+@click.option('--no-parallel', is_flag=True,
+              help='Solve the candidates in this process instead of in worker processes, and '
+                   'disable the parallel Multi-Verse refinement (no effect on the result).')
+@click.option('--workers', default=8, type=int,
+              help='Number of worker processes used to solve candidates in parallel.')
+@click.option('--fast-polish', is_flag=True,
+              help='Solve large missions faster. The warm-start solve can crawl through thousands of '
+                   'IPOPT iterations; this gives it an iteration budget and finishes from that point '
+                   'with a cold pass. Missions that solve inside the budget return the same '
+                   'trajectory as before.')
 
 # --- Export & Validation ---
-@click.option('--validate', is_flag=True, 
+@click.option('--validate/--no-validate', default=False,
               help='Run validation and block export on failure (requires JAX/Immrax).')
 @click.option('--sysid-fit', type=click.Path(exists=True, dir_okay=False), default=None,
               help='Optional sysid_fit.json digital-twin fit (requires --validate or --live).')
-@click.option('--export-format', type=click.Choice(['none', 'controller', 'python', 'python-compact'], case_sensitive=False), 
+@click.option('--export-format', type=click.Choice(['none', 'controller', 'python', 'python-compact'], case_sensitive=False),
               default='none', help='Export format for controller consumption (python-compact is the packed Pybricks format).')
-@click.option('--controller-dt', default=0.02, type=float, 
+@click.option('--controller-dt', default=0.02, type=click.FloatRange(min=0.001, max=1.0),
               help='Fixed timestep for controller export (seconds).')
-@click.option('--benchmark', is_flag=True, 
+@click.option('--benchmark', is_flag=True,
               help='Collect comprehensive benchmarking data for whitepaper.')
 
 # --- Visualization ---
 @click.option('--plot', is_flag=True, help='Plot the resulting trajectory.')
 @click.option('--animate', is_flag=True, help='Animate the trajectory in real-time.')
-@click.option('--live', is_flag=True, help='Enable live interactive visualization in browser.')
+@click.option('--live', is_flag=True, help='Open the live browser view while solving (blocking).')
+@click.option('--port', default=8765, type=int,
+              help='Port for the live browser view.')
 @click.option('--show-convergence', is_flag=True, help='Show convergence visualization.')
-@click.option('--convergence-mode', type=click.Choice(['parallel', 'best', 'layered'], case_sensitive=False), 
+@click.option('--convergence-mode', type=click.Choice(['parallel', 'best', 'layered'], case_sensitive=False),
               default='best', help='Convergence visualization mode.')
-@click.option('--convergence-animate', is_flag=True, help='Animate convergence.')
-@click.option('--convergence-output', type=str, default=None, 
-              help='Save convergence plot/animation to file.')
 
 # --- Miscellaneous ---
+@click.option('-v', '--verbose', is_flag=True, help='Show solver internals.')
 @click.option('--quiet', '-q', is_flag=True, help='Suppress verbose output.')
-def main(config, waypoints, output, samples, accuracy_weight, candidates, stop_waypoints, events, 
-         simple, per_segment_dt, no_parallel, workers, validate, sysid_fit, export_format, controller_dt, benchmark, 
-         plot, animate, live, show_convergence, convergence_mode, convergence_animate, convergence_output, quiet):
+@click.pass_context
+def main(ctx, config, waypoints, output, gui, gui_port, doctor, multiverse, simple, preset,
+         samples, accuracy_weight, candidates, stop_waypoints, events, per_segment_dt, uniform_dt,
+         no_parallel, workers, fast_polish, validate, sysid_fit, export_format, controller_dt, benchmark,
+         plot, animate, live, port, show_convergence, convergence_mode, verbose, quiet):
     """
     FLL Trajectory Optimizer CLI.
     Generates time-optimal trajectories for Lego robots.
+
+    \b
+    Examples:
+      python main.py -w examples/example_straight.json
+      python main.py -w mission.json --preset safe -o mission.traj
+      python main.py --gui
+      python main.py --doctor
     """
-    if not quiet:
-        click.echo(f"Loading config from {config}...")
-    with open(config, 'r') as f:
-        config_data = json.load(f)
-    
-    robot_cfg = RobotConfig(config_data)
+    if quiet and verbose:
+        raise click.ClickException("--quiet and --verbose cannot be combined.")
+    if simple and multiverse:
+        raise click.ClickException(
+            "--simple is the default; use --multiverse for the experimental pipeline (not both)."
+        )
+    if simple and not quiet:
+        click.secho(
+            "Note: --simple is now the default. Use --multiverse for the experimental pipeline.",
+            fg="yellow",
+        )
+    if per_segment_dt and uniform_dt:
+        raise click.ClickException(
+            "--per-segment-dt and --uniform-dt are mutually exclusive."
+        )
+    if (per_segment_dt or uniform_dt) and multiverse:
+        raise click.ClickException(
+            "--per-segment-dt/--uniform-dt are only supported by the simple solver."
+        )
+
+    if doctor:
+        from diagnostics import run_doctor
+        raise SystemExit(run_doctor(config_path=config))
+
+    if gui:
+        if multiverse:
+            raise click.ClickException(
+                "--multiverse is not available in the studio yet; use the command line."
+            )
+        if live or plot or animate:
+            raise click.ClickException(
+                "--gui cannot be combined with --live, --plot or --animate."
+            )
+        from gui_server import run_studio
+        run_studio(config_path=config, waypoints_path=waypoints,
+                   port=gui_port, presets=PRESETS)
+        return
+
+    if waypoints is None:
+        raise click.UsageError(
+            "Missing option '-w' / '--waypoints'. "
+            "Example: python main.py -w examples/example_straight.json"
+        )
+
+    values = {"samples": samples, "accuracy_weight": accuracy_weight,
+              "candidates": candidates, "validate": validate,
+              "export_format": export_format}
+    if preset:
+        values = _apply_preset(ctx, preset, values)
+        samples = values["samples"]
+        accuracy_weight = values["accuracy_weight"]
+        candidates = values["candidates"]
+        validate = values["validate"]
+        export_format = values["export_format"]
 
     if validate and not HAS_JAX:
         raise click.ClickException(
-            "--validate requires JAX and Immrax. Install them or run without --validate."
+            f"--validate needs JAX and Immrax. {JAX_HINT}"
         )
-    if per_segment_dt and not simple:
+    if multiverse and not HAS_MULTIVERSE:
         raise click.ClickException(
-            "--per-segment-dt is only supported with --simple."
+            f"--multiverse needs JAX, JAXOpt and Immrax. {JAX_HINT}"
+        )
+
+    dt_mode = "per-segment" if per_segment_dt else "uniform" if uniform_dt else "auto"
+
+    config_data, robot_cfg = _load_config(config)
+    if not quiet and os.path.abspath(config) == os.path.abspath(DEFAULT_CONFIG):
+        click.secho(
+            f"Using the example robot config ({DEFAULT_CONFIG}). "
+            "Pass -c/--config with your own robot to plan for your build.",
+            fg="yellow",
         )
 
     digital_twin = None
@@ -202,8 +769,9 @@ def main(config, waypoints, output, samples, accuracy_weight, candidates, stop_w
             )
         if not HAS_JAX:
             raise click.ClickException(
-                "--sysid-fit requires JAX and Immrax so the fitted model can run."
+                f"--sysid-fit needs JAX and Immrax. {JAX_HINT}"
             )
+        from digital_twin import load_sysid_fit
         try:
             digital_twin = load_sysid_fit(sysid_fit)
         except (OSError, ValueError) as exc:
@@ -262,116 +830,125 @@ def main(config, waypoints, output, samples, accuracy_weight, candidates, stop_w
                     "using the nominal model."
                 )
 
-    # Choose optimizer based on --simple flag
-    if simple:
+    # Choose optimizer
+    if multiverse:
         if not quiet:
-            click.echo("Using simple optimizer (legacy mode)")
-        optimizer = TrajectoryOptimizer(robot_cfg)
+            click.echo(f"Using the Multi-Verse optimizer (parallel={not no_parallel}, workers={workers})")
+        from multiverse_optimizer import MasterTrajectoryOptimizer
+        try:
+            optimizer = MasterTrajectoryOptimizer(
+                robot_cfg, enable_parallel=not no_parallel,
+                num_workers=workers, verbose=not quiet)
+        except ImportError as exc:
+            raise click.ClickException(f"{exc} {JAX_HINT}")
     else:
-        parallel = not no_parallel
         if not quiet:
-            click.echo(f"Using JAX-Enhanced Multi-Verse optimizer (parallel={parallel}, workers={workers})")
-        optimizer = MasterTrajectoryOptimizer(robot_cfg, enable_parallel=parallel, num_workers=workers, verbose=not quiet)
-    
-    if not quiet:
-        click.echo(f"Loading waypoints from {waypoints}...")
-    with open(waypoints, 'r') as f:
-        wp_data = json.load(f)
-    
-    wps = []
-    waypoint_events = {}  # index -> event name
-    waypoint_thresholds = {} # index -> float
-    json_stop_indices = []
-    for i, item in enumerate(wp_data):
-        if isinstance(item, dict):
-            wps.append((item['x'], item['y'], item.get('heading')))
-            if 'event' in item:
-                waypoint_events[i] = item['event']
-            if item.get('stop'):
-                json_stop_indices.append(i)
-            if 'error_threshold' in item:
-                waypoint_thresholds[i] = float(item['error_threshold'])
-            elif item.get('precision_mode'):
-                waypoint_thresholds[i] = 0.005 # 0.5 cm
-        else:
-            wps.append((item[0], item[1], item[2] if len(item) > 2 else None))
+            click.echo("Using the simple CasADi optimizer")
+        optimizer = TrajectoryOptimizer(robot_cfg)
 
-    if not quiet:
-        if simple:
-            dt_mode = "per-segment dt" if per_segment_dt else "uniform dt"
-            click.echo(f"Optimizing trajectory through {len(wps)} waypoints "
-                       f"(candidates={max(1, candidates)} initial-guess seeds, "
-                       f"accuracy_weight={accuracy_weight}, {dt_mode})...")
-        else:
-            click.echo(f"Optimizing trajectory through {len(wps)} waypoints "
-                       f"(base accuracy_weight={accuracy_weight}, candidates={max(1, candidates)})...")
-
-    capture_iterations = show_convergence
-
-    # Parse stop waypoints
-    stop_indices = []
-    if stop_waypoints:
-        try:
-            stop_indices = [int(x.strip()) for x in stop_waypoints.split(',')]
-        except ValueError:
-            click.echo("Invalid stop waypoints format.")
-
-    if events:
-        try:
-            for pair in events.split(','):
-                idx_str, event_name = pair.strip().split(':')
-                waypoint_events[int(idx_str.strip())] = event_name.strip()
-        except ValueError:
-            click.echo("Invalid events format.")
+    wps, waypoint_events, waypoint_thresholds, json_stop_indices = _load_waypoints(waypoints)
+    stop_indices = _parse_stop_waypoints(stop_waypoints, len(wps))
+    waypoint_events.update(_parse_events(events, len(wps)))
 
     # sorted() so the constraint order (and therefore the IPOPT iterate) is
     # reproducible; set() iteration order changes the NLP ordering.
     all_stop_indices = sorted(set(stop_indices + json_stop_indices))
 
+    if not quiet:
+        # The two modes are not peers: uniform dt forces every waypoint segment
+        # to take the SAME time, so a path with unequal segment lengths pays
+        # for the long one on every segment. Per-segment dt lets each segment
+        # have its own duration and is the general model (KI-022).
+        dt_label = {
+            "auto": "mixed equal-duration/per-segment dt",
+            "uniform": "equal-duration segments (legacy)",
+            "per-segment": "per-segment dt",
+        }[dt_mode]
+        click.echo(
+            f"Solving {len(wps)} waypoints (samples={samples}, "
+            f"accuracy_weight={accuracy_weight}, candidates={max(1, candidates)}, "
+            f"{dt_label})..."
+        )
+
+    capture_iterations = show_convergence
+
     # Start live visualizer if requested
     if live:
-        viz = get_visualizer()
+        from live_visualizer import get_visualizer
+        try:
+            viz = get_visualizer(port=port)
+        except RuntimeError as exc:
+            raise click.ClickException(str(exc))
         wp_dicts = [{"x": w[0], "y": w[1], "heading": w[2]} for w in wps]
         viz.send_config(config_data, wp_dicts)
         if not quiet:
-            click.echo("Live visualizer started. Open viz/index.html in your browser.")
-            
+            click.echo(f"Live visualizer running on ws://127.0.0.1:{port}")
+            _open_live_page(port)
+
     # --- CANDIDATE LOOP (validate and select; KI-020) ---
     # Solve several candidates, score each with the same Immrax check, and let
     # _select_attempt pick the winner: passing first, then the smallest envelope,
-    # then the fastest. With --simple the candidates are different initial-guess
-    # seeds (different local optima), not different accuracy weights: the old
-    # accuracy_weight ladder silently traded speed for a bound that could get
-    # worse (longer trajectories accumulate more uncertainty).
-    candidate_specs = _candidate_specs(accuracy_weight, candidates, use_styles=simple)
+    # then the fastest. With the simple solver the candidates are different
+    # initial-guess seeds (different local optima), not different accuracy
+    # weights: the old accuracy_weight ladder silently traded speed for a bound
+    # that could get worse (longer trajectories accumulate more uncertainty).
+    candidate_specs = _candidate_specs(accuracy_weight, candidates,
+                                       use_styles=not multiverse, dt_mode=dt_mode)
     attempt_passed = False
     best_reasons = []
     all_attempts = []  # Each candidate: samples, stats, cost, ok, violation, tube, converged, reasons
 
-    for cand_idx, spec in enumerate(candidate_specs):
-        curr_accuracy_weight = spec["accuracy_weight"]
-        guess_style = spec["guess_style"]
-        if not quiet:
-            if simple:
-                click.echo(f"Candidate {cand_idx + 1}/{len(candidate_specs)} "
-                           f"(guess_style={guess_style})...")
-            else:
-                click.echo(f"Candidate {cand_idx + 1}/{len(candidate_specs)} "
-                           f"(accuracy_weight={curr_accuracy_weight})...")
+    # --- SOLVE PHASE ---
+    # The candidates are independent, so they are solved first and scored
+    # afterwards. Without validation only the first candidate is solved.
+    use_validation = HAS_JAX and (validate or live)
+    specs_to_solve = candidate_specs if use_validation else candidate_specs[:1]
 
+    solve_payloads = []
+    for spec in specs_to_solve:
         solve_kwargs = dict(
             num_samples_per_segment=samples,
-            accuracy_weight=curr_accuracy_weight,
+            accuracy_weight=spec["accuracy_weight"],
             stop_waypoint_indices=all_stop_indices,
             waypoint_events=waypoint_events,
-            verbose=not quiet,
+            verbose=verbose and not quiet,
             capture_iterations=capture_iterations,
             live_viz=live,
         )
-        if simple:
-            solve_kwargs["guess_style"] = guess_style
-            solve_kwargs["per_segment_dt"] = per_segment_dt
-        samples_data, stats = optimizer.solve(wps, **solve_kwargs)
+        if not multiverse:
+            solve_kwargs["guess_style"] = spec["guess_style"]
+            solve_kwargs["per_segment_dt"] = spec.get("per_segment_dt", False)
+        if fast_polish:
+            solve_kwargs["fast_polish"] = True
+        solve_payloads.append((robot_cfg, wps, spec, solve_kwargs, multiverse))
+
+    # The live view and the convergence plot both need the solver in this
+    # process, so those runs stay sequential. Worker processes import the
+    # optimizer module themselves, so an injected or patched optimizer would be
+    # ignored there: only the stock solvers may run in a worker.
+    stock_optimizer = type(optimizer).__module__ in ("optimizer", "multiverse_optimizer")
+    parallel = (len(solve_payloads) > 1 and not live and not show_convergence
+                and not no_parallel and stock_optimizer)
+    if not quiet and len(solve_payloads) > 1:
+        click.echo(f"Solving {len(solve_payloads)} candidates "
+                   f"({'in parallel' if parallel else 'sequentially'})...")
+    solved = _solve_candidates(solve_payloads, workers, quiet, parallel,
+                                local_optimizer=optimizer)
+
+    for cand_idx, (spec, solve_result) in enumerate(zip(candidate_specs, solved)):
+        curr_accuracy_weight = spec["accuracy_weight"]
+        guess_style = spec["guess_style"]
+        per_segment_dt = spec.get("per_segment_dt", False)
+        if not quiet:
+            if multiverse:
+                click.echo(f"Candidate {cand_idx + 1}/{len(candidate_specs)} "
+                           f"(accuracy_weight={curr_accuracy_weight})...")
+            else:
+                timing = "per-segment" if per_segment_dt else "equal-duration"
+                click.echo(f"Candidate {cand_idx + 1}/{len(candidate_specs)} "
+                           f"(guess_style={guess_style}, {timing} dt)...")
+
+        samples_data, stats = solve_result
 
         # Track this candidate. A non-converged candidate is never eligible for export (KI-001).
         attempt_record = {
@@ -383,22 +960,22 @@ def main(config, waypoints, output, samples, accuracy_weight, candidates, stop_w
             "diverged": False,
             "converged": bool(stats.get("converged", False)),
             "guess_style": guess_style,
+            "per_segment_dt": per_segment_dt,
             "reasons": [],
         }
         all_attempts.append(attempt_record)
 
         # Always compute reachability envelope if JAX is available and we are in live/validate mode
-        if not quiet: click.echo(f"DEBUG: HAS_JAX={HAS_JAX}, validate={validate}, live={live}")
-        if not (HAS_JAX and (validate or live)):
+        if not use_validation:
             break
 
         try:
-            jax_cfg = JAXRobotConfig(robot_cfg)
+            validator_cls, robot_config_cls = _ensure_jax_classes()
+            jax_cfg = robot_config_cls(robot_cfg)
             if digital_twin is None:
-                immrax_val = ImmraxValidator(jax_cfg)
+                immrax_val = validator_cls(jax_cfg)
             else:
-                immrax_val = ImmraxValidator(
-                    jax_cfg, digital_twin=digital_twin)
+                immrax_val = validator_cls(jax_cfg, digital_twin=digital_twin)
 
             # Use the uncertainty ranges declared in the config (KI-009).
             cof_range = robot_cfg.uncertainties["cof"]
@@ -408,12 +985,14 @@ def main(config, waypoints, output, samples, accuracy_weight, candidates, stop_w
             wheel_radius_range = robot_cfg.uncertainties["wheel_radius_range"]
             inertia_range = robot_cfg.uncertainties["inertia_kg_m2"]
 
-            if not quiet: click.echo(f"  Running Immrax Robustness Check...")
+            if not quiet:
+                click.echo("  Running the Immrax robustness check...")
             immrax_report = immrax_val.validate_trajectory(
                 samples_data, cof_range, torque_range, backlash_range,
                 track_width_range, wheel_radius_range, inertia_range)
         except Exception as e:
-            if not quiet: click.echo(f"  ERROR: Immrax validation failed: {e}")
+            if not quiet:
+                click.echo(f"  ERROR: Immrax validation failed: {e}")
             import traceback
             traceback.print_exc()
             # A validator crash is not a pass (KI-002).
@@ -450,6 +1029,7 @@ def main(config, waypoints, output, samples, accuracy_weight, candidates, stop_w
 
         attempt_record["tube"] = float(max_err_all)
         attempt_record["diverged"] = bool(immrax_report['reachability'].get('diverged', False))
+        attempt_record["tracking_m"] = float(immrax_report.get("max_tracking_error_m", 0.0))
         attempt_record["ok"] = (attempt_record["converged"] and not failed_threshold
                                 and bool(immrax_report['passed']))
         attempt_record["reasons"] = _immrax_failure_reasons(immrax_report, failed_threshold, max_vio_val)
@@ -461,6 +1041,22 @@ def main(config, waypoints, output, samples, accuracy_weight, candidates, stop_w
             tracking_error = float(immrax_report.get("max_tracking_error_m", 0.0))
             if tracking_error > 0.005:
                 attempt_record["violation"] = tracking_error
+
+        cpu_summary = None
+        if validate:
+            # The CPU audit runs on every candidate, not only on the winner, so
+            # a candidate that clears Immrax but breaks the force, slip or
+            # integration limits cannot block a later candidate that passes
+            # every gate.
+            cpu_summary = validate_samples(samples_data, robot_cfg)
+            if not cpu_summary["passed"]:
+                attempt_record["ok"] = False
+                attempt_record["reasons"] = list(attempt_record["reasons"]) + \
+                    _cpu_failure_reasons(cpu_summary)
+
+        # Per-segment detail, so a failure can be pinned to a part of the path.
+        attempt_record["segments"] = _segment_report(
+            samples_data, samples, waypoint_thresholds, immrax_report, cpu_summary)
 
         if not quiet:
             score = "envelope diverged" if attempt_record["diverged"] else f"envelope {attempt_record['tube']*100:.2f} cm"
@@ -479,6 +1075,7 @@ def main(config, waypoints, output, samples, accuracy_weight, candidates, stop_w
         best, passed_any = _select_attempt(all_attempts)
         if best is None:
             raise click.ClickException("Solver did not converge on any attempt. No trajectory written.")
+        selected_k = next(k for k, a in enumerate(all_attempts, 1) if a is best)
         if not quiet and len(all_attempts) > 1:
             for k, a in enumerate(all_attempts, 1):
                 if a.get("diverged"):
@@ -488,18 +1085,36 @@ def main(config, waypoints, output, samples, accuracy_weight, candidates, stop_w
                 else:
                     score = "no envelope"
                 state = "ok" if a["ok"] else "failed"
-                if simple:
-                    label = f"Candidate {k} ({a.get('guess_style', 'baseline')})"
-                else:
+                if multiverse:
                     label = f"Candidate {k}"
+                else:
+                    # Name the mode by what it constrains, and show how the
+                    # time was split, so a uniform win is self-explanatory:
+                    # equal-duration segments are forced to take the same time
+                    # each, which is why they are slow on an uneven path
+                    # (KI-022).
+                    timing = "per-seg" if a.get("per_segment_dt") else "equal-dur"
+                    label = f"Candidate {k} ({a.get('guess_style', 'baseline')}, {timing})"
                 click.echo(f"  {label}: {a.get('duration', float('inf')):6.3f} s, {score} ({state})")
-            selected_k = next(k for k, a in enumerate(all_attempts, 1) if a is best)
+                seg_dt = (a.get("stats") or {}).get("segment_dt")
+                if seg_dt and len(seg_dt) > 1:
+                    seg_times = [d * samples for d in seg_dt]
+                    spread = "  segment times: " + " ".join("%.2f" % t for t in seg_times) + " s"
+                    click.echo(f"    {spread}")
             click.echo(f"  Selected candidate {selected_k}.")
         samples_data, stats = best["samples"], best["stats"]
         attempt_passed = passed_any
         best_reasons = best["reasons"]
+        selected_tube = best.get("tube", float("inf"))
+        selected_index = selected_k
     else:
         best_reasons = all_attempts[-1]["reasons"] if all_attempts else []
+        selected_tube = all_attempts[-1]["tube"] if all_attempts else float("inf")
+        selected_index = 1 if all_attempts else None
+
+    if use_validation:
+        # The studio reads this to show which part of the path failed.
+        _emit_validation_report(all_attempts, selected_index)
 
     # --- EXPORT GATE (KI-001 / KI-002) ---
     block_reason = _export_block_reason(stats, validate, attempt_passed)
@@ -539,12 +1154,10 @@ def main(config, waypoints, output, samples, accuracy_weight, candidates, stop_w
     }
     with open(output, 'w') as f:
         json.dump(result, f, indent=1)
-    
-    if not quiet:
-        click.echo(f"Successfully saved trajectory to {output}")
+
+    written = [output]
 
     if benchmark:
-        from validator import compute_metrics
         quality_metrics = compute_metrics(samples_data, robot_cfg)
         stats["quality_metrics"] = quality_metrics
         stats["robot_config"] = {
@@ -555,6 +1168,7 @@ def main(config, waypoints, output, samples, accuracy_weight, candidates, stop_w
         stats_output = os.path.splitext(output)[0] + '_stats.json'
         with open(stats_output, 'w') as f:
             json.dump(stats, f, indent=2)
+        written.append(stats_output)
 
     if validate:
         validate_trajectory(output, config, waypoints=wps)
@@ -562,36 +1176,45 @@ def main(config, waypoints, output, samples, accuracy_weight, candidates, stop_w
     if export_format == 'controller':
         ctrl_output = os.path.splitext(output)[0] + '_controller.json'
         write_controller_file(output, ctrl_output, target_dt=controller_dt, track_width=robot_cfg.track_width)
+        written.append(ctrl_output)
 
     if export_format in ('python', 'python-compact'):
         py_output = os.path.splitext(output)[0] + '.py'
         write_python_file(output, py_output, compact=(export_format == 'python-compact'))
+        written.append(py_output)
+
+    if not quiet:
+        _print_summary(output, samples_data, robot_cfg, validate, attempt_passed,
+                       selected_tube, written[1:])
 
     if plot:
-        if not quiet: click.echo("Generating plot...")
-        # Always show standard trajectory plot
-        if not quiet: click.echo("  Generating standard trajectory plot...")
+        from plotter import plot_trajectory, plot_reachability_envelope
+        if not quiet:
+            click.echo("Generating plot...")
+            click.echo("  Generating standard trajectory plot...")
         plot_trajectory(samples_data, waypoints=wps, title=f"Trajectory: {os.path.basename(output)}")
-        
+
         # Also show reachability envelope plot if Immrax data is available
         if HAS_JAX and any('reachability_envelope' in s for s in samples_data):
-            if not quiet: click.echo("  Generating reachability envelope plot...")
+            if not quiet:
+                click.echo("  Generating reachability envelope plot...")
             plot_reachability_envelope(samples_data, waypoints=wps, title=f"Reachability Envelope: {os.path.basename(output)}", block=True)
 
     if animate:
+        from animated_plotter import animate_trajectory
         animate_trajectory(samples_data, waypoints=wps, title=f"Trajectory: {os.path.basename(output)}")
-    
+
     if show_convergence:
         if hasattr(optimizer, 'iteration_history') and optimizer.iteration_history:
+            from convergence_plotter import plot_convergence
             plot_convergence(optimizer.iteration_history, mode=convergence_mode, waypoints=wps, title=f"Convergence: {os.path.basename(output)}")
 
     if live:
-        viz = get_visualizer()
-        # Broadcast final trajectory with envelopes
         viz.send_trajectory(samples_data, phase="final")
         click.echo("\nLive visualizer is active. Press Enter to stop and exit...")
         input()
         viz.stop()
+
 
 if __name__ == '__main__':
     main()

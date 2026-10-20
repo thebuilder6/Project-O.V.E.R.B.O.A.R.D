@@ -183,27 +183,48 @@ class TestCandidateSpecs(unittest.TestCase):
         from main import _candidate_specs
         self.specs = _candidate_specs
 
-    def test_styles_step_from_base_with_simple(self):
-        specs = self.specs(0.0, 3, use_styles=True)
+    def test_auto_alternates_timing_modes_per_seed(self):
+        specs = self.specs(0.0, 5, use_styles=True)
+        self.assertEqual([s["guess_style"] for s in specs],
+                         ["baseline", "baseline", "rolling", "rolling", "bow_left"])
+        self.assertEqual([s["per_segment_dt"] for s in specs],
+                         [False, True, False, True, False])
+        self.assertEqual([s["accuracy_weight"] for s in specs], [0.0] * 5)
+
+    def test_uniform_mode_uses_seeds_without_per_segment_timing(self):
+        specs = self.specs(0.0, 3, use_styles=True, dt_mode="uniform")
         self.assertEqual([s["guess_style"] for s in specs],
                          ["baseline", "rolling", "bow_left"])
-        self.assertEqual([s["accuracy_weight"] for s in specs], [0.0, 0.0, 0.0])
+        self.assertTrue(all(not s["per_segment_dt"] for s in specs))
 
-    def test_single_candidate_is_the_baseline(self):
+    def test_per_segment_mode_uses_seeds_with_per_segment_timing(self):
+        specs = self.specs(0.0, 3, use_styles=True, dt_mode="per-segment")
+        self.assertEqual([s["guess_style"] for s in specs],
+                         ["baseline", "rolling", "bow_left"])
+        self.assertTrue(all(s["per_segment_dt"] for s in specs))
+
+    def test_unknown_dt_mode_is_rejected(self):
+        with self.assertRaises(ValueError):
+            self.specs(0.0, 2, use_styles=True, dt_mode="nope")
+
+    def test_single_candidate_is_the_uniform_baseline(self):
         specs = self.specs(1.5, 1, use_styles=True)
         self.assertEqual(len(specs), 1)
         self.assertEqual(specs[0]["guess_style"], "baseline")
         self.assertEqual(specs[0]["accuracy_weight"], 1.5)
+        self.assertFalse(specs[0]["per_segment_dt"])
 
     def test_count_is_clamped_to_at_least_one(self):
         specs = self.specs(0.0, 0, use_styles=True)
         self.assertEqual(len(specs), 1)
         self.assertEqual(specs[0]["guess_style"], "baseline")
+        self.assertFalse(specs[0]["per_segment_dt"])
 
     def test_multiverse_keeps_accuracy_weight_ladder(self):
         specs = self.specs(0.0, 3, use_styles=False)
         self.assertEqual([s["accuracy_weight"] for s in specs], [0.0, 2.0, 4.0])
         self.assertTrue(all(s["guess_style"] == "baseline" for s in specs))
+        self.assertTrue(all(not s["per_segment_dt"] for s in specs))
 
 
 @unittest.skipUnless(HAS_IMMRAX, "jax/immrax not installed")
@@ -313,6 +334,18 @@ class TestWriteGateIntegration(unittest.TestCase):
             samples = _consistent_samples()
             samples[-1]["x"] = 1.0
             return samples, {"converged": True, "final_cost": 1.0}
+
+    class _CpuFailingPerSegmentOptimizer(_Optimizer):
+        """Per-segment candidate is shorter but violates the CPU force limit."""
+
+        def solve(self, *args, **kwargs):
+            if kwargs.get("per_segment_dt"):
+                samples = _consistent_samples(n=11, dt=0.05, speed=0.2)
+                for sample in samples:
+                    sample["al"] = 100.0
+                    sample["ar"] = 100.0
+                return samples, {"converged": True, "final_cost": 0.5}
+            return super().solve(*args, **kwargs)
 
     class _FailingImmrax:
         def __init__(self, config, digital_twin=None):
@@ -427,6 +460,17 @@ class TestWriteGateIntegration(unittest.TestCase):
     def test_successful_validation_writes_trajectory(self):
         result, exists = self._run(
             self._Optimizer, ("--validate",), self._PassingImmrax)
+        self.assertEqual(result.exit_code, 0, result.output)
+        self.assertTrue(exists)
+
+    def test_cpu_failure_in_one_candidate_does_not_block_a_later_pass(self):
+        # Candidate 2 is shorter and passes Immrax, but its forces fail the CPU
+        # audit. It must not win over candidate 1, which passes every gate.
+        result, exists = self._run(
+            self._CpuFailingPerSegmentOptimizer,
+            ("--validate", "--candidates", "2"),
+            self._PassingImmrax,
+        )
         self.assertEqual(result.exit_code, 0, result.output)
         self.assertTrue(exists)
 

@@ -2,6 +2,9 @@
 Unit tests for optimizer.py and benchmark dry-run smoke tests.
 """
 
+import json
+import os
+import time
 import unittest
 import numpy as np
 from robot_model import RobotConfig
@@ -507,6 +510,143 @@ class TestTrajectoryOptimizer(unittest.TestCase):
         self.assertEqual(len(stats["segment_dt"]), 2)
         self.assertGreater(max(stats["segment_dt"]) / min(stats["segment_dt"]), 1.2)
         self.assertAlmostEqual(samples[-1]["t"], 5 * sum(stats["segment_dt"]), places=6)
+
+
+class TestFastPolish(unittest.TestCase):
+    """The fast solve path must not change a mission that solves today."""
+
+    def setUp(self):
+        self.config = RobotConfig({"robot": {
+            "mass": 0.8, "inertia": 0.002, "track_width": 0.1,
+            "wheel_radius": 0.03, "v_max_rad_s": 15.0, "t_max_nm": 0.05,
+            "gearing": 1.0, "cof": 0.5,
+        }})
+        self.waypoints = [(0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (1.2, 0.4, 0.0)]
+
+    def _solve(self, **kwargs):
+        optimizer = TrajectoryOptimizer(self.config)
+        return optimizer.solve(self.waypoints, num_samples_per_segment=5,
+                               accuracy_weight=0.0, verbose=False, **kwargs)
+
+    def test_fast_polish_matches_the_single_pass(self):
+        """A mission that converges inside the budget keeps its trajectory."""
+        _, plain = self._solve()
+        samples_fast, fast = self._solve(fast_polish=True)
+
+        self.assertTrue(plain["converged"])
+        self.assertTrue(fast["converged"])
+        self.assertTrue(fast["fast_polish"])
+        self.assertEqual(fast["stage_count"], 1)
+        self.assertAlmostEqual(fast["final_cost"], plain["final_cost"], places=6)
+
+    def test_fast_polish_finishes_when_the_budget_runs_out(self):
+        """With a tiny budget the cold pass takes over and still converges."""
+        _, plain = self._solve()
+        samples, stats = self._solve(fast_polish=True, polish_iter_budget=2)
+
+        self.assertTrue(stats["converged"])
+        self.assertGreaterEqual(stats["stage_count"], 2)
+        # A two-iteration budget leaves a poor point to start from, so the
+        # result may be worse than the single pass, but it must stay in the
+        # same order of magnitude.
+        self.assertLess(stats["final_cost"], plain["final_cost"] * 2.0)
+
+    def test_initial_guess_is_used(self):
+        """An explicit guess starts the solve from that point."""
+        optimizer = TrajectoryOptimizer(self.config)
+        samples, stats = optimizer.solve(
+            self.waypoints, num_samples_per_segment=5, verbose=False)
+        guess = TrajectoryOptimizer.guess_from_samples(samples, 2, 5)
+
+        # Two segment intervals plus eleven states of five values.
+        self.assertEqual(len(guess), 2 + 11 * 5)
+
+        optimizer = TrajectoryOptimizer(self.config)
+        _, stats = optimizer.solve(
+            self.waypoints, num_samples_per_segment=5, verbose=False,
+            initial_guess=guess)
+        self.assertTrue(stats["converged"])
+
+    def test_initial_guess_with_wrong_size_is_rejected(self):
+        optimizer = TrajectoryOptimizer(self.config)
+        with self.assertRaises(ValueError):
+            optimizer.solve(self.waypoints, num_samples_per_segment=5,
+                            verbose=False, initial_guess=np.zeros(3))
+
+    def test_guess_from_samples_round_trip(self):
+        """The rebuilt guess keeps the intervals and the states."""
+        optimizer = TrajectoryOptimizer(self.config)
+        samples, stats = optimizer.solve(
+            self.waypoints, num_samples_per_segment=5, verbose=False)
+        guess = TrajectoryOptimizer.guess_from_samples(samples, 2, 5)
+
+        self.assertAlmostEqual(guess[0], stats["segment_dt"][0], places=6)
+        self.assertAlmostEqual(guess[1], stats["segment_dt"][1], places=6)
+        # The states follow the intervals.
+        self.assertAlmostEqual(guess[2], samples[0]["x"], places=9)
+        self.assertAlmostEqual(guess[2 + 4 * 5 + 3], samples[4]["vl"], places=9)
+
+    def test_guess_from_samples_rejects_an_empty_trajectory(self):
+        with self.assertRaises(ValueError):
+            TrajectoryOptimizer.guess_from_samples([], 1, 5)
+
+
+class TestSolverIterationBudget(unittest.TestCase):
+    """Guard against the warm-start crawl coming back.
+
+    The warm-start pass treats the initial point as a previous iterate. On a
+    mission this size that makes IPOPT walk through thousands of iterations
+    for an answer a cold pass reaches in a fraction of the time. Nothing in
+    the interface would show that regression: the trajectory would still be
+    correct, only the solve would be slow. The iteration count is the
+    symptom, so it is what this test bounds.
+    """
+
+    # The reference mission: the 10-waypoint complex mission with four stops.
+    MISSION = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                           "examples", "example_complex_mission.json")
+    REFERENCE_COST = 6.068      # seconds, the documented trajectory time
+    MAX_ITERATIONS = 1200       # measured: 877 (200 budgeted + 677 cold)
+    MAX_WALL_SECONDS = 60.0     # measured: ~15 s; a smoke bound, not a benchmark
+
+    @classmethod
+    def setUpClass(cls):
+        with open(cls.MISSION, "r", encoding="utf-8") as handle:
+            raw = json.load(handle)
+        waypoints = raw["waypoints"] if isinstance(raw, dict) and "waypoints" in raw else raw
+        cls.waypoints = []
+        cls.stops = []
+        for i, item in enumerate(waypoints):
+            if isinstance(item, dict):
+                cls.waypoints.append((item["x"], item["y"], item.get("heading")))
+                if item.get("stop"):
+                    cls.stops.append(i)
+            else:
+                cls.waypoints.append((item[0], item[1], item[2] if len(item) > 2 else None))
+        with open(os.path.join(os.path.dirname(cls.MISSION), "fll_choreo.json"),
+                  "r", encoding="utf-8") as handle:
+            cls.config = RobotConfig(json.load(handle))
+
+    def test_fast_polish_stays_inside_the_iteration_budget(self):
+        """The fast path must keep the heavy mission inside its budget."""
+        optimizer = TrajectoryOptimizer(self.config)
+        start = time.time()
+        samples, stats = optimizer.solve(
+            self.waypoints, num_samples_per_segment=10,
+            stop_waypoint_indices=self.stops, verbose=False, fast_polish=True)
+        wall = time.time() - start
+
+        self.assertTrue(stats["converged"])
+        iterations = sum(i or 0 for i in stats["stage_iterations"])
+        self.assertLessEqual(
+            iterations, self.MAX_ITERATIONS,
+            f"the fast path used {iterations} iterations "
+            f"(budget {self.MAX_ITERATIONS}); the crawl may be back")
+        self.assertLess(wall, self.MAX_WALL_SECONDS,
+                        f"the fast path took {wall:.1f}s")
+        # The trajectory must still be the one we validated.
+        self.assertAlmostEqual(stats["final_cost"], self.REFERENCE_COST, delta=0.05)
+        self.assertEqual(len(samples), 91)
 
 
 # ---------------------------------------------------------------------------

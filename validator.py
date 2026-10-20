@@ -226,13 +226,21 @@ def compute_metrics(samples: List[Dict[str, Any]], robot_cfg: Optional[RobotConf
     al = [s["al"] for s in samples]
     ar = [s["ar"] for s in samples]
 
-    # Jerk: second difference of accelerations
+    # Jerk: second difference of accelerations.
+    #
+    # al[i] is the AVERAGE acceleration over the interval [t_i, t_{i+1}], so
+    # the jump between al[i] and al[i+1] happens over the spacing between
+    # those two interval MIDPOINTS, which is 0.5*(dt_i + dt_{i+1}). Dividing
+    # by dt_i alone is only correct when every interval is the same length;
+    # with per-segment dt it understates the jerk at a segment boundary and
+    # reports a different physical quantity than the uniform mode (KI-022).
     dt_vals = [t[i + 1] - t[i] for i in range(len(t) - 1)]
     jerks = []
     for i in range(len(al) - 1):
-        if dt_vals[i] > 1e-9:
-            jerks.append((al[i + 1] - al[i]) / dt_vals[i])
-            jerks.append((ar[i + 1] - ar[i]) / dt_vals[i])
+        span = 0.5 * (dt_vals[i] + dt_vals[i + 1]) if i + 1 < len(dt_vals) else dt_vals[i]
+        if span > 1e-9:
+            jerks.append((al[i + 1] - al[i]) / span)
+            jerks.append((ar[i + 1] - ar[i]) / span)
 
     path_len = sum(
         np.hypot(x[i + 1] - x[i], y[i + 1] - y[i])

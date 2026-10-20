@@ -193,16 +193,18 @@ python main.py --simple -c examples/fll_choreo.json -w examples/example_straight
 
 - `-n, --samples`: Samples per segment (default 10).
 - `-a, --accuracy-weight`: Smoothness/jerk weight (0 = time-optimal).
-- `--candidates`: Candidates to solve and compare with `--validate` (default 2, max 5). With `--simple` these are distinct initial-guess seeds (`baseline`, `rolling`, `bow_left`, `bow_right`, `turn_first`) at the same accuracy weight; the Multi-Verse path keeps the `accuracy_weight` ladder. A passing candidate wins by smallest envelope, then shortest time; `1` disables the comparison.
+- `--candidates`: Candidates to solve and compare with `--validate` (default 2, max 5). With `--simple` each candidate combines an initial-guess seed (`baseline`, `rolling`, `bow_left`, `bow_right`, `turn_first`) with a timing mode: by default candidate 1 is uniform baseline, candidate 2 is per-segment baseline, then the remaining seeds alternate. The Multi-Verse path keeps the `accuracy_weight` ladder. A passing candidate wins by smallest envelope, then shortest time; `1` disables the comparison.
 - `--stop-waypoints "0,2,4"`: Comma-separated stop indices.
 - `--events "1:lower_arm,3:release"`: Comma-separated event mappings.
 - `--simple`: CasADi-only optimizer (recommended).
-- `--per-segment-dt`: Give each waypoint segment its own sample interval (`--simple` only). The default is one shared interval, which keeps the validated mission behavior. Measured tradeoff: an uneven 1.0 m + 0.2 m path passes at 2.710 s / 0.32 cm envelope versus 4.463 s / 0.35 cm uniform; the complex mission at `accuracy_weight=0` is faster (5.447 s / 1.18 cm) but fails the 5 mm tracking gate at 0.86 cm, and at `0.02` passes at 7.312 s / 1.61 cm, worse than the uniform 6.068 s / 1.22 cm baseline. Select the mode per path and validate it.
+- `--per-segment-dt`: Force each waypoint segment to have its own sample interval (`--simple` only). By default candidates mix uniform and per-segment timing.
+- `--uniform-dt`: Force one shared sample interval across all segments (`--simple` only). By default candidates mix both modes. Use it to reproduce the uniform-only behavior.
+- Timing tradeoff: an uneven 1.0 m + 0.2 m path passes all gates with per-segment at `accuracy_weight=0.005` in 2.732 s / 0.32 cm envelope and 0.36 cm tracking, versus 4.456 s / 0.37 cm / 0.36 cm uniform at the same weight, so the mixed loop selects per-segment. At `accuracy_weight=0` the per-segment candidate is 2.710 s / 0.32 cm but the CPU force audit rejects a 0.00057 N overshoot, so the mixed loop falls back to uniform. The complex mission at `accuracy_weight=0` is faster with per-segment (5.447 s / 1.18 cm) but fails the 5 mm tracking gate at 0.86 cm, so the uniform 6.068 s / 1.22 cm candidate is selected. The CPU audit runs per candidate, so a partial pass cannot block a later fully passing candidate.
 - `--no-parallel`, `--workers`: Multi-Verse options; currently no effect on the result (KI-004).
 
 ### Validation and export
 
-- `--validate`: CPU audit + Immrax + final-waypoint gate. Requires JAX/Immrax. With `--candidates N` (default 2, max 5), solves N candidates (initial-guess seeds with `--simple`, accuracy-weight variants otherwise) and exports the passing one with the smallest envelope; on failure, exits 1 and writes nothing.
+- `--validate`: CPU audit + Immrax + final-waypoint gate. Requires JAX/Immrax. With `--candidates N` (default 2, max 5), solves N candidates (seed/timing combinations with `--simple`, accuracy-weight variants otherwise) and exports the passing one with the smallest envelope; on failure, exits 1 and writes nothing.
 - `--sysid-fit PATH`: Optional `sysid_fit.json` measured actuator/odometry model; requires `--validate` or `--live`. The default kinematic model is used when omitted. Slip is loaded/reported but not applied yet (KI-020).
 - `--export-format controller|python|python-compact`: Write a fixed-timestep controller JSON, a legacy list-of-dicts Python module, or a packed-compact Python module. The compact module is consumed by `pybricks_code/ramsete_compact.py` or `ramsete_compact_events.py`.
 - `--controller-dt`: Controller timestep in seconds (default 0.02).
