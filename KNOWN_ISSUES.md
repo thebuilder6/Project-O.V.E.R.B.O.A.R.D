@@ -4,7 +4,7 @@ Last reviewed: 2026-10-19
 
 Scope: whole repository, reviewed as a single-user, offline desktop tool for one FLL robot. This is not a multi-user or server-scale review.
 
-Status: KI-001, KI-002, KI-003, KI-005, KI-006, KI-007, KI-008, KI-009, KI-010, KI-011, KI-012, KI-013, KI-014, KI-015, KI-016, KI-018, KI-019, KI-021, KI-022, KI-023, KI-024, KI-025, KI-026, KI-027, KI-028, KI-029, KI-030, and KI-031 are **fixed in the working tree** (uncommitted). All other items are open; KI-017 is partially fixed. KI-020 records the remaining digital-twin and optimization work. The user-facing docs were reconciled with this tree on 2026-10-19; the code remains the authority if they diverge again.
+Status: KI-001, KI-002, KI-003, KI-005, KI-006, KI-007, KI-008, KI-009, KI-010, KI-011, KI-012, KI-013, KI-014, KI-015, KI-016, KI-018, KI-019, KI-021, KI-022, KI-023, KI-024, KI-025, KI-026, KI-027, KI-028, KI-029, KI-030, and KI-031 are **fixed in the working tree** (uncommitted). KI-032 is **mitigated**: the test cache is on by default and its rules are in `testcache.py`. All other items are open; KI-017 is partially fixed. KI-020 records the remaining digital-twin and optimization work. The user-facing docs were reconciled with this tree on 2026-10-19; the code remains the authority if they diverge again.
 
 How to use this list: refer to an item by its ID, for example “fix KI-003”.
 
@@ -43,6 +43,7 @@ How to use this list: refer to an item by its ID, for example “fix KI-003”.
 | KI-029 | P1 | Robot runtime | ~~A late control tick silently skipped a mission event~~ (fixed) |
 | KI-030 | P1 | Studio | ~~The studio told the operator an unchecked trajectory was "approved", and kept the last solve's path on the field~~ (fixed) |
 | KI-031 | P1 | Install | ~~A new user could not install the project: the two requirement files contradicted each other, and the first run died with an ImportError~~ (fixed) |
+| KI-032 | P1 | Tests | A test cache can hide a regression (mitigated: the fingerprint is wide, only a passed test is skipped, and the summary says what was skipped) |
 
 ## P0 — fix first
 
@@ -347,6 +348,46 @@ How to use this list: refer to an item by its ID, for example “fix KI-003”.
 - `.gitattributes` keeps the `.bat` files out of the line-ending conversion, so their CRLF survives into a ZIP download, and keeps the `.sh` files LF.
 
 **Workaround:** None needed. `tests/test_cli_ux.py::TestFirstRun` pins the report on a clean machine, the install command in it, and the CRLF in the batch files.
+
+### KI-032 — A test cache can hide a regression
+
+**Status:** Mitigated in the working tree (uncommitted). The cache is on by default and its rules live in `testcache.py`; `--no-cache` runs everything.
+
+**Files:** `testcache.py`, `run_tests.py`, `tests/test_testcache.py`, `.gitignore`
+
+**Problem:** The suite took about two minutes, and nearly all of it went into tests whose code had not changed since the last run. Re-running everything on every change is the wrong trade for a tree this size.
+
+**The risk:** a cache says "this test does not have to run again". If it says that for a test whose code *did* change, a regression walks past a green suite. The cache is a claim about what a test depends on, and a wrong claim is a hole nobody sees.
+
+**Fix (the rules, all in `testcache.py`):**
+
+- The fingerprint of a test covers the test module, the transitive import closure of the project modules it imports, every file it opens, every directory it lists, every project script it hands to a subprocess, every project module it imports while it runs, and the environment: the Python version and the versions of numpy, casadi, jax, jaxlib, immrax, scipy and the rest.
+- **Only a test that passed is skipped.** A failure always runs again.
+- **A test that wrote a file inside the repository is never skipped**, because another test may read what it wrote.
+- A file that is gone counts as changed, and a directory is fingerprinted by its listing, so a file added to it invalidates the tests that listed it.
+- The summary says how many tests the cache skipped and how much runtime that saved, so a green run never hides a skipped test. `--cache-status` prints the plan, `--no-cache` ignores the cache, `--clear-cache` throws it away and `--durations N` lists the slowest tests.
+
+**What it cannot see:** a file a test reads only on a path it did not take in the recorded run, and a file that only a *subprocess* reads, when that subprocess was neither named on the command line nor named in the code the test handed it. Those are the holes. They are the reason the fingerprint is deliberately wide and the rules above are conservative.
+
+**Evidence:** On the tree as it stands, the suite is 508 tests and takes 121 s. A second run over the same tree takes 20 s: 491 of the tests are skipped, and the 17 that run are the ones that write into the repository (the studio tests, which write into `missions/`, the doctor, which writes its report, and the cache's own tests, which write a probe file). The saving is reported in the summary, so the number is never a guess, and a third run takes the same 20 s: the cache does not invalidate itself.
+
+**Workaround:** `python run_tests.py --no-cache` for the full suite. The cache is a development convenience; it is not a gate, and no release decision rests on a cached run.
+
+### KI-033 — The host could not find the hub over Bluetooth
+
+**Status:** Fixed in the working tree (uncommitted). The hub is found the way the Pybricks IDE finds it: by probing what is nearby.
+
+**Files:** `hub_ble.py` (new), `hub_deploy.py`, `gui_server.py`, `tests/test_hub_ble.py`
+
+**Problem:** The host found the hub with `pybricksdev.ble.find_device()`, which accepts an advertisement only when it carries the Pybricks service UUID **and** a local name. Windows does not report them in that shape. bleak's WinRT backend leaves `service_uuids` empty unless the peripheral puts the UUID in the advertisement payload, and the local name tends to arrive in a scan response the scanner never joins. The filter therefore never matched, and every push over Bluetooth ended in "No Pybricks hub found over BLE" while the Pybricks IDE connected to the same hub without trouble - the IDE enumerates every nearby device and probes the one you pick.
+
+**Evidence:** On the development machine, bleak reported `local_name = None` and `service_uuids = []` for 8 of the 11 devices it saw, and reported a name for the rest only when the name happened to be in the advertisement payload. The one device whose advertisement carried a service UUID was reported correctly, so the UUID is not always lost - but the *name* usually is, and `find_device` insists on both.
+
+**Fix (implemented):** `hub_ble.py` scans everything (no service filter), ranks the candidates - the hub the operator names first, then anything that advertises the Pybricks service, then the rest - and asks the ones that do not announce themselves by connecting and looking for the Pybricks service. The probe runs a few devices at a time, so the answer comes in seconds rather than in a minute. `hub_deploy.py` uses it for the BLE transport, so the CLI, `main.py --push-hub`, `sysid_collect.py` and the studio's push all get it. `python hub_deploy.py --list-hubs` is the IDE's device picker: it shows what the adapter can see and says which of the devices is a hub.
+
+**Workaround:** None needed. If the hub is still not found, the error says what was tried and lists the devices that were visible, and names the three usual causes: the hub is off, the Pybricks IDE holds the hub's single connection, or the hub was never paired.
+
+---
 
 ## P2 — cleanup
 

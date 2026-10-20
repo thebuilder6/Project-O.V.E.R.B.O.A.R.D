@@ -2,15 +2,24 @@
 Test runner for FLL Trajectory Optimizer test suite.
 
 Runs all tests and generates a coverage report.
+
+The runner keeps a cache of the tests that passed. A test whose code and
+data have not changed since it passed is skipped, so a second run over an
+unchanged tree costs a fraction of the first one. `testcache.py` holds the
+rules; `python run_tests.py --cache-status` says what the cache would do and
+`python run_tests.py --no-cache` ignores it and runs everything.
 """
 
-import unittest
 import sys
+import time
+import unittest
 from pathlib import Path
 
 # Add project root to path
 project_root = Path(__file__).parent
 sys.path.insert(0, str(project_root))
+
+import testcache
 
 # Import test modules (non-JAX dependent)
 from tests.test_optimizer import (
@@ -73,6 +82,12 @@ from tests.test_hub_deploy import (
     TestFirmwareCompiles,
     TestHubRunnerContract,
 )
+from tests.test_hub_ble import (
+    TestFindHub,
+    TestScan,
+    TestHubDeployUsesTheProbe,
+    TestListHubs,
+)
 from tests.test_sysid_collect import (
     TestCollectorMetadata,
     TestSessionPoses,
@@ -125,6 +140,11 @@ from tests.test_studio_honesty import (
     TestTheResultExplainsItself,
     TestTheSheetWithoutASession,
 )
+from tests.test_testcache import (
+    TestCacheSkipsUnchangedCode,
+    TestCacheFingerprints,
+    TestCacheRecords,
+)
 
 # Regression tests (no JAX required)
 from tests.test_regressions import (
@@ -152,138 +172,254 @@ except ImportError as e:
     JAX_AVAILABLE = False
 
 
+# Every test class in the suite, in the order it runs.
+def test_classes():
+    """The test classes, the JAX ones first when they are available."""
+    classes = [
+        TestExportConfig,
+        TestAttemptSelection,
+        TestCandidateSpecs,
+        TestReachabilityEnvelope,
+        TestBenchmarkValidationConfig,
+        TestExportGate,
+        TestValidatorGates,
+        TestWriteGateIntegration,
+        TestOpenLoopModel,
+        TestSweepSpecs,
+        TestTrajectoryOptimizer,
+        TestRobotConfig,
+        TestDifferentialDriveModel,
+        TestMeasuredMotorConfig,
+        TestForwardIntegrate,
+        TestAuditConstraints,
+        TestComputeMetrics,
+        TestValidateTrajectory,
+        TestSysIdFit,
+        TestRandomSuiteGenerator,
+        TestNoLoadSpeed,
+        TestDrivebaseProfile,
+        TestHubSessionPoses,
+        TestDigitalTwinConfig,
+        TestDigitalTwinValidator,
+        TestMeasuredMotorFit,
+        TestMeasuredMotorEndToEnd,
+        TestDigitalTwinMechanisms,
+        TestMotorLaw,
+        TestDrivetrainModel,
+        TestDeclaredMotorCheck,
+        TestObstacleOverlap,
+        TestFieldCollisions,
+        TestFieldFiles,
+        TestServerPayload,
+        TestLaunchAreas,
+        TestRoboVibeField,
+        TestRoboVibeConverter,
+        TestMatDownload,
+        TestAutocrop,
+        TestComposeMat,
+        TestPdfRendering,
+        TestSysIdCompare,
+        TestCompactExport,
+        TestResampleHeading,
+        TestFinalWaypointEvent,
+        TestFinalWaypointEventCompact,
+        TestFirmwareParity,
+        TestLateTickEvents,
+        TestSessionFile,
+        TestPushHubCli,
+        TestFirmwareCompiles,
+        TestHubRunnerContract,
+        TestFindHub,
+        TestScan,
+        TestHubDeployUsesTheProbe,
+        TestListHubs,
+        TestCollectorMetadata,
+        TestSessionPoses,
+        TestFittedScales,
+        TestMeasurementSheet,
+        TestRepeatStatistics,
+        TestRefinedStepFit,
+        TestDriftRegression,
+        TestDriftAndStallTorque,
+        TestWallHoming,
+        TestCollectCommand,
+        TestCliBasics,
+        TestStudioEntryPoints,
+        TestStudioPush,
+        TestStudioModel,
+        TestStudioCalibration,
+        TestBacklashModel,
+        TestHeadingMetric,
+        TestParallelCandidates,
+        TestValidationReport,
+        TestIterationHistory,
+        TestFastPolish,
+        TestSolverIterationBudget,
+        TestMergeConditions,
+        TestBenchmarkDryRun,
+        TestSelfConsistentPlan,
+        TestStudioRoutes,
+        TestStudioSolve,
+        TestStudioHelpers,
+        TestStudioInventory,
+        TestStudioReport,
+        TestReportBuilder,
+        TestProjectFile,
+        TestStudioReportRoute,
+        TestStudioInventoryNewControls,
+        TestTheHiddenAttributeWins,
+        TestThePushNeedsAValidatedTrajectory,
+        TestAFailedSolveLeavesNoPath,
+        TestASolveThatNeverStartsClearsTheVerdict,
+        TestTheMessageTheOperatorReads,
+        TestTheResultExplainsItself,
+        TestTheSheetWithoutASession,
+        TestCacheSkipsUnchangedCode,
+        TestCacheFingerprints,
+        TestCacheRecords,
+    ]
+    if JAX_AVAILABLE:
+        classes = [
+            TestJAXHeuristics,
+            TestJAXRamsete,
+            TestJAXDriveQuantization,
+            TestRefinementAccuracy,
+            TestCriticMetrics,
+        ] + classes
+    return classes
+
+
+class TimingResult(unittest.TextTestResult):
+    """A result that remembers how long every test took."""
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.durations = []
+        self._started = time.perf_counter()
+
+    def startTest(self, test):
+        self._started = time.perf_counter()
+        super().startTest(test)
+
+    def stopTest(self, test):
+        self.durations.append((time.perf_counter() - self._started, test.id()))
+        super().stopTest(test)
+
+
+def parse_flags(argv):
+    """The switches the runner understands."""
+    flags = {"cache": True, "status": False, "clear": False, "durations": 0}
+    for index, arg in enumerate(argv):
+        if arg == "--no-cache":
+            flags["cache"] = False
+        elif arg == "--cache-status":
+            flags["status"] = True
+        elif arg == "--clear-cache":
+            flags["clear"] = True
+        elif arg == "--durations":
+            if index + 1 < len(argv):
+                flags["durations"] = int(argv[index + 1])
+        elif arg.startswith("--durations="):
+            flags["durations"] = int(arg.split("=", 1)[1])
+    return flags
+
+
+def test_ids(classes):
+    """The id of every test in the suite."""
+    ids = []
+    for klass in classes:
+        for name in dir(klass):
+            if name.startswith("test") and callable(getattr(klass, name)):
+                ids.append(f"{klass.__module__}.{klass.__qualname__}.{name}")
+    return ids
+
+
+def print_cache_status(cache, classes):
+    """Say what the cache would do, without running a thing."""
+    changed = cache.changed_files()
+    ids = test_ids(classes)
+    skipped = sum(1 for test_id in ids if cache.should_skip(test_id))
+    print("TEST CACHE")
+    print(f"  the cache file: {cache.path}")
+    print(f"  {len(cache.entries)} tests have a fingerprint, {len(ids)} in the suite")
+    print(f"  {skipped} of them would be skipped, {len(ids) - skipped} would run")
+    if changed:
+        print(f"  {len(changed)} file(s) changed since the last run:")
+        for rel in changed[:40]:
+            print(f"    {rel}")
+        if len(changed) > 40:
+            print(f"    ... and {len(changed) - 40} more")
+    else:
+        print("  nothing changed since the last run")
+    print(f"  environment: {cache.env()}")
+
+
 def run_tests():
     """Run all tests and return results."""
+    flags = parse_flags(sys.argv[1:])
+    classes = test_classes()
+
+    if flags["clear"]:
+        if testcache.CACHE_PATH.exists():
+            testcache.CACHE_PATH.unlink()
+            print("The test cache is gone; every test runs again.")
+        else:
+            print("There was no test cache.")
+
+    cache = testcache.Cache(enabled=flags["cache"])
+
+    if flags["status"]:
+        print_cache_status(cache, classes)
+        return True
+
     # Create test suite
     loader = unittest.TestLoader()
     suite = unittest.TestSuite()
-    
-    # Add all test classes
-    if JAX_AVAILABLE:
-        suite.addTests(loader.loadTestsFromTestCase(TestJAXHeuristics))
-        suite.addTests(loader.loadTestsFromTestCase(TestJAXRamsete))
-        suite.addTests(loader.loadTestsFromTestCase(TestJAXDriveQuantization))
-        suite.addTests(loader.loadTestsFromTestCase(TestRefinementAccuracy))
-        suite.addTests(loader.loadTestsFromTestCase(TestCriticMetrics))
-    suite.addTests(loader.loadTestsFromTestCase(TestExportConfig))
-    suite.addTests(loader.loadTestsFromTestCase(TestAttemptSelection))
-    suite.addTests(loader.loadTestsFromTestCase(TestCandidateSpecs))
-    suite.addTests(loader.loadTestsFromTestCase(TestReachabilityEnvelope))
-    suite.addTests(loader.loadTestsFromTestCase(TestBenchmarkValidationConfig))
-    suite.addTests(loader.loadTestsFromTestCase(TestExportGate))
-    suite.addTests(loader.loadTestsFromTestCase(TestValidatorGates))
-    suite.addTests(loader.loadTestsFromTestCase(TestWriteGateIntegration))
-    suite.addTests(loader.loadTestsFromTestCase(TestOpenLoopModel))
-    suite.addTests(loader.loadTestsFromTestCase(TestSweepSpecs))
-    suite.addTests(loader.loadTestsFromTestCase(TestTrajectoryOptimizer))
-    suite.addTests(loader.loadTestsFromTestCase(TestRobotConfig))
-    suite.addTests(loader.loadTestsFromTestCase(TestDifferentialDriveModel))
-    suite.addTests(loader.loadTestsFromTestCase(TestMeasuredMotorConfig))
-    suite.addTests(loader.loadTestsFromTestCase(TestForwardIntegrate))
-    suite.addTests(loader.loadTestsFromTestCase(TestAuditConstraints))
-    suite.addTests(loader.loadTestsFromTestCase(TestComputeMetrics))
-    suite.addTests(loader.loadTestsFromTestCase(TestValidateTrajectory))
-    suite.addTests(loader.loadTestsFromTestCase(TestSysIdFit))
-    suite.addTests(loader.loadTestsFromTestCase(TestRandomSuiteGenerator))
-    suite.addTests(loader.loadTestsFromTestCase(TestNoLoadSpeed))
-    suite.addTests(loader.loadTestsFromTestCase(TestDrivebaseProfile))
-    suite.addTests(loader.loadTestsFromTestCase(TestHubSessionPoses))
-    suite.addTests(loader.loadTestsFromTestCase(TestDigitalTwinConfig))
-    suite.addTests(loader.loadTestsFromTestCase(TestDigitalTwinValidator))
-    suite.addTests(loader.loadTestsFromTestCase(TestMeasuredMotorFit))
-    suite.addTests(loader.loadTestsFromTestCase(TestMeasuredMotorEndToEnd))
-    suite.addTests(loader.loadTestsFromTestCase(TestDigitalTwinMechanisms))
-    suite.addTests(loader.loadTestsFromTestCase(TestMotorLaw))
-    suite.addTests(loader.loadTestsFromTestCase(TestDrivetrainModel))
-    suite.addTests(loader.loadTestsFromTestCase(TestDeclaredMotorCheck))
-    suite.addTests(loader.loadTestsFromTestCase(TestObstacleOverlap))
-    suite.addTests(loader.loadTestsFromTestCase(TestFieldCollisions))
-    suite.addTests(loader.loadTestsFromTestCase(TestFieldFiles))
-    suite.addTests(loader.loadTestsFromTestCase(TestServerPayload))
-    suite.addTests(loader.loadTestsFromTestCase(TestLaunchAreas))
-    suite.addTests(loader.loadTestsFromTestCase(TestRoboVibeField))
-    suite.addTests(loader.loadTestsFromTestCase(TestRoboVibeConverter))
-    suite.addTests(loader.loadTestsFromTestCase(TestMatDownload))
-    suite.addTests(loader.loadTestsFromTestCase(TestAutocrop))
-    suite.addTests(loader.loadTestsFromTestCase(TestComposeMat))
-    suite.addTests(loader.loadTestsFromTestCase(TestPdfRendering))
-    suite.addTests(loader.loadTestsFromTestCase(TestSysIdCompare))
-    suite.addTests(loader.loadTestsFromTestCase(TestCompactExport))
-    suite.addTests(loader.loadTestsFromTestCase(TestResampleHeading))
-    suite.addTests(loader.loadTestsFromTestCase(TestFinalWaypointEvent))
-    suite.addTests(loader.loadTestsFromTestCase(TestFinalWaypointEventCompact))
-    suite.addTests(loader.loadTestsFromTestCase(TestFirmwareParity))
-    suite.addTests(loader.loadTestsFromTestCase(TestLateTickEvents))
-    suite.addTests(loader.loadTestsFromTestCase(TestSessionFile))
-    suite.addTests(loader.loadTestsFromTestCase(TestPushHubCli))
-    suite.addTests(loader.loadTestsFromTestCase(TestFirmwareCompiles))
-    suite.addTests(loader.loadTestsFromTestCase(TestHubRunnerContract))
-    suite.addTests(loader.loadTestsFromTestCase(TestCollectorMetadata))
-    suite.addTests(loader.loadTestsFromTestCase(TestSessionPoses))
-    suite.addTests(loader.loadTestsFromTestCase(TestFittedScales))
-    suite.addTests(loader.loadTestsFromTestCase(TestMeasurementSheet))
-    suite.addTests(loader.loadTestsFromTestCase(TestRepeatStatistics))
-    suite.addTests(loader.loadTestsFromTestCase(TestRefinedStepFit))
-    suite.addTests(loader.loadTestsFromTestCase(TestDriftRegression))
-    suite.addTests(loader.loadTestsFromTestCase(TestDriftAndStallTorque))
-    suite.addTests(loader.loadTestsFromTestCase(TestWallHoming))
-    suite.addTests(loader.loadTestsFromTestCase(TestCollectCommand))
-    suite.addTests(loader.loadTestsFromTestCase(TestCliBasics))
-    suite.addTests(loader.loadTestsFromTestCase(TestStudioEntryPoints))
-    suite.addTests(loader.loadTestsFromTestCase(TestStudioPush))
-    suite.addTests(loader.loadTestsFromTestCase(TestStudioModel))
-    suite.addTests(loader.loadTestsFromTestCase(TestStudioCalibration))
-    suite.addTests(loader.loadTestsFromTestCase(TestBacklashModel))
-    suite.addTests(loader.loadTestsFromTestCase(TestHeadingMetric))
-    suite.addTests(loader.loadTestsFromTestCase(TestParallelCandidates))
-    suite.addTests(loader.loadTestsFromTestCase(TestValidationReport))
-    suite.addTests(loader.loadTestsFromTestCase(TestIterationHistory))
-    suite.addTests(loader.loadTestsFromTestCase(TestFastPolish))
-    suite.addTests(loader.loadTestsFromTestCase(TestSolverIterationBudget))
-    suite.addTests(loader.loadTestsFromTestCase(TestMergeConditions))
-    suite.addTests(loader.loadTestsFromTestCase(TestBenchmarkDryRun))
-    suite.addTests(loader.loadTestsFromTestCase(TestSelfConsistentPlan))
-    suite.addTests(loader.loadTestsFromTestCase(TestStudioRoutes))
-    suite.addTests(loader.loadTestsFromTestCase(TestStudioSolve))
-    suite.addTests(loader.loadTestsFromTestCase(TestStudioHelpers))
-    suite.addTests(loader.loadTestsFromTestCase(TestStudioInventory))
-    suite.addTests(loader.loadTestsFromTestCase(TestStudioReport))
-    suite.addTests(loader.loadTestsFromTestCase(TestReportBuilder))
-    suite.addTests(loader.loadTestsFromTestCase(TestProjectFile))
-    suite.addTests(loader.loadTestsFromTestCase(TestStudioReportRoute))
-    suite.addTests(loader.loadTestsFromTestCase(TestStudioInventoryNewControls))
-    suite.addTests(loader.loadTestsFromTestCase(TestTheHiddenAttributeWins))
-    suite.addTests(loader.loadTestsFromTestCase(TestThePushNeedsAValidatedTrajectory))
-    suite.addTests(loader.loadTestsFromTestCase(TestAFailedSolveLeavesNoPath))
-    suite.addTests(loader.loadTestsFromTestCase(TestASolveThatNeverStartsClearsTheVerdict))
-    suite.addTests(loader.loadTestsFromTestCase(TestTheMessageTheOperatorReads))
-    suite.addTests(loader.loadTestsFromTestCase(TestTheResultExplainsItself))
-    suite.addTests(loader.loadTestsFromTestCase(TestTheSheetWithoutASession))
-    
+    for klass in classes:
+        suite.addTests(loader.loadTestsFromTestCase(klass))
+
+    # The cache decides which tests do not have to run again.
+    testcache.instrument(classes, cache)
+
     # Run tests
-    runner = unittest.TextTestRunner(verbosity=2)
+    started = time.perf_counter()
+    runner = unittest.TextTestRunner(verbosity=2, resultclass=TimingResult)
     result = runner.run(suite)
-    
+    elapsed = time.perf_counter() - started
+
     # Print summary
     print("\n" + "=" * 70)
     print("TEST SUMMARY")
     print("=" * 70)
     print(f"Tests run: {result.testsRun}")
-    print(f"Successes: {result.testsRun - len(result.failures) - len(result.errors)}")
+    print(f"Successes: {result.testsRun - len(result.failures) - len(result.errors) - len(result.skipped)}")
     print(f"Failures: {len(result.failures)}")
     print(f"Errors: {len(result.errors)}")
     print(f"Skipped: {len(result.skipped)}")
-    
+    if cache.skipped:
+        print(f"  of which {len(cache.skipped)} by the cache: "
+              f"nothing they read has changed")
+    print(f"Time: {elapsed:.1f} s")
+    if cache.saved_seconds:
+        print(f"The cache saved {cache.saved_seconds:.1f} s of runtime")
+
     if result.failures:
         print("\nFailed tests:")
         for test, traceback in result.failures:
             print(f"  - {test}")
-    
+
     if result.errors:
         print("\nError tests:")
         for test, traceback in result.errors:
             print(f"  - {test}")
-    
+
+    if flags["durations"] and result.durations:
+        print("\nSlowest tests:")
+        for duration, test_id in sorted(result.durations, reverse=True)[:flags["durations"]]:
+            print(f"  {duration:7.2f} s  {test_id}")
+
+    cache.save()
+
     return result.wasSuccessful()
 
 

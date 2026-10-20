@@ -70,3 +70,7 @@ sysid_fit.json
 # Temporary files
 *.tmp
 *.bak
+
+# The test cache: which tests passed, and the fingerprint of what they read.
+# It is disposable - `python run_tests.py --clear-cache` throws it away.
+.test_cache.json
