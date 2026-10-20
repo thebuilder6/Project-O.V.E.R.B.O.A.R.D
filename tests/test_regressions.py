@@ -24,6 +24,7 @@ import numpy as np
 from click.testing import CliRunner
 
 from robot_model import RobotConfig
+from optimizer import GUESS_STYLES
 from export import write_python_file
 from benchmark import RandomBenchmark
 from validator import check_final_waypoint, forward_integrate, validate_samples
@@ -393,6 +394,28 @@ class TestWriteGateIntegration(unittest.TestCase):
 
     class _NonConvergedOptimizer(_Optimizer):
         converged = False
+        calls = 0
+
+        def solve(self, *args, **kwargs):
+            type(self).calls += 1
+            return super().solve(*args, **kwargs)
+
+    class _BaselineSeedFailsOptimizer(_Optimizer):
+        """The baseline seed stops at its budget; the other seeds do not.
+
+        KI-048: the default candidate set is two candidates of the *same*
+        seed, so a path that beats the baseline seed used to end with no
+        trajectory at all.
+        """
+
+        styles = []
+
+        def solve(self, *args, **kwargs):
+            style = kwargs.get("guess_style", "baseline")
+            type(self).styles.append(style)
+            if style == "baseline":
+                return [], {"converged": False, "final_cost": float("inf")}
+            return super().solve(*args, **kwargs)
 
     class _WrongEndpointOptimizer(_Optimizer):
         def solve(self, *args, **kwargs):
@@ -405,6 +428,26 @@ class TestWriteGateIntegration(unittest.TestCase):
 
         def solve(self, *args, **kwargs):
             if kwargs.get("per_segment_dt"):
+                samples = _consistent_samples(n=11, dt=0.05, speed=0.2)
+                for sample in samples:
+                    sample["al"] = 100.0
+                    sample["ar"] = 100.0
+                return samples, {"converged": True, "final_cost": 0.5}
+            return super().solve(*args, **kwargs)
+
+    class _SeedFailsGateOptimizer(_Optimizer):
+        """The baseline seed breaks the force limit; the other seeds do not.
+
+        KI-048: the candidate set's two candidates share one seed, so a set
+        that fails every gate is rescued by the other seeds.
+        """
+
+        styles = []
+
+        def solve(self, *args, **kwargs):
+            style = kwargs.get("guess_style", "baseline")
+            type(self).styles.append(style)
+            if style == "baseline":
                 samples = _consistent_samples(n=11, dt=0.05, speed=0.2)
                 for sample in samples:
                     sample["al"] = 100.0
@@ -500,6 +543,37 @@ class TestWriteGateIntegration(unittest.TestCase):
         self.assertNotEqual(result.exit_code, 0)
         self.assertFalse(exists)
         self.assertIn("did not converge", result.output.lower())
+
+    def test_another_seed_is_tried_when_the_first_one_stops(self):
+        """KI-048: one seed that does not converge must not end the mission."""
+        self._BaselineSeedFailsOptimizer.styles = []
+        result, exists = self._run(self._BaselineSeedFailsOptimizer)
+        self.assertEqual(result.exit_code, 0, result.output)
+        self.assertTrue(exists)
+        styles = self._BaselineSeedFailsOptimizer.styles
+        self.assertIn("baseline", styles)
+        self.assertTrue(any(style != "baseline" for style in styles),
+                        f"no other seed was tried: {styles}")
+
+    def test_a_set_that_fails_every_gate_is_rescued(self):
+        """KI-048: the other seeds are tried when the set passes nothing."""
+        self._SeedFailsGateOptimizer.styles = []
+        result, exists = self._run(self._SeedFailsGateOptimizer,
+                                   ("--validate",), self._PassingImmrax)
+        self.assertEqual(result.exit_code, 0, result.output)
+        self.assertTrue(exists)
+        styles = self._SeedFailsGateOptimizer.styles
+        self.assertTrue(any(style != "baseline" for style in styles),
+                        f"no rescue seed was tried: {styles}")
+
+    def test_the_rescue_is_bounded(self):
+        """KI-048: the rescue must end, not loop."""
+        self._NonConvergedOptimizer.calls = 0
+        result, exists = self._run(self._NonConvergedOptimizer)
+        self.assertNotEqual(result.exit_code, 0)
+        self.assertFalse(exists)
+        # The candidate set, then one rescue per seed the set did not use.
+        self.assertLessEqual(self._NonConvergedOptimizer.calls, len(GUESS_STYLES))
 
     def test_failed_validation_writes_nothing(self):
         result, exists = self._run(

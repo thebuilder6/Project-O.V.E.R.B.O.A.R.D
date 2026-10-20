@@ -55,6 +55,7 @@ How to use this list: refer to an item by its ID, for example “fix KI-003”.
 | KI-044 | P1 | Studio | ~~The studio kept the last run's verdict, and a reload could not cancel a solve~~ (fixed) |
 | KI-045 | P2 | Cleanup | `sysid_solver.py` is a superseded prototype (open) |
 | KI-047 | P1 | Solver | ~~The fast solve path made the solver slower, and its test failed on the tree~~ (fixed) |
+| KI-048 | P1 | Solver / output | ~~The solver gives up on a path instead of trying another candidate~~ (fixed; a rescue round tries the other seeds when the run produces nothing) |
 | KI-049 | P1 | Validation | ~~The reachability envelope reported a 54 mm width that was the divergence guard's fingerprint, and the tube behind it was blown up by a dependency the interval arithmetic could not see~~ (fixed) |
 
 ## P0 — fix first
@@ -443,6 +444,8 @@ On the nine missions where both have a passing candidate, the refined family is 
 
 **Workaround:** None needed. `tests/test_regressions.py::TestSegmentLimits` pins the rule, including that the last waypoint's limit is used rather than dropped.
 
+**What it changes:** a mission with a precision waypoint is now held to its tight limit on the approach, so it can fail where it passed. The measurement runs in `docs/measurements/` were taken with the old rule; each records the tree it describes, so they stay valid as records, but a run that depends on a precision waypoint has to be measured again.
+
 ---
 
 ### KI-035 — The wheel-speed limit ignored the gearing
@@ -573,38 +576,70 @@ On the nine missions where both have a passing candidate, the refined family is 
 
 ---
 
-### KI-049 — The reachability envelope reported a truncation as a width, and the tube behind it was blown up by a dependency
+### KI-048 — The solver gives up on a path instead of trying another candidate
 
-**Status:** Fixed in the working tree (uncommitted).
+**Status:** Fixed in the working tree (uncommitted). The rescue round is in.
 
-**Files:** `immrax_validator.py` (`RobotOpenLoop.f`, `DigitalTwinOpenLoop`, `ImmraxValidator.__init__`, `compute_reachability`), `docs/research/rq_a/exp19_envelope_scatter.py`, `tests/test_envelope_soundness.py`, `requirements-optional.txt`
+**Files:** `optimizer.py` (`solve`), `main.py` (`_rescue_specs`, the candidate
+loop), `tests/test_regressions.py`
 
-**Problem:** Two separate faults, and they hid each other.
+**Problem:** IPOPT can exhaust its iteration budget (5 000 is the configured
+limit). The optimizer catches the `Maximum_Iterations_Exceeded` and returns
+best-effort samples, but the candidate is marked as not converged, and a
+non-converged candidate is never eligible for export (KI-001). The candidate
+is therefore thrown away, and its wall time is spent for nothing.
 
-The first was in the *number*. The validator stops the propagation when the tube's half-diagonal passes 50 mm and reports the radius it had at that moment, so the reported "width" is a property of the guard and not of the path: the same 54.561 mm came out for a 0.5 m path, a 1 m path and a 2 m path, and 53.081 mm for two other combinations. The reachability envelope was quoted as 54 mm against a 20 mm threshold, as if it were a measurement. It was a truncation.
+The default candidate set makes the loss worse than it has to be: its two
+candidates are the *same* seed (baseline) on the two timing models, so when
+the solver stops at its budget, the other seeds (`rolling`, `bow_left`,
+`bow_right`, `turn_first`) are never tried.
 
-The second was in the *model*. The plant computes the turn rate as `(vr - vl) / track_width`, and both wheel speeds are the **same** command times the **same** gain, so the true turn rate does not depend on the gain at all. The natural extension cannot see that, so it reported a turn rate of `+/- (the width of the wheel speed interval) / track` where the truth says zero. That phantom rate integrates into a heading drift and then into a lateral drift, and the tube grows with the square of the time until it crosses the guard. The digital twin made it worse: it carries the two wheel speeds as *states*, so the lost correlation was in the state and not in the expression, and no inclusion function could recover it.
+**Evidence:** the stress run of 2026-10-20
+([`docs/measurements/2026-10-20-stress/`](docs/measurements/2026-10-20-stress/)).
+**One candidate in 228** hit the limit: `m004#1` with the per-segment timing
+model, 36.5 s, `Assertion "return_success(accept_limit)" failed ...
+return_status is 'Maximum_Iterations_Exceeded'`. The same path on the other
+robot took 0.26 s and 0.30 s to solve; the equal-duration candidate on the
+same robot needed 3 898 iterations to converge (27.6 s). So the path is not
+the problem - the robot's constants pushed the solver into a hard region
+where the baseline seed grinds.
 
-**Evidence.** A 1 m straight at 0.5 m/s with a +/-1 % gain band, the reachable set sampled over the declared uncertainty with the corners included (`exp19_envelope_scatter.py`):
+**What the measurement does NOT show:** in all 114 mission-robot pairs, at
+least one candidate converged. **No mission was lost to this.** The cost in
+the measured case was the 36.5 s and the loss of the *better* candidate (the
+per-segment one was faster). The "both candidates stop at their budget" case
+- the one that loses the mission - was not observed.
 
-| plant and inclusion | reported | truncated | reachable set | contains it |
-|---|---:|---|---:|---|
-| plain plant, natural inclusion | 54.03 mm | yes | 4.51 mm | yes |
-| plain plant, Jacobian inclusion | 11.83 mm | no | 4.51 mm | yes |
-| plain plant, natural inclusion, **after the fix** | 11.77 mm | no | 4.51 mm | yes |
-| digital twin, wheel speeds as states | 53.61 mm | yes | 4.55 mm | yes |
-| digital twin, **mean and difference** | 11.76 mm | no | 4.55 mm | yes |
+**Fix (implemented):** the CLI now solves the candidates in rounds. The first
+round is the candidate set; if the run produced **nothing usable** - no
+candidate passed the gates, or (without validation) none converged - the
+seeds the set did not use are tried as a **rescue** before the mission is
+given up on (`_rescue_specs` and the round loop in `main()`). On a validated
+run the rescue uses the per-segment model, because that is where the
+measured rescues came from. A rescue candidate is insurance: it is only
+selected when the candidate set itself produced nothing that passed.
 
-The reachable set the robot can actually reach is 4.5 mm wide. Everything above that was the model's own doing.
+The rescue costs nothing when the plan works, and one parallel round of
+solves when it does not. On a path where nothing passes at all, the run now
+takes about twice as long and still refuses - which is the honest answer.
 
-**Fix (implemented):** Two exact reformulations, and no threshold was moved.
+**Evidence that it works:** on the pinned tree of the stress run, the two
+pairs the default set lost and the stock set rescued are now trajectories:
+`m001#0` is written at 7.746 s with a 1.69 cm envelope (the *rolling* seed,
+per-segment) and `m005#1` at 3.702 s with a 0.46 cm envelope (the
+*bow_right* seed, per-segment) - the same numbers the harness measured.
 
-1. The wheel-speed difference is taken from the **commands** and the gain is applied afterwards. `(u_r - u_l) * gain` is the same motion as `u_r * gain - u_l * gain`, but the command difference is one number, so one number times the gain is an exact interval, while the difference of two gain-scaled commands is not. On a straight the command difference is exactly zero, so the turn rate is exactly zero.
-2. The digital twin carries the wheel speeds as the **mean** and the **difference** instead of the two wheel speeds. The difference is what the turn rate is read from, and the two are perfectly correlated, which an interval box cannot express. The change of variables is a linear bijection and the dynamics are transformed exactly, so the enclosure is still a bound of the same reachable set.
+**What it does not fix:** the measured case where one candidate converged
+and the other did not is unchanged, because the rescue only fires when the
+run produced nothing usable, and there the run produced a trajectory (which
+the gates then refused).
 
-The report now also carries `envelope_truncated`, so a cut-off propagation says so, and the inclusion functions are behind a switch (`PLANT_INCLUSION`, `CONTROLLER_INCLUSION`) with the Jacobian and the mixed-Jacobian both implemented and checked against the sampled set. The default stayed on the natural inclusion because the measurement says it is now the better one: on the six example missions the Jacobian is 0.00-0.08 mm **wider** and 5-15 % slower, because the reformulation already removed the dependency it would have exploited.
+**Workaround:** `--candidates 5` puts the other seeds in the set, so a path
+that grinds on the baseline seed gets four more starting points. It costs
+three more solves and three more validation passes per mission, and it is
+not the default.
 
-**Workaround:** None needed. The 20 mm envelope threshold and the 5 mm tracking threshold are unchanged (`docs/DIGITAL_TWIN_PLAN.md`). What is left of the calibrated-model problem is the width of the reachable set itself, which on a curve is physics: with a +/-1 % gain band the turn rate of a curve is uncertain by 1 %, and the lateral spread that follows is larger than 50 mm on the example missions. That is the gain band, not the model.
+---
 
 ---
 
@@ -641,6 +676,42 @@ So the cold restart is only cheap from a good point: from the warm pass's half-f
 **Workaround:** None needed. The flag stays off by default, and the test's 1200-iteration budget holds again.
 
 ---
+
+### KI-049 — The reachability envelope reported a truncation as a width, and the tube behind it was blown up by a dependency
+
+**Status:** Fixed in the working tree (uncommitted).
+
+**Files:** `immrax_validator.py` (`RobotOpenLoop.f`, `DigitalTwinOpenLoop`, `ImmraxValidator.__init__`, `compute_reachability`), `docs/research/rq_a/exp19_envelope_scatter.py`, `tests/test_envelope_soundness.py`, `requirements-optional.txt`
+
+**Problem:** Two separate faults, and they hid each other.
+
+The first was in the *number*. The validator stops the propagation when the tube's half-diagonal passes 50 mm and reports the radius it had at that moment, so the reported "width" is a property of the guard and not of the path: the same 54.561 mm came out for a 0.5 m path, a 1 m path and a 2 m path, and 53.081 mm for two other combinations. The reachability envelope was quoted as 54 mm against a 20 mm threshold, as if it were a measurement. It was a truncation.
+
+The second was in the *model*. The plant computes the turn rate as `(vr - vl) / track_width`, and both wheel speeds are the **same** command times the **same** gain, so the true turn rate does not depend on the gain at all. The natural extension cannot see that, so it reported a turn rate of `+/- (the width of the wheel speed interval) / track` where the truth says zero. That phantom rate integrates into a heading drift and then into a lateral drift, and the tube grows with the square of the time until it crosses the guard. The digital twin made it worse: it carries the two wheel speeds as *states*, so the lost correlation was in the state and not in the expression, and no inclusion function could recover it.
+
+**Evidence.** A 1 m straight at 0.5 m/s with a +/-1 % gain band, the reachable set sampled over the declared uncertainty with the corners included (`exp19_envelope_scatter.py`):
+
+| plant and inclusion | reported | truncated | reachable set | contains it |
+|---|---:|---|---:|---|
+| plain plant, natural inclusion | 54.03 mm | yes | 4.51 mm | yes |
+| plain plant, Jacobian inclusion | 11.83 mm | no | 4.51 mm | yes |
+| plain plant, natural inclusion, **after the fix** | 11.77 mm | no | 4.51 mm | yes |
+| digital twin, wheel speeds as states | 53.61 mm | yes | 4.55 mm | yes |
+| digital twin, **mean and difference** | 11.76 mm | no | 4.55 mm | yes |
+
+The reachable set the robot can actually reach is 4.5 mm wide. Everything above that was the model's own doing.
+
+**Fix (implemented):** Two exact reformulations, and no threshold was moved.
+
+1. The wheel-speed difference is taken from the **commands** and the gain is applied afterwards. `(u_r - u_l) * gain` is the same motion as `u_r * gain - u_l * gain`, but the command difference is one number, so one number times the gain is an exact interval, while the difference of two gain-scaled commands is not. On a straight the command difference is exactly zero, so the turn rate is exactly zero.
+2. The digital twin carries the wheel speeds as the **mean** and the **difference** instead of the two wheel speeds. The difference is what the turn rate is read from, and the two are perfectly correlated, which an interval box cannot express. The change of variables is a linear bijection and the dynamics are transformed exactly, so the enclosure is still a bound of the same reachable set.
+
+The report now also carries `envelope_truncated`, so a cut-off propagation says so, and the inclusion functions are behind a switch (`PLANT_INCLUSION`, `CONTROLLER_INCLUSION`) with the Jacobian and the mixed-Jacobian both implemented and checked against the sampled set. The default stayed on the natural inclusion because the measurement says it is now the better one: on the six example missions the Jacobian is 0.00-0.08 mm **wider** and 5-15 % slower, because the reformulation already removed the dependency it would have exploited.
+
+**Workaround:** None needed. The 20 mm envelope threshold and the 5 mm tracking threshold are unchanged (`docs/DIGITAL_TWIN_PLAN.md`). What is left of the calibrated-model problem is the width of the reachable set itself, which on a curve is physics: with a +/-1 % gain band the turn rate of a curve is uncertain by 1 %, and the lateral spread that follows is larger than 50 mm on the example missions. That is the gain band, not the model.
+
+---
+
 ## P2 — cleanup
 
 ### KI-017 — Convergence flags do nothing
@@ -931,3 +1002,5 @@ A tick that arrives late jumps the index over one or more samples, and the event
 
 This list does not cover `sysid_solver.py` beyond its imports, the plotting and animation modules in depth, the Pybricks tutorials, or the generated trajectory and benchmark data. The Pybricks code was not run on hardware.
  The motor's numbers are measured now as well: the collector's `top_speed` test lifts the robot so the motor runs free and measures the speed at which it makes no torque, the fit rejects that number when the robot reached the commanded speed instead, and `main.py --sysid-fit` writes the measured stall torque and no-load speed into the robot config. That closes a hole where the optimizer planned against the declared motor and the validator checked the measured one. The drivetrain model is in `drivetrain.py`; the model is checked against an independent simulator in `research/crosscheck/`, and the findings are in `docs/research/RQ-B_drivetrain_model.md`.
+
+The random mission suite and the random robot constants were outside this list's scope until 2026-10-20, when a stress run measured 180 candidates on 45 random paths and 90 random robots against the production gate chain ([`docs/measurements/2026-10-20-stress/`](docs/measurements/2026-10-20-stress/)). It found one failure mode that was not in this list (KI-048, since fixed) and confirmed that the tracking and forward-integration gates are dominated by the discretisation mismatch rather than by the physics (KI-026, RQ-A). What that run does **not** cover: the paths in the suite are longer and more turny than a real FLL mission, the robot constants are drawn, not measured (KI-020), and nothing was run on hardware.

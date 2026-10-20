@@ -1,0 +1,138 @@
+{
+  "seed": 20261020,
+  "count": 12,
+  "missions": [
+    {
+      "id": "m000",
+      "profile": "even",
+      "file": "m000.json",
+      "num_waypoints": 4,
+      "num_segments": 3,
+      "path_length_m": 1.3645,
+      "segment_length_ratio": 1.6,
+      "max_turn_rad": 0.2599,
+      "pinned_headings": 3
+    },
+    {
+      "id": "m001",
+      "profile": "uneven",
+      "file": "m001.json",
+      "num_waypoints": 8,
+      "num_segments": 7,
+      "path_length_m": 2.791,
+      "segment_length_ratio": 6.26,
+      "max_turn_rad": 0.1781,
+      "pinned_headings": 4
+    },
+    {
+      "id": "m002",
+      "profile": "turny",
+      "file": "m002.json",
+      "num_waypoints": 7,
+      "num_segments": 6,
+      "path_length_m": 2.936,
+      "segment_length_ratio": 1.84,
+      "max_turn_rad": 2.5248,
+      "pinned_headings": 4
+    },
+    {
+      "id": "m003",
+      "profile": "mixed",
+      "file": "m003.json",
+      "num_waypoints": 7,
+      "num_segments": 6,
+      "path_length_m": 3.7724,
+      "segment_length_ratio": 6.0,
+      "max_turn_rad": 0.939,
+      "pinned_headings": 4
+    },
+    {
+      "id": "m004",
+      "profile": "even",
+      "file": "m004.json",
+      "num_waypoints": 5,
+      "num_segments": 4,
+      "path_length_m": 1.9845,
+      "segment_length_ratio": 1.3,
+      "max_turn_rad": 0.0,
+      "pinned_headings": 2
+    },
+    {
+      "id": "m005",
+      "profile": "uneven",
+      "file": "m005.json",
+      "num_waypoints": 3,
+      "num_segments": 2,
+      "path_length_m": 1.6857,
+      "segment_length_ratio": 8.15,
+      "max_turn_rad": 0.0,
+      "pinned_headings": 2
+    },
+    {
+      "id": "m006",
+      "profile": "turny",
+      "file": "m006.json",
+      "num_waypoints": 4,
+      "num_segments": 3,
+      "path_length_m": 1.3935,
+      "segment_length_ratio": 1.75,
+      "max_turn_rad": 2.5494,
+      "pinned_headings": 4
+    },
+    {
+      "id": "m007",
+      "profile": "mixed",
+      "file": "m007.json",
+      "num_waypoints": 5,
+      "num_segments": 4,
+      "path_length_m": 2.1264,
+      "segment_length_ratio": 5.41,
+      "max_turn_rad": 0.0,
+      "pinned_headings": 3
+    },
+    {
+      "id": "m008",
+      "profile": "even",
+      "file": "m008.json",
+      "num_waypoints": 5,
+      "num_segments": 4,
+      "path_length_m": 1.878,
+      "segment_length_ratio": 1.41,
+      "max_turn_rad": 0.0621,
+      "pinned_headings": 3
+    },
+    {
+      "id": "m009",
+      "profile": "uneven",
+      "file": "m009.json",
+      "num_waypoints": 8,
+      "num_segments": 7,
+      "path_length_m": 5.2838,
+      "segment_length_ratio": 8.77,
+      "max_turn_rad": 0.0472,
+      "pinned_headings": 4
+    },
+    {
+      "id": "m010",
+      "profile": "turny",
+      "file": "m010.json",
+      "num_waypoints": 3,
+      "num_segments": 2,
+      "path_length_m": 0.6512,
+      "segment_length_ratio": 1.12,
+      "max_turn_rad": 0.0,
+      "pinned_headings": 2
+    },
+    {
+      "id": "m011",
+      "profile": "mixed",
+      "file": "m011.json",
+      "num_waypoints": 4,
+      "num_segments": 3,
+      "path_length_m": 1.6241,
+      "segment_length_ratio": 2.38,
+      "max_turn_rad": 2.3873,
+      "pinned_headings": 4
+    }
+  ]
+}

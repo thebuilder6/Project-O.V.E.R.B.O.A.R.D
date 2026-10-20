@@ -129,6 +129,67 @@ _THREAD_ENV_VARS = ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS"
                     "NUMEXPR_NUM_THREADS")
 
 
+def _dt_modes(dt_mode):
+    """The timing models a candidate set cycles through.
+
+    The two modes are not peers: "uniform" shares one dt across all
+    segments, which because every segment has the same sample count also
+    forces every segment to take the SAME time; on a path with unequal
+    segment lengths that is a large artificial penalty. "per-segment" gives
+    each segment its own dt and is the general model (KI-022).
+    """
+    if dt_mode == "uniform":
+        return [False]
+    if dt_mode == "per-segment":
+        return [True]
+    if dt_mode == "auto":
+        return [False, True]
+    raise ValueError(f"Unknown dt_mode: {dt_mode}")
+
+
+def _rescue_specs(specs, base_weight, use_styles, dt_mode, validated):
+    """The candidates to try when the run would otherwise produce nothing.
+
+    With validation, nothing passed the gates; without it, nothing
+    converged. Either way the mission ends with no trajectory, and the
+    default candidate set cannot help: its two candidates are the *same*
+    seed (the baseline) on the two timing models, so the other seeds are
+    never tried (KI-048).
+
+    The rescue is the seeds the set did not use. On a validated run it uses
+    the per-segment model, because that is where the measured rescues came
+    from: of the eighteen mission-robot pairs the default set lost on
+    random paths, the full stock set rescued two, both of them per-segment,
+    and the other seeds' equal-duration candidates rescued none (the stress
+    run of 2026-10-20). On an unvalidated run the model is not changed: the
+    operator asked for one plan without a check, so the rescue is the same
+    plan from a different starting point.
+
+    The Multi-Verse path walks an accuracy-weight ladder rather than the
+    seeds, and each of its candidates costs a whole pipeline, so it is left
+    alone.
+    """
+    if not use_styles:
+        return []
+    used = {spec["guess_style"] for spec in specs}
+    if validated and dt_mode != "uniform":
+        modes = [True]
+    else:
+        modes = []
+        for spec in specs:
+            mode = bool(spec.get("per_segment_dt", False))
+            if mode not in modes:
+                modes.append(mode)
+    rescue = []
+    for style in GUESS_STYLES:
+        if style in used:
+            continue
+        for mode in modes:
+            rescue.append({"accuracy_weight": base_weight,
+                           "guess_style": style, "per_segment_dt": mode})
+    return rescue
+
+
 def _candidate_specs(base_accuracy_weight, count, use_styles=True, dt_mode="auto",
                      sweep=False, refined=False):
     """Definitions for the candidate set.
@@ -170,14 +231,7 @@ def _candidate_specs(base_accuracy_weight, count, use_styles=True, dt_mode="auto
                  "guess_style": "baseline", "per_segment_dt": False}
                 for k in range(count)]
 
-    if dt_mode == "uniform":
-        modes = [False]
-    elif dt_mode == "per-segment":
-        modes = [True]
-    elif dt_mode == "auto":
-        modes = [False, True]
-    else:
-        raise ValueError(f"Unknown dt_mode: {dt_mode}")
+    modes = _dt_modes(dt_mode)
 
     specs = []
     for k in range(count):
@@ -1238,195 +1292,254 @@ def main(ctx, config, waypoints, output, gui, gui_port, doctor, multiverse, simp
     use_validation = HAS_JAX and validate
     specs_to_solve = candidate_specs if use_validation else candidate_specs[:1]
 
-    solve_payloads = []
-    for spec in specs_to_solve:
-        solve_kwargs = dict(
-            num_samples_per_segment=samples,
-            accuracy_weight=spec["accuracy_weight"],
-            stop_waypoint_indices=all_stop_indices,
-            waypoint_events=waypoint_events,
-            verbose=verbose and not quiet,
-            capture_iterations=capture_iterations,
-        )
-        if not multiverse:
-            solve_kwargs["guess_style"] = spec["guess_style"]
-            solve_kwargs["per_segment_dt"] = spec.get("per_segment_dt", False)
-            if self_consistent:
-                solve_kwargs["self_consistent"] = True
-        if fast_polish:
-            solve_kwargs["fast_polish"] = True
-        solve_payloads.append((robot_cfg, wps, spec, solve_kwargs, multiverse))
+    def _payloads_for(specs):
+        """The solve payloads for a set of candidates."""
+        payloads = []
+        for spec in specs:
+            solve_kwargs = dict(
+                num_samples_per_segment=samples,
+                accuracy_weight=spec["accuracy_weight"],
+                stop_waypoint_indices=all_stop_indices,
+                waypoint_events=waypoint_events,
+                verbose=verbose and not quiet,
+                capture_iterations=capture_iterations,
+            )
+            if not multiverse:
+                solve_kwargs["guess_style"] = spec["guess_style"]
+                solve_kwargs["per_segment_dt"] = spec.get("per_segment_dt", False)
+                if self_consistent:
+                    solve_kwargs["self_consistent"] = True
+            if fast_polish:
+                solve_kwargs["fast_polish"] = True
+            payloads.append((robot_cfg, wps, spec, solve_kwargs, multiverse))
+        return payloads
 
     # The live view and the convergence plot both need the solver in this
     # process, so those runs stay sequential. Worker processes import the
     # optimizer module themselves, so an injected or patched optimizer would be
     # ignored there: only the stock solvers may run in a worker.
     stock_optimizer = type(optimizer).__module__ in ("optimizer", "multiverse_optimizer")
-    parallel = (len(solve_payloads) > 1 and not live and not show_convergence
-                and not no_parallel and stock_optimizer)
-    if not quiet and len(solve_payloads) > 1:
-        click.echo(f"Solving {len(solve_payloads)} candidates "
-                   f"({'in parallel' if parallel else 'sequentially'})...")
-    solved, histories = _solve_candidates(solve_payloads, workers, quiet, parallel,
-                                         local_optimizer=optimizer)
 
-    for cand_idx, (spec, solve_result) in enumerate(zip(candidate_specs, solved)):
-        curr_accuracy_weight = spec["accuracy_weight"]
-        guess_style = spec["guess_style"]
-        per_segment_dt = spec.get("per_segment_dt", False)
-        if not quiet:
-            if multiverse:
-                click.echo(f"Candidate {cand_idx + 1}/{len(candidate_specs)} "
-                           f"(accuracy_weight={curr_accuracy_weight})...")
+    def _solve_batch(specs):
+        """Solve one set of candidates and return their results and logs."""
+        payloads = _payloads_for(specs)
+        parallel = (len(payloads) > 1 and not live and not show_convergence
+                    and not no_parallel and stock_optimizer)
+        if not quiet and len(payloads) > 1:
+            click.echo(f"Solving {len(payloads)} candidates "
+                       f"({'in parallel' if parallel else 'sequentially'})...")
+        return _solve_candidates(payloads, workers, quiet, parallel,
+                                  local_optimizer=optimizer)
+
+    # The candidates are solved in rounds. The first round is the candidate
+    # set; if it produced nothing usable, the seeds the set did not use are
+    # tried as a rescue (KI-048).
+    batch = list(specs_to_solve)
+    is_rescue = False
+    while batch:
+        solved, histories = _solve_batch(batch)
+
+        for cand_idx, (spec, solve_result) in enumerate(zip(batch, solved)):
+            curr_accuracy_weight = spec["accuracy_weight"]
+            guess_style = spec["guess_style"]
+            per_segment_dt = spec.get("per_segment_dt", False)
+            number = (f"Rescue {cand_idx + 1}/{len(batch)}" if is_rescue
+                      else f"Candidate {cand_idx + 1}/{len(batch)}")
+            if not quiet:
+                if multiverse:
+                    click.echo(f"{number} "
+                               f"(accuracy_weight={curr_accuracy_weight})...")
+                else:
+                    timing = "per-segment" if per_segment_dt else "equal-duration"
+                    weight = f", a={curr_accuracy_weight:g}" if sweep else ""
+                    click.echo(f"{number} "
+                               f"(guess_style={guess_style}, {timing} dt{weight})...")
+
+            samples_data, stats = solve_result
+
+            # Track this candidate. A non-converged candidate is never eligible for export (KI-001).
+            attempt_record = {
+                "samples": samples_data, "stats": stats,
+                "cost": stats.get('final_cost', float('inf')),
+                "ok": False, "violation": float("inf"),
+                "tube": float("inf"),
+                "duration": float(samples_data[-1]['t']) if samples_data else float("inf"),
+                "diverged": False,
+                "converged": bool(stats.get("converged", False)),
+                "guess_style": guess_style,
+                # Which starting point produced it: the seed, or the Multi-Verse
+                # pipeline's refined trajectory. The style alone does not say:
+                # a refined candidate carries the baseline style.
+                "guess": spec.get("guess", guess_style),
+                "per_segment_dt": per_segment_dt,
+                "accuracy_weight": curr_accuracy_weight,
+                "iteration_history": (histories[cand_idx]
+                                      if cand_idx < len(histories) else []),
+                "reasons": [],
+                # A rescue candidate is insurance: it is only chosen when the
+                # candidate set itself produced nothing usable.
+                "rescue": is_rescue,
+            }
+            all_attempts.append(attempt_record)
+
+            # Always compute reachability envelope if JAX is available and we are in live/validate mode
+            if not use_validation:
+                continue
+
+            try:
+                validator_cls, robot_config_cls = _ensure_jax_classes()
+                jax_cfg = robot_config_cls(robot_cfg)
+                if digital_twin is None:
+                    immrax_val = validator_cls(jax_cfg, control_dt=control_dt)
+                else:
+                    immrax_val = validator_cls(jax_cfg, digital_twin=digital_twin,
+                                               control_dt=control_dt)
+
+                # Use the uncertainty ranges declared in the config (KI-009).
+                cof_range = robot_cfg.uncertainties["cof"]
+                torque_range = robot_cfg.uncertainties["torque_headroom"]
+                backlash_range = robot_cfg.uncertainties["gear_backlash_m"]
+                track_width_range = robot_cfg.uncertainties["track_width_range"]
+                wheel_radius_range = robot_cfg.uncertainties["wheel_radius_range"]
+                inertia_range = robot_cfg.uncertainties["inertia_kg_m2"]
+
+                if not quiet:
+                    click.echo("  Running the Immrax robustness check...")
+                immrax_report = immrax_val.validate_trajectory(
+                    samples_data, cof_range, torque_range, backlash_range,
+                    track_width_range, wheel_radius_range, inertia_range)
+            except Exception as e:
+                if not quiet:
+                    click.echo(f"  ERROR: Immrax validation failed: {e}")
+                import traceback
+                traceback.print_exc()
+                # A validator crash is not a pass (KI-002).
+                attempt_record["reasons"] = [f"Immrax validation error: {e}"]
+                if not validate:
+                    break
+                continue
+
+            # Attach envelope to samples for export/viz (do this even if it failed, so user can see it)
+            for i, env in enumerate(immrax_report['reachability']['envelope']):
+                if i < len(samples_data):
+                    samples_data[i]['reachability_envelope'] = env
+
+            # CONTEXT-AWARE SAFETY CHECK (score every candidate on the same scale)
+            failed_threshold = False
+            max_vio_val = 0.0
+            max_err_all = 0.0
+
+            for i in range(len(samples_data)):
+                # Determine local threshold. The segment's limit is the one of
+                # the waypoint the segment arrives at (see _segment_limit), so a
+                # precision waypoint is held to its tight limit on the approach.
+                wp_idx = i // samples
+                local_threshold = _segment_limit(waypoint_thresholds, wp_idx)
+
+                # Check envelope radius (max error)
+                env = samples_data[i].get('reachability_envelope', {})
+                if env:
+                    err_x = (env['x_max'] - env['x_min']) / 2.0
+                    err_y = (env['y_max'] - env['y_min']) / 2.0
+                    err = np.sqrt(err_x**2 + err_y**2)
+                    max_err_all = max(max_err_all, err)
+                    if env.get('unknown') or err > local_threshold:
+                        failed_threshold = True
+                        max_vio_val = max(max_vio_val, err)
+
+            attempt_record["tube"] = float(max_err_all)
+            attempt_record["diverged"] = bool(immrax_report['reachability'].get('diverged', False))
+            # A cut-off propagation reports the width the tube had when it
+            # crossed the guard, not the width it would have reached, so the
+            # number is a property of the guard and not of the path. Say so
+            # next to it (KI-049).
+            attempt_record["envelope_truncated"] = bool(
+                immrax_report['reachability'].get('envelope_truncated',
+                                                  attempt_record["diverged"]))
+            attempt_record["tracking_m"] = float(immrax_report.get("max_tracking_error_m", 0.0))
+            attempt_record["heading_rad"] = float(immrax_report.get("max_heading_error_rad", 0.0))
+            attempt_record["ok"] = (attempt_record["converged"] and not failed_threshold
+                                    and bool(immrax_report['passed']))
+            attempt_record["reasons"] = _immrax_failure_reasons(immrax_report, failed_threshold, max_vio_val)
+            if failed_threshold:
+                attempt_record["violation"] = max_vio_val
             else:
-                timing = "per-segment" if per_segment_dt else "equal-duration"
-                weight = f", a={curr_accuracy_weight:g}" if sweep else ""
-                click.echo(f"Candidate {cand_idx + 1}/{len(candidate_specs)} "
-                           f"(guess_style={guess_style}, {timing} dt{weight})...")
+                # Tracking is a quantified failure too; rank failed candidates on it
+                # instead of falling back to pure cost (KI-020 scoring).
+                tracking_error = float(immrax_report.get("max_tracking_error_m", 0.0))
+                if tracking_error > 0.005:
+                    attempt_record["violation"] = tracking_error
 
-        samples_data, stats = solve_result
+            cpu_summary = None
+            if validate:
+                # The CPU audit runs on every candidate, not only on the winner, so
+                # a candidate that clears Immrax but breaks the force, slip or
+                # integration limits cannot block a later candidate that passes
+                # every gate.
+                cpu_summary = validate_samples(samples_data, robot_cfg)
+                if not cpu_summary["passed"]:
+                    attempt_record["ok"] = False
+                    attempt_record["reasons"] = list(attempt_record["reasons"]) + \
+                        _cpu_failure_reasons(cpu_summary)
+                # The peak wheel jerk, for the score vector. It is the quantity
+                # the accuracy weight trades against, so it belongs beside the
+                # other scores (Q10's step 1).
+                attempt_record["peak_jerk_m_s3"] = float(
+                    cpu_summary.get("metrics", {}).get("max_jerk_m_s3", 0.0) or 0.0)
 
-        # Track this candidate. A non-converged candidate is never eligible for export (KI-001).
-        attempt_record = {
-            "samples": samples_data, "stats": stats,
-            "cost": stats.get('final_cost', float('inf')),
-            "ok": False, "violation": float("inf"),
-            "tube": float("inf"),
-            "duration": float(samples_data[-1]['t']) if samples_data else float("inf"),
-            "diverged": False,
-            "converged": bool(stats.get("converged", False)),
-            "guess_style": guess_style,
-            # Which starting point produced it: the seed, or the Multi-Verse
-            # pipeline's refined trajectory. The style alone does not say:
-            # a refined candidate carries the baseline style.
-            "guess": spec.get("guess", guess_style),
-            "per_segment_dt": per_segment_dt,
-            "accuracy_weight": curr_accuracy_weight,
-            "iteration_history": (histories[cand_idx]
-                                  if cand_idx < len(histories) else []),
-            "reasons": [],
-        }
-        all_attempts.append(attempt_record)
-
-        # Always compute reachability envelope if JAX is available and we are in live/validate mode
-        if not use_validation:
-            break
-
-        try:
-            validator_cls, robot_config_cls = _ensure_jax_classes()
-            jax_cfg = robot_config_cls(robot_cfg)
-            if digital_twin is None:
-                immrax_val = validator_cls(jax_cfg, control_dt=control_dt)
-            else:
-                immrax_val = validator_cls(jax_cfg, digital_twin=digital_twin,
-                                           control_dt=control_dt)
-
-            # Use the uncertainty ranges declared in the config (KI-009).
-            cof_range = robot_cfg.uncertainties["cof"]
-            torque_range = robot_cfg.uncertainties["torque_headroom"]
-            backlash_range = robot_cfg.uncertainties["gear_backlash_m"]
-            track_width_range = robot_cfg.uncertainties["track_width_range"]
-            wheel_radius_range = robot_cfg.uncertainties["wheel_radius_range"]
-            inertia_range = robot_cfg.uncertainties["inertia_kg_m2"]
+            # Per-segment detail, so a failure can be pinned to a part of the path.
+            attempt_record["segments"] = _segment_report(
+                samples_data, samples, waypoint_thresholds, immrax_report, cpu_summary)
 
             if not quiet:
-                click.echo("  Running the Immrax robustness check...")
-            immrax_report = immrax_val.validate_trajectory(
-                samples_data, cof_range, torque_range, backlash_range,
-                track_width_range, wheel_radius_range, inertia_range)
-        except Exception as e:
-            if not quiet:
-                click.echo(f"  ERROR: Immrax validation failed: {e}")
-            import traceback
-            traceback.print_exc()
-            # A validator crash is not a pass (KI-002).
-            attempt_record["reasons"] = [f"Immrax validation error: {e}"]
-            if not validate:
+                score = "envelope diverged" if attempt_record["diverged"] else f"envelope {attempt_record['tube']*100:.2f} cm"
+                if attempt_record["ok"]:
+                    click.echo(f"  Passed! {score}, all segments within thresholds.")
+                else:
+                    reason_text = "; ".join(attempt_record["reasons"]) or "validation failed"
+                    click.echo(f"  FAILED: {reason_text}.")
+
+            if not validate:  # Live-only: keep the result for visualization.
                 break
-            continue
 
-        # Attach envelope to samples for export/viz (do this even if it failed, so user can see it)
-        for i, env in enumerate(immrax_report['reachability']['envelope']):
-            if i < len(samples_data):
-                samples_data[i]['reachability_envelope'] = env
-
-        # CONTEXT-AWARE SAFETY CHECK (score every candidate on the same scale)
-        failed_threshold = False
-        max_vio_val = 0.0
-        max_err_all = 0.0
-
-        for i in range(len(samples_data)):
-            # Determine local threshold. The segment's limit is the one of
-            # the waypoint the segment arrives at (see _segment_limit), so a
-            # precision waypoint is held to its tight limit on the approach.
-            wp_idx = i // samples
-            local_threshold = _segment_limit(waypoint_thresholds, wp_idx)
-
-            # Check envelope radius (max error)
-            env = samples_data[i].get('reachability_envelope', {})
-            if env:
-                err_x = (env['x_max'] - env['x_min']) / 2.0
-                err_y = (env['y_max'] - env['y_min']) / 2.0
-                err = np.sqrt(err_x**2 + err_y**2)
-                max_err_all = max(max_err_all, err)
-                if env.get('unknown') or err > local_threshold:
-                    failed_threshold = True
-                    max_vio_val = max(max_vio_val, err)
-
-        attempt_record["tube"] = float(max_err_all)
-        attempt_record["diverged"] = bool(immrax_report['reachability'].get('diverged', False))
-        attempt_record["tracking_m"] = float(immrax_report.get("max_tracking_error_m", 0.0))
-        attempt_record["heading_rad"] = float(immrax_report.get("max_heading_error_rad", 0.0))
-        attempt_record["ok"] = (attempt_record["converged"] and not failed_threshold
-                                and bool(immrax_report['passed']))
-        attempt_record["reasons"] = _immrax_failure_reasons(immrax_report, failed_threshold, max_vio_val)
-        if failed_threshold:
-            attempt_record["violation"] = max_vio_val
-        else:
-            # Tracking is a quantified failure too; rank failed candidates on it
-            # instead of falling back to pure cost (KI-020 scoring).
-            tracking_error = float(immrax_report.get("max_tracking_error_m", 0.0))
-            if tracking_error > 0.005:
-                attempt_record["violation"] = tracking_error
-
-        cpu_summary = None
-        if validate:
-            # The CPU audit runs on every candidate, not only on the winner, so
-            # a candidate that clears Immrax but breaks the force, slip or
-            # integration limits cannot block a later candidate that passes
-            # every gate.
-            cpu_summary = validate_samples(samples_data, robot_cfg)
-            if not cpu_summary["passed"]:
-                attempt_record["ok"] = False
-                attempt_record["reasons"] = list(attempt_record["reasons"]) + \
-                    _cpu_failure_reasons(cpu_summary)
-            # The peak wheel jerk, for the score vector. It is the quantity
-            # the accuracy weight trades against, so it belongs beside the
-            # other scores (Q10's step 1).
-            attempt_record["peak_jerk_m_s3"] = float(
-                cpu_summary.get("metrics", {}).get("max_jerk_m_s3", 0.0) or 0.0)
-
-        # Per-segment detail, so a failure can be pinned to a part of the path.
-        attempt_record["segments"] = _segment_report(
-            samples_data, samples, waypoint_thresholds, immrax_report, cpu_summary)
-
-        if not quiet:
-            score = "envelope diverged" if attempt_record["diverged"] else f"envelope {attempt_record['tube']*100:.2f} cm"
-            if attempt_record["ok"]:
-                click.echo(f"  Passed! {score}, all segments within thresholds.")
-            else:
-                reason_text = "; ".join(attempt_record["reasons"]) or "validation failed"
-                click.echo(f"  FAILED: {reason_text}.")
-
-        if not validate:  # Live-only: keep the result for visualization.
+        # Did the run produce something usable? With validation that means a
+        # candidate that passed every gate; without it, a candidate that
+        # converged. If not, the seeds the candidate set did not use are
+        # tried before the mission is given up on (KI-048): the set's two
+        # candidates share one seed, so without the rescue a path that beats
+        # the baseline seed ends with no trajectory at all.
+        usable = [a for a in all_attempts
+                  if (a.get("ok") if use_validation else a.get("converged"))]
+        if usable or is_rescue:
             break
+        batch = _rescue_specs(specs_to_solve, accuracy_weight, not multiverse,
+                              dt_mode, use_validation)
+        if not batch:
+            break
+        is_rescue = True
+        if not quiet:
+            if use_validation:
+                click.echo("  No candidate passed the gates; trying the other "
+                           "seeds.")
+            else:
+                click.echo("  No candidate converged; trying the other seeds.")
 
     if validate:
         # Never silently export a failed candidate: prefer a passing one with the
         # smallest envelope, otherwise the converged candidate closest to passing.
-        best, passed_any = _select_attempt(all_attempts)
+        # A rescue candidate is insurance: it is only chosen when the candidate
+        # set itself produced nothing that passed.
+        primary = [a for a in all_attempts if not a.get("rescue")]
+        rescue = [a for a in all_attempts if a.get("rescue")]
+        best, passed_any = _select_attempt(primary)
+        if not passed_any and rescue:
+            rescue_best, rescue_passed = _select_attempt(rescue)
+            if rescue_passed or best is None:
+                best, passed_any = rescue_best, rescue_passed
         if best is None:
-            raise click.ClickException("Solver did not converge on any attempt. No trajectory written.")
+            raise click.ClickException(
+                f"Solver did not converge on any of the {len(all_attempts)} "
+                f"attempts. No trajectory written.")
         selected_k = next(k for k, a in enumerate(all_attempts, 1) if a is best)
         if not quiet and len(all_attempts) > 1:
             for k, a in enumerate(all_attempts, 1):
@@ -1462,8 +1575,19 @@ def main(ctx, config, waypoints, output, gui, gui_port, doctor, multiverse, simp
         selected_tube = best.get("tube", float("inf"))
         selected_index = selected_k
     else:
-        best_reasons = all_attempts[-1]["reasons"] if all_attempts else []
-        selected_tube = all_attempts[-1]["tube"] if all_attempts else float("inf")
+        # Without validation the first candidate is the result. After a
+        # rescue round it is the last candidate that converged, not merely
+        # the last one tried.
+        converged = [a for a in all_attempts if a.get("converged")]
+        chosen = converged[-1] if converged else (
+            all_attempts[-1] if all_attempts else None)
+        if chosen is not None:
+            samples_data, stats = chosen["samples"], chosen["stats"]
+            best_reasons = chosen["reasons"]
+            selected_tube = chosen.get("tube", float("inf"))
+        else:
+            best_reasons = []
+            selected_tube = float("inf")
         selected_index = 1 if all_attempts else None
 
     if use_validation:
