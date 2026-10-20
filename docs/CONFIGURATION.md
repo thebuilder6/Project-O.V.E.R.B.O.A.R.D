@@ -197,7 +197,7 @@ python main.py --simple -c examples/fll_choreo.json -w examples/example_straight
 - `--stop-waypoints "0,2,4"`: Comma-separated stop indices.
 - `--events "1:lower_arm,3:release"`: Comma-separated event mappings.
 - `--simple`: CasADi-only optimizer (recommended).
-- `--per-segment-dt`: Give each waypoint segment its own sample interval (`--simple` only). The default is one shared interval.
+- `--per-segment-dt`: Give each waypoint segment its own sample interval (`--simple` only). The default is one shared interval, which keeps the validated mission behavior. Measured tradeoff: an uneven 1.0 m + 0.2 m path passes at 2.710 s / 0.32 cm envelope versus 4.463 s / 0.35 cm uniform; the complex mission at `accuracy_weight=0` is faster (5.447 s / 1.18 cm) but fails the 5 mm tracking gate at 0.86 cm, and at `0.02` passes at 7.312 s / 1.61 cm, worse than the uniform 6.068 s / 1.22 cm baseline. Select the mode per path and validate it.
 - `--no-parallel`, `--workers`: Multi-Verse options; currently no effect on the result (KI-004).
 
 ### Validation and export
