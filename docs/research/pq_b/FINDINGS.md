@@ -294,7 +294,57 @@ which is a discretisation artefact).
 
 ---
 
-## 4. The answers, question by question
+## 4. The accuracy weight: a real dial with a lottery attached (Q6)
+
+A 9-point weight ladder (0, 0.00025, 0.0005, 0.001, 0.002, 0.005, 0.01, 0.02,
+0.05) was run on 12 missions under both timing models (216 candidates).
+
+**Pooled across missions the relationship is invisible** — Spearman(weight,
+tracking) = -0.174, Pearson -0.013 — because the missions differ more from
+each other than the weight moves a mission.
+
+**Within a mission it is strong and in the expected direction**: the median
+per-mission Spearman is **-0.683**, and 20 of 24 missions are negative (a
+higher weight gives a lower tracking error).
+
+| weight | equal-duration: pass / duration / tracking | per-segment: pass / duration / tracking |
+|---:|---|---|
+| 0 | 25 % / 6.19 s / 0.71 cm | 17 % / 5.14 s / 1.14 cm |
+| 0.00025 | 25 % / 6.19 s / 0.78 cm | 17 % / 4.76 s / 1.09 cm |
+| 0.0005 | 17 % / 6.19 s / 0.79 cm | 17 % / 5.28 s / 1.34 cm |
+| 0.001 | 33 % / 7.05 s / 0.74 cm | 17 % / 5.31 s / 0.67 cm |
+| 0.002 | 33 % / 7.08 s / 0.72 cm | 33 % / 5.26 s / 0.64 cm |
+| 0.005 | 33 % / 7.21 s / 0.69 cm | **42 %** / 5.38 s / 0.77 cm |
+| 0.01 | 42 % / 7.92 s / 0.50 cm | 33 % / 5.50 s / 0.70 cm |
+| 0.02 | **50 %** / 8.04 s / 0.53 cm | 33 % / 5.66 s / 0.67 cm |
+| 0.05 | 42 % / 6.91 s / 0.52 cm | 33 % / 8.34 s / 0.61 cm |
+
+**Answer to Q6: the weight is a real accuracy proxy, but it is a search, not a
+dial.**
+
+- *The proxy is real*: more weight buys less tracking error, monotonically in
+  the median, inside a mission.
+- *The trade is real*: the duration grows with the weight. The best trade in
+  the whole table is per-segment at `a = 0.005`: **42 % pass against 17 % at
+  weight 0, for 5 % more time** (5.38 s against 5.14 s).
+- *The lottery is real*: **21 of 192** steps are non-monotone — a higher
+  weight gave a slower **and** less accurate trajectory — and the weight that
+  produced the fastest *passing* trajectory differs per mission (0, 0.00025,
+  0.0005, 0.002 and 0.01 all occur on the twelve missions).
+
+The CLI's five-point grid (0, 0.001, 0.002, 0.005, 0.01) covers the useful
+range: the pass rate peaks around 0.005-0.02 and falls again by 0.05, where
+the duration jumps to 8.34 s under per-segment timing. Extending the grid
+further is not worth the solves.
+
+Note the interaction: under per-segment timing the weight buys pass rate
+almost for free (17 % -> 42 % for 0.24 s), while under equal-duration timing
+it costs 2 s for the same gain. **The weight and the timing model are not
+independent axes**, which the agenda's candidate set treats them as.
+
+---
+
+## 5. The answers, question by question
 
 | # | question | answer | evidence |
 |---|---|---|---|

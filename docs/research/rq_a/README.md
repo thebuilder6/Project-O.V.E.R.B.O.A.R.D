@@ -43,7 +43,7 @@ temporary directory; nothing in the repository is modified.
 | `check_hermite.py` | is the spline interpolant correct? | yes: 0.0012 mm against the exact circle |
 | `verify_backlash_fix.py` | does the KI-025 backlash fix behave as designed? | the backlash no longer touches the tracking error (0.0000 mm) and now widens the envelope |
 | `exp10_gain_band.py` | what does the digital twin's actuator-gain band do? | it blows up the **envelope** (54 mm at ±1 % over 1 m), not the tracking error (0.9 mm) - the controller corrects the speed error |
-| `exp10_floor.py` | what sets the tracking-error floor at fine sampling? | the 20 ms command hold: at n=40 a 2 ms tick takes the error from 0.979 cm to 0.048 cm |
+| `exp10_floor.py` | what sets the tracking-error floor at fine sampling? | the 20 ms command hold: at n=40 a 2 ms tick takes the error from 0.979 cm to 0.048 cm; giving the controller the **interval-average velocity** removes it without touching the tick (0.110 cm), which pins the mechanism on the distance covered per interval |
 | `exp11_density.py` | how does the error vary with the sampling density? | it is **U-shaped**, with a minimum near 4-6 control ticks per sample interval; the default `-n 10` is on the coarse side |
 
 ## Reproducing against the pinned tree
