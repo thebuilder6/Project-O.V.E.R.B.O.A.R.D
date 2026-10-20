@@ -9,36 +9,50 @@ gate, the validation rules and the file formats stay in one place.
     python main.py --gui
 """
 
+import csv
+import hashlib
 import json
 import math
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
 import threading
 import time
 import traceback
+import urllib.request
 import webbrowser
 from collections import deque
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 
 REPO_ROOT = Path(__file__).resolve().parent
 VIZ_DIR = REPO_ROOT / "viz"
 EXAMPLES_DIR = REPO_ROOT / "examples"
 MISSIONS_DIR = REPO_ROOT / "missions"
+# The robot, measured once: the session, the sheet, the poses and the fit.
+CALIBRATION_DIR = REPO_ROOT / "calibration"
+# The mat pictures the operator fetches. They are not tracked: FIRST's mat
+# artwork is copyrighted, so it is downloaded on request and kept here.
+MATS_DIR = REPO_ROOT / "mats"
 
 MAX_BODY_BYTES = 2_000_000
 LOG_LINES = 800
 SLUG_RE = re.compile(r"[^a-z0-9_-]+")
 
+# The host-side push client. Patched in tests with a stand-in.
+HUB_DEPLOY = REPO_ROOT / "hub_deploy.py"
+# The collector the calibration pushes to the hub.
+COLLECTOR_SCRIPT = REPO_ROOT / "pybricks_code" / "sysid_digital_twin.py"
+
 # Files the studio is allowed to serve from viz/.
 STATIC_FILES = {
     "/studio.css": ("studio.css", "text/css; charset=utf-8"),
     "/studio.js": ("studio.js", "application/javascript; charset=utf-8"),
-    "/index.html": ("index.html", "text/html; charset=utf-8"),
+    "/report.js": ("report.js", "application/javascript; charset=utf-8"),
 }
 
 
@@ -122,12 +136,13 @@ def summarize_trajectory(path):
 
 
 class Job:
-    """One solve running in the background."""
+    """One solve or push running in the background."""
 
-    def __init__(self, job_id, name, output_dir):
+    def __init__(self, job_id, name, output_dir, kind="solve"):
         self.id = job_id
         self.name = name
         self.output_dir = output_dir
+        self.kind = kind
         self.status = "running"
         self.exit_code = None
         self.lines = deque(maxlen=LOG_LINES)
@@ -135,6 +150,7 @@ class Job:
         self.started = time.time()
         self.finished = None
         self.error = ""
+        self.result = {}
 
     def log(self, text):
         self.lines.append(text)
@@ -143,12 +159,15 @@ class Job:
         return {
             "id": self.id,
             "name": self.name,
+            "kind": self.kind,
             "status": self.status,
             "exit_code": self.exit_code,
             "started": self.started,
             "finished": self.finished,
+            "wall_s": (self.finished - self.started) if self.finished else None,
             "error": self.error,
             "log": list(self.lines),
+            "result": self.result,
         }
 
 
@@ -213,6 +232,24 @@ def build_command(job_dir, config_path, waypoints_path, output_path, options):
     elif timing == "per-segment":
         command.append("--per-segment-dt")
 
+    if options.get("fast_polish"):
+        command.append("--fast-polish")
+
+    if options.get("sweep"):
+        command.append("--sweep")
+
+    if options.get("self_consistent"):
+        command.append("--self-consistent")
+
+    # The iteration history is always requested: the studio's convergence
+    # plot and its candidate explainer both read it, and without it the
+    # browser shows nothing about how the solve converged.
+    command += ["--iteration-history", str(job_dir / "iterations.json")]
+
+    sysid_fit = options.get("sysid_fit")
+    if sysid_fit:
+        command += ["--sysid-fit", str(sysid_fit)]
+
     if options.get("validate"):
         command.append("--validate")
 
@@ -230,7 +267,10 @@ def start_job(server, payload):
     name = slugify(payload.get("name"))
     config = payload.get("config")
     waypoints = payload.get("waypoints")
-    options = payload.get("options") or {}
+    options = dict(payload.get("options") or {})
+    # A fitted plant is only used by the validator, so it forces validation on.
+    if options.get("sysid_fit") and not options.get("validate"):
+        options["validate"] = True
 
     if not isinstance(config, dict):
         raise ValueError("A robot configuration is required.")
@@ -267,6 +307,453 @@ def start_job(server, payload):
 
     command = build_command(job_dir, config_path, waypoints_path, output_path, options)
     job = Job(server.next_job_id(), name, job_dir)
+    job.result = {"limits": {}, "iterations": []}
+    server.add_job(job)
+
+    def run():
+        try:
+            proc = subprocess.Popen(
+                command, cwd=str(REPO_ROOT), stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
+                text=True, encoding="utf-8", errors="replace")
+            job.proc = proc
+            for line in proc.stdout:
+                job.log(line.rstrip("\n"))
+            proc.stdout.close()
+            job.exit_code = proc.wait()
+        except Exception as exc:  # noqa: BLE001 - report it in the UI
+            job.error = str(exc)
+            job.log(f"Studio error: {exc}")
+            job.exit_code = -1
+        finally:
+            job.finished = time.time()
+            # The plots need the limits and, when asked for, the way the
+            # trajectory converged. Fill them in before the status flips, so a
+            # poll that sees the job finished also sees the result.
+            samples = []
+            traj = artifact_path(job, "traj")
+            if traj and traj.is_file():
+                document = _read_json(traj) or {}
+                samples = document.get("trajectory", {}).get("samples", [])
+            try:
+                job.result["limits"] = trajectory_limits(config_path, samples)
+            except Exception:  # noqa: BLE001 - a plot is not worth a failure
+                job.result["limits"] = {}
+            try:
+                job.result["collisions"] = field_collisions(
+                    samples, config, options.get("field"))
+            except Exception:  # noqa: BLE001 - a mark is not worth a failure
+                job.result["collisions"] = []
+            history = job_dir / "iterations.json"
+            if history.is_file():
+                job.result["iterations"] = _read_json(history) or []
+            if job.status == "running":
+                job.status = "ok" if job.exit_code == 0 else "failed"
+            if job.status == "failed" and not job.error:
+                job.error = job.lines[-1] if job.lines else "The solve failed."
+
+    thread = threading.Thread(target=run, daemon=True, name=f"Solve{job.id}")
+    thread.start()
+    job.thread = thread
+    return job
+
+
+def _interval(summary, name):
+    """The 95% interval of one parameter, or None."""
+    stats = summary.get(f"{name}_between_runs") or {}
+    ci95 = stats.get("ci95")
+    if isinstance(ci95, list) and len(ci95) == 2:
+        return [float(ci95[0]), float(ci95[1])]
+    return None
+
+
+def summarize_fit(fit):
+    """The numbers of a fitted model, the way the fitter prints them."""
+    actuator = fit.get("actuator", {}) or {}
+    straight = actuator.get("straight", {}) or {}
+    turn = actuator.get("turn", {}) or {}
+    sensors = fit.get("sensors", {}) or {}
+    odometry = fit.get("odometry", {}) or {}
+    slip = fit.get("slip", {}) or {}
+
+    def value(source, key):
+        item = source.get(key)
+        return float(item) if isinstance(item, (int, float)) else None
+
+    return {
+        "calibrated": bool(straight.get("calibrated") or turn.get("calibrated")),
+        "wheel_radius_m": value(fit, "wheel_radius_m"),
+        "straight": {
+            "calibrated": bool(straight.get("calibrated")),
+            "gain": value(straight, "gain"),
+            "gain_ci95": _interval(straight, "gain"),
+            "tau_s": value(straight, "tau_s"),
+            "delay_s": value(straight, "delay_s"),
+            "n_runs": straight.get("n_runs"),
+        },
+        "turn": {
+            "calibrated": bool(turn.get("calibrated")),
+            "gain": value(turn, "gain"),
+            "gain_ci95": _interval(turn, "gain"),
+            "tau_s": value(turn, "tau_s"),
+            "delay_s": value(turn, "delay_s"),
+            "n_runs": turn.get("n_runs"),
+        },
+        "gyro_z_bias_deg_s": value(sensors, "gyro_z_bias_deg_s"),
+        "odometry": {
+            "calibrated": bool(odometry.get("calibrated")),
+            "distance_scale": value(odometry, "distance_scale"),
+            "distance_scale_ci95": _interval(odometry, "distance_scale"),
+            "heading_scale": value(odometry, "heading_scale"),
+            "heading_scale_ci95": _interval(odometry, "heading_scale"),
+        },
+        "slip": {
+            "calibrated": bool(slip.get("calibrated")),
+            "brake_ratio_median": value(slip, "brake_ratio_median"),
+            "brake_ratio_min": value(slip, "brake_ratio_min"),
+            "brake_ratio_max": value(slip, "brake_ratio_max"),
+        },
+    }
+
+
+def load_fit(path):
+    """Read a fitted model and summarise it."""
+    fit = _read_json(path)
+    if not isinstance(fit, dict):
+        raise ValueError(f"'{path}' is not a fitted model.")
+    if "actuator" not in fit:
+        raise ValueError(f"'{path}' has no actuator model. "
+                         "It does not look like a sysid_fit.json.")
+    summary = summarize_fit(fit)
+    summary["source"] = str(path)
+    return summary
+
+
+def field_payload():
+    """The fields the studio can draw on, by season.
+
+    The footprints are measured off FIRST's public field wireframe and live
+    in ``fields/``. The mat's picture is not ours to ship, so the operator
+    brings their own image; the geometry is only the coordinates on it.
+    """
+    from fields import load_all_fields
+
+    models = load_all_fields()
+    return {
+        "seasons": [
+            {"id": model.season, "label": model.label}
+            for model in models.values()
+        ],
+        "fields": {
+            model.season: model.as_dict() for model in models.values()
+        },
+    }
+
+
+def download_field_mat(season, timeout=120):
+    """Compose a season's mat picture from FIRST's own documents.
+
+    FIRST's mat artwork is copyrighted, so it is not in this tree and this
+    never puts it in one. The picture is *composed* on this machine from the
+    document FIRST publishes: the field guide's wireframe page is rendered,
+    cropped to the mat and scaled to the mat's physical size, so the picture
+    maps exactly onto the mat. This is the same idea as the reference
+    simulator's ``tools/mat-import``.
+
+    The composed picture and the document it came from are kept in
+    ``mats/``, which is not tracked.
+
+    Returns:
+        A dict with the picture's URL in this server, its size and the
+        credit line.
+    """
+    from fields import load_field
+
+    field = load_field(season)
+    if field is None:
+        raise ValueError(f"There is no field for the season {season!r}.")
+    source = field.mat_source or {}
+    url = source.get("url")
+    if not url:
+        raise ValueError(f"The field {season!r} has no mat document to read.")
+
+    MATS_DIR.mkdir(parents=True, exist_ok=True)
+    # The picture is cached under the document's name, so two fields that
+    # share a mat share the picture too.
+    mat_mm = str(source.get("mat_mm", "2004x1143"))
+    stem = hashlib.sha1(f"{url}|{mat_mm}".encode("utf-8")).hexdigest()[:12]
+    target = MATS_DIR / f"mat-{stem}.png"
+    document = MATS_DIR / f"mat-{stem}-source.pdf"
+    if not target.is_file():
+        if not document.is_file():
+            request = urllib.request.Request(
+                url, headers={"User-Agent": "overboard-studio"})
+            try:
+                with urllib.request.urlopen(request, timeout=timeout) as response:
+                    data = response.read()
+            except Exception as exc:  # noqa: BLE001 - reported to the browser
+                raise ValueError(
+                    f"Could not fetch FIRST's field guide: {exc}") from exc
+            if not data.startswith(b"%PDF"):
+                raise ValueError("What came back is not a PDF.")
+            with open(document, "wb") as handle:
+                handle.write(data)
+        try:
+            from mat_import import compose_mat
+            compose_mat(
+                str(document), str(target),
+                mat_mm=mat_mm,
+                page=int(source.get("page", 2) or 2))
+        except RuntimeError as exc:
+            raise ValueError(str(exc)) from exc
+
+    return {
+        "url": f"/mats/{target.name}",
+        "width_m": field.mat_width_m,
+        "height_m": field.mat_height_m,
+        "credit": source.get("credit", ""),
+        "source_url": url,
+    }
+
+
+def field_collisions(samples, config, season):
+    """Where the planned path runs into a mission model.
+
+    The robot is treated as a disc as wide as its axle track, centred on the
+    path. Nothing is changed and nothing is blocked: the collisions are only
+    marked, so a human can decide what to do about them.
+    """
+    if not season or not samples:
+        return []
+    from fields import load_field
+    from robot_model import RobotConfig
+
+    field = load_field(season)
+    if field is None:
+        return []
+    try:
+        track = float(RobotConfig(config or {}).track_width)
+    except (TypeError, ValueError, KeyError):
+        track = 0.0
+    radius = max(track, 0.0) / 2.0
+    return [item.as_dict() for item in field.collisions(samples, radius)]
+
+
+def list_fits():
+    """The measured models the studio knows about."""
+    models = []
+    if not CALIBRATION_DIR.is_dir():
+        return models
+    for path in sorted(CALIBRATION_DIR.glob("*.sysid_fit.json")):
+        try:
+            summary = load_fit(path)
+        except ValueError:
+            continue
+        summary["name"] = path.stem.replace(".sysid_fit", "")
+        summary["path"] = str(path)
+        models.append(summary)
+    return models
+
+
+def store_fit(name, fit):
+    """Keep a fitted model with the robot, and summarise it."""
+    if not isinstance(fit, dict) or "actuator" not in fit:
+        raise ValueError("That file has no actuator model. "
+                         "It does not look like a sysid_fit.json.")
+    CALIBRATION_DIR.mkdir(exist_ok=True)
+    path = CALIBRATION_DIR / f"{slugify(name, 'robot')}.sysid_fit.json"
+    with open(path, "w", encoding="utf-8") as handle:
+        json.dump(fit, handle, indent=2)
+        handle.write("\n")
+    summary = summarize_fit(fit)
+    summary["source"] = str(path)
+    summary["name"] = path.stem.replace(".sysid_fit", "")
+    summary["path"] = str(path)
+    return summary
+
+
+def calibration_paths(name):
+    """Where the files of one calibration live."""
+    stem = str(CALIBRATION_DIR / slugify(name, "robot"))
+    return {
+        "session": Path(stem + ".session.csv"),
+        "sheet": Path(stem + ".sheet.csv"),
+        "poses": Path(stem + ".poses.csv"),
+        "fit": Path(stem + ".sysid_fit.json"),
+    }
+
+
+def _session_runs(path):
+    """The runs in a captured session."""
+    from sysid_fit import parse_session
+    try:
+        with open(path, "r", encoding="utf-8", errors="replace") as handle:
+            text = handle.read()
+    except OSError:
+        return []
+    return parse_session(text)
+
+
+def _sheet_rows(runs):
+    """One row per measurement the session needs."""
+    from sysid_fit import session_tests
+    rows = []
+    for (name, repeat), (run_id, poses) in sorted(session_tests(runs).items()):
+        for stop in range(poses):
+            rows.append({"test": name, "repeat": repeat, "stop": stop})
+    return rows
+
+
+def collect_progress(session_path):
+    """Where the collection is: the test running, and what still needs measuring."""
+    runs = _session_runs(session_path)
+    rows = _sheet_rows(runs)
+    current = None
+    if runs:
+        last = runs[-1]
+        current = {
+            "test": last["name"],
+            "repeat": last["meta"].get("repeat"),
+            "run_id": last["meta"].get("run_id"),
+        }
+    return {
+        "current": current,
+        "tests_done": len(runs),
+        "rows": rows,
+        "needed": len(rows),
+    }
+
+
+def read_sheet_rows(sheet_path, rows):
+    """The measurement sheet with whatever the operator has filled in.
+
+    The rows are read as text, so a measurement the operator typed is shown
+    back even when one of its numbers is blank. The fitter reads the sheet
+    with its own reader, which skips a row that is not complete.
+    """
+    filled = {}
+    if sheet_path and sheet_path.is_file():
+        try:
+            with open(sheet_path, "r", encoding="utf-8", newline="") as handle:
+                for raw in csv.DictReader(handle):
+                    name = (raw.get("test") or "").strip()
+                    if not name:
+                        continue
+                    key = (name, (raw.get("repeat") or "0").strip(),
+                           (raw.get("stop") or "0").strip())
+                    filled[key] = raw
+        except OSError:
+            filled = {}
+    out = []
+    for row in rows:
+        key = (row["test"], str(row["repeat"]), str(row["stop"]))
+        value = filled.get(key, {})
+        out.append({
+            "test": row["test"],
+            "repeat": row["repeat"],
+            "stop": row["stop"],
+            "x_mm": (value.get("x_mm") or "").strip(),
+            "y_mm": (value.get("y_mm") or "").strip(),
+            "turn_right_deg": (value.get("turn_right_deg") or "").strip(),
+        })
+    return out
+
+
+def save_sheet(sheet_path, rows):
+    """Write the operator's measurements, in the fitter's sheet format."""
+    from sysid_fit import SHEET_FIELDS
+    sheet_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(sheet_path, "w", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=SHEET_FIELDS)
+        writer.writeheader()
+        for row in rows:
+            writer.writerow({key: row.get(key, "") for key in SHEET_FIELDS})
+    return sheet_path
+
+
+def fit_from_sheet(name):
+    """Fit the model from the collected session and the filled sheet."""
+    from sysid_fit import fit_session, sheet_to_poses, write_poses_csv
+
+    paths = calibration_paths(name)
+    if not paths["session"].is_file():
+        raise ValueError("There is no collected session for this robot yet.")
+    if not paths["sheet"].is_file():
+        raise ValueError("There is no measurement sheet yet.")
+
+    runs = _session_runs(paths["session"])
+    if not runs:
+        raise ValueError("The session has no test blocks in it.")
+
+    from sysid_fit import read_sheet
+    rows = read_sheet(str(paths["sheet"]))
+    pose_rows, problems = sheet_to_poses(rows, runs)
+
+    # The robot's own wheel diameter, measured by the robot: the hub prints it
+    # in the session's metadata, so no drivebase profile file is needed.
+    wheel_radius = None
+    for run in runs:
+        diameter = run["meta"].get("wheel_diameter_mm")
+        if diameter:
+            wheel_radius = float(diameter) / 2000.0
+            break
+
+    poses = {}
+    for row in pose_rows:
+        run_id = str(row.get("run_id") or "").strip()
+        if not run_id:
+            continue
+        poses.setdefault(run_id, []).append({
+            "stop": int(float(row.get("stop") or 0)),
+            "x_m": float(row.get("x_m") or 0.0),
+            "y_m": float(row.get("y_m") or 0.0),
+            "heading_deg": float(row.get("heading_deg") or 0.0),
+        })
+    for entries in poses.values():
+        entries.sort(key=lambda entry: entry["stop"])
+
+    if wheel_radius is None:
+        raise ValueError("The session does not say the wheel diameter, so the "
+                         "fit has no wheel radius to work with.")
+
+    result = fit_session(runs, poses=poses, wheel_radius_m=wheel_radius)
+    result["drivebase"] = {
+        "name": name,
+        "wheel_radius_m": wheel_radius,
+        "source": str(paths["session"]),
+    }
+    write_poses_csv(pose_rows, str(paths["poses"]))
+
+    paths["fit"].parent.mkdir(parents=True, exist_ok=True)
+    with open(paths["fit"], "w", encoding="utf-8") as handle:
+        json.dump(result, handle, indent=2)
+        handle.write("\n")
+
+    summary = summarize_fit(result)
+    summary["name"] = slugify(name, "robot")
+    summary["path"] = str(paths["fit"])
+    summary["problems"] = problems
+    return summary
+
+
+def start_collect(server, payload):
+    """Push the calibration suite to the hub and capture the session."""
+    name = slugify(payload.get("name") or "robot", "robot")
+    connection = str(payload.get("connection") or "ble")
+    if connection not in ("ble", "usb"):
+        raise ValueError("The connection must be ble or usb.")
+    hub_name = payload.get("hub_name") or None
+
+    job_dir = Path(tempfile.mkdtemp(prefix="overboard_collect_"))
+    session_path = job_dir / "session.csv"
+    command = [sys.executable, "-u", str(HUB_DEPLOY), str(COLLECTOR_SCRIPT),
+               "--conn", connection, "--out", str(session_path)]
+    if hub_name:
+        command += ["--name", str(hub_name)]
+
+    job = Job(server.next_job_id(), f"collect {name}", job_dir, kind="collect")
+    job.result = {"name": name, "connection": connection,
+                  "session_path": str(session_path), "progress": None}
     server.add_job(job)
 
     def run():
@@ -289,12 +776,157 @@ def start_job(server, payload):
             if job.status == "running":
                 job.status = "ok" if job.exit_code == 0 else "failed"
             if job.status == "failed" and not job.error:
-                job.error = job.lines[-1] if job.lines else "The solve failed."
+                job.error = job.lines[-1] if job.lines else "The collection failed."
+            if job.exit_code == 0 and session_path.is_file():
+                try:
+                    paths = calibration_paths(name)
+                    paths["session"].parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copyfile(str(session_path), str(paths["session"]))
+                    job.result["session_path"] = str(paths["session"])
+                except OSError as exc:
+                    job.log(f"Could not save the session: {exc}")
 
-    thread = threading.Thread(target=run, daemon=True, name=f"Solve{job.id}")
+    thread = threading.Thread(target=run, daemon=True, name=f"Collect{job.id}")
     thread.start()
     job.thread = thread
     return job
+
+
+def trajectory_limits(config_path, samples):
+    """The limits the studio draws the trajectory against.
+
+    The force limit is the same worst-case curve the validator uses, so a
+    plot that touches the limit means the validator would too.
+    """
+    from robot_model import RobotConfig
+    config = _read_json(config_path) or {}
+    try:
+        robot = RobotConfig(config)
+    except Exception:
+        return {}
+    speed_limit = robot.v_max_rad_s * robot.wheel_radius * robot.speed_headroom
+    force_limit = [robot.get_max_force_at_velocity_robust(s.get("vl", 0.0))
+                   for s in samples]
+    return {
+        "speed_limit_m_s": speed_limit,
+        "force_limit_n": force_limit,
+    }
+
+
+def _git(args, cwd):
+    """Run git in a directory. Returns (ok, output)."""
+    try:
+        proc = subprocess.run(["git", "-C", str(cwd)] + list(args),
+                              capture_output=True, text=True, timeout=30)
+    except (OSError, subprocess.SubprocessError) as exc:
+        return False, str(exc)
+    return proc.returncode == 0, (proc.stdout or "") + (proc.stderr or "")
+
+
+# The commits are made with a fixed identity, so the studio does not need a
+# git configuration on the machine it runs on.
+_GIT_IDENTITY = ["-c", "user.name=OVERBOARD Studio",
+                 "-c", "user.email=studio@localhost",
+                 "-c", "commit.gpgsign=false"]
+
+
+def ensure_mission_repo():
+    """Make the missions folder its own git repository, so every save is a commit.
+
+    The folder usually sits inside the project's own repository, so the check
+    is for a repository *of this folder* and not for one that merely contains
+    it: the missions have their own history, and the project does not get
+    commits the operator did not ask for.
+    """
+    MISSIONS_DIR.mkdir(exist_ok=True)
+    ok, top = _git(["rev-parse", "--show-toplevel"], MISSIONS_DIR)
+    if ok:
+        try:
+            if Path(top.strip()).resolve() == MISSIONS_DIR.resolve():
+                return True
+        except OSError:
+            pass
+    ok, _ = _git(["init", "-q"], MISSIONS_DIR)
+    if not ok:
+        return False
+    _git(["add", "-A"], MISSIONS_DIR)
+    _git(_GIT_IDENTITY + ["commit", "-q", "-m", "Missions folder"], MISSIONS_DIR)
+    return True
+
+
+def commit_mission(name, message):
+    """Commit a saved mission. Returns the commit id, or None."""
+    if not ensure_mission_repo():
+        return None
+    ok, _ = _git(["add", "--", f"{name}.json"], MISSIONS_DIR)
+    if not ok:
+        return None
+    ok, output = _git(_GIT_IDENTITY + ["commit", "-q", "-m", message], MISSIONS_DIR)
+    if not ok:
+        # Nothing changed, or git is unhappy: the file is still saved.
+        return None
+    ok, head = _git(["rev-parse", "HEAD"], MISSIONS_DIR)
+    return head.strip() if ok else None
+
+
+def mission_history(name):
+    """The commits that touched a mission, newest first."""
+    if not (MISSIONS_DIR / f"{name}.json").is_file():
+        return []
+    ok, output = _git(
+        ["log", "--format=%H%x1f%s%x1f%cI", "--", f"{name}.json"], MISSIONS_DIR)
+    if not ok:
+        return []
+    entries = []
+    for line in output.splitlines():
+        parts = line.split("\x1f")
+        if len(parts) == 3:
+            entries.append({"sha": parts[0], "message": parts[1], "when": parts[2]})
+    return entries
+
+
+def restore_mission(name, sha):
+    """Put a mission back to an earlier version. Returns the waypoints."""
+    # The path is relative to the repository's root, which is the missions
+    # folder itself.
+    ok, content = _git(["show", f"{sha}:./{name}.json"], MISSIONS_DIR)
+    if not ok:
+        raise ValueError("That version cannot be read.")
+    path = MISSIONS_DIR / f"{name}.json"
+    with open(path, "w", encoding="utf-8") as handle:
+        handle.write(content)
+    return json.loads(content)
+
+
+def read_robot_files():
+    """What the robot's own files say: its event actions and its geometry.
+
+    pybricks_code/ is firmware: it imports pybricks.* and cannot be imported
+    on the host, so the few values the studio needs are read as text.
+    """
+    events = []
+    geometry = {}
+
+    try:
+        runner = (REPO_ROOT / "pybricks_code" / "hub_runner.py").read_text(
+            encoding="utf-8", errors="replace")
+    except OSError:
+        runner = ""
+    block = re.search(r"MISSION_EVENTS\s*=\s*\{(.*?)\n\s*\}", runner, re.S)
+    if block:
+        events = re.findall(r"[\"']([^\"']+)[\"']\s*:", block.group(1))
+
+    try:
+        config = (REPO_ROOT / "pybricks_code" / "robot_config.py").read_text(
+            encoding="utf-8", errors="replace")
+    except OSError:
+        config = ""
+    for name, value in re.findall(
+            r"^\s*(WHEEL_DIAMETER_MM|AXLE_TRACK_MM)\s*=\s*([0-9.]+)",
+            config, re.M):
+        geometry[name] = float(value)
+
+    return {"events": events, "geometry": geometry}
 
 
 def artifact_path(job, kind):
@@ -304,10 +936,146 @@ def artifact_path(job, kind):
         "controller": f"{job.name}_controller.json",
         "python": f"{job.name}.py",
         "stats": f"{job.name}_stats.json",
+        "session": "session.csv",
+        "report": f"{job.name}_report.html",
     }
     if kind not in names:
         return None
     return job.output_dir / names[kind]
+
+
+def read_session_poses(path):
+    """The measured poses and event names in a captured hub session."""
+    from sysid_fit import poses_from_hub_session
+
+    try:
+        with open(path, "r", encoding="utf-8", errors="replace") as handle:
+            lines = handle.read().splitlines()
+    except OSError:
+        return [], []
+    rows, events = poses_from_hub_session(lines)
+    poses = [{"x_m": row["x_m"], "y_m": row["y_m"],
+              "heading_deg": row["heading_deg"]} for row in rows]
+    return poses, events
+
+
+def compare_with_plan(traj_path, session_path):
+    """The plan against what the robot did, as sysid_compare reports it.
+
+    The hub's pose is in the robot's own frame - the origin is where the robot
+    physically sat when it started, which is the plan's first waypoint. The
+    plan is in the field frame, so the measured pose is rotated by the plan's
+    first heading and moved by its first position before the two are compared.
+    """
+    from sysid_compare import compare
+    from sysid_fit import write_poses_csv
+
+    poses, _ = read_session_poses(session_path)
+    if not poses:
+        return None
+
+    document = _read_json(traj_path) or {}
+    samples = document.get("trajectory", {}).get("samples", [])
+    if not samples:
+        return None
+    first = samples[0]
+    x0 = float(first.get("x", 0.0))
+    y0 = float(first.get("y", 0.0))
+    heading0 = float(first.get("heading", 0.0) or 0.0)
+    cos = math.cos(heading0)
+    sin = math.sin(heading0)
+
+    rows = []
+    for index, pose in enumerate(poses):
+        xm = float(pose["x_m"])
+        ym = float(pose["y_m"])
+        rows.append({
+            "run_id": "hub",
+            "stop": index,
+            "x_m": x0 + xm * cos - ym * sin,
+            "y_m": y0 + xm * sin + ym * cos,
+            "heading_deg": float(pose["heading_deg"]) + math.degrees(heading0),
+        })
+
+    with tempfile.TemporaryDirectory() as tmp:
+        poses_csv = os.path.join(tmp, "poses.csv")
+        write_poses_csv(rows, poses_csv)
+        try:
+            return compare(str(traj_path), poses_csv)
+        except (OSError, ValueError) as exc:
+            return {"error": str(exc)}
+
+
+def start_push(server, payload):
+    """Push an already-solved trajectory to the hub."""
+    source = server.get_job(str(payload.get("job_id") or ""))
+    if source is None:
+        raise ValueError("Unknown job.")
+    traj = artifact_path(source, "traj")
+    if traj is None or not traj.is_file():
+        # The export gate did not pass, so there is nothing safe to push.
+        raise ValueError("That solve produced no trajectory to push.")
+
+    connection = str(payload.get("connection") or "ble")
+    if connection not in ("ble", "usb"):
+        raise ValueError("The connection must be ble or usb.")
+    hub_name = payload.get("hub_name") or None
+
+    job_dir = Path(tempfile.mkdtemp(prefix="overboard_push_"))
+    session_path = job_dir / "session.csv"
+    command = [sys.executable, "-u", str(HUB_DEPLOY),
+               "--trajectory", str(traj), "--conn", connection,
+               "--out", str(session_path)]
+    if hub_name:
+        command += ["--name", str(hub_name)]
+
+    job = Job(server.next_job_id(), source.name, job_dir, kind="push")
+    job.result = {"connection": connection, "hub_name": hub_name or "",
+                  "poses": [], "events": [], "report": None}
+    server.add_job(job)
+
+    def run():
+        try:
+            proc = subprocess.Popen(
+                command, cwd=str(REPO_ROOT), stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
+                text=True, encoding="utf-8", errors="replace")
+            job.proc = proc
+            for line in proc.stdout:
+                job.log(line.rstrip("\n"))
+            proc.stdout.close()
+            job.exit_code = proc.wait()
+        except Exception as exc:  # noqa: BLE001 - report it in the UI
+            job.error = str(exc)
+            job.log(f"Studio error: {exc}")
+            job.exit_code = -1
+        finally:
+            job.finished = time.time()
+            # The measured pose and the comparison are filled in before the
+            # status flips, so a poll that sees the job finished also sees the
+            # result.
+            if job.exit_code == 0 and session_path.is_file():
+                poses, events = read_session_poses(session_path)
+                job.result["poses"] = poses
+                job.result["events"] = events
+                job.result["report"] = compare_with_plan(traj, session_path)
+                # The session belongs next to the mission it came from.
+                try:
+                    MISSIONS_DIR.mkdir(exist_ok=True)
+                    target = MISSIONS_DIR / f"{source.name}.session.csv"
+                    shutil.copyfile(str(session_path), str(target))
+                    job.result["session_path"] = str(target)
+                except OSError as exc:
+                    job.log(f"Could not save the session next to the mission: {exc}")
+            if job.status == "running":
+                job.status = "ok" if job.exit_code == 0 else "failed"
+            if job.status == "failed" and not job.error:
+                job.error = job.lines[-1] if job.lines else "The push failed."
+
+    thread = threading.Thread(target=run, daemon=True, name=f"Push{job.id}")
+    thread.start()
+    job.thread = thread
+    return job
 
 
 class StudioHandler(BaseHTTPRequestHandler):
@@ -319,6 +1087,14 @@ class StudioHandler(BaseHTTPRequestHandler):
     # --- plumbing -------------------------------------------------------
     def log_message(self, fmt, *args):
         pass  # keep the console readable
+
+    def handle_one_request(self):
+        try:
+            super().handle_one_request()
+        except (ConnectionResetError, BrokenPipeError):
+            # The browser closed the connection (a reload, a cancelled fetch).
+            # That is normal, not a server error.
+            self.close_connection = True
 
     def _host_allowed(self):
         host = (self.headers.get("Host") or "").split(":")[0]
@@ -377,6 +1153,23 @@ class StudioHandler(BaseHTTPRequestHandler):
                 return self._json(200, self.server.initial)
             if path == "/api/examples":
                 return self._json(200, collect_examples())
+            if path == "/api/robot":
+                return self._json(200, read_robot_files())
+            if path == "/api/robot/models":
+                return self._json(200, {"models": list_fits()})
+            if path == "/api/missions/history":
+                return self._mission_history()
+            if path == "/api/fields":
+                return self._json(200, field_payload())
+            if path.startswith("/mats/"):
+                return self._serve_mat(path)
+            if path == "/api/calibration/sheet":
+                return self._sheet()
+            if path == "/api/jobs/current":
+                job = self.server.active_job()
+                if job is None:
+                    return self._json(200, {"job": None})
+                return self._json(200, {"job": job.snapshot()})
             if path.startswith("/api/jobs/"):
                 return self._job_route(path)
             return self._error(404, "Not found.")
@@ -391,8 +1184,29 @@ class StudioHandler(BaseHTTPRequestHandler):
         try:
             if path == "/api/solve":
                 return self._solve()
+            if path == "/api/push":
+                return self._push()
+            if path == "/api/robot/model/load":
+                return self._load_model()
+            if path == "/api/robot/model/store":
+                return self._store_model()
+            if path == "/api/calibration/collect":
+                return self._collect()
+            if path == "/api/calibration/sheet":
+                return self._save_sheet()
+            if path == "/api/calibration/fit":
+                return self._fit()
+            if path == "/api/field/mat":
+                return self._field_mat()
             if path == "/api/missions":
                 return self._save_mission()
+            if path == "/api/missions/restore":
+                return self._restore_mission()
+            if path.startswith("/api/jobs/") and path.endswith("/report"):
+                job = self.server.get_job(path.split("/")[3])
+                if job is None:
+                    return self._error(404, "Unknown job.")
+                return self._write_report(job)
             if path.startswith("/api/jobs/") and path.endswith("/cancel"):
                 job_id = path.split("/")[3]
                 return self._cancel_job(job_id)
@@ -411,6 +1225,35 @@ class StudioHandler(BaseHTTPRequestHandler):
         with open(path, "rb") as handle:
             body = handle.read()
         self._send(200, body, content_type=content_type)
+
+    def _serve_mat(self, path):
+        """A mat picture the operator fetched."""
+        name = os.path.basename(path)
+        if not name.endswith(".png"):
+            return self._error(404, "Not found.")
+        target = MATS_DIR / name
+        if not target.is_file():
+            return self._error(404, "That mat has not been fetched yet.")
+        with open(target, "rb") as handle:
+            return self._send(200, handle.read(), content_type="image/png")
+
+    def _field_mat(self):
+        """Fetch a season's mat picture and hand the browser its URL."""
+        try:
+            length = int(self.headers.get("Content-Length", 0))
+        except (TypeError, ValueError):
+            length = 0
+        try:
+            payload = json.loads(self.rfile.read(length) or b"{}")
+        except ValueError:
+            payload = {}
+        season = str(payload.get("season") or "").strip()
+        if not season:
+            return self._error(400, "A season is needed.")
+        try:
+            return self._json(200, download_field_mat(season))
+        except ValueError as exc:
+            return self._error(400, str(exc))
 
     def _health(self):
         from diagnostics import check_environment, summarize
@@ -432,6 +1275,11 @@ class StudioHandler(BaseHTTPRequestHandler):
             return self._error(404, "Unknown job.")
         if len(parts) == 3:
             payload = job.snapshot()
+            if job.kind == "collect":
+                # The session grows as the hub prints, so the checklist is
+                # recomputed on every poll.
+                payload["progress"] = collect_progress(
+                    job.result.get("session_path", ""))
             summary = None
             if job.status == "ok":
                 summary = summarize_trajectory(artifact_path(job, "traj"))
@@ -445,18 +1293,45 @@ class StudioHandler(BaseHTTPRequestHandler):
             with open(path_to_traj, "rb") as handle:
                 return self._send(200, handle.read(),
                                   content_type="application/json; charset=utf-8")
+        if len(parts) == 4 and parts[3] == "report":
+            return self._serve_report(job)
         if len(parts) == 5 and parts[3] == "artifact":
             return self._download(job, parts[4])
         return self._error(404, "Not found.")
 
     def _artifacts(self, job):
+        kinds = ("session",) if job.kind == "push" else (
+            "traj", "controller", "python", "stats", "report")
         found = []
-        for kind in ("traj", "controller", "python", "stats"):
+        for kind in kinds:
             path = artifact_path(job, kind)
             if path and path.is_file():
                 found.append({"kind": kind, "name": path.name,
                               "size": path.stat().st_size})
         return found
+
+    def _serve_report(self, job):
+        """The mission report, as a page the operator can print."""
+        path = artifact_path(job, "report")
+        if not path or not path.is_file():
+            return self._error(404, "No report was written.")
+        with open(path, "rb") as handle:
+            body = handle.read()
+        return self._send(200, body, content_type="text/html; charset=utf-8")
+
+    def _write_report(self, job):
+        """Write the report the browser built, next to the trajectory."""
+        payload = self._read_body()
+        html = payload.get("html")
+        if not isinstance(html, str) or not html.strip():
+            raise ValueError("The report is empty.")
+        path = artifact_path(job, "report")
+        if not path:
+            return self._error(404, "No report can be written for this job.")
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write(html)
+        return self._json(200, {"name": path.name, "path": str(path),
+                                "url": f"/api/jobs/{job.id}/report"})
 
     def _download(self, job, kind):
         path = artifact_path(job, kind)
@@ -478,6 +1353,98 @@ class StudioHandler(BaseHTTPRequestHandler):
         job = start_job(self.server, payload)
         return self._json(202, job.snapshot())
 
+    def _push(self):
+        if self.server.active_job() is not None:
+            return self._error(409, "Something is already running. Cancel it first.")
+        payload = self._read_body()
+        job = start_push(self.server, payload)
+        return self._json(202, job.snapshot())
+
+    def _load_model(self):
+        """Take a fitted model from somewhere and keep it with the robot."""
+        payload = self._read_body()
+        path = payload.get("path")
+        if not path:
+            return self._error(400, "Give the path of a sysid_fit.json.")
+        source = Path(path)
+        if not source.is_absolute():
+            source = REPO_ROOT / source
+        try:
+            fit = _read_json(source)
+        except OSError as exc:
+            return self._error(400, f"Could not read '{source}': {exc}")
+        if not isinstance(fit, dict) or "actuator" not in fit:
+            return self._error(400, f"'{source}' has no actuator model. "
+                                  "It does not look like a sysid_fit.json.")
+        name = payload.get("name") or source.stem.replace(".sysid_fit", "")
+        summary = store_fit(name, fit)
+        return self._json(200, summary)
+
+    def _store_model(self):
+        """Store a fitted model the browser uploaded."""
+        payload = self._read_body()
+        fit = payload.get("fit")
+        name = payload.get("name") or "robot"
+        if not isinstance(fit, dict):
+            return self._error(400, "That file has no actuator model. "
+                                  "It does not look like a sysid_fit.json.")
+        summary = store_fit(name, fit)
+        return self._json(200, summary)
+
+    def _collect(self):
+        """Push the calibration suite to the hub and capture the session."""
+        if self.server.active_job() is not None:
+            return self._error(409, "Something is already running. Cancel it first.")
+        payload = self._read_body()
+        job = start_collect(self.server, payload)
+        return self._json(202, job.snapshot())
+
+    def _sheet(self):
+        """The measurement rows the session needs, and what is filled in."""
+        query = urlparse(self.path).query
+        params = parse_qs(query)
+        name = (params.get("name") or ["robot"])[0]
+        paths = calibration_paths(name)
+        session = paths["session"]
+        if not session.is_file():
+            return self._error(404, "There is no collected session for this robot yet.")
+        rows = _sheet_rows(_session_runs(session))
+        filled = read_sheet_rows(paths["sheet"], rows)
+        missing = sum(1 for row in filled
+                      if row["x_mm"] == "" and row["y_mm"] == ""
+                      and row["turn_right_deg"] == "")
+        return self._json(200, {"rows": filled, "missing": missing,
+                                "total": len(filled), "name": name})
+
+    def _fit(self):
+        """Fit the model from the session and the filled sheet."""
+        payload = self._read_body()
+        name = payload.get("name") or "robot"
+        try:
+            summary = fit_from_sheet(name)
+        except ValueError as exc:
+            return self._error(400, str(exc))
+        return self._json(200, summary)
+
+    def _save_sheet(self):
+        """Save the operator's measurements."""
+        payload = self._read_body()
+        name = payload.get("name") or "robot"
+        rows = payload.get("rows")
+        if not isinstance(rows, list):
+            return self._error(400, "The sheet has no rows.")
+        paths = calibration_paths(name)
+        try:
+            save_sheet(paths["sheet"], rows)
+        except OSError as exc:
+            return self._error(500, f"Could not save the sheet: {exc}")
+        filled = read_sheet_rows(paths["sheet"], rows)
+        missing = sum(1 for row in filled
+                      if row["x_mm"] == "" and row["y_mm"] == ""
+                      and row["turn_right_deg"] == "")
+        return self._json(200, {"rows": filled, "missing": missing,
+                                "total": len(filled), "name": name})
+
     def _cancel_job(self, job_id):
         job = self.server.get_job(job_id)
         if job is None:
@@ -497,10 +1464,32 @@ class StudioHandler(BaseHTTPRequestHandler):
             raise ValueError("A mission needs at least two waypoints.")
         name = slugify(payload.get("name"))
         MISSIONS_DIR.mkdir(exist_ok=True)
+        # The repository is made before the file is written, so its first
+        # commit is the folder itself and the mission gets a commit of its own.
+        ensure_mission_repo()
         path = MISSIONS_DIR / f"{name}.json"
         with open(path, "w", encoding="utf-8") as handle:
             json.dump(waypoints, handle, indent=1)
-        return self._json(200, {"name": name, "path": str(path)})
+        # Every save is a commit, so the mission has a history.
+        commit = commit_mission(name, payload.get("message") or f"Mission {name}")
+        return self._json(200, {"name": name, "path": str(path), "commit": commit,
+                                "history": mission_history(name)})
+
+    def _mission_history(self):
+        query = urlparse(self.path).query
+        params = parse_qs(query)
+        name = slugify((params.get("name") or ["robot"])[0])
+        return self._json(200, {"name": name, "history": mission_history(name)})
+
+    def _restore_mission(self):
+        payload = self._read_body()
+        name = slugify(payload.get("name"))
+        sha = payload.get("sha")
+        if not sha:
+            raise ValueError("Give the commit to restore.")
+        waypoints = restore_mission(name, sha)
+        return self._json(200, {"name": name, "waypoints": waypoints,
+                                "history": mission_history(name)})
 
 
 def create_server(port, presets, initial):
@@ -518,9 +1507,13 @@ def create_server(port, presets, initial):
     )
 
 
-def build_initial(config_path=None, waypoints_path=None):
+def build_initial(config_path=None, waypoints_path=None, auto_solve=False, options=None):
     """The mission and robot the studio opens with."""
-    initial = {"config": None, "waypoints": None, "config_name": None}
+    initial = {"config": None, "waypoints": None, "config_name": None,
+               "auto_solve": bool(auto_solve), "options": dict(options or {})}
+    # A fitted plant is only used by the validator, so it turns validation on.
+    if initial["options"].get("sysid_fit") and not initial["options"].get("validate"):
+        initial["options"]["validate"] = True
 
     config_file = Path(config_path) if config_path else EXAMPLES_DIR / "fll_choreo.json"
     if not config_file.is_absolute():
@@ -540,9 +1533,11 @@ def build_initial(config_path=None, waypoints_path=None):
     return initial
 
 
-def run_studio(config_path=None, waypoints_path=None, port=8000, presets=None):
+def run_studio(config_path=None, waypoints_path=None, port=8000, presets=None,
+               auto_solve=False, options=None):
     """Run the studio until the user stops it."""
-    initial = build_initial(config_path=config_path, waypoints_path=waypoints_path)
+    initial = build_initial(config_path=config_path, waypoints_path=waypoints_path,
+                            auto_solve=auto_solve, options=options)
     try:
         server = create_server(port, presets, initial)
     except RuntimeError as exc:

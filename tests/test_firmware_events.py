@@ -14,6 +14,7 @@ so an event attached to the last waypoint was exported but never fired.
 import asyncio
 import math
 import os
+import re
 import struct
 import sys
 import types
@@ -49,6 +50,82 @@ ramsete.gc = _GcStub()
 ramsete_compact_events.gc = _GcStub()
 
 from export import encode_compact_trajectory  # noqa: E402
+
+
+class TestFirmwareParity(unittest.TestCase):
+    """The validator must model the controller that actually runs (KI-028).
+
+    The wheel-force hold error is proportional to how long the drive command
+    is held, so a validator that models a different control period from the
+    firmware reports a different tracking error - and the gate is decided on
+    that number. The controllers that are in use are the two compact ones and
+    the list-of-dict reference; they must all hold the command for the same
+    time, and the validator must hold it for that time too.
+    """
+
+    def _declared_period_ms(self, module_name):
+        """The control period a firmware module declares, in milliseconds.
+
+        A module either names it as a constant or sleeps for it directly.
+        """
+        path = os.path.join(_FIRMWARE_DIR, module_name)
+        with open(path, encoding="utf-8") as handle:
+            text = handle.read()
+        match = re.search(r"_LOOP_MS\s*=\s*const\((\d+)\)", text)
+        if match:
+            return int(match.group(1))
+        match = re.search(r"CONTROL_MS\s*=\s*(\d+)", text)
+        if match:
+            return int(match.group(1))
+        waits = [int(w) for w in re.findall(r"await wait\((\d+)\)", text)]
+        self.assertTrue(waits, f"{module_name} declares no control period")
+        return max(waits)
+
+    def test_the_controllers_in_use_hold_the_command_for_the_same_time(self):
+        periods = {}
+        for module in ("ramsete_compact.py", "ramsete_compact_events.py",
+                       "ramsete.py"):
+            periods[module] = self._declared_period_ms(module)
+        self.assertEqual(len(set(periods.values())), 1,
+                         f"the controllers disagree on the hold: {periods}")
+
+    def test_the_validator_holds_the_command_for_the_firmware_period(self):
+        from immrax_validator import CONTROL_DT
+        period_ms = self._declared_period_ms("ramsete_compact_events.py")
+        self.assertAlmostEqual(CONTROL_DT, period_ms / 1000.0, places=9,
+                               msg="the validator's control period does not "
+                                   "match the firmware's")
+
+    def test_the_two_compact_controllers_share_the_same_parts(self):
+        """They must not be able to drift apart.
+
+        Both use the odometry, the controller and the limiter from
+        ramsete.py, so a change to the shared behaviour reaches both.
+        """
+        for module in ("ramsete_compact.py", "ramsete_compact_events.py"):
+            path = os.path.join(_FIRMWARE_DIR, module)
+            with open(path, encoding="utf-8") as handle:
+                text = handle.read()
+            for part in ("Odometry", "RamseteController", "KinematicLimiter"):
+                self.assertIn(part, text,
+                              f"{module} does not use the shared {part}")
+
+    def test_the_validator_does_not_round_the_command(self):
+        """The controllers that are in use pass floats to drive().
+
+        The legacy ramsete_fast.py rounds, and so did the validator; a
+        rounded command is a different command, so the model has to agree
+        with the firmware that runs.
+        """
+        from immrax_validator import RamseteController
+        import jax.numpy as jnp
+        controller = RamseteController(2.0, 0.7, track_width=0.0965)
+        pose = jnp.array([0.0, 0.0, 0.0])
+        ref = jnp.array([0.0, 0.0, 0.0, 0.1234, 0.0, 0.0])
+        w = jnp.array([1.0, 1.0, 0.0, 0.0965, 0.028, 0.001, 1.0])
+        rounded = controller(0.0, pose, ref, w, normalize=True, quantize=True)
+        raw = controller(0.0, pose, ref, w, normalize=True, quantize=False)
+        self.assertNotAlmostEqual(float(rounded[0]), float(raw[0]), places=6)
 
 
 class _FakeDriveBase:

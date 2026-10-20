@@ -13,7 +13,6 @@ import numpy as np
 import casadi as ca
 from robot_model import RobotConfig, DifferentialDriveModel
 from path_planning import ReedsSheppPath, linear_interpolation_waypoints
-from live_visualizer import get_visualizer
 import sys
 import time
 
@@ -273,7 +272,7 @@ class MasterTrajectoryOptimizer:
         self.refine_probe = None
 
     def solve(self, waypoints: List[Tuple[float, float, Optional[float]]], num_samples_per_segment: int = 10, accuracy_weight: float = 0.0,
-              stop_waypoint_indices: Optional[List[int]] = None, waypoint_events: Optional[Dict[int, str]] = None, apply_headroom: bool = True, verbose: bool = True, capture_iterations: bool = False, live_viz: bool = False, fast_polish: bool = False) -> List[Dict[str, Any]]:
+              stop_waypoint_indices: Optional[List[int]] = None, waypoint_events: Optional[Dict[int, str]] = None, apply_headroom: bool = True, verbose: bool = True, capture_iterations: bool = False, fast_polish: bool = False) -> List[Dict[str, Any]]:
         self.stats = OptimizationStats()
         total_start_time = time.time()
         
@@ -359,7 +358,7 @@ class MasterTrajectoryOptimizer:
         phase5_start = time.time()
         if verbose: print("Phase 5: Final global polish (CasADi/IPOPT)...")
         # Warm start CasADi using the fully JAX-refined trajectory!
-        final_traj, polish_stats = self._global_solve(waypoints, num_samples_per_segment, None, accuracy_weight, stop_waypoint_indices, waypoint_events, apply_headroom, fast_mode=False, initial_samples=global_traj, capture_iterations=capture_iterations, live_viz=live_viz, fast_polish=fast_polish)
+        final_traj, polish_stats = self._global_solve(waypoints, num_samples_per_segment, None, accuracy_weight, stop_waypoint_indices, waypoint_events, apply_headroom, fast_mode=False, initial_samples=global_traj, capture_iterations=capture_iterations, fast_polish=fast_polish)
         self.stats.phase_times["polish"] = time.time() - phase5_start
         self.stats.converged = bool(polish_stats.get("converged", False))
         self.stats.refine_probe = self.refine_probe
@@ -452,10 +451,10 @@ class MasterTrajectoryOptimizer:
             
         return trajectory
     
-    def _global_solve(self, waypoints, num_samples, guess, accuracy, stops, events, headroom, fast_mode, initial_samples=None, capture_iterations=False, live_viz=False, fast_polish=False, probe_refined=True):
+    def _global_solve(self, waypoints, num_samples, guess, accuracy, stops, events, headroom, fast_mode, initial_samples=None, capture_iterations=False, fast_polish=False, probe_refined=True):
         from optimizer import TrajectoryOptimizer
         optimizer = TrajectoryOptimizer(self.config)
-        samples, inner_stats = optimizer.solve(waypoints, num_samples, accuracy, stops, events, headroom, self.verbose, capture_iterations=capture_iterations, live_viz=live_viz, fast_polish=fast_polish)
+        samples, inner_stats = optimizer.solve(waypoints, num_samples, accuracy, stops, events, headroom, self.verbose, capture_iterations=capture_iterations, fast_polish=fast_polish)
 
         # KI-004: the refined trajectory is a second starting point for the
         # polish, not a dead value. Probe it with a bounded cold pass and keep

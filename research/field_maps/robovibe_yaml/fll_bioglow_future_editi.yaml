@@ -1,0 +1,20 @@
+challenge:
+  season: FLL BIOGLOW Future Edition
+  comment: preview only, check back in August 2026
+  match_duration_seconds: 150
+  year: 2026-2027
+map:
+  unit_of_measurement: mm
+  width: 1207
+  height: 1143
+  imageurl: map.png
+  imagesepia: true
+  startareas:
+    - id: Start Area
+      length: 260
+      quadrant: 1
+      radius: 200
+      type: rectangle
+      width: 390
+      x: 30
+      y: 10

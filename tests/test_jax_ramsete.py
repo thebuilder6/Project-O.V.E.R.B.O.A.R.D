@@ -96,8 +96,16 @@ class TestJAXRamsete(unittest.TestCase):
         exact = jnp.where(grid == 0.0, 1.0, jnp.sin(grid) / grid)
         self.assertLess(float(jnp.max(jnp.abs(_sinc_poly(grid) - exact))), 1e-5)
 
-    def test_reference_interpolation_matches_ramsete_fast(self):
-        """Linear pose/velocity interpolation, with the turn rate derived."""
+    def test_reference_interpolation_matches_the_firmware(self):
+        """Linear pose/velocity interpolation, with the turn rate derived.
+
+        The model mirrors the controllers that are in use: the reference is
+        interpolated linearly and the Ramsete gain is recomputed from the
+        interpolated speed and turn rate, as ``ramsete.py``'s controller
+        does. The legacy ``ramsete_fast.py`` interpolates a per-sample gain
+        instead; the difference is worth nothing on the tracking error
+        (docs/research/RQ-A_tracking_error.md, finding F7).
+        """
         from immrax_validator import _interpolated_reference
 
         b = 2.0
@@ -108,8 +116,6 @@ class TestJAXRamsete(unittest.TestCase):
               "vl": 0.4, "vr": 0.6, "omega": 2.07}
         v0 = (s0["vl"] + s0["vr"]) / 2.0
         v1 = (s1["vl"] + s1["vr"]) / 2.0
-        kr0 = math.sqrt(s0["omega"]**2 + b * v0**2)
-        kr1 = math.sqrt(s1["omega"]**2 + b * v1**2)
         # The turn rate is the derivative of the interpolated heading, not an
         # independent line: the heading and the turn rate have to describe
         # the same motion (KI-027).
@@ -124,7 +130,9 @@ class TestJAXRamsete(unittest.TestCase):
             self.assertAlmostEqual(ref[2], s0["heading"] + dh * frac)
             self.assertAlmostEqual(ref[3], v0 + (v1 - v0) * frac)
             self.assertAlmostEqual(ref[4], ref_omega)
-            self.assertAlmostEqual(ref[5], kr0 + (kr1 - kr0) * frac)
+            # The gain comes from the interpolated values, like the firmware.
+            self.assertAlmostEqual(
+                ref[5], math.sqrt(ref[4] ** 2 + b * ref[3] ** 2))
 
     def test_turn_rate_is_the_heading_derivative_across_the_wrap(self):
         """The heading difference is the short way, like the firmware's."""

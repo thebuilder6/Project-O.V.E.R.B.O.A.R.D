@@ -200,6 +200,37 @@ class StallTorqueFit:
                 f"stall torque range {self.t_max_range} has lower > upper")
 
 
+@dataclass(frozen=True)
+class DrivetrainFit:
+    """The motor's free-running speed, measured with the wheels lifted.
+
+    The torque-speed line the force model uses is fixed by its two ends:
+    the stall torque and the speed at which the torque reaches zero. The
+    stall torque is measured by pushing the robot into a wall
+    (``StallTorqueFit``); this is the other end, measured with the robot off
+    the ground so the motor pushes nothing.
+
+    The number is the wheel's free-running speed in rad/s. The config's
+    ``v_max_rad_s`` is the same quantity at the motor, so the gearing
+    multiplies it on the way into the config.
+    """
+
+    calibrated: bool = False
+    no_load_speed_rad_s: Optional[float] = None
+    no_load_speed_range: Tuple[float, float] = (0.0, 0.0)
+    n_sources: int = 0
+
+    def __post_init__(self):
+        if self.no_load_speed_rad_s is not None and self.no_load_speed_rad_s <= 0.0:
+            raise ValueError(
+                "no-load speed must be positive, got "
+                f"{self.no_load_speed_rad_s}")
+        if self.no_load_speed_range[0] > self.no_load_speed_range[1]:
+            raise ValueError(
+                f"no-load speed range {self.no_load_speed_range} has "
+                "lower > upper")
+
+
 def _actuator_from_dict(payload: Dict[str, Any]) -> ActuatorFit:
     payload = payload if isinstance(payload, dict) else {}
     calibrated = bool(payload.get("calibrated", False))
@@ -292,6 +323,30 @@ def _stall_torque_from_dict(payload: Dict[str, Any]) -> StallTorqueFit:
     )
 
 
+def _drivetrain_from_dict(payload: Dict[str, Any]) -> DrivetrainFit:
+    payload = payload if isinstance(payload, dict) else {}
+    speed = _optional_float(
+        payload.get("no_load_speed_rad_s"), "drivetrain.no_load_speed_rad_s")
+    ci = payload.get("no_load_speed_rad_s_ci95")
+    if isinstance(ci, (list, tuple)) and len(ci) == 2:
+        low = _optional_float(ci[0], "drivetrain.no_load_speed_rad_s_ci95")
+        high = _optional_float(ci[1], "drivetrain.no_load_speed_rad_s_ci95")
+    else:
+        low = high = None
+    if low is not None and high is not None:
+        speed_range = (low, high)
+    elif speed is not None:
+        speed_range = (speed, speed)
+    else:
+        speed_range = (0.0, 0.0)
+    return DrivetrainFit(
+        calibrated=bool(payload.get("calibrated", False)),
+        no_load_speed_rad_s=speed,
+        no_load_speed_range=speed_range,
+        n_sources=int(payload.get("n_sources", 0) or 0),
+    )
+
+
 def _odometry_from_dict(payload: Dict[str, Any]) -> OdometryFit:
     payload = payload if isinstance(payload, dict) else {}
     return OdometryFit(
@@ -367,6 +422,7 @@ class DigitalTwinConfig:
     slip: SlipFit = field(default_factory=SlipFit)
     drift: DriftFit = field(default_factory=DriftFit)
     stall_torque: StallTorqueFit = field(default_factory=StallTorqueFit)
+    drivetrain: DrivetrainFit = field(default_factory=DrivetrainFit)
     backlash: Dict[str, Any] = field(default_factory=dict)
     validation: Dict[str, Any] = field(default_factory=dict)
     drivebase: Dict[str, Any] = field(default_factory=dict)
@@ -392,6 +448,7 @@ class DigitalTwinConfig:
         sensors = _sensors_from_dict(data.get("sensors", {}))
         drift = _drift_from_dict(data.get("drift", {}))
         stall_torque = _stall_torque_from_dict(data.get("stall_torque", {}))
+        drivetrain = _drivetrain_from_dict(data.get("drivetrain", {}))
         drivebase = _drivebase_from_dict(data.get("drivebase"), data)
 
         calibrated = any((
@@ -417,6 +474,7 @@ class DigitalTwinConfig:
             slip=slip,
             drift=drift,
             stall_torque=stall_torque,
+            drivetrain=drivetrain,
             backlash=dict(backlash) if isinstance(backlash, dict) else {},
             validation=dict(validation) if isinstance(validation, dict) else {},
             drivebase=drivebase,
@@ -497,6 +555,40 @@ class DigitalTwinConfig:
             return None
         return tuple(self.stall_torque.t_max_range)
 
+    def no_load_speed_rad_s(self) -> Optional[float]:
+        """The measured free-running speed at the wheel, or None.
+
+        The motor's free-running speed is the speed at which it makes no
+        torque, so it is the other end of the torque-speed line the force
+        model uses. It is reported at the wheel; the config's ``v_max_rad_s``
+        is the same quantity at the motor, so the gearing multiplies it.
+        """
+        if not self.drivetrain.calibrated:
+            return None
+        if self.drivetrain.no_load_speed_rad_s is None:
+            return None
+        return float(self.drivetrain.no_load_speed_rad_s)
+
+    def measured_motor(self, gearing: float = 1.0) -> Dict[str, Any]:
+        """The measured motor numbers, ready for ``RobotConfig``.
+
+        A measurement always wins over a declared number, but only for the
+        quantities that were actually measured. The keys that are absent are
+        the ones the calibration did not cover, and the config keeps its
+        declared value for those.
+        """
+        result: Dict[str, Any] = {}
+        stall = self.stall_torque_nm()
+        if stall is not None:
+            result["t_max_nm"] = stall
+            stall_range = self.stall_torque_range_nm()
+            if stall_range is not None:
+                result["t_max_range"] = stall_range
+        speed = self.no_load_speed_rad_s()
+        if speed is not None:
+            result["no_load_speed_rad_s"] = speed * float(gearing)
+        return result
+
     def gyro_z_bias_rad_s(self) -> float:
         """Stationary gyro z bias as a yaw-rate offset, in rad/s.
 
@@ -563,6 +655,12 @@ class DigitalTwinConfig:
                 "gyro_z_bias_deg_s": self.sensors.gyro_z_bias_deg_s,
             },
             "drivebase": dict(self.drivebase),
+            "drivetrain": {
+                "calibrated": self.drivetrain.calibrated,
+                "no_load_speed_rad_s": self.drivetrain.no_load_speed_rad_s,
+                "no_load_speed_range": list(self.drivetrain.no_load_speed_range),
+                "n_sources": self.drivetrain.n_sources,
+            },
             "applied": {
                 "actuator_gain_range": list(self.actuator_gain_range()),
                 "actuator_tau_s": self.actuator_tau_s(),
@@ -572,6 +670,7 @@ class DigitalTwinConfig:
                 "integrated_odometry": self.odometry.calibrated,
                 "gyro_z_bias_rad_s": self.gyro_z_bias_rad_s(),
                 "slip_model": self.slip.calibrated,
+                "measured_motor": bool(self.measured_motor()),
             },
             "source": list(self.source),
         }

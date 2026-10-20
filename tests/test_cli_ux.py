@@ -270,7 +270,7 @@ class TestValidationReport(unittest.TestCase):
     class _WideImmrax:
         """An envelope that is over the local threshold."""
 
-        def __init__(self, config, digital_twin=None):
+        def __init__(self, config, digital_twin=None, **kwargs):
             pass
 
         def validate_trajectory(self, samples, *ranges, **kwargs):
@@ -329,69 +329,59 @@ class TestValidationReport(unittest.TestCase):
         self.assertIsNotNone(payload["candidates"][0]["duration_s"])
 
 
-class TestLiveVisualizerPorts(unittest.TestCase):
-    """KI-005: the live view must never take a port from another program."""
+class TestIterationHistory(unittest.TestCase):
+    """--iteration-history writes how the trajectory converged."""
 
-    def test_busy_port_raises_instead_of_killing(self):
-        from live_visualizer import LiveVisualizer
-        holder = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        holder.bind(("127.0.0.1", 0))
-        holder.listen(1)
-        port = holder.getsockname()[1]
-        try:
-            viz = LiveVisualizer(port=port)
-            with self.assertRaises(RuntimeError) as ctx:
-                viz.start()
-            self.assertIn("already in use", str(ctx.exception))
-        finally:
-            holder.close()
+    def test_the_history_has_the_first_guess_and_the_solution(self):
+        import main
+        runner = CliRunner()
+        with tempfile.TemporaryDirectory() as tmp:
+            out = os.path.join(tmp, "out.traj")
+            history = os.path.join(tmp, "iterations.json")
+            result = runner.invoke(main.main, [
+                "-w", "examples/example_straight.json", "-o", out,
+                "--iteration-history", history, "-q"])
+            self.assertEqual(result.exit_code, 0, result.output)
+            self.assertTrue(os.path.exists(history))
+            with open(history, "r", encoding="utf-8") as handle:
+                entries = json.load(handle)
+        self.assertEqual(len(entries), 2)
+        self.assertEqual(entries[0]["phase"], "initial_guess")
+        self.assertEqual(entries[1]["phase"], "final_solution")
+        self.assertIn("cost", entries[0])
+        self.assertTrue(entries[0]["trajectory"])
 
-    def test_free_port_starts(self):
-        from live_visualizer import LiveVisualizer
-        probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        probe.bind(("127.0.0.1", 0))
-        port = probe.getsockname()[1]
-        probe.close()
-        viz = LiveVisualizer(port=port)
-        try:
-            viz.start()
-            self.assertIsNotNone(viz.thread)
-        finally:
-            viz.stop()
 
-    def test_a_late_client_receives_the_config_and_trajectory(self):
-        """KI-016: a client that connects after the solve still gets the field."""
-        import asyncio
+class TestStudioEntryPoints(unittest.TestCase):
+    """--gui and --live both open the studio; --live solves the mission."""
 
-        import websockets
+    def setUp(self):
+        import main
+        self.main = main
+        self.runner = CliRunner()
 
-        from live_visualizer import LiveVisualizer
+    def test_live_and_gui_cannot_be_combined(self):
+        result = self.runner.invoke(self.main.main, [
+            "--gui", "--live", "-w", "examples/example_straight.json"])
+        self.assertEqual(result.exit_code, 1)
+        self.assertIn("both open the studio", result.output)
 
-        probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        probe.bind(("127.0.0.1", 0))
-        port = probe.getsockname()[1]
-        probe.close()
+    def test_live_needs_a_mission(self):
+        result = self.runner.invoke(self.main.main, ["--live"])
+        self.assertEqual(result.exit_code, 2)
+        self.assertIn("--waypoints", result.output)
 
-        viz = LiveVisualizer(port=port)
-        viz.start()
-        try:
-            # The solve finished before any browser was open.
-            viz.send_config({"robot": {"mass": 0.7}}, [{"x": 0.0, "y": 0.0}])
-            viz.send_trajectory([{"t": 0.0, "x": 0.0, "y": 0.0}], phase="final")
-
-            async def read():
-                async with websockets.connect(f"ws://127.0.0.1:{port}") as ws:
-                    first = json.loads(await asyncio.wait_for(ws.recv(), timeout=5))
-                    second = json.loads(await asyncio.wait_for(ws.recv(), timeout=5))
-                    return first, second
-
-            first, second = asyncio.run(read())
-            self.assertEqual(first["type"], "config")
-            self.assertEqual(len(first["waypoints"]), 1)
-            self.assertEqual(second["type"], "trajectory")
-            self.assertEqual(second["phase"], "final")
-        finally:
-            viz.stop()
+    def test_studio_options_carry_the_cli_settings(self):
+        options = self.main._studio_options(
+            samples=14, accuracy_weight=0.005, candidates=3, dt_mode="per-segment",
+            validate=True, export_format="controller", controller_dt=0.02,
+            fast_polish=True, sysid_fit="fit.json")
+        self.assertEqual(options["samples"], 14)
+        self.assertEqual(options["timing"], "per-segment")
+        self.assertTrue(options["validate"])
+        self.assertEqual(options["export_format"], "controller")
+        self.assertTrue(options["fast_polish"])
+        self.assertEqual(options["sysid_fit"], "fit.json")
 
 
 if __name__ == "__main__":

@@ -357,3 +357,60 @@ class TestDifferentialDriveModel(unittest.TestCase):
         self.assertLess(nl, base_normal)
         self.assertGreater(nr, base_normal)
         self.assertLess(nl + nr, 2.0 * base_normal + 1e-9)
+
+
+class TestMeasuredMotor(unittest.TestCase):
+    """A measured motor replaces the declared one in the config (KI-010)."""
+
+    def _config(self, **extra):
+        robot = {"mass": 0.723, "inertia": 0.001, "track_width": 0.0965,
+                 "wheel_radius": 0.028, "v_max_rad_s": 18.94,
+                 "t_max_nm": 0.138, "gearing": 1.0, "cof": 1.37}
+        robot.update(extra)
+        return RobotConfig({"robot": robot})
+
+    def test_the_declared_motor_is_untouched_until_it_is_measured(self):
+        config = self._config()
+        self.assertAlmostEqual(config.t_max_nm, 0.138)
+        self.assertAlmostEqual(config.v_max_rad_s, 18.94)
+
+    def test_a_measured_motor_replaces_the_declared_numbers(self):
+        config = self._config()
+        changes = config.apply_measured_motor(
+            t_max_nm=0.120, no_load_speed_rad_s=22.5)
+        self.assertAlmostEqual(config.t_max_nm, 0.120)
+        self.assertAlmostEqual(config.v_max_rad_s, 22.5)
+        self.assertAlmostEqual(changes["t_max_nm"]["measured"], 0.120)
+        self.assertAlmostEqual(changes["t_max_nm"]["declared"], 0.138)
+
+    def test_the_derived_torque_range_follows_the_measured_number(self):
+        config = self._config()
+        declared = config.uncertainties["t_max_range"]
+        self.assertAlmostEqual(declared[1], 0.138 * 0.95)
+        config.apply_measured_motor(t_max_nm=0.120)
+        measured = config.uncertainties["t_max_range"]
+        self.assertAlmostEqual(measured[1], 0.120 * 0.95)
+
+    def test_a_declared_range_is_kept(self):
+        config = self._config(uncertainties={"t_max_range": [0.10, 0.13]})
+        config.apply_measured_motor(t_max_nm=0.120)
+        self.assertEqual(config.uncertainties["t_max_range"], (0.10, 0.13))
+
+    def test_a_measured_range_wins_over_the_derived_one(self):
+        config = self._config()
+        config.apply_measured_motor(t_max_nm=0.120,
+                                    t_max_range=(0.115, 0.125))
+        self.assertEqual(config.uncertainties["t_max_range"], (0.115, 0.125))
+
+    def test_the_force_limit_moves_with_the_measured_motor(self):
+        config = self._config()
+        before = config.get_max_force_at_velocity(0.1, apply_headroom=False)
+        config.apply_measured_motor(t_max_nm=0.138, no_load_speed_rad_s=22.5)
+        after = config.get_max_force_at_velocity(0.1, apply_headroom=False)
+        self.assertGreater(after, before)
+
+    def test_nothing_is_applied_when_nothing_was_measured(self):
+        config = self._config()
+        changes = config.apply_measured_motor()
+        self.assertEqual(changes, {})
+        self.assertAlmostEqual(config.t_max_nm, 0.138)

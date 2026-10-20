@@ -38,6 +38,22 @@ _PI = const(3141593) / 1000000.0
 _TWO_PI = const(6283185) / 1000000.0
 _I1000 = const(1) / 1000.0
 
+# The control period, in milliseconds.
+#
+# It is the same as the plain twin's (ramsete_compact.py) and the same as
+# ramsete.py's: the drive command is held until the next iteration, and the
+# hold is what the wheel-force error is proportional to. The validator models
+# it (immrax_validator.py, CONTROL_DT), so the two firmwares and the model
+# have to agree on it.
+#
+# 20 ms is the hub's budget: the loop does the odometry update, the
+# controller and the limiter every iteration, and a 50 Hz heartbeat leaves
+# the hub room to run everything else. It is also a *deterministic* period,
+# so the model can mirror it exactly; a free-running loop would make the
+# model's hold a lower bound on the robot's.
+_LOOP_MS = const(20)
+_GC_EVERY = const(50)      # collect about once per second, not every tick
+
 
 def _check_blob(samples):
     """Validate the packed header and return the sample count."""
@@ -91,6 +107,7 @@ async def follow_trajectory(
     n_events = len(events) if events else 0
 
     watch = StopWatch()
+    now_time = watch.time
     unpack_from = ustruct.unpack_from
 
     s_idx = 0
@@ -98,6 +115,7 @@ async def follow_trajectory(
     last_t = 0.0
     current_v = 0.0
     current_w = 0.0
+    next_loop = now_time()
 
     loop_count = 0
     total_calc = 0.0
@@ -106,11 +124,11 @@ async def follow_trajectory(
 
     gc.collect()
     gc.threshold(4096)
-    print("Mission Start: compact event loop...")
+    print("Mission Start: compact event loop, %dms period..." % _LOOP_MS)
 
     try:
         while True:
-            t = watch.time() * _I1000
+            t = now_time() * _I1000
             if t >= total_time:
                 break
 
@@ -181,7 +199,7 @@ async def follow_trajectory(
 
             drivebase.drive(v_cmd * 1000.0, math.degrees(-w_cmd))
 
-            dur = watch.time() - calc_start
+            dur = now_time() - calc_start
             total_calc += dur
             if dur > max_calc:
                 max_calc = dur
@@ -193,7 +211,19 @@ async def follow_trajectory(
                     % (t, odom.x, odom.y, xr, yr)
                 )
 
-            await wait(5)
+            # The 20 ms heartbeat, synced so the period is exact: the model
+            # mirrors it, so the hold it assumes has to be the hold the robot
+            # really gets.
+            next_loop += _LOOP_MS
+            if loop_count % _GC_EVERY == 0 and next_loop - now_time() > 3:
+                gc.collect()
+
+            slack = next_loop - now_time()
+            if slack > 0:
+                await wait(slack)
+            else:
+                next_loop = now_time()
+                await wait(1)
 
     finally:
         drivebase.stop()

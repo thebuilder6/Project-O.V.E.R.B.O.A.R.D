@@ -2,7 +2,6 @@ from typing import List, Dict, Tuple, Any, Optional
 import numpy as np
 import casadi as ca
 from robot_model import RobotConfig, DifferentialDriveModel
-from live_visualizer import get_visualizer
 
 # Distinct deterministic initial guesses for candidate generation. They are
 # only guesses: IPOPT still enforces every waypoint, stop, and force limit.
@@ -20,14 +19,13 @@ _GAUSS_LEGENDRE_4 = (
 )
 
 
-
 class TrajectoryOptimizer:
     def __init__(self, config: RobotConfig) -> None:
         self.config = config
         self.model = DifferentialDriveModel(config)
         self.iteration_history: List[Dict[str, Any]] = []  # Store convergence data
 
-    def solve(self, waypoints: List[Tuple[float, float, Optional[float]]], num_samples_per_segment: int = 10, accuracy_weight: float = 0.0, stop_waypoint_indices: Optional[List[int]] = None, waypoint_events: Optional[Dict[int, str]] = None, apply_headroom: bool = True, verbose: bool = True, capture_iterations: bool = False, live_viz: bool = False, guess_style: str = "baseline", per_segment_dt: bool = False, initial_guess: Optional[np.ndarray] = None, fast_polish: bool = False, polish_iter_budget: int = 200, solver_options: Optional[Dict[str, Any]] = None, self_consistent: bool = False) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
+    def solve(self, waypoints: List[Tuple[float, float, Optional[float]]], num_samples_per_segment: int = 10, accuracy_weight: float = 0.0, stop_waypoint_indices: Optional[List[int]] = None, waypoint_events: Optional[Dict[int, str]] = None, apply_headroom: bool = True, verbose: bool = True, capture_iterations: bool = False, guess_style: str = "baseline", per_segment_dt: bool = False, initial_guess: Optional[np.ndarray] = None, fast_polish: bool = False, polish_iter_budget: int = 200, solver_options: Optional[Dict[str, Any]] = None, self_consistent: bool = False) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
         """
         waypoints: list of (x, y, heading)
         heading is in radians. None means unconstrained.
@@ -38,7 +36,6 @@ class TrajectoryOptimizer:
         apply_headroom: If True, applies safety margin for real-world tracking.
         verbose: If True, prints progress messages.
         capture_iterations: If True, captures intermediate solver states for convergence visualization.
-        live_viz: If True, streams live updates to the WebSocket visualizer.
         guess_style: initial-guess seed, one of GUESS_STYLES. Different seeds
                      explore different local optima; the constraints are unchanged.
         per_segment_dt: if True, each waypoint segment gets its own sample
@@ -60,6 +57,7 @@ class TrajectoryOptimizer:
         polish_iter_budget: iteration budget for the warm pass in the fast
                    path. Missions that need more iterations than this are
                    finished with a cold pass instead.
+        solver_options: extra IPOPT options that override the defaults.
         self_consistent: if True, place the samples on the path the
                     trajectory's own (v, omega) profile traces, by
                     integrating that profile with a Gauss-Legendre rule
@@ -67,7 +65,6 @@ class TrajectoryOptimizer:
                     self-consistent by construction: the samples lie on the
                     path and the headings are its tangents. Off by default
                     so the measured plans stay reproducible.
-        solver_options: extra IPOPT options that override the defaults.
         """
         num_segments = len(waypoints) - 1
         N = num_segments * num_samples_per_segment + 1
@@ -85,10 +82,9 @@ class TrajectoryOptimizer:
             apply_headroom=apply_headroom,
             verbose=verbose,
             capture_iterations=capture_iterations,
-            live_viz=live_viz,
-            self_consistent=self_consistent,
             guess_style=guess_style,
             per_segment_dt=per_segment_dt,
+            self_consistent=self_consistent,
         )
 
         if not fast_polish:
@@ -148,6 +144,50 @@ class TrajectoryOptimizer:
         return samples, stats
 
     @staticmethod
+    def merge_conditions(waypoints, stop_waypoint_indices=None):
+        """Classify every waypoint by the conditions the pieces around it share.
+
+        The path is planned as one NLP over one shared variable set, so the
+        two pieces bounding a waypoint always agree on the state there:
+        position, heading and the wheel velocities are single variables that
+        both pieces see.  What the pieces must *additionally* guarantee is
+        that the wheel force profile runs through the point without a step.
+
+        The four cases:
+
+        * stop and pinned heading -- the state there is fully determined, so
+          the point is a legitimate timing boundary: the pieces on either
+          side need agree on nothing and the timing may be re-chosen.
+        * pinned heading, no stop -- the pieces must agree on the wheel
+          velocities there, and the force profile must be continuous.
+        * stop, no pinned heading -- the pieces must agree on the heading
+          there; the velocity is zero on both sides.
+        * neither -- the pieces must agree on both.
+
+        Returns one dict per waypoint with the keys ``index``, ``stop``,
+        ``heading_pinned``, ``boundary``, ``agree_velocity``,
+        ``agree_heading`` and ``continuous_force``.  ``continuous_force`` is
+        False at a stop: the wheel force has to reverse sign when the robot
+        comes to rest and goes again, so it cannot be continuous there.
+        """
+        stops = set(stop_waypoint_indices or [])
+        out = []
+        for i, wp in enumerate(waypoints):
+            is_stop = i in stops
+            pinned = len(wp) > 2 and wp[2] is not None
+            boundary = bool(is_stop and pinned)
+            out.append({
+                "index": i,
+                "stop": bool(is_stop),
+                "heading_pinned": bool(pinned),
+                "boundary": boundary,
+                "agree_velocity": not boundary,
+                "agree_heading": not boundary,
+                "continuous_force": bool(not is_stop),
+            })
+        return out
+
+    @staticmethod
     def guess_from_samples(samples: List[Dict[str, Any]], num_segments: int,
                            num_samples_per_segment: int) -> np.ndarray:
         """Rebuild a [dt..., states...] guess array from formatted samples.
@@ -168,7 +208,7 @@ class TrajectoryOptimizer:
             dts[i] = max(times[k + 1] - times[k], 1e-3)
         return np.concatenate([dts, states.flatten()])
 
-    def _solve_once(self, waypoints: List[Tuple[float, float, Optional[float]]], num_samples_per_segment: int = 10, accuracy_weight: float = 0.0, stop_waypoint_indices: Optional[List[int]] = None, waypoint_events: Optional[Dict[int, str]] = None, apply_headroom: bool = True, verbose: bool = True, capture_iterations: bool = False, live_viz: bool = False, guess_style: str = "baseline", per_segment_dt: bool = False, initial_guess: Optional[np.ndarray] = None, warm_start: bool = True, stage_label: Optional[str] = None, solver_options: Optional[Dict[str, Any]] = None, self_consistent: bool = False) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
+    def _solve_once(self, waypoints: List[Tuple[float, float, Optional[float]]], num_samples_per_segment: int = 10, accuracy_weight: float = 0.0, stop_waypoint_indices: Optional[List[int]] = None, waypoint_events: Optional[Dict[int, str]] = None, apply_headroom: bool = True, verbose: bool = True, capture_iterations: bool = False, guess_style: str = "baseline", per_segment_dt: bool = False, initial_guess: Optional[np.ndarray] = None, warm_start: bool = True, stage_label: Optional[str] = None, solver_options: Optional[Dict[str, Any]] = None, self_consistent: bool = False) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
         """Run one IPOPT pass over the trajectory NLP.
 
         warm_start=True asks IPOPT to treat the initial point as a previous
@@ -213,6 +253,45 @@ class TrajectoryOptimizer:
         theta = X[:, 2]
         vl = X[:, 3]
         vr = X[:, 4]
+
+        # Merge conditions at the waypoints.
+        #
+        # The pieces bounding a waypoint already agree on the state there:
+        # position, heading and the wheel velocities are single shared
+        # variables.  What the per-piece timing model can break is the
+        # *reading* of the motion profile.  The acceleration on the interval
+        # before waypoint j is (vl[k]-vl[k-1])/dt[j-1] and the one after it
+        # is (vl[k+1]-vl[k])/dt[j], with k = j*num_samples_per_segment.  When
+        # dt changes across the waypoint the same velocity ramp is read as
+        # two different accelerations, so the wheel force profile gets a step
+        # exactly at the point the path is supposed to run through smoothly.
+        # Requiring the two accelerations to match removes that step.
+        #
+        # A waypoint where the robot stops is exempt: the wheel force has to
+        # reverse sign when the robot comes to rest and goes again, so it
+        # cannot be continuous there.  A waypoint where the robot stops AND
+        # the heading is pinned is a full timing boundary (the state is
+        # determined), so nothing is required across it.
+        #
+        # The equal-duration model needs no counterpart: dt never changes
+        # there, so it re-reads the ramp the same way on both sides and the
+        # waypoint is not a special point in the force profile.
+        #
+        # The constraints are added further down, once the starting point is
+        # known, because they are scaled to acceleration units.
+        merge_constraints = []
+        if per_segment_dt:
+            _conds = self.merge_conditions(waypoints, stop_waypoint_indices)
+            for _j in range(1, num_segments):
+                if not _conds[_j]["continuous_force"]:
+                    continue
+                _k = _j * num_samples_per_segment
+                merge_constraints.append((
+                    (vl[_k] - vl[_k - 1]) * dt[_j]
+                    - (vl[_k + 1] - vl[_k]) * dt[_j - 1],
+                    (vr[_k] - vr[_k - 1]) * dt[_j]
+                    - (vr[_k + 1] - vr[_k]) * dt[_j - 1],
+                ))
 
         # Objective: minimize total time + smoothness penalty.
         #
@@ -400,6 +479,19 @@ class TrajectoryOptimizer:
             opti.set_initial(dt, float(guess_dt[0]))
         guess_states = guess[num_segments:].reshape((N, 5))
         opti.set_initial(X, guess_states)
+
+        # The merge constraints are scaled to acceleration units so that
+        # IPOPT's absolute constraint tolerance means something physical.
+        # The raw residual (vl[k]-vl[k-1])*dt_next - (vl[k+1]-vl[k])*dt_prev
+        # is in metres, where a 1e-2 tolerance would be a centimetre of
+        # velocity ramp.  Dividing by the reference interval squared turns it
+        # into m/s^2, the same quantity the wheel force follows.
+        if merge_constraints:
+            dt_ref = float(np.mean(guess_dt)) or 0.1
+            scale = 1.0 / (dt_ref * dt_ref)
+            for _vl_res, _vr_res in merge_constraints:
+                opti.subject_to(_vl_res * scale == 0)
+                opti.subject_to(_vr_res * scale == 0)
         
         # Capture initial guess for convergence visualization
         if capture_iterations:
@@ -441,47 +533,6 @@ class TrajectoryOptimizer:
             # Caller overrides win over the defaults above.
             s_opts.update(solver_options)
         opti.solver("ipopt", p_opts, s_opts)
-
-        if live_viz:
-            viz = get_visualizer()
-            def callback(iteration):
-                try:
-                    # Get current state from debug
-                    X_curr = np.array(opti.debug.value(X))
-                    if per_segment_dt:
-                        dt_curr = np.asarray(opti.debug.value(dt), dtype=float).reshape(-1)
-                    else:
-                        dt_curr = np.full(num_segments, float(opti.debug.value(dt)))
-                    times = self._sample_times(dt_curr, num_samples_per_segment, N)
-                    # Convert to list of dicts for JSON serialization
-                    traj_data = []
-                    for k in range(N):
-                        vl_k = float(X_curr[k, 3])
-                        vr_k = float(X_curr[k, 4])
-
-                        # Rough force/torque estimate for live viz
-                        fl, fr = 0.0, 0.0
-                        if k < N - 1:
-                            dt_k = dt_curr[k // num_samples_per_segment]
-                            al = (float(X_curr[k+1, 3]) - vl_k) / dt_k
-                            ar = (float(X_curr[k+1, 4]) - vr_k) / dt_k
-                            fl, fr = self.model.get_dynamics(vl_k, vr_k, al, ar)
-
-                        traj_data.append({
-                            "t": float(times[k]),
-                            "x": float(X_curr[k, 0]),
-                            "y": float(X_curr[k, 1]),
-                            "heading": float(X_curr[k, 2]),
-                            "vl": vl_k,
-                            "vr": vr_k,
-                            "fl": fl,
-                            "fr": fr
-                        })
-                    viz.send_trajectory(traj_data, phase="global_solve", iteration=iteration)
-                except Exception:
-                    pass
-            
-            opti.callback(callback)
 
         stage_prefix = f"[stage {stage_label}] " if stage_label else ""
         try:

@@ -1,0 +1,201 @@
+{
+  "season": "2026-27",
+  "label": "FLL 2026-27 BIOGLOW",
+  "mat": {
+    "width_m": 2.004,
+    "height_m": 1.143
+  },
+  "mat_source": {
+    "kind": "pdf",
+    "url": "https://firstinspires.blob.core.windows.net/fll/challenge/2026-27/fll-challenge-bioglow-wireframe-grid.pdf",
+    "page": 2,
+    "mat_mm": "2004x1143",
+    "credit": "FIRST's 2026-27 field guide. The mat picture is composed from it on this machine, the same way the reference simulator does it, and is not ours to ship."
+  },
+  "mat_image": {
+    "url": "https://raw.githubusercontent.com/jaimeyu/fll_sim/b04157cb207d4b43b82d684fe35ef8609890599b/public/maps/bioglow_numbered_mat.png",
+    "width_px": 1908,
+    "height_px": 1076,
+    "credit": "FIRST's 2026-27 BIOGLOW mat artwork with the mission numbers added, read from jaimeyu/fll_sim (GPL-3.0) at commit b04157cb. It is the colour mat; it is not ours to ship, so the studio downloads it for you and keeps it outside the repository."
+  },
+  "placement_uncertainty_m": 0.05,
+  "obstacles": [
+    {
+      "id": "m01",
+      "name": "Drone Survey",
+      "kind": "circle",
+      "x_m": 1.152,
+      "y_m": 0.055,
+      "w_m": 0.068,
+      "h_m": 0.068,
+      "rot_deg": 0.0
+    },
+    {
+      "id": "m02",
+      "name": "Exploding Seeds",
+      "kind": "rect",
+      "x_m": 0.636,
+      "y_m": 0.538,
+      "w_m": 0.062,
+      "h_m": 0.062,
+      "rot_deg": 0.0
+    },
+    {
+      "id": "m03",
+      "name": "Flip the Rock",
+      "kind": "rect",
+      "x_m": 0.084,
+      "y_m": 0.657,
+      "w_m": 0.132,
+      "h_m": 0.066,
+      "rot_deg": 0.0
+    },
+    {
+      "id": "m04",
+      "name": "Lucky Leaves",
+      "kind": "rect",
+      "x_m": 0.121,
+      "y_m": 1.019,
+      "w_m": 0.132,
+      "h_m": 0.132,
+      "rot_deg": 0.0
+    },
+    {
+      "id": "m05",
+      "name": "Reaching Roots",
+      "kind": "rect",
+      "x_m": 0.406,
+      "y_m": 1.088,
+      "w_m": 0.042,
+      "h_m": 0.088,
+      "rot_deg": 0.0
+    },
+    {
+      "id": "m06",
+      "name": "Leafcutter Frenzy",
+      "kind": "rect",
+      "x_m": 1.537,
+      "y_m": 1.07,
+      "w_m": 0.155,
+      "h_m": 0.124,
+      "rot_deg": 0.0
+    },
+    {
+      "id": "m07",
+      "name": "Humongous Fungus",
+      "kind": "rect",
+      "x_m": 1.537,
+      "y_m": 1.07,
+      "w_m": 0.155,
+      "h_m": 0.124,
+      "rot_deg": 0.0
+    },
+    {
+      "id": "m08",
+      "name": "Tangled",
+      "kind": "rect",
+      "x_m": 0.578,
+      "y_m": 1.059,
+      "w_m": 0.153,
+      "h_m": 0.128,
+      "rot_deg": 0.0
+    },
+    {
+      "id": "m09",
+      "name": "Research Platform",
+      "kind": "rect",
+      "x_m": 0.578,
+      "y_m": 1.059,
+      "w_m": 0.153,
+      "h_m": 0.128,
+      "rot_deg": 0.0
+    },
+    {
+      "id": "m10a",
+      "name": "Fragile Microhabitat",
+      "kind": "rect",
+      "x_m": 0.751,
+      "y_m": 1.048,
+      "w_m": 0.042,
+      "h_m": 0.047,
+      "rot_deg": 0.0
+    },
+    {
+      "id": "m10b",
+      "name": "Fragile Microhabitat",
+      "kind": "rect",
+      "x_m": 1.096,
+      "y_m": 0.776,
+      "w_m": 0.036,
+      "h_m": 0.036,
+      "rot_deg": 0.0
+    },
+    {
+      "id": "m11",
+      "name": "Window to the Past",
+      "kind": "rect",
+      "x_m": 1.405,
+      "y_m": 0.592,
+      "w_m": 0.095,
+      "h_m": 0.095,
+      "rot_deg": 45.0
+    },
+    {
+      "id": "m12",
+      "name": "Forest Elder",
+      "kind": "circle",
+      "x_m": 1.937,
+      "y_m": 0.755,
+      "w_m": 0.066,
+      "h_m": 0.066,
+      "rot_deg": 0.0
+    },
+    {
+      "id": "m12-post",
+      "name": "Forest Elder Post",
+      "kind": "rect",
+      "x_m": 1.937,
+      "y_m": 0.545,
+      "w_m": 0.025,
+      "h_m": 0.06,
+      "rot_deg": 0.0
+    },
+    {
+      "id": "dock-farm",
+      "name": "Dock",
+      "kind": "rect",
+      "x_m": 1.009,
+      "y_m": 0.648,
+      "w_m": 0.13,
+      "h_m": 0.204,
+      "rot_deg": 0.0
+    },
+    {
+      "id": "dock-city",
+      "name": "Dock",
+      "kind": "rect",
+      "x_m": 1.278,
+      "y_m": 0.092,
+      "w_m": 0.095,
+      "h_m": 0.135,
+      "rot_deg": 0.0
+    },
+    {
+      "id": "dock-mine",
+      "name": "Dock",
+      "kind": "rect",
+      "x_m": 1.885,
+      "y_m": 1.031,
+      "w_m": 0.11,
+      "h_m": 0.15,
+      "rot_deg": -40.0
+    }
+  ],
+  "source": {
+    "provenance": "Measured off FIRST's own field wireframe, which is public: https://firstinspires.blob.core.windows.net/fll/challenge/2026-27/fll-challenge-bioglow-wireframe-grid.pdf",
+    "frame": "The mat's own frame: the mat's south-west corner is (0, 0) and its north edge is up. The mat is 2004 x 1143 mm, centred in the 2362 x 1143 mm table.",
+    "checked_against": "Two independent readings of the same printed wireframe agree on the sizes to a few millimetres but place the features up to 100 mm apart, so a footprint here is good to about 50 mm, not to a millimetre.",
+    "mat_picture": "The mat picture is 1908 x 1076 px, an aspect of 1.7732 against the mat's 1.7544. Drawn at the mat's size it is stretched by about 1%, which puts its features up to 20 mm from where they belong - inside the 50 mm placement uncertainty, but the collision check uses the footprints above, not the picture.",
+    "adjust_it": "The operator can move a model on their own mat. A team that has measured their own field should trust their measurement over this file."
+  }
+}

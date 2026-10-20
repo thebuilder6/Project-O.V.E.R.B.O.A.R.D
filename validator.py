@@ -234,10 +234,16 @@ def compute_metrics(samples: List[Dict[str, Any]], robot_cfg: Optional[RobotConf
     # by dt_i alone is only correct when every interval is the same length;
     # with per-segment dt it understates the jerk at a segment boundary and
     # reports a different physical quantity than the uniform mode (KI-022).
+    #
+    # The last sample carries al=0 because it has no following interval, so
+    # differencing it against the previous sample measures a jump that does not
+    # exist. The solver stops at N-2 for the same reason, and the metric must
+    # use the same term set, or a short final interval reports a huge fake
+    # jerk.
     dt_vals = [t[i + 1] - t[i] for i in range(len(t) - 1)]
     jerks = []
-    for i in range(len(al) - 1):
-        span = 0.5 * (dt_vals[i] + dt_vals[i + 1]) if i + 1 < len(dt_vals) else dt_vals[i]
+    for i in range(len(al) - 2):
+        span = 0.5 * (dt_vals[i] + dt_vals[i + 1])
         if span > 1e-9:
             jerks.append((al[i + 1] - al[i]) / span)
             jerks.append((ar[i + 1] - ar[i]) / span)

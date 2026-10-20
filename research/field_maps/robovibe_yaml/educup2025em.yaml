@@ -1,0 +1,225 @@
+challenge:
+  filename: educup2025em.yaml
+  match_duration_seconds: 120
+  season: EduCup 2025 Master Engineering Challenge
+  year: 2025
+  rules: https://educup.org/wp-content/uploads/2025/01/Edu-Robotics-Cup-Masters-Rulebook-2024-2025_FINAL.pdf
+map:
+  imagesepia: true
+  imageurl: map.jpg
+  width: 2362
+  height: 1143
+  models:
+    M01:
+      name: Build a Spaceship
+      areas:
+        - length: 64
+          rotation: 0
+          width: 64
+          x: 148
+          y: 957
+          passive: true
+        - length: 64
+          rotation: 0
+          width: 64
+          x: 1153
+          y: 555
+          passive: true
+        - length: 64
+          rotation: 0
+          width: 64
+          x: 2079
+          y: 1070
+          passive: true
+    M02:
+      areas:
+        - length: 208
+          rotation: 0
+          width: 137
+          x: 2141
+          y: 814
+          placeholder: true
+      connected:
+        - M01a
+      name: Build a Spaceship Goal
+      score:
+        M02a:
+          description: Bring the External Fuel Tank, the Solid Fuel Booster Rocket and Orbiter to touch the Spaceship graphic.
+          max: 3
+          min: 0
+          score: 10
+          type: range
+        M02b:
+          description: 'Assembly: All components are on top of each other in the following order (Lvl 1 External Fuel Tank, Lvl 2 Solid Fuel Booster Rocket, Lvl 3 Orbiter)'
+          score: 10
+          type: binary
+    M03:
+      areas:
+        - length: 25
+          rotation: 0
+          type: circle
+          width: 25
+          x: 1449
+          y: 869
+          passive: true
+        - length: 25
+          rotation: 0
+          type: circle
+          width: 25
+          x: 1427
+          y: 643
+          passive: true
+        - length: 25
+          rotation: 0
+          type: circle
+          width: 25
+          x: 1146
+          y: 879
+          passive: true
+        - length: 25
+          rotation: 0
+          type: circle
+          width: 25
+          x: 1131
+          y: 1051
+          passive: true
+        - length: 25
+          rotation: 0
+          type: circle
+          width: 25
+          x: 247
+          y: 914
+          passive: true
+        - length: 25
+          rotation: 0
+          type: circle
+          width: 25
+          x: 654
+          y: 516
+          passive: true
+      name: Cargo (Water and Air)      
+    M04:
+      areas:
+        - length: 40
+          rotation: 0
+          type: circle
+          width: 40
+          x: 965
+          y: 97
+          passive: true
+      name: Cargo (Food)
+    M05:
+      areas:
+        - length: 209
+          rotation: 0
+          width: 209
+          x: 1848
+          y: 859
+          placeholder: true
+      connected:
+        - M03a
+        - M04a
+      name: Cargo Goal
+      score:
+        M05a:
+          description: 'Water and air cargo elements are touching the area in the top right corner of the field: including the spacecraft and the black-white line next to it.'
+          max: 6
+          min: 0
+          score: 10
+          type: range
+        M05b:
+          description: 'Food cargo element is touching the area in the top right corner of the field: including the spacecraft and the black-white line next to it.'
+          score: 30
+          type: binary
+    M06:
+      areas:
+        - length: 40
+          rotation: 0
+          type: circle
+          width: 40
+          x: 1379
+          y: 142
+          passive: true
+        - length: 40
+          rotation: 0
+          type: circle
+          width: 40
+          x: 1557
+          y: 472
+          passive: true
+        - length: 40
+          rotation: 0
+          type: circle
+          width: 40
+          x: 333
+          y: 558
+          passive: true
+      name: The Crew
+    M07:
+      areas:
+        - length: 363
+          rotation: 0
+          width: 443
+          x: 1855
+          y: 11
+          placeholder: true
+      connected:
+        - M06a
+      name: The Crew Goal
+      score:
+        M07a:
+          description: |-
+            The astronaut crew is waiting at the farm area (located in the bottom right corner, marked on the map; the white-black line does not count).
+            The astronaut is touching the target area.
+
+            0.5x multiply / crew member ( 1.5 x (40+90))
+          score: 100
+          type: binary
+    M08:
+      areas:
+        - length: 154
+          rotation: 0
+          width: 154
+          x: 178
+          y: 167
+          placeholder: true
+      name: Parking
+      score:
+        M08a:
+          description: Robot parked touching the University area
+          score: 20
+          type: binary
+    M09:
+      areas: []
+      name: Technical points
+      score:
+        M09a:
+          description: |-
+            Recorded and uploaded video includes all requested parts:
+            - robot,
+            - game field and game objects,
+            - robot run,
+            - end position of robot and game objects.
+          score: 10
+          type: binary
+    M10:
+      areas: []
+      name: Efficiency Points
+      score:
+        M10a:
+          description: |-
+            Every 10 seconds saved earns 5 points (this is only achievable if at least 2 astronauts are in the target area, at least one piece of each type of cargo is in the target area, and all components of the spaceship are also in the target area).
+            Very important: Maximum 30 points can be achieved
+          max: 6
+          min: 0
+          score: 5
+          type: range
+  startareas:
+    - id: Launch Island Area
+      length: 279
+      quadrant: 1
+      radius: 200
+      type: rectangle
+      width: 279
+      x: 1044
+      y: 485

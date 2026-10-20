@@ -21,7 +21,6 @@ CORE_PACKAGES = [
     ("click", "click", True),
     ("plotly", "plotly", True),
     ("matplotlib", "matplotlib", True),
-    ("websockets", "websockets", True),
 ]
 
 OPTIONAL_PACKAGES = [
@@ -65,7 +64,7 @@ def port_free(port, host="127.0.0.1"):
         probe.close()
 
 
-def check_environment(config_path=None, ports=(8765, 8000)):
+def check_environment(config_path=None, ports=(8000,)):
     """Return a list of check results: {name, status, detail, hint}.
 
     status is "ok", "warn" or "error".

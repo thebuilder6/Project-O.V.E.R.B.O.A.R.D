@@ -1,0 +1,7 @@
+# command: C:\Users\jumpi\AppData\Local\Microsoft\WindowsApps\PythonSoftwareFoundation.Python.3.12_qbz5n2kfra8p0\python.exe main.py -c examples/fll_choreo.json -w examples/example_complex_mission.json -o C:\Users\jumpi\AppData\Local\Temp\tmp_p2o8zvz\example_complex_mission.traj --validate --sweep --self-consistent
+# wall_seconds: 0.1
+# exit_code: 2
+
+
+--- stderr ---
+C:\Users\jumpi\AppData\Local\Microsoft\WindowsApps\PythonSoftwareFoundation.Python.3.12_qbz5n2kfra8p0\python.exe: can't open file 'C:\\Users\\jumpi\\Documents\\Github\\Project-O.V.E.R.B.O.A.R.D\\docs\\main.py': [Errno 2] No such file or directory

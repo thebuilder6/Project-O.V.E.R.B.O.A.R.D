@@ -1,0 +1,358 @@
+challenge:
+  match_duration_seconds: 150
+  rules: https://firstinspires.blob.core.windows.net/fll/challenge/2026-27/fll-challenge-bioglow-wireframe-grid.pdf
+  season: FLL BIOGLOW Founders Edition
+  year: 2026-2027
+id: fll2026founders.yaml
+map:
+  height: 1143
+  imagesepia: false
+  imageurl: map.png
+  models:
+    EI:
+      areas:
+        - height: 10
+          length: 80
+          placeholder: true
+          type: circle
+          width: 80
+          x: 50
+          y: 4
+        - height: 10
+          length: 80
+          placeholder: true
+          type: circle
+          width: 80
+          x: 2232
+          y: 4
+      name: Equipment Inspection
+      score:
+        EIa:
+          description: If your robot and all your equipment fit completely in one launch area and are under a height limit of 12 in. (305 mm) during the pre-match inspection
+          score: 20
+    M01:
+      areas:
+        - length: 64
+          passive: true
+          rotation: 0
+          type: circle
+          width: 64
+          x: 1301
+          y: 25
+        - length: 36
+          placeholder: true
+          rotation: 0
+          type: rectangle
+          width: 36
+          x: 790
+          y: 40
+        - length: 97
+          rotation: 60
+          type: rectangle
+          width: 74
+          x: 1174
+          y: 234
+      name: Drone Survey
+      score:
+        M01a:
+          description: Drone is no longer touching the mat
+          score: 20
+          type: binary
+        M01b:
+          description: 'Bonus: LiDAR map completely flipped, scan marker partly in survey area'
+          requires: M01a
+          score: 10
+          type: binary
+    M02:
+      length: 58
+      name: Exploding Seeds
+      rotation: 45
+      score:
+        M02a:
+          description: Seeds no longer touching the stalk
+          max: 3
+          min: 0
+          score: 10
+          type: range
+      width: 56
+      x: 777
+      y: 539
+    M03:
+      length: 65
+      name: Flip the Rock
+      rotation: 0
+      score:
+        M03a:
+          description: The research flag is down
+          score: 20
+          type: binary
+        M03b:
+          description: 'Bonus: and the rock has been returned to its original starting position'
+          requires: M03a
+          score: 10
+          type: binary
+      width: 137
+      x: 193
+      y: 626
+    M04:
+      areas:
+        - length: 49
+          rotation: 0
+          width: 49
+          x: 235
+          y: 955
+        - length: 49
+          rotation: 45
+          width: 49
+          x: 250
+          y: 1037
+        - length: 49
+          rotation: 0
+          width: 49
+          x: 318
+          y: 1039
+      name: Lucky Leaves
+      score:
+        M04a:
+          description: One leaf is completely removed, no longer touching the nest
+          score: 10
+          type: binary
+        M04b:
+          description: 'Bonus: and the second leaf is completely removed, no longer touching the nest, with the katydid in its original starting position'
+          requires: M04a
+          score: 20
+          type: binary
+    M05:
+      comment: 🖐️🚫 No-Equipment-Constraint
+      length: 91
+      name: Reaching Roots
+      rotation: 0
+      score:
+        M05a:
+          description: 'The plant root is: (1) Partially extended OR (2) Completely extended'
+          scores:
+            - 0
+            - 10
+            - 20
+          type: range
+      width: 41
+      x: 564
+      y: 1046
+    M06:
+      length: 102
+      name: Leafcutter Frenzy
+      rotation: 45
+      score:
+        M06a:
+          description: The ant is touching the nest, and the leaf fragments are contained within the nest (per fragment)
+          max: 3
+          min: 0
+          score: 10
+          type: range
+      width: 71
+      x: 1637
+      y: 1061
+    M07:
+      comment: 🖐️🚫 No-Equipment-Constraint
+      length: 33
+      name: Humongous Fungus
+      rotation: 0
+      score:
+        M07a:
+          description: The mycelium is completely extended
+          score: 20
+          type: binary
+        M07b:
+          description: 'Bonus: connection formed between extended mycelium and opposing teams extended plant root'
+          max: 2
+          min: 0
+          score: 10
+          type: range
+      width: 50
+      x: 1749
+      y: 1040
+    M08:
+      length: 125
+      name: Tangled
+      rotation: 0
+      score:
+        M08a:
+          description: The vine is touching the mat
+          score: 30
+          type: binary
+      width: 118
+      x: 686
+      y: 1000
+    M09:
+      comment: 🖐️🚫 No-Equipment-Constraint
+      length: 125
+      name: Research Platform
+      rotation: 0
+      score:
+        M09a:
+          description: The research platform is raised
+          score: 10
+          type: binary
+        M09b:
+          description: The camera trap is deployed
+          score: 10
+          type: binary
+        M09c:
+          description: The seed is no longer touching the tree
+          score: 10
+          type: binary
+      width: 22
+      x: 815
+      y: 1000
+    M10:
+      areas:
+        - length: 45
+          rotation: 30
+          width: 40
+          x: 905
+          y: 1042
+        - length: 45
+          rotation: 45
+          width: 40
+          x: 1194
+          y: 718
+      name: Fragile Microhabitats
+      score:
+        M10a:
+          description: The spider habitat is in its original starting position
+          score: 10
+          type: binary
+        M10b:
+          description: The snail habitat is in its original starting position
+          score: 10
+          type: binary
+    M11:
+      length: 81
+      name: Window to the Past
+      rotation: 45
+      score:
+        M11a:
+          description: The root cover is down, touching the mat
+          score: 20
+          type: binary
+      width: 74
+      x: 1532
+      y: 593
+    M12:
+      areas:
+        - length: 64
+          rotation: 0
+          type: circle
+          width: 64
+          x: 2089
+          y: 726
+        - length: 62
+          rotation: 0
+          type: rectangle
+          width: 26
+          x: 2107
+          y: 515
+      name: Forest Elder
+      score:
+        M12a:
+          description: The cane is completely raised, touching the tree
+          score: 20
+          type: binary
+        M12b:
+          description: The support tie is around the post
+          score: 10
+          type: binary
+    M13:
+      length: 138
+      name: Keystone Species
+      rotation: 0
+      score:
+        M13a:
+          description: Your team's keystone species is on the restoration platform, and the young trees are raised
+          score: 30
+          type: binary
+      width: 88
+      x: 1137
+      y: 558
+    M14:
+      length: 138
+      name: Seeds of Renewal
+      rotation: 0
+      score:
+        M14a:
+          description: Seeds are contained within the replantation station
+          max: 4
+          min: 0
+          score: 5
+          type: range
+        M14b:
+          description: 'Bonus: and are touching the mat'
+          max: 4
+          min: 0
+          score: 5
+          type: range
+      width: 88
+      x: 1417
+      y: 25
+    M15:
+      comment: 🖐️🚫 No-Equipment-Constraint
+      length: 138
+      name: Biocentric Architecture
+      rotation: 45
+      score:
+        M15a:
+          description: The nesting canopy is raised
+          score: 10
+          type: binary
+        M15b:
+          description: The garden skylight is completely in
+          score: 10
+          type: binary
+        M15c:
+          description: The compost hatch is completely opened, touching the mat
+          score: 10
+          type: binary
+        M15d:
+          description: 'Environmental Bonus: completed greatest ecological need for the dock the model is located'
+          score: 10
+          type: binary
+      width: 88
+      x: 1990
+      y: 1016
+    PT:
+      areas:
+        - height: 10
+          length: 80
+          placeholder: true
+          type: circle
+          width: 80
+          x: 50
+          y: 1040
+      name: Precision
+      score:
+        PTa:
+          description: How many Precision Tokens are left on the field?
+          scores:
+            - 0
+            - 10
+            - 15
+            - 25
+            - 35
+            - 50
+            - 50
+          type: range
+  startareas:
+    - id: Launch Area Left
+      quadrant: 1
+      radius: 485
+      type: quarter-circle
+      x: 181
+      y: 0
+    - id: Launch Area Right
+      quadrant: 2
+      radius: 485
+      type: quarter-circle
+      x: 2181
+      y: 0
+  unit_of_measurement: mm
+  width: 2362

@@ -1,104 +1,127 @@
-import os
+"""Generate a random mission suite for review.
+
+This script used to be broken in two ways (KI-015): it read a
+``robot_config.json`` that does not exist in the repository, and it treated
+``solve()`` as returning the samples when it returns a ``(samples, stats)``
+tuple, so it wrote a malformed trajectory. Both are fixed here.
+
+The mission generator itself lives in ``research/suite.py``: it is stratified
+over four path profiles (even, uneven, turny, mixed) and deterministic from a
+seed, so a suite can be regenerated exactly. ``research/harness.py`` runs the
+same missions through the full gate chain; this script only solves and writes
+them out for a human to look at.
+
+Usage::
+
+    python examples/generate_random_suite.py --count 10 --seed 7 --out random_suite
+"""
+
+import argparse
 import json
-import random
-import numpy as np
+import os
+import sys
+from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from optimizer import TrajectoryOptimizer
 from robot_model import RobotConfig
-from multiverse_optimizer import MasterTrajectoryOptimizer
-from plotter import plot_trajectory
-import matplotlib.pyplot as plt
+from research.suite import build_suite
 
-def generate_random_waypoints(num_waypoints=5, x_range=(0, 1), y_range=(0, 1)):
-    wps = []
-    for i in range(num_waypoints):
-        wp = {
-            "x": random.uniform(*x_range),
-            "y": random.uniform(*y_range),
-            "heading": random.choice([None, random.uniform(-np.pi, np.pi)]),
-            "stop": random.choice([True, False]) if i > 0 and i < num_waypoints - 1 else True
-        }
-        wps.append(wp)
-    return wps
+DEFAULT_CONFIG = "examples/fll_choreo.json"
 
-def run_suite(num_runs=10, output_dir="random_suite"):
+
+def run_suite(num_runs: int = 10, output_dir: str = "random_suite",
+              config_path: str = DEFAULT_CONFIG, seed: int = 7,
+              samples: int = 10, plot: bool = False):
+    """Generate, solve and write ``num_runs`` random missions."""
     if not os.path.exists(output_dir):
         os.makedirs(output_dir)
-        
-    config_path = "robot_config.json"
-    with open(config_path, 'r') as f:
-        config_data = json.load(f)
+
+    with open(config_path, "r", encoding="utf-8") as handle:
+        config_data = json.load(handle)
     robot_cfg = RobotConfig(config_data)
-    
-    # Store results for the human reviewer
+
+    missions = build_suite(num_runs, seed)
     suite_data = []
-    
-    for i in range(num_runs):
-        print(f"--- Run {i+1}/{num_runs} ---")
-        num_wps = random.randint(3, 8)
-        wps_json = generate_random_waypoints(num_wps)
-        wps_list = [(wp['x'], wp['y'], wp.get('heading')) for wp in wps_json]
-        stop_indices = [idx for idx, wp in enumerate(wps_json) if wp.get('stop')]
-        
-        # Randomize strategy
-        accuracy_weight = random.choice([0.0, 1.0, 2.0, 5.0])
-        use_simple = random.random() < 0.2 # 20% simple
-        
-        run_name = f"run_{i:03d}"
+
+    for index, mission in enumerate(missions):
+        run_name = mission["id"]
         run_dir = os.path.join(output_dir, run_name)
-        if not os.path.exists(run_dir):
-            os.makedirs(run_dir)
-            
-        with open(os.path.join(run_dir, "waypoints.json"), 'w') as f:
-            json.dump(wps_json, f, indent=2)
-            
+        os.makedirs(run_dir, exist_ok=True)
+
+        with open(os.path.join(run_dir, "waypoints.json"), "w", encoding="utf-8") as handle:
+            json.dump(mission["waypoints"], handle, indent=2)
+
+        waypoints = [(wp["x"], wp["y"], wp.get("heading")) for wp in mission["waypoints"]]
+        stop_indices = [i for i, wp in enumerate(mission["waypoints"]) if wp.get("stop")]
+
+        optimizer = TrajectoryOptimizer(robot_cfg)
         try:
-            if use_simple:
-                from optimizer import TrajectoryOptimizer
-                optimizer = TrajectoryOptimizer(robot_cfg)
-            else:
-                optimizer = MasterTrajectoryOptimizer(robot_cfg, enable_parallel=True, num_workers=4, verbose=False)
-                
-            samples = optimizer.solve(
-                wps_list, 
-                num_samples_per_segment=15, 
-                accuracy_weight=accuracy_weight,
+            # solve() returns (samples, stats). Treating the tuple as the
+            # samples is what made the old script write garbage.
+            samples, stats = optimizer.solve(
+                waypoints,
+                num_samples_per_segment=samples,
                 stop_waypoint_indices=stop_indices,
-                verbose=False
+                verbose=False,
             )
-            
-            # Save trajectory
-            with open(os.path.join(run_dir, "trajectory.json"), 'w') as f:
-                json.dump(samples, f, indent=2)
-                
-            # Plot
-            fig = plot_trajectory(samples, waypoints=wps_list, title=f"Run {i}: a={accuracy_weight}, simple={use_simple}", show=False)
-            fig.savefig(os.path.join(run_dir, "plot.png"))
-            plt.close(fig)
-            
+            converged = bool(stats.get("converged", False))
+            with open(os.path.join(run_dir, "trajectory.json"), "w", encoding="utf-8") as handle:
+                json.dump({"trajectory": {"samples": samples}}, handle, indent=2)
+
+            if plot:
+                import matplotlib
+                matplotlib.use("Agg")
+                import matplotlib.pyplot as plt
+                from plotter import plot_trajectory
+                figure = plot_trajectory(
+                    samples, waypoints=waypoints,
+                    title=f"{run_name} ({mission['profile']})", show=False)
+                figure.savefig(os.path.join(run_dir, "plot.png"))
+                plt.close(figure)
+
             suite_data.append({
                 "id": run_name,
-                "accuracy_weight": accuracy_weight,
-                "simple": use_simple,
-                "status": "success",
-                "review": {
-                    "is_wrong": False,
-                    "explanation": ""
-                }
+                "profile": mission["profile"],
+                "status": "converged" if converged else "failed",
+                "converged": converged,
+                "duration_s": samples[-1]["t"] if samples else None,
+                "iterations": stats.get("iter_count"),
+                "review": {"is_wrong": False, "explanation": ""},
             })
-            
-        except Exception as e:
-            print(f"Run {i} failed: {e}")
+            print(f"--- {run_name} ({mission['profile']}): "
+                  f"{'converged' if converged else 'FAILED'} "
+                  f"{samples[-1]['t']:.3f}s" if samples else f"--- {run_name}: FAILED")
+        except Exception as exc:  # a failed solve is a result, not a crash
             suite_data.append({
                 "id": run_name,
+                "profile": mission["profile"],
                 "status": "failed",
-                "error": str(e)
+                "error": str(exc),
             })
-            
-        # Save the suite metadata incrementally for immediate review
-        with open(os.path.join(output_dir, "suite_metadata.json"), 'w') as f:
-            json.dump(suite_data, f, indent=2)
-        
+            print(f"--- {run_name}: failed: {exc}")
+
+        with open(os.path.join(output_dir, "suite_metadata.json"), "w", encoding="utf-8") as handle:
+            json.dump(suite_data, handle, indent=2)
+
     print(f"\nSuite generation complete. Review folder: {output_dir}")
     print("Please check suite_metadata.json to log your review comments.")
+    return suite_data
+
 
 if __name__ == "__main__":
-    run_suite(num_runs=10)
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--count", type=int, default=10, help="How many missions.")
+    parser.add_argument("--seed", type=int, default=7, help="RNG seed.")
+    parser.add_argument("--out", default="random_suite", help="Output folder.")
+    parser.add_argument("--config", default=DEFAULT_CONFIG, help="Robot config.")
+    parser.add_argument("--samples", type=int, default=10,
+                        help="Samples per segment.")
+    parser.add_argument("--plot", action="store_true",
+                        help="Also write a plot.png per mission.")
+    args = parser.parse_args()
+    run_suite(num_runs=args.count, output_dir=args.out, config_path=args.config,
+              seed=args.seed, samples=args.samples, plot=args.plot)

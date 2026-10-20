@@ -344,7 +344,67 @@ independent axes**, which the agenda's candidate set treats them as.
 
 ---
 
-## 5. The answers, question by question
+## 5. The Multi-Verse pipeline reproduces the simple solver and costs 3-15x the time (Q12)
+
+The Multi-Verse path was run on 12 missions and compared with the simple
+solver's baseline on the same missions and the same tree:
+
+| | |
+|---|---|
+| missions where the Multi-Verse duration equals the simple solver's | **11 of 12** (to three decimals) |
+| missions where Multi-Verse is faster | 1 (m000, -3.2 %) |
+| passing | simple 3/12, Multi-Verse 4/12 (the extra one is m000) |
+| wall time per solve | 2.5-28 s against 0.07-30 s; typically **3-15x** the simple solve |
+
+The reason is KI-004: the pipeline's phase 5 re-solves from the default
+baseline guess, and the JAX-refined probe never wins. The one mission where
+it differs is the one where the probe did win.
+
+**Answer to Q12:** the pipeline is dead weight, confirmed at scale rather than
+on one example mission. It reproduces the trivial answer, spends 3-15x the
+wall time to do it, and won exactly once in twelve. The evidence-backed
+decision is to delete it or to repurpose it as a topology sampler for a path
+family that does not exist yet (Q1 says such a family is not a speed lever
+either, so that hope is weak).
+
+---
+
+## 6. How much of a PASS depends on the declared uncertainty (KI-020)
+
+Every declared uncertainty range was scaled around its nominal value and the
+same candidates were re-validated at each width (9 missions x 10 candidates
+x 5 widths = 450 validations of the same trajectories):
+
+| spread of the declared ranges | pass rate | median envelope | median tracking |
+|---|---:|---:|---:|
+| 0.0 — collapsed to the nominal value | 32 % | 0.43 cm | 0.59 cm |
+| 0.5 — half the declared width | 32 % | 0.60 cm | 0.60 cm |
+| 1.0 — **as declared** | 31 % | 0.79 cm | 0.60 cm |
+| 1.5 — 1.5x the declared width | **2 %** | 0.99 cm | 0.60 cm |
+| 2.0 — double the declared width | **0 %** | 1.18 cm | 0.60 cm |
+
+Three things fall out of this table.
+
+1. **The tracking error is completely insensitive to the declared
+   uncertainty** (0.59-0.60 cm at every width). RQ-A found this on five
+   missions; here it is confirmed on 450 validations. The tracking gate is a
+   deterministic check, not a robustness check.
+2. **The envelope is the uncertainty-driven quantity**: it grows linearly with
+   the spread (0.43 -> 1.18 cm), and it is what the spread breaks.
+3. **The pass rate is a cliff, and the declared ranges sit on its edge.**
+   Collapsing the ranges to their nominal values or halving them changes
+   nothing (32 % -> 31 %), but widening them by half takes the pass rate from
+   31 % to **2 %**, and doubling them takes it to **0 %**.
+
+**This is the single most important caveat in this document.** The declared
+ranges in `examples/fll_choreo.json` are test assumptions (KI-020), and the
+system's verdicts are extremely sensitive to them: a 50 % wider range than
+declared would make almost every trajectory fail. A PASS today is partly a
+statement about the assumptions, not only about the trajectory.
+
+---
+
+## 7. The answers, question by question
 
 | # | question | answer | evidence |
 |---|---|---|---|
@@ -353,17 +413,17 @@ independent axes**, which the agenda's candidate set treats them as.
 | Q3 | is multi-start worth anything? | **It is insurance, and now priced**: one extra seed is worth 3 missions; candidates 4-16 buy 1 mission; the baseline alone passes on 8/32, a non-baseline rescues 5 more | F5 |
 | Q4 | reachability as an objective term? | **The cheap proxy exists** (duration explains the envelope with r = 0.90) but it is not the binding constraint; the envelope does bind on 46 % of candidates, yet the failures that block missions are tracking failures | F2, F11 |
 | Q5 | feed the critic back into the solver? | **No**: the critic flags 100 % of passing and 100 % of failing candidates, so it cannot select anything | F7 |
-| Q6 | does the accuracy weight buy accuracy? | See the weight study below | — |
-| Q7 | sample density against timing flexibility? | See the density study below | — |
+| Q6 | does the accuracy weight buy accuracy? | **Yes, within a mission** (median per-mission Spearman -0.68: more weight, less tracking error) **but it is a trade, not a dial** (21 of 192 steps are non-monotone, and the best weight differs per mission). The best trade found: per-segment at `a = 0.005` gives 42 % pass against 17 % at weight 0, for 5 % more time | section 4 |
+| Q7 | sample density against timing flexibility? | **Per-segment timing at low density wins.** n = 10 is the sweet spot: more samples cost 5x the solve time and do not improve the tracking error (0.60 cm at n = 10, 0.72 cm at n = 40) and can lose gate coverage (n = 20 passes on 0 of 6 missions) | `MEASUREMENTS_density.md` |
 | Q8 | is the baseline's dominance an artefact? | **Yes.** The baseline has the lowest pass rate of the five seeds and produces the fastest candidate on 2 of 32 missions | F1 |
-| Q9 | what would make the validator a digital twin? | **Not answerable without hardware.** What *is* answerable: the tracking error is a discretisation artefact (RQ-A), and the plant still assumes instant tracking, so 8 % of passing plans exceed the hub's acceleration limit | F3, F10 |
+| Q9 | what would make the validator a digital twin? | **Not answerable without hardware.** What *is* answerable: the tracking error is a discretisation artefact (RQ-A), the declared uncertainty does not move it at all (section 6), and the plant still assumes instant tracking, so 8 % of passing plans exceed the hub's acceleration limit | F3, F10, section 6 |
 | Q10 | is "smallest envelope" the right selection rule? | **It does not matter**: five rules pick the same trajectory on every mission | F6 |
 | Q11 | should the executor be part of the planner? | **Partly answerable now**: 7 % of candidates, and 8 % of the passing ones, demand more acceleration than the DriveBase delivers. The gate cannot see it | F10 |
-| Q12 | what should the Multi-Verse path become? | See the Multi-Verse study below | — |
+| Q12 | what should the Multi-Verse path become? | **Delete it or stop funding it.** It reproduces the simple solver on 11 of 12 missions and costs 3-15x the wall time | section 5 |
 
 ---
 
-## 5. What this changes in the agenda
+## 8. What this changes in the agenda
 
 1. **The six-mission base has to go.** Three of the agenda's headline claims
    (the baseline dominates, the envelope never binds, the seeds never win) do
@@ -381,7 +441,7 @@ independent axes**, which the agenda's candidate set treats them as.
 6. **The plant's instant-tracking assumption hides a real gap** (F10): 8 % of
    the trajectories the system calls safe cannot be executed by the hub.
 
-## 6. What is still not answerable here
+## 9. What is still not answerable here
 
 | | |
 |---|---|
@@ -389,7 +449,7 @@ independent axes**, which the agenda's candidate set treats them as.
 | The hardware truth of any number here | every number is a model prediction; the declared uncertainty ranges are test assumptions |
 | Whether the discretisation fix changes the seed conclusions | RQ-A's OQ6. It has to be re-run after the fix. |
 
-## 7. The repairs made along the way
+## 10. The repairs made along the way
 
 | defect | repair |
 |---|---|
@@ -398,7 +458,7 @@ independent axes**, which the agenda's candidate set treats them as.
 | KI-015: the pipeline benchmark reported failed solves as normal results | it now reads `stats["converged"]` and prints FAILED |
 | KI-015: the default `--config` was a file that does not exist | it now defaults to `examples/fll_choreo.json` |
 
-## 8. The honesty clause
+## 11. The honesty clause
 
 Every number in this document is a **model prediction**. The declared
 uncertainty ranges in `examples/fll_choreo.json` are test assumptions, not
@@ -406,3 +466,4 @@ measurements, and no hardware logs exist in the repository. A `PASS` means
 "the trajectory passes the gates of an uncalibrated model", not "the robot
 can drive it". The tracking numbers additionally measure a discretisation
 artefact (RQ-A), not a physical tracking error.
+

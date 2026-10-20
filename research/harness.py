@@ -1,0 +1,553 @@
+﻿"""Measurement harness for the path-planning research agenda.
+
+Runs a (mission x candidate) matrix, scores every candidate with the
+production gate chain, and writes one JSON record per candidate.
+
+The scoring below mirrors the candidate loop in ``main.py`` (the
+context-aware envelope check, the Immrax check and the CPU audit) and calls
+the production helpers for every gate, so a record says the same thing the
+CLI would say. Only the bookkeeping is new: this harness adds no planning
+logic and changes no production module.
+
+Usage::
+
+    python research/harness.py --missions research/missions --out research/results/matrix.jsonl \\
+        --specs matrix --samples 10 --workers 8
+"""
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import math
+import os
+import sys
+import time
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Sequence, Tuple
+
+# The measured system. OVERBOARD_TREE points at a pinned copy of the planner,
+# the same convention docs/research/rq_a uses, so a measurement is tied to a
+# tree state even while the working tree is being edited.
+TOOL_ROOT = Path(__file__).resolve().parent.parent
+MEASURE_ROOT = Path(os.environ.get("OVERBOARD_TREE") or TOOL_ROOT)
+for _root in (TOOL_ROOT, MEASURE_ROOT):
+    if str(_root) not in sys.path:
+        sys.path.insert(0, str(_root))
+
+import numpy as np
+
+import main as cli
+from optimizer import GUESS_STYLES, TrajectoryOptimizer
+from validator import check_final_waypoint, compute_metrics, validate_samples
+
+from research import seeds as seed_lib
+
+# The weight grid the CLI sweeps with (main.SWEEP_WEIGHTS).
+CLI_SWEEP_WEIGHTS = (0.0, 0.001, 0.002, 0.005, 0.01)
+# A wider grid for the Q6 study: is the weight a dial or a lottery?
+WIDE_WEIGHTS = (0.0, 0.00025, 0.0005, 0.001, 0.002, 0.005, 0.01, 0.02, 0.05)
+
+# The files whose content decides what a measurement means.
+PROVENANCE_FILES = ("optimizer.py", "main.py", "immrax_validator.py",
+                     "validator.py", "robot_model.py", "multiverse_optimizer.py")
+
+
+def _hash_file(path: Path) -> str:
+    return hashlib.md5(path.read_bytes()).hexdigest().upper()
+
+
+def provenance() -> Dict[str, Any]:
+    """Hashes of the files that decide what a measurement means."""
+    hashes = {}
+    for name in PROVENANCE_FILES:
+        path = MEASURE_ROOT / name
+        if path.exists():
+            hashes[name] = _hash_file(path)
+    return hashes
+
+
+def tree_state() -> str:
+    """One short token for the current tree state.
+
+    The tree is edited while a measurement runs, so every record carries the
+    state it was produced under. A record whose token differs from the
+    others was produced by a different solver.
+    """
+    digest = hashlib.md5()
+    for name in PROVENANCE_FILES:
+        path = MEASURE_ROOT / name
+        if path.exists():
+            digest.update(_hash_file(path).encode("ascii"))
+    return digest.hexdigest().upper()[:12]
+
+
+def _resolve(path: str) -> str:
+    """Resolve a path against the measured tree, not the working directory."""
+    candidate = Path(path)
+    if candidate.is_absolute() or candidate.exists():
+        return str(candidate)
+    return str(MEASURE_ROOT / path)
+
+
+# --------------------------------------------------------------------------
+# Specs: what to solve
+# --------------------------------------------------------------------------
+
+def _spec(label: str, style: str, timing: str, weight: float, samples: int,
+          guess: str = "stock", engine: str = "simple") -> Dict[str, Any]:
+    return {
+        "label": label,
+        "style": style,
+        "timing": timing,
+        "weight": float(weight),
+        "samples": int(samples),
+        "guess": guess,
+        "engine": engine,
+    }
+
+
+def build_specs(name: str, base_weight: float, samples: int) -> List[Dict[str, Any]]:
+    """The candidate sets the harness can run."""
+    timings = ("equal-duration", "per-segment")
+    specs: List[Dict[str, Any]] = []
+    seen = set()
+
+    def add(spec: Dict[str, Any]) -> None:
+        key = (spec["style"], spec["timing"], spec["weight"], spec["samples"],
+               spec["guess"])
+        if key in seen:
+            return
+        seen.add(key)
+        specs.append(spec)
+
+    if name in ("seeds", "matrix"):
+        for style in GUESS_STYLES:
+            for timing in timings:
+                add(_spec(f"{style}/{timing}/a={base_weight:g}", style, timing,
+                          base_weight, samples))
+
+    if name in ("weights", "matrix"):
+        for weight in CLI_SWEEP_WEIGHTS:
+            for timing in timings:
+                add(_spec(f"baseline/{timing}/a={weight:g}", "baseline", timing,
+                          weight, samples))
+
+    if name == "wide-weights":
+        for weight in WIDE_WEIGHTS:
+            for timing in timings:
+                add(_spec(f"baseline/{timing}/a={weight:g}", "baseline", timing,
+                          weight, samples))
+
+    if name in ("spline", "matrix"):
+        # Q1: a real path family against the straight-line seed.
+        for timing in timings:
+            add(_spec(f"spline/{timing}/a={base_weight:g}", "baseline", timing,
+                      base_weight, samples, guess="spline"))
+
+    if name in ("proportional", "matrix"):
+        # Q2: a length-proportional time allocation.
+        add(_spec(f"proportional-dt/per-segment/a={base_weight:g}", "rolling",
+                  "per-segment", base_weight, samples, guess="proportional_dt"))
+
+    if name == "density":
+        # Q7: sample density against timing flexibility.
+        for density in (5, 10, 20, 40):
+            for timing in timings:
+                add(_spec(f"baseline/{timing}/a={base_weight:g}/n={density}",
+                          "baseline", timing, base_weight, density))
+
+    if name == "multiverse":
+        # Q12: the experimental pipeline against the simple solver.
+        for weight in (base_weight, base_weight + 2.0):
+            add(_spec(f"multiverse/equal-duration/a={weight:g}", "baseline",
+                      "equal-duration", weight, samples, engine="multiverse"))
+
+    if not specs:
+        raise SystemExit(f"Unknown spec set {name!r}")
+    return specs
+
+
+# --------------------------------------------------------------------------
+# Scoring: the production gates, in the production order
+# --------------------------------------------------------------------------
+
+def _scaled_range(values: Sequence[float], spread: float) -> Tuple[float, float]:
+    """Widen or narrow a declared uncertainty range around its nominal value.
+
+    ``spread = 1`` is the range as declared, ``0`` collapses it to the
+    nominal value, ``2`` doubles its width. The declared ranges are test
+    assumptions (KI-020), so this measures how much of a PASS depends on
+    them.
+    """
+    low, high = float(values[0]), float(values[1])
+    nominal = 0.5 * (low + high)
+    half = 0.5 * (high - low) * float(spread)
+    return (max(1e-9, nominal - half), nominal + half)
+
+
+def _score(samples_data: List[Dict[str, Any]], stats: Dict[str, Any],
+           robot_cfg, validator_cls, robot_config_cls,
+           thresholds: Dict[int, float], samples_per_segment: int,
+           waypoints: Sequence[Tuple[float, float, Optional[float]]],
+           critic=None, profiles: bool = False, spread: float = 1.0) -> Dict[str, Any]:
+    """Run the full gate chain on one candidate and return the measurements."""
+    record: Dict[str, Any] = {
+        "converged": bool(stats.get("converged", False)),
+        "duration_s": float(samples_data[-1]["t"]) if samples_data else float("inf"),
+        "cost": float(stats.get("final_cost", float("inf"))),
+        "solve_s": float(stats.get("total_time", float("nan"))),
+        "iter_count": int(stats.get("iter_count", -1)),
+        "segment_dt": [float(d) for d in (stats.get("segment_dt") or [])],
+    }
+    probe = stats.get("refine_probe")
+    if isinstance(probe, dict):
+        record["refine_probe"] = {k: (float(v) if isinstance(v, (int, float)) else v)
+                                  for k, v in probe.items()}
+
+    if not samples_data:
+        record.update({"ok": False, "reasons": ["no samples"],
+                       "tube_m": float("inf"), "tracking_m": float("inf")})
+        return record
+
+    try:
+        jax_cfg = robot_config_cls(robot_cfg)
+        immrax_val = validator_cls(jax_cfg)
+        uncertainties = robot_cfg.uncertainties
+        report = immrax_val.validate_trajectory(
+            samples_data,
+            _scaled_range(uncertainties["cof"], spread),
+            _scaled_range(uncertainties["torque_headroom"], spread),
+            _scaled_range(uncertainties["gear_backlash_m"], spread),
+            _scaled_range(uncertainties["track_width_range"], spread),
+            _scaled_range(uncertainties["wheel_radius_range"], spread),
+            _scaled_range(uncertainties["inertia_kg_m2"], spread),
+        )
+    except Exception as exc:  # a validator crash is not a pass (KI-002)
+        record.update({"ok": False, "reasons": [f"Immrax error: {exc}"],
+                       "tube_m": float("inf"), "tracking_m": float("inf")})
+        return record
+
+    for i, env in enumerate(report["reachability"]["envelope"]):
+        if i < len(samples_data):
+            samples_data[i]["reachability_envelope"] = env
+
+    failed_threshold = False
+    max_violation = 0.0
+    max_tube = 0.0
+    for i in range(len(samples_data)):
+        limit = thresholds.get(i // samples_per_segment, 0.02)
+        env = samples_data[i].get("reachability_envelope", {})
+        if not env:
+            continue
+        err_x = (env["x_max"] - env["x_min"]) / 2.0
+        err_y = (env["y_max"] - env["y_min"]) / 2.0
+        radius = math.sqrt(err_x ** 2 + err_y ** 2)
+        max_tube = max(max_tube, radius)
+        if env.get("unknown") or radius > limit:
+            failed_threshold = True
+            max_violation = max(max_violation, radius)
+
+    cpu_summary = validate_samples(samples_data, robot_cfg)
+    waypoint_check = check_final_waypoint(samples_data, waypoints[-1])
+
+    reasons = cli._immrax_failure_reasons(report, failed_threshold, max_violation)
+    # The same rule main.py uses for a candidate: converged, inside the local
+    # envelope threshold, physically safe by Immrax, and clean in the CPU
+    # audit. The final-waypoint check is a separate gate in main.py (it runs
+    # on the selected candidate), so it is reported here rather than folded
+    # into the pass flag.
+    ok = (record["converged"] and not failed_threshold and bool(report["passed"]))
+    if not cpu_summary["passed"]:
+        ok = False
+        reasons = list(reasons) + cli._cpu_failure_reasons(cpu_summary, waypoint_check)
+    if not waypoint_check["passed"]:
+        reasons = list(reasons) + [
+            f"final waypoint error {waypoint_check['pos_error_m'] * 100:.2f} cm",
+        ]
+
+    metrics = compute_metrics(samples_data, robot_cfg)
+    # The heading change between consecutive samples. RQ-A (docs/research/
+    # RQ-A_tracking_error.md) identifies this as the variable that explains
+    # the closed-loop tracking error: the plan, the controller's reference and
+    # the plant's integration are three different discretisations, and they
+    # disagree by roughly this much per sample.
+    steps = []
+    for i in range(len(samples_data) - 1):
+        delta = (samples_data[i + 1]["heading"] - samples_data[i]["heading"]
+                 + math.pi) % (2 * math.pi) - math.pi
+        steps.append(abs(delta))
+    # Peak wheel acceleration. The hub's DriveBase ramps its trajectories at
+    # about 7.8 m/s^2 for this robot's geometry (KI-021), and the optimizer
+    # does not model that limit, so it is measured here.
+    peak_accel = 0.0
+    for sample in samples_data:
+        peak_accel = max(peak_accel, abs(float(sample.get("al", 0.0))),
+                         abs(float(sample.get("ar", 0.0))))
+    record.update({
+        "ok": bool(ok),
+        "tube_m": float(max_tube),
+        "tracking_m": float(report.get("max_tracking_error_m", float("inf"))),
+        "max_dtheta_rad": float(max(steps)) if steps else 0.0,
+        "mean_dtheta_rad": float(sum(steps) / len(steps)) if steps else 0.0,
+        "max_accel_m_s2": float(peak_accel),
+        "num_samples": len(samples_data),
+        "motor_violation_N": float(report.get("max_motor_violation_N", 0.0)),
+        "slip_l_N": float(report.get("max_slip_l_N", 0.0)),
+        "slip_r_N": float(report.get("max_slip_r_N", 0.0)),
+        "speed_violation_m_s": float(report.get("speed_violation_m_s", 0.0)),
+        "diverged": bool(report["reachability"].get("diverged", False)),
+        "integrate_max_m": float(cpu_summary["errors"]["max_pos_error_m"]),
+        "integrate_final_m": float(cpu_summary["errors"]["final_pos_error_m"]),
+        "violating_samples": int(cpu_summary["audit"]["num_violating_samples"]),
+        "slip_points": int(cpu_summary["audit"]["num_slip_points"]),
+        "final_wp_pos_m": float(waypoint_check["pos_error_m"]),
+        "final_wp_heading_rad": float(waypoint_check["heading_error_rad"]),
+        "path_length_m": float(metrics.get("path_length_m", float("nan"))),
+        "max_jerk_m_s3": float(metrics.get("max_jerk_m_s3", float("nan"))),
+        "max_wheel_speed_m_s": float(metrics.get("max_wheel_speed_m_s", float("nan"))),
+        "reasons": reasons,
+    })
+
+    if critic is not None:
+        try:
+            windows = critic.evaluate(samples_data, samples_per_segment)
+            record["critic_windows"] = len(windows)
+        except Exception as exc:
+            record["critic_windows"] = -1
+            record["critic_error"] = str(exc)
+
+    if profiles:
+        # Per-sample envelope radius and forward drift, for the Q4 proxy study.
+        radii = []
+        for sample in samples_data:
+            env = sample.get("reachability_envelope", {})
+            if not env:
+                radii.append(None)
+                continue
+            err_x = (env["x_max"] - env["x_min"]) / 2.0
+            err_y = (env["y_max"] - env["y_min"]) / 2.0
+            radii.append(round(math.sqrt(err_x ** 2 + err_y ** 2), 6))
+        record["envelope_profile_m"] = radii
+        record["distance_profile_m"] = [
+            round(float(sample.get("t", 0.0)), 6) for sample in samples_data
+        ]
+    return record
+
+
+# --------------------------------------------------------------------------
+# The run
+# --------------------------------------------------------------------------
+
+def load_mission(path: Path) -> Dict[str, Any]:
+    """Load a mission file the way the CLI does."""
+    wps, events, thresholds, stop_indices = cli._load_waypoints(str(path))
+    meta = {"file": path.name, "profile": None}
+    index_path = path.parent / "index.json"
+    if index_path.exists():
+        index = json.loads(index_path.read_text(encoding="utf-8"))
+        for entry in index.get("missions", []):
+            if entry.get("file") == path.name:
+                meta["profile"] = entry.get("profile")
+                meta["id"] = entry.get("id")
+                break
+    return {
+        "waypoints": wps,
+        "events": events,
+        "thresholds": thresholds,
+        "stop_indices": stop_indices,
+        "meta": meta,
+    }
+
+
+def _initial_guess(spec: Dict[str, Any], mission: Dict[str, Any], robot_cfg):
+    """Build the initial guess for a spec, when it is not a stock seed."""
+    guess_kind = spec["guess"]
+    if guess_kind == "stock":
+        return None
+    samples = spec["samples"]
+    waypoints = mission["waypoints"]
+    stops = mission["stop_indices"]
+    if guess_kind == "spline":
+        return seed_lib.spline_guess(waypoints, samples, robot_cfg, stops)
+    if guess_kind == "proportional_dt":
+        return seed_lib.proportional_dt_guess(waypoints, samples, robot_cfg, stops)
+    raise ValueError(f"Unknown guess kind {guess_kind!r}")
+
+
+def run_mission(mission: Dict[str, Any], specs: List[Dict[str, Any]], robot_cfg,
+                validator_cls, robot_config_cls, critic=None,
+                workers: int = 8, profiles: bool = False,
+                spreads: Sequence[float] = (1.0,),
+                self_consistent: bool = False) -> List[Dict[str, Any]]:
+    """Solve every spec for one mission and score each result."""
+    waypoints = mission["waypoints"]
+    thresholds = mission["thresholds"]
+    stop_indices = mission["stop_indices"]
+
+    payloads = []
+    for spec in specs:
+        solve_kwargs: Dict[str, Any] = {
+            "num_samples_per_segment": spec["samples"],
+            "accuracy_weight": spec["weight"],
+            "stop_waypoint_indices": stop_indices,
+            "waypoint_events": {},
+            "verbose": False,
+            "capture_iterations": False,
+        }
+        engine = spec.get("engine", "simple")
+        if engine == "simple":
+            solve_kwargs["guess_style"] = spec["style"]
+            solve_kwargs["per_segment_dt"] = spec["timing"] == "per-segment"
+            if self_consistent:
+                solve_kwargs["self_consistent"] = True
+            guess = _initial_guess(spec, mission, robot_cfg)
+            if guess is not None:
+                solve_kwargs["initial_guess"] = guess
+        payloads.append((robot_cfg, waypoints, spec, solve_kwargs,
+                         engine == "multiverse"))
+
+    solved = cli._solve_candidates(payloads, workers, quiet=True, parallel=workers > 1)
+
+    records = []
+    state = tree_state()
+    for spec, result in zip(specs, solved):
+        samples_data, stats = result
+        for spread in spreads:
+            record = _score(samples_data, stats, robot_cfg, validator_cls,
+                            robot_config_cls, thresholds, spec["samples"],
+                            waypoints, critic=critic, profiles=profiles,
+                            spread=spread)
+            record.update({
+                "mission": mission["meta"].get("id") or mission["meta"]["file"],
+                "mission_file": mission["meta"]["file"],
+                "profile": mission["meta"].get("profile"),
+                "tree": state,
+                "spread": spread,
+                "label": spec["label"],
+                "style": spec["style"],
+                "guess": spec["guess"],
+                "engine": spec.get("engine", "simple"),
+                "self_consistent": bool(self_consistent),
+                "timing": spec["timing"],
+                "weight": spec["weight"],
+                "samples": spec["samples"],
+                "num_waypoints": len(waypoints),
+                "num_segments": len(waypoints) - 1,
+            })
+            records.append(record)
+    return records
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--missions", nargs="+", default=["research/missions"],
+                        help="Mission files or directories.")
+    parser.add_argument("--out", required=True, help="Output JSONL file.")
+    parser.add_argument("--specs", default="matrix",
+                        help="Spec set: seeds, weights, wide-weights, spline, "
+                             "proportional, density, matrix.")
+    parser.add_argument("--samples", type=int, default=10,
+                        help="Samples per segment for the non-density spec sets.")
+    parser.add_argument("--weight", type=float, default=0.0,
+                        help="Base accuracy weight.")
+    parser.add_argument("--workers", type=int, default=8,
+                        help="Worker processes used to solve the candidates.")
+    parser.add_argument("--config", default="examples/fll_choreo.json",
+                        help="Robot config.")
+    parser.add_argument("--limit", type=int, default=0,
+                        help="Only run the first N missions (0 = all).")
+    parser.add_argument("--no-critic", action="store_true",
+                        help="Skip the Multi-Verse critic metrics (Q5).")
+    parser.add_argument("--profiles", action="store_true",
+                        help="Store the per-sample envelope profile (Q4).")
+    parser.add_argument("--spread", type=float, default=1.0,
+                        help="Scale the declared uncertainty ranges: 1 = as "
+                             "declared, 0 = collapsed to nominal, 2 = twice as "
+                             "wide (KI-020 sensitivity).")
+    parser.add_argument("--spreads", type=float, nargs="*", default=None,
+                        help="Validate every candidate at these spread "
+                             "factors. Overrides --spread.")
+    parser.add_argument("--self-consistent", action="store_true",
+                        help="Plan self-consistent trajectories (KI-026): the "
+                             "samples lie on the path the plan's own profile "
+                             "traces.")
+    parser.add_argument("--append", action="store_true",
+                        help="Append to the output file instead of replacing it.")
+    args = parser.parse_args()
+
+    # Collect the mission files.
+    files: List[Path] = []
+    for entry in args.missions:
+        path = Path(entry)
+        if path.is_dir():
+            files.extend(sorted(p for p in path.glob("*.json")
+                                if p.name != "index.json"))
+        else:
+            files.append(path)
+    if args.limit:
+        files = files[:args.limit]
+    if not files:
+        raise SystemExit("No mission files found")
+
+    config_data, robot_cfg = cli._load_config(_resolve(args.config))
+    validator_cls, robot_config_cls = cli._ensure_jax_classes()
+
+    critic = None
+    if not args.no_critic:
+        try:
+            from multiverse_optimizer import TrajectoryCritic
+            critic = TrajectoryCritic(robot_cfg)
+        except Exception as exc:
+            print(f"critic unavailable: {exc}")
+
+    specs = build_specs(args.specs, args.weight, args.samples)
+    spreads = tuple(args.spreads) if args.spreads else (args.spread,)
+    out_path = Path(args.out)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    mode = "a" if args.append else "w"
+    start = time.time()
+
+    print(f"{len(files)} missions x {len(specs)} candidates "
+          f"x {len(spreads)} spread(s) = "
+          f"{len(files) * len(specs) * len(spreads)} validations")
+    with out_path.open(mode, encoding="utf-8") as handle:
+        if not args.append:
+            handle.write(json.dumps({
+                "record": "meta",
+                "specs": args.specs,
+                "samples": args.samples,
+                "base_weight": args.weight,
+                "config": args.config,
+                "spread": list(spreads),
+                "self_consistent": bool(args.self_consistent),
+                "provenance": provenance(),
+                "started": time.strftime("%Y-%m-%d %H:%M:%S"),
+            }) + "\n")
+        for index, path in enumerate(files, 1):
+            mission = load_mission(path)
+            mission_start = time.time()
+            records = run_mission(mission, specs, robot_cfg, validator_cls,
+                                  robot_config_cls, critic=critic,
+                                  workers=args.workers, profiles=args.profiles,
+                                  spreads=spreads,
+                                  self_consistent=args.self_consistent)
+            for record in records:
+                handle.write(json.dumps(record) + "\n")
+            handle.flush()
+            passing = sum(1 for r in records if r.get("ok"))
+            best = min((r for r in records if r.get("ok")),
+                       key=lambda r: r.get("duration_s", float("inf")),
+                       default=None)
+            best_text = f"{best['duration_s']:.3f}s" if best else "-"
+            print(f"[{index}/{len(files)}] {path.name:<28} "
+                  f"{passing}/{len(records)} pass  best {best_text}  "
+                  f"{time.time() - mission_start:.1f}s")
+
+    print(f"wrote {out_path} in {time.time() - start:.1f}s")
+
+
+if __name__ == "__main__":
+    main()
+

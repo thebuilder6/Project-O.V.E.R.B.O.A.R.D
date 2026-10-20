@@ -1,49 +1,36 @@
-# Measurement evidence — 2026-10-20
+# Review plots — 2026-10-20
 
-The same heuristic matrix as [`2026-10-19`](../2026-10-19/), re-run after the
-**KI-025** fixes (the backlash dimensional error and the missing heading
-metric). The purpose is one thing: **prove that the fixes did not change any
-gate outcome.**
-
-## The comparison
-
-| | before | after |
-|---|---|---|
-| measurement folder | [`../2026-10-19/`](../2026-10-19/) | this folder |
-| candidates solved | 60 | 60 |
-| **pass flags changed** | — | **0 of 60** |
-| selections changed | — | 0 of 12 runs |
-| tracking error | — | mean −0.0008 cm (range −0.025 to +0.029) |
-| envelope radius | — | mean **+0.0070 cm** (range −0.058 to +0.061) |
-| tracking + envelope | — | mean +0.0062 cm |
-| worst-case total per run | — | moved by at most 0.065 cm |
-
-The tracking error barely moved, because it is dominated by the
-discretisation mismatch described in
-[`../../research/RQ-A_tracking_error.md`](../../research/RQ-A_tracking_error.md)
-and not by the backlash. What changed is *where* the backlash is accounted
-for: it is now a position uncertainty in the reachable set rather than a
-systematic lag in the tracking metric.
-
-Against a 5 mm tracking threshold and a 2 cm envelope threshold, a total
-uncertainty that moved by 0.006 cm on average and by at most 0.065 cm in the
-worst case is noise.
-
-## What was run
-
-Identical to the 2026-10-19 matrix:
+Two figures comparing the two timing models on the current tree, produced by
+[`dt_modes_plots.py`](dt_modes_plots.py):
 
 ```bash
-python main.py -c examples/fll_choreo.json -w examples/<mission>.json \
-  -o <tmp>.traj --validate --candidates 5 --uniform-dt
-python main.py -c examples/fll_choreo.json -w examples/<mission>.json \
-  -o <tmp>.traj --validate --candidates 5 --per-segment-dt
+python docs/measurements/2026-10-20/dt_modes_plots.py
 ```
 
-Missions: `example_straight`, `example_s_curve`, `example_mission_first4`,
-`example_complex_mission`, `example_with_stops`, `example_with_events`.
+| file | what it shows |
+|---|---|
+| `dt_modes.png` | the complex mission: path, reachability tube, closed-loop tracking error, time per segment, the wheel-force step at each waypoint, and the wheel-force profile |
+| `uneven_dt_modes.png` | the uneven 1.0 m + 0.2 m path, the same six panels |
 
-## Caveat
+## What the panels say
 
-Model predictions, not hardware measurements. No hardware logs exist in this
-repository.
+**Time per segment** is the whole story of the two models. The equal-duration
+mode shares one `dt` across all segments, and because every segment has the
+same sample count that also forces every segment to take the **same time** —
+so on the uneven path the 0.2 m hop inherits the 1.0 m segment's 2.23 s and
+the robot crawls through it, overshooting the last waypoint and coming back
+(the black path in the uneven figure). The per-piece mode gives each segment
+its own duration and drives straight through.
+
+**Wheel-force step through each waypoint** is the KI-024 property. The
+per-piece model may re-time at a waypoint, but it may not step the wheel
+force there: the per-piece bars are flat on the floor at every waypoint the
+robot drives through, while the equal-duration bars reach a few m/s². The
+hatched bars are waypoints the robot *stops* at, where the wheel force has to
+reverse sign and a step is expected.
+
+**The tracking and force panels** are measured with the validator mirroring
+the controller that runs (KI-028): a 5 ms command hold, an unrounded command
+and the gain recomputed from the interpolated speed and turn rate. The
+numbers in the older 2026-10-19 evidence were measured against a 20 ms mirror
+of a controller that is not in use, so they are not comparable.

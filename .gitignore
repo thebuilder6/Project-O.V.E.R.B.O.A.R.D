@@ -52,6 +52,9 @@ pybricks_code/hub_mission.py
 research/results/
 research/missions/
 
+# The mat pictures the studio fetches. FIRST's mat artwork is copyrighted,
+# so it is downloaded on request and kept out of the repository.
+mats/
 # Calibration session artifacts
 session.csv
 calibration_sheet.csv

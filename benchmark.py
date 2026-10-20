@@ -10,7 +10,7 @@ Combines three previous benchmark scripts into a single entry-point:
 
 Common options
 --------------
-    --config <path>   Robot config file (default: robot_config.json)
+    --config <path>   Robot config file (default: examples/fll_choreo.json)
     --output <path>   Where to write JSON results (default: benchmark_results.json)
     --runs  <int>     How many runs / iterations  (default depends on mode)
 
@@ -27,6 +27,7 @@ Random-mode extra options
 
 import argparse
 import json
+import math
 import os
 import random
 import time
@@ -91,7 +92,7 @@ class CLIBenchmarkRunner:
     and .traj output match exactly what end-users experience.
     """
 
-    def __init__(self, config_path: str = "robot_config.json"):
+    def __init__(self, config_path: str = "examples/fll_choreo.json"):
         self.config_path = config_path
         self.results: list[dict] = []
 
@@ -259,11 +260,16 @@ def run_pipeline_benchmark(config_data: dict, cfg: RobotConfig) -> dict:
     # --- Simple -----------------------------------------------------------
     opt_simple = TrajectoryOptimizer(cfg)
     t0 = time.time()
-    samples_s, _ = opt_simple.solve(wps, verbose=False)
+    samples_s, stats_s = opt_simple.solve(wps, verbose=False)
     t_simple = time.time() - t0
     cost_s = samples_s[-1]["t"]
-    print(f"  Simple CasADi  solve={t_simple:.4f}s  traj_time={cost_s:.4f}s")
-    result["simple"] = {"solve_time": t_simple, "traj_time": cost_s}
+    # A solve that did not converge is not a result (KI-001). Report it as a
+    # failure instead of averaging its debug values into the summary.
+    converged_s = bool(stats_s.get("converged", False))
+    print(f"  Simple CasADi  solve={t_simple:.4f}s  traj_time={cost_s:.4f}s"
+          f"  {'converged' if converged_s else 'FAILED'}")
+    result["simple"] = {"solve_time": t_simple, "traj_time": cost_s,
+                         "converged": converged_s}
 
     # --- Multi-Verse (if available) ---------------------------------------
     if HAS_MULTIVERSE:
@@ -274,13 +280,16 @@ def run_pipeline_benchmark(config_data: dict, cfg: RobotConfig) -> dict:
         samples_mv, stats_mv = opt_mv.solve(wps, verbose=False)
         t_mv = time.time() - t0
         cost_mv = samples_mv[-1]["t"]
-        print(f"  JAX Multi-Verse solve={t_mv:.4f}s  traj_time={cost_mv:.4f}s")
+        converged_mv = bool(stats_mv.get("converged", False))
+        print(f"  JAX Multi-Verse solve={t_mv:.4f}s  traj_time={cost_mv:.4f}s"
+              f"  {'converged' if converged_mv else 'FAILED'}")
         improvement = (cost_s - cost_mv) / cost_s * 100
         print(f"  Cost improvement: {improvement:.2f}%")
         if stats_mv.get("phase_times", {}).get("refinement") is not None:
             print(f"  JAX refine phase: {stats_mv['phase_times']['refinement']:.4f}s")
         result["multiverse"] = {"solve_time": t_mv, "traj_time": cost_mv,
-                                "improvement_pct": improvement}
+                                "improvement_pct": improvement,
+                                "converged": converged_mv}
     else:
         print("  Multi-Verse skipped (JAX not installed).")
         result["multiverse"] = None
@@ -401,21 +410,47 @@ class RandomBenchmark:
 
     # ------------------------------------------------------------------
     def generate_waypoints(self, profile: str) -> tuple[list, list]:
-        """Return (wps_list, stop_indices) for random mission profile."""
+        """Return (wps_list, stop_indices) for random mission profile.
+
+        The waypoints are a random walk inside the profile's field, not
+        independent uniform draws. Uniform draws put two waypoints on top of
+        each other often enough to make the mission unsolvable for reasons
+        that have nothing to do with the planner, which is exactly the kind
+        of artefact a benchmark must not have.
+        """
         p = self.PROFILES[profile]
         n = random.randint(*p["n"])
         wps_json, wps_list, stops = [], [], []
+        x = random.uniform(*p["x"])
+        y = random.uniform(*p["y"])
+        direction = random.uniform(-np.pi, np.pi)
         for i in range(n):
-            heading = random.choice([None, random.uniform(-np.pi, np.pi)])
+            if i > 0:
+                length = random.uniform(0.2, 0.8)
+                direction += random.uniform(-0.6, 0.6)
+                nx = x + length * math.cos(direction)
+                ny = y + length * math.sin(direction)
+                if not (p["x"][0] <= nx <= p["x"][1]):
+                    direction = math.pi - direction
+                    nx = x + length * math.cos(direction)
+                if not (p["y"][0] <= ny <= p["y"][1]):
+                    direction = -direction
+                    ny = y + length * math.sin(direction)
+                x, y = nx, ny
+            heading = None
+            if i == 0:
+                heading = direction
+            elif profile == "stress_test" and random.random() < 0.5:
+                heading = direction + math.pi
+            elif random.random() < 0.4:
+                heading = direction
             stop = (i == 0) or (i == n - 1) or (random.random() < 0.3)
             wp = {
-                "x": random.uniform(*p["x"]),
-                "y": random.uniform(*p["y"]),
+                "x": round(x, 4),
+                "y": round(y, 4),
                 "heading": heading,
                 "stop": stop,
             }
-            if profile == "stress_test" and i > 0 and random.random() < 0.5:
-                wp["heading"] = (wps_json[i - 1].get("heading") or 0) + np.pi
             wps_json.append(wp)
             wps_list.append((wp["x"], wp["y"], wp["heading"]))
             if stop:
@@ -568,7 +603,7 @@ def _parse_args():
     )
     parser.add_argument("--mode", choices=["cli", "pipeline", "random", "solver"], default="pipeline",
                         help="Benchmark mode (default: pipeline)")
-    parser.add_argument("--config", default="robot_config.json",
+    parser.add_argument("--config", default="examples/fll_choreo.json",
                         help="Robot config file")
     parser.add_argument("--output", default="benchmark_results.json",
                         help="Output JSON path")

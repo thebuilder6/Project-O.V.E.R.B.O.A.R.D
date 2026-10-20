@@ -208,7 +208,7 @@ Three things follow, and they change the plan:
 2. **The two fixes are complementary, not alternatives.** The exact-plan fix helps where the ticks are many (n ≤ 15) and hurts where they are few; the finer-tick fix is the mirror image. **Both together give 0.034 cm at n=30** — the best result in the table, and 37× better than the shipped 1.248 cm.
 3. **The single highest-value change at the current default is the optimizer's kinematics.** At n=10 the exact-plan fix alone turns the S-curve from a fail into a pass (1.248 → 0.494 cm). The stops mission improves from 1.807 to 0.973 cm on the same change — it still fails, but by half.
 
-The finer tick is a property of the *model*, not of the robot: the deployed firmware runs a 20 ms loop and the validator mirrors it. The honest reading is that the plan's sampling density has to be **matched to the controller's tick** — roughly 4 to 6 ticks per sample interval — and the plan's positions have to be the exact integral of its own profile. A 2 ms tick in the validator is a way of *measuring* how much the density mismatch costs; it is not a fix you can ship without changing the firmware loop.
+The finer tick is a property of the *model*, not of the robot: the controllers that are in use hold the drive command for 5 ms and the validator now models that (Fix 4), so the "2 ms tick" column below is a way of *measuring* how much the density mismatch costs - it is not a fix you can ship without changing the firmware loop. The honest reading is that the plan's sampling density has to be **matched to the controller's tick** - roughly 4 to 6 ticks per sample interval - and the plan's positions have to be the exact integral of its own profile.
 
 ### F7 — The reference interpolates four coupled quantities independently, and the firmware does the same
 
@@ -293,6 +293,47 @@ Recorded because two of them produced convincing nonsense that briefly looked li
 
 ---
 
+### F8 — The complete reference fix: report the interval averages, not interpolated instantaneous values
+
+Two independent lines of work landed on the same place.
+
+The **hold analysis** (from the floor experiment): the plan's own trapezoidal rule says the distance covered in one sample interval is the *interval average speed* × the interval. The controller holds its command for a whole 20 ms tick, so the robot's velocity is a **staircase** and the distance it covers in an interval is the mean of that staircase — not the average the plan assumed. The mismatch per interval is `0.5·(v_k − v_{k+1})·dt_k`, and it accumulates.
+
+The **consistency analysis** (F7): the heading and the turn rate are interpolated independently, and if `ω` is a line then the heading is a parabola. They disagree by up to 9° mid-interval.
+
+Both say the same thing: **the reference should report the interval averages.** The heading target stays interpolated (the robot really does sweep through it) and the position stays interpolated (the plan's samples are the chord's ends), but the *feedforward* — `v`, `ω` and the gain `kr` — should be the interval averages.
+
+And there is a clean reason it works: the plan's trapezoidal rule **is** "move at the interval-average velocity along the chord". Tell the robot that and it traces exactly the path the plan assumed.
+
+Measured (`exp15_interval_average.py`, per-segment timing; **VW** = interval-average velocity + interval-average turn rate + gain recomputed from them):
+
+| mission | n | shipped | VW | best of {shipped, plan fix, VW} |
+|---|---:|---:|---:|---:|
+| s_curve | 10 | 1.248 | 2.141 | **0.494 ✓** (plan fix) |
+| s_curve | 20 | 0.491 | 0.337 | 0.337 |
+| s_curve | 40 | 0.979 | **0.110 ✓** | **0.110 ✓** |
+| stops | 10 | 1.807 | 2.982 | 0.974 (plan fix) |
+| stops | 20 | 1.065 | 0.407 | 0.407 |
+| stops | 40 | 1.294 | **0.202 ✓** | **0.202 ✓** |
+| complex | 10 | 0.864 | **0.371** | **0.371** |
+| complex | 20 | 1.046 | **0.153 ✓** | **0.153 ✓** |
+| complex | 40 | 0.687 | **0.067 ✓** | **0.067 ✓** |
+
+(✓ = passes the 5 mm tracking gate. "Plan fix" is the optimizer's self-consistent collocation, KI-026.)
+
+**The two fixes are mirror images across the density, and that is the whole story of RQ-A:**
+
+| | helps at coarse sampling (n = 10) | helps at fine sampling (n = 20–40) |
+|---|---|---|
+| **the plan's positions** (KI-026) | yes — S-curve 1.248 → 0.494 ✓ | no — it makes the fine end worse |
+| **the reference's averages** (this finding) | no — it makes the coarse end worse | yes — up to **10×** better |
+
+Taken together, **the best of the three variants improves every cell** and passes **5 of the 9**, with the tracking error down to 0.07–0.49 cm across the whole matrix, from 0.49–1.81 cm shipped. The density question, which looked like the central mystery, dissolves once both are in place: the reference fix makes the fine end work, and the plan fix covers the coarse end.
+
+**What this means for the work.** The reference fix is the bigger and cheaper of the two: it is one line per file in `ramsete_compact_events.py`, `ramsete_compact.py`, `ramsete_fast.py` and `immrax_validator.py`, it does not change the plan, so it does not invalidate the measured candidate set or the seed conclusions, and it is worth up to 10× rather than 2.5×. The plan fix is already implemented as `--self-consistent` and is worth 2.5× at the coarse end.
+
+---
+
 ## Fixes applied
 
 Two of the findings were **direct bugs in the code**, not design gaps, and are now fixed (KI-025). The structural finding — the three-way discretisation mismatch — is **not** fixed; it is the open item below.
@@ -369,9 +410,79 @@ Measured after the fix, per-segment timing, the five cells F7 tabulated:
 
 Four of the five failing cells now pass, and the complex mission halves its error at the default density. The S-curve at the default density gets *worse*, which is F7's own finding: the coupling cannot be fixed in isolation, the plan has to be self-consistent too (KI-026), and the two together are what the sweep is for.
 
+### Fix 4 - the validator was mirroring a firmware that is not in use
+
+F6 identified the 20 ms command hold as the floor, and treated the period as a
+property of the robot. It is not: **it is a property of the model**, and the
+model was wrong about which firmware it models.
+
+The validator was written against `pybricks_code/ramsete_fast.py`. The
+controllers that are actually in use are the two compact ones and the
+list-of-dict reference, and they do not agree with it:
+
+| | ramsete_compact_events.py *(deployed: hub_runner.py)* | ramsete_compact.py *(the SysId replay)* | ramsete.py *(the IDE missions)* | the validator used to model |
+|---|---|---|---|---|
+| control period | `await wait(5)` -> 5 ms | `_LOOP_MS = 20` -> 20 ms | `await wait(5)` -> 5 ms | **20 ms** |
+| drive command | floats | rounded to mm/s and deg/s | floats | **rounded** |
+| Ramsete gain | recomputed from the interpolated v, w | interpolated per sample | recomputed | **interpolated** |
+| rate limit | `KinematicLimiter` | none | `KinematicLimiter` | none |
+
+The control period is the expensive line: the hold error is proportional to
+it, so a validator that holds the command four times too long reports about
+four times the error the robot will have. The two compact controllers could
+not be mirrored by one validator because they did not even agree with each
+other.
+
+**What changed.**
+
+- `pybricks_code/ramsete_compact.py` now uses the same three parts as its
+  event-capable twin - the shared `Odometry`, `RamseteController` and
+  `KinematicLimiter` from `ramsete.py` - the same 5 ms loop, and the same
+  unrounded drive command. The two compact controllers are now the same
+  controller with and without events, so they cannot drift apart, and the
+  duplicated odometry and Ramsete math is gone.
+- `immrax_validator.py` holds the command for 5 ms (`CONTROL_DT`), does not
+  round it, and recomputes the Ramsete gain from the interpolated speed and
+  turn rate, like the controller the firmware uses.
+- `tests/test_firmware_events.py::TestFirmwareParity` pins the parity: the
+  controllers in use must declare the same control period, the validator's
+  period must equal it, the two compact controllers must use the shared
+  parts, and the validator must not round the command.
+
+**Measured** (`exp16_firmware_parity.py`, per-segment timing, the legacy
+mirror against the deployed one, plan held fixed):
+
+| mission | n | legacy mirror | gate | deployed mirror | gate | factor |
+|---|---:|---:|---|---:|---|---:|
+| s_curve | 40 | 0.960 cm | fail | **0.177 cm** | **pass** | 5.4x |
+| stops | 40 | 1.296 cm | fail | **0.208 cm** | **pass** | 6.2x |
+| complex | 20 | 1.151 cm | fail | **0.266 cm** | **pass** | 4.3x |
+| complex | 40 | 1.176 cm | fail | **0.302 cm** | **pass** | 3.9x |
+| events | 40 | 0.519 cm | fail | **0.128 cm** | **pass** | 4.1x |
+| first4 | 20 | 0.563 cm | fail | **0.110 cm** | **pass** | 5.1x |
+| straight | 10 | 0.341 cm | pass | 0.013 cm | pass | 26.7x |
+
+Seven of the twenty-four (mission, density) cells change from fail to pass,
+and the reported tracking error is 3-5x smaller everywhere except at the
+coarsest density, where the plan's own deviation dominates and the hold was
+partly cancelling it.
+
+**Two gaps are still open**, and both are recorded rather than closed:
+
+1. The `KinematicLimiter` is in the firmware and in no model. The firmware
+   limits the command by the motor's force limit and by the gear backlash;
+   the validator models neither. The limiter also still carries the *old*
+   backlash model - a deficit subtracted from the wheel speed, which is the
+   dimensional error KI-025 removed from the model but not from the firmware.
+   So the robot is stricter than the model in one way (the force limit) and
+   has a bias the model no longer has in another (the backlash).
+2. `ramsete_fast.py` is still a 20 ms synced loop that rounds the command
+   and interpolates the gain. It is the legacy path; the two compact
+   controllers and `ramsete.py` are the ones in use.
+
 ### Not fixed - the structural mismatch
 
-Two of the three sides of the three-way discretisation inconsistency are now closed: the plan's own collocation (KI-026) and the reference's coupling (Fix 3). What is left is the *shape* of the reference - the controller still follows the chord between the samples rather than the curve, which is the second half of the package and needs the plan fix to be in place everywhere, and the 20 ms sample-and-hold, which is the remaining floor (OQ1).
+Two of the three sides of the three-way discretisation inconsistency are now closed: the plan's own collocation (KI-026) and the reference's coupling (Fix 3). What is left is the *shape* of the reference - the controller still follows the chord between the samples rather than the curve, which is the second half of the package and needs the plan fix to be in place everywhere, and the command hold, which is now modelled at the firmware's real period (Fix 4) and is the remaining floor (OQ1).
 
 ---
 
@@ -431,41 +542,6 @@ still follows the chord, and the chord is now within the sagitta of the path.
 | S-curve, n=10 (default) | plan/profile deviation | tracking | gate |
 |---|---:|---:|---|
 | trapezoid, candidate 1 | 11.5 mm | 1.31 cm | fail |
-| trapezoid, candidate 2 | 11.5 mm | 1.25 cm | fail |
-| self-consistent, candidate 1 | < 0.1 mm | 0.59 cm | fail |
-| **self-consistent, candidate 2** | **< 0.1 mm** | **0.47 cm** | **PASS** |
-
-The validator's own forward-integration check stops reporting its 1.3 cm
-error, because the plan now agrees with itself.
-
-It is not a free win, and it is not the whole fix:
-
-- The complex mission moves from 0.49 cm to 0.51 cm, so it now fails the gate
-  by 0.01 cm. The candidate set has to be re-tuned under the new formulation.
-- The stops mission gets slower (6.2 s to 7.8 s): a direction reversal is
-  where a self-consistent plan is hardest (OQ5).
-- The first-four-waypoints mission gets 8 % faster (1.83 s to 1.68 s).
-- At fine sampling this changes little: the floor there is the 20 ms
-  sample-and-hold, not the plan (OQ1).
-
-### F10 — the self-consistent collocation, implemented (OQ2, half 1)
-
-OQ2 asked whether the optimizer can be reformulated so the consistency is
-structural. It can: replace the trapezoidal position rule with a quadrature
-over the *integrated* heading, and the samples land on the path the plan's own
-(v, omega) profile traces, with the heading samples as its tangents.
-
-`optimizer.py` now has it behind `--self-consistent` (off by default, so the
-measured plans stay reproducible). The position rule integrates the interval's
-velocity along the heading the robot will hold - the turn rate integrated, not
-the two endpoints - with a four-node Gauss-Legendre rule, O(dt^7) per interval
-against the trapezoid's O(dt^3). The heading rule is unchanged, so the headings
-are the tangents by construction. Nothing on the robot changes: the firmware
-still follows the chord, and the chord is now within the sagitta of the path.
-
-| S-curve, n=10 (default) | plan/profile deviation | tracking | gate |
-|---|---:|---:|---|
-| trapezoid, candidate 1 | 11.5 mm | 1.31 cm | fail |
 | trapezoid, candidate 2 | 11.5 mm | 1.32 cm | fail |
 | self-consistent, candidate 1 | < 0.1 mm | 0.59 cm | fail |
 | self-consistent, candidate 2 | < 0.1 mm | 0.55 cm | fail (0.05 cm over) |
@@ -491,7 +567,6 @@ It is not a free win, and it is not the whole fix:
   two changes interact and have to be tuned together.
 - At fine sampling this changes little: the floor there is the 20 ms
   sample-and-hold, not the plan (OQ1).
-
 
 ## What this changes in the research agenda
 In [`../HEURISTICS_AND_VERIFICATION.md`](../HEURISTICS_AND_VERIFICATION.md) Part IV:

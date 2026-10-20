@@ -1,0 +1,146 @@
+[
+ {
+  "tag": "example_straight__default",
+  "mission": "example_straight",
+  "mode": "default",
+  "wall_s": 0.1,
+  "exit_code": 2,
+  "report": null
+ },
+ {
+  "tag": "example_straight__sweep",
+  "mission": "example_straight",
+  "mode": "sweep",
+  "wall_s": 0.1,
+  "exit_code": 2,
+  "report": null
+ },
+ {
+  "tag": "example_straight__sweep-self-consistent",
+  "mission": "example_straight",
+  "mode": "sweep-self-consistent",
+  "wall_s": 0.1,
+  "exit_code": 2,
+  "report": null
+ },
+ {
+  "tag": "example_s_curve__default",
+  "mission": "example_s_curve",
+  "mode": "default",
+  "wall_s": 0.1,
+  "exit_code": 2,
+  "report": null
+ },
+ {
+  "tag": "example_s_curve__sweep",
+  "mission": "example_s_curve",
+  "mode": "sweep",
+  "wall_s": 0.1,
+  "exit_code": 2,
+  "report": null
+ },
+ {
+  "tag": "example_s_curve__sweep-self-consistent",
+  "mission": "example_s_curve",
+  "mode": "sweep-self-consistent",
+  "wall_s": 0.1,
+  "exit_code": 2,
+  "report": null
+ },
+ {
+  "tag": "example_mission_first4__default",
+  "mission": "example_mission_first4",
+  "mode": "default",
+  "wall_s": 0.1,
+  "exit_code": 2,
+  "report": null
+ },
+ {
+  "tag": "example_mission_first4__sweep",
+  "mission": "example_mission_first4",
+  "mode": "sweep",
+  "wall_s": 0.1,
+  "exit_code": 2,
+  "report": null
+ },
+ {
+  "tag": "example_mission_first4__sweep-self-consistent",
+  "mission": "example_mission_first4",
+  "mode": "sweep-self-consistent",
+  "wall_s": 0.1,
+  "exit_code": 2,
+  "report": null
+ },
+ {
+  "tag": "example_complex_mission__default",
+  "mission": "example_complex_mission",
+  "mode": "default",
+  "wall_s": 0.1,
+  "exit_code": 2,
+  "report": null
+ },
+ {
+  "tag": "example_complex_mission__sweep",
+  "mission": "example_complex_mission",
+  "mode": "sweep",
+  "wall_s": 0.1,
+  "exit_code": 2,
+  "report": null
+ },
+ {
+  "tag": "example_complex_mission__sweep-self-consistent",
+  "mission": "example_complex_mission",
+  "mode": "sweep-self-consistent",
+  "wall_s": 0.1,
+  "exit_code": 2,
+  "report": null
+ },
+ {
+  "tag": "example_with_stops__default",
+  "mission": "example_with_stops",
+  "mode": "default",
+  "wall_s": 0.1,
+  "exit_code": 2,
+  "report": null
+ },
+ {
+  "tag": "example_with_stops__sweep",
+  "mission": "example_with_stops",
+  "mode": "sweep",
+  "wall_s": 0.1,
+  "exit_code": 2,
+  "report": null
+ },
+ {
+  "tag": "example_with_stops__sweep-self-consistent",
+  "mission": "example_with_stops",
+  "mode": "sweep-self-consistent",
+  "wall_s": 0.1,
+  "exit_code": 2,
+  "report": null
+ },
+ {
+  "tag": "example_with_events__default",
+  "mission": "example_with_events",
+  "mode": "default",
+  "wall_s": 0.1,
+  "exit_code": 2,
+  "report": null
+ },
+ {
+  "tag": "example_with_events__sweep",
+  "mission": "example_with_events",
+  "mode": "sweep",
+  "wall_s": 0.1,
+  "exit_code": 2,
+  "report": null
+ },
+ {
+  "tag": "example_with_events__sweep-self-consistent",
+  "mission": "example_with_events",
+  "mode": "sweep-self-consistent",
+  "wall_s": 0.1,
+  "exit_code": 2,
+  "report": null
+ }
+]

@@ -1,0 +1,268 @@
+challenge:
+  match_duration_seconds: 120
+  rules: https://wro.hu/wp-content/uploads/2026/02/WRO-Kids-Game-Rules_HUN_-2026.pdf
+  season: WRO 2026 Inspired Kids
+  year: 2026
+id: wro2026ikids.yaml
+map:
+  height: 1143
+  imagesepia: true
+  imageurl: map.jpg
+  models:
+    M01:
+      areas:
+        - length: 50
+          passive: true
+          placeholder: false
+          type: circle
+          width: 50
+          x: 1420
+          y: 629
+        - length: 50
+          passive: true
+          rotation: 0
+          type: circle
+          width: 50
+          x: 815
+          y: 890
+        - length: 50
+          passive: true
+          rotation: 0
+          type: circle
+          width: 50
+          x: 1863
+          y: 140
+        - length: 50
+          passive: true
+          rotation: 0
+          type: circle
+          width: 50
+          x: 1806
+          y: 884
+        - length: 50
+          passive: true
+          rotation: 0
+          type: circle
+          width: 50
+          x: 676
+          y: 376
+        - length: 50
+          passive: true
+          rotation: 0
+          type: circle
+          width: 50
+          x: 598
+          y: 49
+        - length: 130
+          placeholder: true
+          rotation: 0
+          type: rectangle
+          width: 344
+          x: 2
+          y: 809
+        - length: 130
+          placeholder: true
+          type: rectangle
+          width: 344
+          x: 895
+          y: 1000
+        - length: 144
+          rotation: 32
+          type: rectangle
+          width: 287
+          x: 1448
+          y: 359
+      comment: Egy párnak együtt kell lennie valamelyik fesztiválon; maximum 60 pont összesen (párok és egyéni figurák pontozása a szabálykönyv szerint).
+      name: Zenei fesztiválok ERC Cityben
+      score:
+        M01a:
+          description: Azonos színű fiú–lány pár teljes terjedelmében valamelyik fesztivál célterületén (sárga körvonal).
+          max: 3
+          score: 20
+          type: range
+        M01b:
+          description: Fiú vagy lány figura teljes terjedelmében valamelyik fesztivál célterületén.
+          max: 6
+          score: 5
+          type: range
+          rule:
+            not: M01a
+    M02:
+      areas:
+        - height: 10
+          length: 50
+          passive: true
+          placeholder: false
+          rotation: 0
+          type: circle
+          width: 50
+          x: 1137
+          y: 1040
+        - length: 50
+          passive: true
+          rotation: 0
+          type: circle
+          width: 50
+          x: 1758
+          y: 581
+        - length: 50
+          passive: true
+          rotation: 0
+          type: circle
+          width: 50
+          x: 923
+          y: 169
+        - length: 317
+          placeholder: true
+          rotation: 0
+          type: circle
+          width: 317
+          x: 1022
+          y: 470
+      comment: Sziget = ERC sziget középső terepszakasza; maximum 30 pont összesen.
+      name: Digitális Detox
+      score:
+        M02a:
+          description: Versenyelemek (Asztal, Könyv, Edu the Talent) teljes terjedelmükkel a szigeti célterületen.
+          max: 3
+          score: 10
+          type: range
+        M02b:
+          description: Versenyelemek (Asztal, Könyv, Edu the Talent) érintik a szigeti célterületet (teljes elhelyezés nélkül).
+          max: 3
+          score: 5
+          type: range
+          rule:
+            not: M02a
+    M03:
+      areas:
+        - height: 10
+          length: 80
+          placeholder: false
+          width: 80
+          x: 1148
+          y: 547
+      comment: Vagy aktivált kút a víz grafikán (20), vagy nem aktivált kút a szigeten (5) — a szabálykönyv szerinti pontozás.
+      name: Probléma a kúttal
+      score:
+        M03a:
+          description: A kút aktivált, javított állapotban érintkezik a szigeten lévő víz grafikával (legalább részben).
+          score: 20
+        M03b:
+          description: A kút a szigeten van, de nincs aktiválva.
+          score: 5
+          rule:
+            not: M03a
+    M04:
+      areas:
+        - height: 10
+          length: 50
+          passive: true
+          placeholder: false
+          rotation: 0
+          type: circle
+          width: 50
+          x: 221
+          y: 203
+        - length: 50
+          passive: true
+          rotation: 0
+          type: circle
+          width: 50
+          x: 157
+          y: 965
+        - length: 50
+          passive: true
+          rotation: 0
+          type: circle
+          width: 50
+          x: 2199
+          y: 211
+        - length: 200
+          placeholder: true
+          rotation: 0
+          type: rectangle
+          width: 200
+          x: 1840
+          y: 854
+      comment: A számítógép (IAS), a Rubik-kocka és a golyóstoll Űrközpontba szállítása; maximum 60 + kiegészítő sor.
+      name: STEM kiállítás az Űrközpontban
+      score:
+        M04a:
+          description: Versenyelemek (IAS számítógép, Rubik-kocka, golyóstoll) érintkeznek az Űrközpont célterületével.
+          max: 3
+          score: 20
+          type: range
+        M04b:
+          description: Versenyelemek nem érintkeznek a kiindulási helyükkel (leszállítva onnan).
+          max: 3
+          score: 5
+          type: range
+          rule:
+            not: M04a
+    M05:
+      areas:
+        - length: 50
+          passive: true
+          placeholder: false
+          rotation: 0
+          type: circle
+          width: 50
+          x: 1814
+          y: 819
+        - length: 50
+          rotation: 0
+          type: circle
+          width: 50
+          x: 1555
+          y: 14
+        - length: 50
+          rotation: 0
+          type: circle
+          width: 50
+          x: 262
+          y: 176
+        - length: 50
+          placeholder: true
+          rotation: 0
+          type: rectangle
+          width: 100
+          x: 627
+          y: 410
+      name: Egy kis családi kikapcsolódás
+      score:
+        M05a:
+          description: Versenyelemek (szék, hangjegy, festőállvány stb.) érintkeznek a táborozási helyszín grafikájával.
+          max: 4
+          score: 10
+          type: range
+    M06:
+      areas:
+        - height: 10
+          length: 111
+          placeholder: true
+          width: 120
+          x: 1054
+          y: 574
+      comment: Csak akkor jár a 20 pont, ha a csapat más feladatból is szerzett pontot; a robotnak önállóan kell a parkoló területre érnie.
+      name: Robot parkolása (Peti, a Jeti)
+      score:
+        M06a:
+          comment: (csak abban az esetben, ha más feladatból is szerzett pontot a csapat)
+          description: Felülnézetből a robot takarja Peti, a Jeti grafikáját a szigeten (parkolás).
+          score: 20
+  startareas:
+    - id: Biztonságos terület
+      length: 250
+      type: rectangle
+      width: 250
+      x: 112
+      y: 120
+    - id: Biztonságos terület
+      length: 250
+      type: rectangle
+      width: 250
+      x: 1805
+      y: 834
+  unit_of_measurement: mm
+  width: 2362

@@ -45,6 +45,7 @@ def _plan_deviation(samples, track_width, steps=400):
         worst = max(worst, math.hypot(x - nxt["x"], y - nxt["y"]))
     return worst
 
+
 class TestTrajectoryOptimizer(unittest.TestCase):
     """Test cases for TrajectoryOptimizer class."""
 
@@ -545,6 +546,227 @@ class TestTrajectoryOptimizer(unittest.TestCase):
         self.assertGreater(max(stats["segment_dt"]) / min(stats["segment_dt"]), 1.2)
         self.assertAlmostEqual(samples[-1]["t"], 5 * sum(stats["segment_dt"]), places=6)
 
+    def test_uniform_dt_forces_every_segment_to_take_the_same_time(self):
+        """KI-022: one shared dt also ties the SEGMENT DURATIONS together.
+
+        Every segment has the same sample count, so sharing one dt forces
+        every segment to take the same time. On a path with unequal segment
+        lengths the short segment inherits the long segment's duration. This
+        is the artificial penalty that makes the equal-duration mode slow, and
+        it is why the per-segment mode is the general model.
+        """
+        config = RobotConfig({"robot": {
+            "mass": 0.8, "inertia": 0.002, "track_width": 0.1,
+            "wheel_radius": 0.03, "v_max_rad_s": 15.0, "t_max_nm": 0.05,
+            "gearing": 1.0, "cof": 0.5,
+        }})
+        optimizer = TrajectoryOptimizer(config)
+        waypoints = [(0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (1.2, 0.0, 0.0)]
+
+        uniform, uniform_stats = optimizer.solve(
+            waypoints, num_samples_per_segment=5, accuracy_weight=0.0,
+            per_segment_dt=False, verbose=False)
+        per_seg, per_seg_stats = optimizer.solve(
+            waypoints, num_samples_per_segment=5, accuracy_weight=0.0,
+            per_segment_dt=True, verbose=False)
+
+        # The equal-duration mode spends the same time on the 1.0 m segment
+        # as on the 0.2 m segment.
+        uniform_durations = [uniform[5]["t"] - uniform[0]["t"],
+                             uniform[-1]["t"] - uniform[5]["t"]]
+        self.assertAlmostEqual(uniform_durations[0], uniform_durations[1], places=9)
+
+        # The per-segment mode is free to spend less time on the short segment,
+        # which is why it finishes sooner on an uneven path.
+        per_seg_durations = [per_seg[5]["t"] - per_seg[0]["t"],
+                             per_seg[-1]["t"] - per_seg[5]["t"]]
+        self.assertLess(per_seg_durations[1], per_seg_durations[0])
+        self.assertLess(per_seg[-1]["t"], uniform[-1]["t"])
+
+    def test_smoothness_cost_charges_physical_jerk_in_both_modes(self):
+        """KI-022: the same physical jerk must cost the same in both modes.
+
+        The smoothness cost used to be the raw acceleration jump, which is
+        proportional to jerk*dt. With per-segment dt a short segment was
+        therefore charged dt^2 less per unit of physical jerk, so the
+        per-segment model could buy violent wheel motion almost for free
+        (137.8 m/s^3 against the uniform model's 9.5 m/s^3 at the same
+        weight). The cost is now the path-wide reference interval squared
+        times the sum of the squared physical jerks, so every layout prices
+        physical jerk the same way.
+        """
+        config = RobotConfig({"robot": {
+            "mass": 0.8, "inertia": 0.002, "track_width": 0.1,
+            "wheel_radius": 0.03, "v_max_rad_s": 15.0, "t_max_nm": 0.05,
+            "gearing": 1.0, "cof": 0.5,
+        }})
+        optimizer = TrajectoryOptimizer(config)
+        num_segments, num_samples = 2, 5
+        N = num_segments * num_samples + 1
+
+        states = np.zeros((N, 5))
+        for k in range(N):
+            states[k, 0] = 0.1 * k
+            states[k, 3] = 0.2  # vl
+            states[k, 4] = 0.2  # vr
+        states[1, 3] = 0.4
+        states[1, 4] = 0.4  # one acceleration step, at sample 0
+
+        def cost_for(dt_values):
+            params = np.concatenate([np.asarray(dt_values, dtype=float),
+                                      states.flatten()])
+            return optimizer._compute_cost(params, N, num_samples, 1.0,
+                                           [(0.0, 0.0, 0.0), (1.0, 0.0, 0.0)])
+
+        def expected(dt_values):
+            """time cost + dt_ref^2 * sum of squared physical jerks."""
+            dt_ref = float(num_samples * np.sum(dt_values)) / (N - 1)
+            time_cost = float(num_samples * np.sum(dt_values))
+            total = 0.0
+            for k in range(N - 2):
+                dt_k = dt_values[k // num_samples]
+                dt_k1 = dt_values[(k + 1) // num_samples]
+                al_k = (states[k + 1, 3] - states[k, 3]) / dt_k
+                al_k1 = (states[k + 2, 3] - states[k + 1, 3]) / dt_k1
+                ar_k = (states[k + 1, 4] - states[k, 4]) / dt_k
+                ar_k1 = (states[k + 2, 4] - states[k + 1, 4]) / dt_k1
+                span = 0.5 * (dt_k + dt_k1)
+                total += ((al_k1 - al_k) / span) ** 2 + ((ar_k1 - ar_k) / span) ** 2
+            return time_cost + dt_ref ** 2 * total
+
+        for dt_values in ([0.2, 0.2], [0.35, 0.05], [0.05, 0.35]):
+            self.assertAlmostEqual(cost_for(dt_values), expected(dt_values),
+                                   places=9)
+
+        # The old cost was the raw sum of squared acceleration jumps, which
+        # weighs a boundary by its own dt and so charged a short segment
+        # dt^2 less per unit of physical jerk. The identity above only holds
+        # with the new, layout-independent price, so it is the regression
+        # guard: reverting to the raw sum breaks it for an uneven layout.
+        def old_raw_cost(dt_values):
+            total = 0.0
+            for k in range(N - 2):
+                dt_k = dt_values[k // num_samples]
+                dt_k1 = dt_values[(k + 1) // num_samples]
+                al_k = (states[k + 1, 3] - states[k, 3]) / dt_k
+                al_k1 = (states[k + 2, 3] - states[k + 1, 3]) / dt_k1
+                ar_k = (states[k + 1, 4] - states[k, 4]) / dt_k
+                ar_k1 = (states[k + 2, 4] - states[k + 1, 4]) / dt_k1
+                total += (al_k1 - al_k) ** 2 + (ar_k1 - ar_k) ** 2
+            return total
+
+        self.assertNotAlmostEqual(cost_for([0.35, 0.05]),
+                                  old_raw_cost([0.35, 0.05]), places=6)
+
+    def test_per_segment_objective_never_worse_than_uniform(self):
+        """KI-022: per-segment dt is a strictly larger feasible set.
+
+        Setting every dt equal recovers the uniform model exactly, so the
+        per-segment optimum can never have a worse penalised objective than
+        the uniform one at the same weight.
+        """
+        config = RobotConfig({"robot": {
+            "mass": 0.8, "inertia": 0.002, "track_width": 0.1,
+            "wheel_radius": 0.03, "v_max_rad_s": 15.0, "t_max_nm": 0.05,
+            "gearing": 1.0, "cof": 0.5,
+        }})
+        optimizer = TrajectoryOptimizer(config)
+        waypoints = [(0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (1.2, 0.0, 0.0)]
+        weight = 0.02
+
+        def objective(per_segment):
+            samples, stats = optimizer.solve(
+                waypoints, num_samples_per_segment=5, accuracy_weight=weight,
+                per_segment_dt=per_segment, verbose=False)
+            N = len(samples)
+            params = np.concatenate([
+                np.asarray(stats["segment_dt"], dtype=float),
+                np.array([[s["x"], s["y"], s["heading"], s["vl"], s["vr"]]
+                          for s in samples]).flatten()])
+            cost = optimizer._compute_cost(params, N, 5, weight, waypoints)
+            return samples[-1]["t"] + cost
+
+        uniform_obj = objective(False)
+        per_seg_obj = objective(True)
+        self.assertLessEqual(per_seg_obj, uniform_obj + 1e-6)
+
+
+class TestMergeConditions(unittest.TestCase):
+    """KI-023: the boundary semantics of the waypoint pieces.
+
+    A waypoint is a legitimate timing boundary only when the robot stops
+    there AND the heading is pinned: the state there is then fully
+    determined, so the pieces on either side need agree on nothing. At every
+    other waypoint the pieces must stay linked, and the wheel force profile
+    must run through the point without a step.
+    """
+
+    def setUp(self):
+        self.config = RobotConfig({"robot": {
+            "mass": 0.8, "inertia": 0.002, "track_width": 0.1,
+            "wheel_radius": 0.03, "v_max_rad_s": 15.0, "t_max_nm": 0.05,
+            "gearing": 1.0, "cof": 0.5,
+        }})
+        self.optimizer = TrajectoryOptimizer(self.config)
+
+    def test_merge_conditions_cover_the_four_cases(self):
+        waypoints = [
+            (0.0, 0.0, 0.0),    # 0: stop + pinned heading -> boundary
+            (1.0, 0.0, 0.0),    # 1: pinned heading, no stop
+            (2.0, 0.0, None),   # 2: stop, no pinned heading
+            (3.0, 0.0, None),   # 3: neither
+        ]
+        stops = [0, 2]
+        conds = self.optimizer.merge_conditions(waypoints, stops)
+
+        self.assertTrue(conds[0]["boundary"])
+        self.assertFalse(conds[0]["agree_velocity"])
+        self.assertFalse(conds[0]["agree_heading"])
+
+        self.assertFalse(conds[1]["boundary"])
+        self.assertTrue(conds[1]["agree_velocity"])
+        self.assertTrue(conds[1]["continuous_force"])
+
+        self.assertFalse(conds[2]["boundary"])
+        self.assertTrue(conds[2]["agree_heading"])
+        # The wheel force has to reverse sign at a stop, so it cannot be
+        # continuous there.
+        self.assertFalse(conds[2]["continuous_force"])
+
+        self.assertFalse(conds[3]["boundary"])
+        self.assertTrue(conds[3]["agree_velocity"])
+        self.assertTrue(conds[3]["agree_heading"])
+        self.assertTrue(conds[3]["continuous_force"])
+
+    def test_per_segment_model_keeps_the_force_continuous_through_a_linked_point(self):
+        """The wheel acceleration must not step at a waypoint the robot drives
+        through. With a dt change on either side the same velocity ramp is
+        read as two different accelerations, which puts a step in the force
+        profile exactly at the point."""
+        waypoints = [(0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (1.2, 0.0, 0.0)]
+        samples, stats = self.optimizer.solve(
+            waypoints, num_samples_per_segment=5, accuracy_weight=0.005,
+            per_segment_dt=True, verbose=False)
+
+        # The per-segment model does re-time across the interior waypoint.
+        self.assertGreater(max(stats["segment_dt"]) / min(stats["segment_dt"]), 1.2)
+
+        k = 5  # the interior waypoint sits on sample 5
+        self.assertLessEqual(abs(samples[k]["al"] - samples[k - 1]["al"]), 1e-6)
+        self.assertLessEqual(abs(samples[k]["ar"] - samples[k - 1]["ar"]), 1e-6)
+
+    def test_equal_duration_model_is_untouched_by_the_merge_conditions(self):
+        """The equal-duration model never changes dt, so it never re-reads the
+        ramp and it keeps its original formulation and result."""
+        waypoints = [(0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (1.2, 0.0, 0.0)]
+        samples, stats = self.optimizer.solve(
+            waypoints, num_samples_per_segment=5, accuracy_weight=0.0,
+            per_segment_dt=False, verbose=False)
+
+        self.assertEqual(len(set(stats["segment_dt"])), 1)
+        self.assertAlmostEqual(samples[-1]["t"], 10 * stats["segment_dt"][0],
+                               places=9)
+
 
 class TestFastPolish(unittest.TestCase):
     """The fast solve path must not change a mission that solves today."""
@@ -572,6 +794,21 @@ class TestFastPolish(unittest.TestCase):
         self.assertTrue(fast["fast_polish"])
         self.assertEqual(fast["stage_count"], 1)
         self.assertAlmostEqual(fast["final_cost"], plain["final_cost"], places=6)
+
+    def test_fast_polish_keeps_the_merge_conditions(self):
+        """The two-stage path must not drop the merge conditions (KI-024)."""
+        optimizer = TrajectoryOptimizer(self.config)
+        samples, stats = optimizer.solve(
+            self.waypoints, num_samples_per_segment=5, accuracy_weight=0.0,
+            per_segment_dt=True, fast_polish=True, verbose=False)
+
+        self.assertTrue(stats["converged"])
+        k = 5  # the interior waypoint
+        # The budgeted pass stops at IPOPT's tolerance, so the step is small
+        # rather than exactly zero. The equal-duration model steps by m/s^2
+        # here, so four orders of magnitude is the bar.
+        self.assertLessEqual(abs(samples[k]["al"] - samples[k - 1]["al"]), 1e-4)
+        self.assertLessEqual(abs(samples[k]["ar"] - samples[k - 1]["ar"]), 1e-4)
 
     def test_fast_polish_finishes_when_the_budget_runs_out(self):
         """With a tiny budget the cold pass takes over and still converges."""
@@ -840,10 +1077,6 @@ class TestBenchmarkDryRun(unittest.TestCase):
         self.assertAlmostEqual(samples[-1]["vr"], 0.0, places=3)
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class TestSelfConsistentPlan(unittest.TestCase):
     """The plan must lie on the path its own (v, omega) profile traces.
 
@@ -898,3 +1131,8 @@ class TestSelfConsistentPlan(unittest.TestCase):
             self.assertAlmostEqual(samples[-1]["y"], 0.0, places=2)
             self.assertAlmostEqual(samples[0]["vl"], 0.0, places=3)
             self.assertAlmostEqual(samples[-1]["vr"], 0.0, places=3)
+
+
+if __name__ == "__main__":
+    unittest.main()
+

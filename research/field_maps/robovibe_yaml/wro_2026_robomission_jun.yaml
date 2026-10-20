@@ -1,0 +1,427 @@
+challenge:
+  match_duration_seconds: 120
+  rules: https://wro-association.org/wp-content/uploads/WRO-2026-RoboMission-Junior-Game-Rules.pdf
+  season: WRO 2026 Robomission Junior
+  comment: Created by Gregor Gramlich
+  year: 2026
+map:
+  imagesepia: true
+  imageurl: map.jpg
+  width: 2362
+  height: 1143
+  models:
+    M01:
+      areas:
+        - height: 52
+          length: 31
+          passive: true
+          rotation: 0
+          width: 64
+          x: 282
+          y: 61
+        - height: 5
+          length: 180
+          placeholder: true
+          rotation: 0
+          width: 791
+          x: 878
+          y: 963
+      comment: Show the visitors around
+      name: Red Visitor
+      score:
+        M01a:
+          description: Visitor is completely in the red area and upright.
+          score: 10
+          type: binary
+        M01b:
+          description: Visitor is partly in the red area or not upright.
+          score: 5
+          type: binary
+          rule:
+            not: M01a
+    M02:
+      areas:
+        - height: 52
+          length: 31
+          passive: true
+          rotation: 0
+          width: 64
+          x: 397
+          y: 61
+        - height: 5
+          length: 180
+          placeholder: true
+          rotation: 0
+          width: 700
+          x: 924
+          y: 0
+      comment: Show the visitors around
+      name: Green Visitor
+      score:
+        M02a:
+          description: Visitor is completely in the green area and upright.
+          score: 10
+          type: binary
+        M02b:
+          description: Visitor is partly in the green area or not upright.
+          score: 5
+          type: binary
+          rule:
+            not: M02a
+    M03:
+      areas:
+        - height: 52
+          length: 31
+          passive: true
+          rotation: 0
+          width: 64
+          x: 512
+          y: 61
+        - height: 0
+          length: 101
+          placeholder: true
+          rotation: 0
+          width: 191
+          x: 2077
+          y: 237
+      comment: Show the visitors around
+      name: Blue Visitor
+      score:
+        M03a:
+          description: Visitor is completely in the blue area and upright.
+          score: 10
+          type: binary
+        M03b:
+          description: Visitor is partly in the blue area or not upright.
+          score: 5
+          type: binary
+          rule:
+            not: M03a
+    M04:
+      areas:
+        - height: 52
+          length: 31
+          passive: true
+          rotation: 0
+          width: 64
+          x: 627
+          y: 61
+        - height: 0
+          length: 101
+          placeholder: true
+          rotation: 0
+          width: 191
+          x: 2077
+          y: 781
+      comment: Show the visitors around
+      name: Black Visitor
+      score:
+        M04a:
+          description: Visitor is completely in the black area and upright.
+          score: 10
+          type: binary
+        M04b:
+          description: Visitor is partly in the black area or not upright.
+          score: 5
+          type: binary
+          rule:
+            not: M04a
+    M05:
+      areas:
+        - height: 126
+          length: 48
+          passive: true
+          rotation: 0
+          width: 48
+          x: 60
+          y: 910
+        - height: 126
+          length: 48
+          passive: true
+          placeholder: false
+          rotation: 0
+          width: 48
+          x: 60
+          y: 762
+        - length: 80
+          placeholder: true
+          rotation: 0
+          width: 80
+          x: 1592
+          y: 700
+        - length: 80
+          placeholder: true
+          rotation: 0
+          width: 80
+          x: 1592
+          y: 363
+      comment: Rebuild the Red Towers
+      name: Red Towers
+      score:
+        M05a:
+          description: Red tower is completely in the red target area (including orange border) and upright.
+          max: 2
+          min: 0
+          score: 15
+          type: range
+        M05b:
+          description: Red tower is partly in the red target area (including orange border) and upright.
+          max: 2
+          min: 0
+          score: 10
+          type: range
+          rule:
+            not: M05a
+    M06:
+      areas:
+        - height: 66
+          length: 48
+          passive: true
+          rotation: 0
+          width: 48
+          x: 207
+          y: 1057
+        - height: 66
+          length: 48
+          passive: true
+          rotation: 0
+          width: 48
+          x: 353
+          y: 1057
+        - height: 61
+          length: 64
+          rotation: 0
+          width: 64
+          x: 1772
+          y: 879
+          placeholder: true
+        - height: 61
+          length: 64
+          rotation: 0
+          width: 64
+          x: 1772
+          y: 200
+          placeholder: true
+      comment: Rebuild the Yellow Towers
+      name: Yellow Towers
+      score:
+        M06a:
+          description: Yellow tower top correctly placed on tower base and tower base still completely in yellow target area (including orange border)
+          max: 2
+          min: 0
+          score: 25
+          type: range
+        M06b:
+          description: Yellow tower top correctly placed on tower base and tower base but only partly in yellow target area (including orange border)
+          max: 2
+          min: 0
+          score: 15
+          type: range
+          rule:
+            not: M06a
+    M07:
+      areas:
+        - height: 40
+          length: 32
+          passive: true
+          rotation: 0
+          width: 428
+          x: 1060
+          y: 50
+        - height: 0
+          length: 48
+          placeholder: true
+          rotation: 0
+          width: 576
+          x: 986
+          y: 1048
+      comment: Bring the artefacts in the museum
+      name: Artefacts
+      score:
+        M07a:
+          description: Artefact is completely in corresponding-coloured exhibition spot in the museum and upright
+          max: 4
+          min: 0
+          score: 15
+          type: range
+        M07b:
+          description: Artefact is partly in corresponding-coloured exhibition spot in the museum or not upright
+          max: 4
+          min: 0
+          score: 5
+          type: range
+          rule:
+            not: M07a
+    M08:
+      areas:
+        - height: 20
+          placeholder: true
+          type: circle
+          x: 1924
+          y: 900
+          width: 100
+          length: 100
+        - height: 0
+          length: 299
+          passive: true
+          points:
+            - x: 0
+              y: 0
+            - x: -35
+              y: 30
+            - x: 60
+              y: 110
+            - x: 110
+              y: 110
+            - x: 150
+              y: 90
+            - x: 150
+              y: 60
+            - x: 350
+              y: 60
+            - x: 350
+              y: 90
+            - x: 440
+              y: 60
+            - x: 440
+              y: -500
+            - x: 350
+              y: -460
+            - x: 350
+              y: -390
+            - x: 150
+              y: -390
+            - x: 150
+              y: -440
+            - x: 80
+              y: -460
+            - x: -50
+              y: -370
+            - x: -40
+              y: -330
+            - x: -20
+              y: -330
+            - x: -30
+              y: -300
+            - x: 0
+              y: -300
+          rotation: 0
+          type: polygon
+          width: 353
+          x: 1924
+          y: 722      
+      name: Cobblestone
+      comment: Clear the cobblestone of dirt, place anywhere on the map
+      score:
+        M08a:
+          description: Dirt particle is not touching the cobblestone area
+          max: 10
+          min: 0
+          score: 2
+          type: range
+    M09:
+      areas:
+        - height: 68
+          length: 48
+          rotation: 0
+          width: 227
+          x: 1991
+          y: 1061
+        - height: 76
+          length: 224
+          rotation: 0
+          width: 48
+          x: 2286
+          y: 459
+      comment: 'Bonus Points: Barrier is not damaged or moved'
+      name: Barriers Bonus
+      score:
+        M09a:
+          description: Barrier is not damaged or moved
+          max: 2
+          min: 0
+          score: 10
+          type: range
+    M10:
+      areas:
+        - height: 158
+          length: 79
+          rotation: 0
+          width: 63
+          x: 1917
+          y: 200
+      comment: 'Bonus Points: Parrot is not damaged or moved'
+      name: Parrot Bonus
+      score:
+        M10a:
+          description: Parrot is not damaged or moved
+          score: 10
+          type: binary
+    M11:
+      areas:
+        - height: 0
+          length: 170
+          passive: true
+          placeholder: true
+          rotation: 0
+          width: 222
+          x: 1995
+          y: 0
+      name: Sponsor Area
+      comment: Area placeholder, not part of any base mission
+    M12:
+      areas:
+        - height: 0
+          length: 170
+          passive: true
+          placeholder: true
+          rotation: 0
+          width: 220
+          x: 576
+          y: 973
+      name: Season Logo Area
+      comment: Area placeholder, not part of any base mission
+    M13:
+      areas:
+        - height: 0
+          length: 48
+          passive: true
+          placeholder: true
+          rotation: 0
+          width: 48
+          x: 100
+          y: 368
+        - height: 0
+          length: 48
+          passive: true
+          placeholder: true
+          rotation: 0
+          width: 48
+          x: 785
+          y: 56
+        - height: 0
+          length: 48
+          passive: true
+          placeholder: true
+          rotation: 0
+          width: 48
+          x: 701
+          y: 810
+        - height: 0
+          length: 50
+          passive: true
+          placeholder: true
+          rotation: 0
+          width: 50
+          x: 2081
+          y: 982
+      name: Extra Spots
+      comment: Area placeholder, not part of any base mission
+  startareas:
+    - id: Launch Area
+      length: 250
+      type: rectangle
+      width: 250
+      x: 361
+      y: 448
+  unit_of_measurement: mm

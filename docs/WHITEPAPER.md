@@ -8,6 +8,8 @@ This document describes the current implementation in the working tree. It repla
 
 > **Scope and safety status:** this is an offline desktop tool for one FLL differential-drive robot. The simple optimizer and safety gate work. The validation model is not yet a full digital twin, some representative curved paths still fail the Immrax gate (KI-020), and Multi-Verse refinement does not change the final trajectory (KI-004). Only output that has passed `--validate` should be treated as safety-checked.
 
+> **Companion document:** [`docs/HEURISTICS_AND_VERIFICATION.md`](HEURISTICS_AND_VERIFICATION.md) documents every path-planning heuristic in the tree, the full verification chain and what each layer does and does not prove, a ledger of the strategies that did not work, and a prioritised research agenda. Section 5 below summarises the validation chain; the companion document is the reference for the gate thresholds, the seed heuristics and the failed approaches.
+
 ---
 
 ## 1. Introduction
@@ -27,7 +29,7 @@ What is still incomplete:
 - Multi-Verse refinement is discarded by the final polish (KI-004).
 - The validator is kinematic and has no motor, DriveBase, odometry, or slip dynamics (KI-020).
 - Under the narrowed test ranges in `examples/fll_choreo.json`, the straight and complex-mission examples pass; the S-curve, stops, and events examples still fail.
-- Live view, convergence flags, random benchmarks, and some export edge cases remain open (KI-005, KI-011, KI-012, KI-015, KI-016, KI-017).
+- Convergence flags, random benchmarks, and some export edge cases remain open (KI-011, KI-012, KI-015, KI-017).
 
 ---
 
@@ -50,7 +52,7 @@ What is still incomplete:
 | `sysid_fit.py` | Host-side fitter for digital-twin logs |
 | `sysid_compare.py` | Planned-vs-measured stop/final pose report |
 | `export.py` | Fixed-timestep controller JSON, legacy Python, and packed-compact Python export |
-| `live_visualizer.py`, `viz/` | WebSocket live view |
+| `gui_server.py`, `viz/studio.*` | Browser studio: mission editor, solve jobs, artifact download |
 | `gui_server.py`, `viz/studio.*` | Browser studio: mission editing, solve jobs, artifact download |
 | `diagnostics.py` | Environment report behind `--doctor` and the studio health check |
 | `convergence_plotter.py`, `plotter.py`, `animated_plotter.py` | Visualization |
@@ -61,16 +63,16 @@ What is still incomplete:
 1. Parse the robot config and waypoints.
 2. Select `TrajectoryOptimizer` (default) or `MasterTrajectoryOptimizer` (`--multiverse`).
 3. Solve the first candidate.
-4. With `--validate` or `--live`, run Immrax reachability on that candidate and score its envelope.
-5. With `--validate`, repeat for the remaining `--candidates` trajectories (default 2, max 5). With the simple solver each candidate combines an initial-guess seed (`baseline`, `rolling`, `bow_left`, `bow_right`, `turn_first`) with a timing mode: by default candidate 1 is uniform baseline, candidate 2 is per-segment baseline, then the remaining seeds alternate. The Multi-Verse path uses accuracy-weight steps of 2.0. Select a passing converged candidate with the smallest envelope (shortest breaks ties); otherwise keep the converged one closest to passing for reporting.
+4. With `--validate`, run Immrax reachability on that candidate and score its envelope.
+5. With `--validate`, repeat for the remaining `--candidates` trajectories (default 2, max 5). With the simple solver each candidate combines an initial-guess seed (`baseline`, `rolling`, `bow_left`, `bow_right`, `turn_first`) with a timing mode: by default candidate 1 is equal-duration baseline, candidate 2 is per-segment baseline, then the remaining seeds alternate. The Multi-Verse path uses accuracy-weight steps of 2.0. Select a passing converged candidate with the smallest envelope (shortest breaks ties); otherwise keep the converged one closest to passing for reporting.
 6. Check the final waypoint, and with `--validate`, run the CPU `validate_samples` gate.
-7. Write the trajectory, then optional stats/controller/legacy-Python/compact-Python exports, then plots or live view.
+7. Write the trajectory, then optional stats/controller/legacy-Python/compact-Python exports, then plots.
 
 A failed solve and a failed validation both exit non-zero without writing the trajectory, controller, Python file, or stats.
 
 ### 2.3 Installation modes
 
-`requirements.txt` covers the default path: numpy, CasADi, Plotly, Click, Matplotlib, rsplan, and websockets. `--validate`, `--multiverse`, and `sysid_solver.py` need the optional stack (JAX, JAXOpt, Immrax, pandas), now listed in `requirements-optional.txt`. JAX 0.6.2 was used for the current test run.
+`requirements.txt` covers the default path: numpy, CasADi, Plotly, Click, Matplotlib and rsplan. `--validate`, `--multiverse`, and `sysid_solver.py` need the optional stack (JAX, JAXOpt, Immrax, pandas), now listed in `requirements-optional.txt`. JAX 0.6.2 was used for the current test run.
 
 ---
 
@@ -161,17 +163,30 @@ For `N = segments * samples_per_segment + 1` samples, the optimizer chooses:
 - one timestep `dt` (the default), or one interval length `dt_i` per waypoint segment with `--per-segment-dt`
 - for each sample `k`: `x_k, y_k, theta_k, vl_k, vr_k`
 
-Every segment has exactly `samples_per_segment` intervals. The per-segment variant uses `dt_i` inside segment `i`; total time is `samples_per_segment * sum_i(dt_i)`, and the interval starting at sample `k` uses `dt[k // samples_per_segment]`. The uniform variant keeps all segments on one `dt`. The candidate loop solves both variants by default; `--uniform-dt` and `--per-segment-dt` force one.
+Every segment has exactly `samples_per_segment` intervals. The per-segment variant uses `dt_i` inside segment `i`; total time is `samples_per_segment * sum_i(dt_i)`, and the interval starting at sample `k` uses `dt[k // samples_per_segment]`. The uniform variant keeps all segments on one `dt`. Because every segment has the same sample count, that also forces every segment to take the SAME time, so on a path with unequal segment lengths the short segment inherits the long segment's duration. The per-segment variant is therefore the general model: setting every `dt_i` equal recovers the uniform solution exactly. The candidate loop solves both variants by default; `--uniform-dt` and `--per-segment-dt` force one.
+
+**Where the time allocation may change (KI-024).** A waypoint is a legitimate timing boundary only when the robot stops there *and* the heading is pinned: the state there is then fully determined, so the pieces on either side need agree on nothing. At every other waypoint the pieces stay linked, and the four cases are:
+
+| waypoint | what the two pieces must agree on | force profile |
+|---|---|---|
+| stop and pinned heading | nothing | free to break (the state is determined) |
+| pinned heading, no stop | the wheel velocities there | must be continuous |
+| stop, no pinned heading | the heading there; the velocity is zero on both sides | must reverse sign (the robot stops) |
+| neither | the heading and the wheel velocities | must be continuous |
+
+The path is one NLP over one shared variable set, so the state agreement is automatic: position, heading and the wheel velocities at a waypoint are single variables that both pieces see. The per-segment timing could still break the *reading* of the motion profile, because the acceleration before a waypoint is `(vl_k - vl_{k-1})/dt_prev` and the one after it is `(vl_{k+1} - vl_k)/dt_next`. A change of interval across the waypoint re-reads the same velocity ramp as two different accelerations, which puts a step in the wheel force profile exactly at the point. The per-segment variant therefore constrains the acceleration — and so the wheel force — to be continuous through every waypoint the robot does not stop at. The uniform variant needs no counterpart: it never changes `dt`, so it reads the ramp the same way on both sides.
+
+The residual of that constraint is scaled by the reference interval squared so it reads in m/s^2, which is the quantity the wheel force follows. The raw residual is in metres, where IPOPT's absolute constraint tolerance of 1e-2 would have allowed a centimetre of velocity ramp.
 
 ### 4.2 Objective
 
 ```text
-J = dt * (N - 1) + accuracy_weight * sum_k [
-        ((al_{k+1} - al_k))^2 + ((ar_{k+1} - ar_k))^2
+J = duration + accuracy_weight * dt_ref^2 * sum_k [
+        ((al_{k+1} - al_k) / span_k)^2 + ((ar_{k+1} - ar_k) / span_k)^2
     ]
 ```
 
-The first term is trajectory duration. The optional second term penalizes jerk-like changes in wheel acceleration. `accuracy_weight = 0` is pure time-optimal. With `--per-segment-dt`, the duration term becomes `samples_per_segment * sum_i(dt_i)` and each acceleration difference uses the interval length of its own segment.
+The first term is trajectory duration. The optional second term penalizes wheel jerk, where `span_k` is the spacing between the midpoints of the two intervals that meet at boundary `k` and `dt_ref` is the mean interval over the whole path. Normalising by `dt_ref` makes the price of physical jerk independent of the timing layout, so the same `accuracy_weight` means the same smoothness in either variant; without it the raw acceleration jump is proportional to `jerk * dt`, and a short interval would be charged `dt^2` less per unit of jerk (KI-022). `accuracy_weight = 0` is pure time-optimal. With `--per-segment-dt` the duration term is `samples_per_segment * sum_i(dt_i)`.
 
 ### 4.3 Constraints
 
@@ -207,6 +222,8 @@ On failure, `TrajectoryOptimizer.solve` still returns a best-effort sample list 
 ---
 
 ## 5. Validation
+
+> The full gate chain (G0 solver convergence, G1 CPU audit, G2 final waypoint, G3 Immrax reachability, G4 local envelope threshold, G5 export gate), every threshold with its source line, and a table of what each layer proves and does not prove, are in [`docs/HEURISTICS_AND_VERIFICATION.md`](HEURISTICS_AND_VERIFICATION.md) §10-§14.
 
 Validation has three layers.
 
@@ -244,7 +261,7 @@ The envelope is the axis-aligned bounding box of the reachable set. The planner 
 
 The gate is a post-solve check. With `--validate`, `main.py` solves `--candidates` trajectories (default 2, max 5), validates each one, and selects the passing candidate with the smallest envelope; the shortest trajectory breaks ties. With the simple solver, the candidates combine initial-guess seeds (`baseline`, `rolling`, `bow_left`, `bow_right`, `turn_first`) with the uniform or per-segment timing mode; the default alternates modes and the Multi-Verse path uses increasing accuracy weights. The CPU audit runs on every candidate, not only the selected one. If none pass, it selects the closest candidate for reporting but still blocks export. Reachability is not a term or constraint in the optimizer (KI-020).
 
-The default candidate set mixes both timing modes, and the CPU audit runs on every candidate so a partial pass cannot block a later fully passing one. Measured on 2026-10-19: an uneven 1.0 m + 0.2 m path passes all gates with per-segment at `accuracy_weight=0.005` in 2.732 s with envelope 0.32 cm and tracking 0.36 cm, versus 4.456 s / 0.37 cm / 0.36 cm uniform at the same weight, so selection keeps the per-segment winner. At `accuracy_weight=0`, per-segment is 2.710 s / 0.32 cm but the CPU audit rejects a 0.00057 N force-limit overshoot, so selection falls back to uniform (4.463 s / 0.35 cm). On the complex mission at `accuracy_weight=0`, per-segment is faster (5.447 s, envelope 1.18 cm) but tracking is 0.86 cm, so the 0.5 cm tracking gate rejects it; the uniform 6.068 s / 1.22 cm / 0.49 cm candidate passes and wins. At `accuracy_weight=0.02`, per-segment passes Immrax at 7.312 s / 1.61 cm / 0.49 cm, still slower and wider than uniform. `--uniform-dt` forces the old uniform-only behavior and `--per-segment-dt` forces per-segment timing.
+The default candidate set mixes both timing modes, and the CPU audit runs on every candidate so a partial pass cannot block a later fully passing one. The two modes are not peers: the equal-duration mode shares one `dt` across all segments, which because every segment has the same sample count also forces every segment to take the SAME time, so on a path with unequal segment lengths the short segment inherits the long segment's duration. The per-segment mode is the general model, and both are held to the same wheel-jerk discipline so `accuracy_weight` means the same thing in either (KI-022). The per-segment mode also holds the wheel force profile continuous through every waypoint the robot does not stop at, which is what makes a change of time scale at such a point legitimate (KI-024). Measured on 2026-10-19: an uneven 1.0 m + 0.2 m path passes all gates with per-segment at `accuracy_weight=0.005` in 2.784 s with envelope 0.32 cm, tracking 0.36 cm and peak wheel jerk 9.52 m/s³, versus 4.456 s / 0.37 cm / 0.36 cm / 9.52 m/s³ for the equal-duration mode at the same weight, so selection keeps the per-segment winner. At `accuracy_weight=0`, per-segment is 2.710 s / 0.32 cm but fails the Immrax and CPU gates, so selection falls back to the equal-duration candidate (4.463 s / 0.35 cm). On the complex mission at `accuracy_weight=0`, per-segment is faster (4.650 s, envelope 1.00 cm) but its tracking is 0.84 cm and its motor force is 0.074 N over the limit, so it is rejected; the equal-duration 6.068 s / 1.22 cm / 0.49 cm candidate passes and wins. `--uniform-dt` forces the equal-duration-only behavior and `--per-segment-dt` forces per-segment timing.
 
 ### 5.3 Measured current behavior
 
@@ -253,13 +270,14 @@ These are model predictions from the current tree, not hardware measurements.
 | Example | Trajectory time | Gate result |
 |---|---:|---|
 | Straight | 2.3770 s | **PASS**; max integration error 0.000407 m; envelope 0.28 cm; zero motor/slip violations |
-| S-curve | 3.6965 s | FAIL; envelope 0.77 cm, tracking 1.32 cm (per-segment: 3.7047 s, 0.76 cm / 1.33 cm, also fails) |
-| Stops | 6.2463 s | FAIL; envelope 0.93 cm, tracking 0.60 cm (per-segment: 5.0986 s, 0.90 cm / 1.85 cm, also fails) |
-| Events | 4.6366 s | FAIL; envelope 0.97 cm, tracking 0.54 cm (per-segment: 4.8957 s, 1.01 cm / 2.09 cm, also fails) |
-| Complex mission | 6.0677 s | **PASS**; envelope 1.22 cm, tracking 0.49 cm (per-segment: 5.4473 s, 1.18 cm / 0.86 cm, rejected by the 5 mm tracking gate) |
-| Uneven test path (1.0 + 0.2 m), default mixed `-a 0.005` | 2.732 s | **PASS**; selected per-segment, envelope 0.32 cm, tracking 0.36 cm (uniform at the same weight: 4.456 s, 0.37 cm / 0.36 cm). At `-a 0` per-segment is 2.710 s / 0.32 cm but the CPU force gate rejects a 0.00057 N overshoot, so uniform 4.463 s / 0.35 cm is selected. |
+| First 4 mission waypoints | 1.8334 s | **PASS**; envelope 0.27 cm, tracking 0.38 cm (equal-duration: 2.1760 s, 0.27 cm / 0.39 cm) |
+| S-curve | 3.6666 s | FAIL; envelope 0.72 cm, tracking 1.26 cm (equal-duration: 3.6965 s, 0.77 cm / 1.32 cm, also fails) |
+| Stops | 6.2463 s | FAIL; envelope 0.93 cm, tracking 0.61 cm (per-segment: 5.1384 s, 0.96 cm / 1.81 cm, also fails) |
+| Events | 4.4156 s | **PASS**; envelope 0.88 cm, tracking 0.44 cm (equal-duration: 4.6366 s, 0.97 cm / 0.52 cm, rejected by the 5 mm tracking gate) |
+| Complex mission | 6.0677 s | **PASS**; envelope 1.22 cm, tracking 0.49 cm (per-segment: 4.6501 s, 1.00 cm / 0.84 cm, rejected by the 5 mm tracking gate and a 0.074 N motor-force overshoot) |
+| Uneven test path (1.0 + 0.2 m), default mixed `-a 0.005` | 2.784 s | **PASS**; selected per-segment, envelope 0.32 cm, tracking 0.36 cm, peak wheel jerk 9.52 m/s³ (equal-duration at the same weight: 4.456 s, 0.37 cm / 0.36 cm / 9.52 m/s³). At `-a 0` per-segment is 2.710 s / 0.32 cm but fails the Immrax and CPU gates, so the equal-duration candidate 4.463 s / 0.35 cm is selected. |
 
-Under the narrowed test assumptions in `examples/fll_choreo.json`, the straight and complex-mission examples pass; the S-curve, stops, and events examples fail and write no output. This is the gate working on an uncalibrated model, not a solver crash. The narrowed ranges are test assumptions, not measured hardware guarantees.
+Under the narrowed test assumptions in `examples/fll_choreo.json`, the straight, first-4, events and complex-mission examples pass; the S-curve and stops examples fail and write no output. This is the gate working on an uncalibrated model, not a solver crash. The narrowed ranges are test assumptions, not measured hardware guarantees.
 
 ### 5.4 What the validator does not prove
 
@@ -327,6 +345,8 @@ The hardware calibration path is implemented but has not been validated on hardw
 ---
 
 ## 7. Multi-Verse pipeline as implemented
+
+> The five phases are documented phase by phase below. Why the pipeline never reaches the solver, and the ledger of Multi-Verse strategies that did not work (the JAX refinement, the refine probe, the degenerate Reeds-Shepp bootstrap, the unread config blocks, the dead `heuristic_wins` counter), are in [`docs/HEURISTICS_AND_VERIFICATION.md`](HEURISTICS_AND_VERIFICATION.md) §8 and §20.
 
 `MasterTrajectoryOptimizer.solve` runs five phases and returns `(final_traj, stats)`.
 
@@ -420,23 +440,19 @@ The full option list is in `README.md` and `docs/CONFIGURATION.md`. Current trut
 
 - The simple CasADi optimizer is the default; `--multiverse` selects the Multi-Verse pipeline and `--simple` is a deprecated alias.
 - `--validate` requires JAX/Immrax and gates output. `--candidates N` (default 2, max 5) selects among seed/timing combinations with the simple solver, or accuracy-weight variants on the Multi-Verse path.
-- `--sysid-fit sysid_fit.json` opts into the fitted five-state plant; it requires `--validate` or `--live`.
+- `--sysid-fit sysid_fit.json` opts into the fitted five-state plant; it requires `--validate`.
 - `--export-format controller|python|python-compact` writes optional outputs after the gate.
 - `--per-segment-dt` forces per-segment intervals and `--uniform-dt` forces one shared interval; both are only valid with the simple solver. By default candidates mix both.
 - `--benchmark` writes `<output>_stats.json` after the gate.
-- `--plot`, `--animate`, and `--live` are blocking.
+- `--plot`, `--animate`, `--gui` and `--live` are blocking.
 - `--workers` and `--no-parallel` do not affect the final result (KI-004).
 - `--convergence-animate` and `--convergence-output` are parsed but unused (KI-017).
 
-### 9.2 Live visualization
+### 9.2 Browser studio
 
-`live_visualizer.py` starts a WebSocket server on `127.0.0.1:8765`. Current issues:
+`gui_server.py` serves `viz/studio.html` on `127.0.0.1:8000` and runs the command line in a subprocess, so the export gate and the validation rules are the same as on the terminal. The studio draws the mission, edits the robot, shows the per-segment validation detail and downloads the artifacts.
 
-- It kills whatever owns port 8765 before binding (KI-005).
-- It broadcasts config/waypoints before a client connects, so the first client misses them (KI-016).
-- `on_regenerate` is never assigned and `send_candidates`/`send_status` are unused; the regenerate controls are dead.
-
-The final trajectory is broadcast, so the view is still useful for inspecting the result. Do not rely on it for live config or topology debugging.
+The earlier WebSocket live view (`live_visualizer.py`, `viz/index.html`) was removed: it was a second, CDN-dependent user interface for the same job, and it could take a port from another program (KI-005, KI-016). `--live` now opens the studio on the given mission and solves it there.
 
 ### 9.3 Convergence
 
@@ -491,7 +507,7 @@ python main.py -c examples/fll_choreo.json \
 
 ### 10.3 Curved and mission examples
 
-The S-curve, stops, and events examples converge but fail the Immrax gate and produce no output with `--validate`. The complex mission passes under the current narrowed test ranges. All values below use the default two candidates (uniform baseline, then per-segment baseline):
+The S-curve, stops, and events examples converge but fail the Immrax gate and produce no output with `--validate`. The complex mission passes under the current narrowed test ranges. All values below use the default two candidates (equal-duration baseline, then per-segment baseline):
 
 | Example | Selected time | Result |
 |---|---:|---|
@@ -513,12 +529,12 @@ The pipeline benchmark in §7.6 produced identical final costs for simple and Mu
 | ID | State | Impact |
 |---|---|---|
 | KI-004 | Open | Multi-Verse refinement and worker flags do not change the final trajectory |
-| KI-005 | Open | `--live` kills whatever owns port 8765 |
+| KI-005 | Fixed | The live view that killed port owners is gone; the studio never takes a port |
 | KI-006 | Open | Fresh `requirements.txt` install cannot run the default or validation paths |
 | KI-011 | Open | Controller heading interpolation can cross ±π the long way |
 | KI-012 | Open | Final-waypoint events do not fire in the deployed runtime |
 | KI-015 | Partial | Pipeline benchmark works; random suite generator still broken |
-| KI-016 | Open | First live-view client misses config/waypoints |
+| KI-016 | Fixed | The live view that missed the config is gone; the studio loads the mission itself |
 | KI-017 | Open | Convergence animate/output flags do nothing; Multi-Verse has no history |
 | KI-018 | Open | Generated mission copies, unused diagnostic API, dead UI state |
 | KI-020 | Partial | Validator is not a full digital twin; reachability is a post-solve candidate score, not an optimizer term |
@@ -538,6 +554,8 @@ Priority order:
 5. **KI-011/KI-012:** unwrap headings on export and fire the final event.
 6. **KI-015:** make random benchmarks use an explicit config and check convergence.
 7. **KI-017/KI-018:** wire or remove convergence flags, dead UI state, and generated duplicates.
+
+The path-planning side of this list — the seed heuristics, the timing models, the candidate set, the reachability objective, and the research agenda with a suggested order — is in [`docs/HEURISTICS_AND_VERIFICATION.md`](HEURISTICS_AND_VERIFICATION.md) Part IV.
 
 ---
 
@@ -615,13 +633,12 @@ Priority order:
 --workers INTEGER              Multi-Verse flag; no current result effect
 --validate / --no-validate     CPU + Immrax gate; requires JAX
 --sysid-fit PATH               optional fitted actuator/odometry model
-                              (requires --validate or --live)
+                              (requires --validate)
 --export-format                none | controller | python | python-compact
 --controller-dt FLOAT          controller timestep
 --benchmark                    write <output>_stats.json
 --plot / --animate             blocking visualization
---live                         blocking WebSocket view
---port INTEGER                 live view port (default 8765)
+--live                         blocking studio on this mission, then solves it
 --show-convergence             simple-optimizer convergence plot
 --convergence-mode             parallel | best | layered
 -v, --verbose                  show solver internals

@@ -1,0 +1,269 @@
+{
+  "seed": 7,
+  "missions": [
+    {
+      "id": "m000",
+      "profile": "even",
+      "file": "m000.json",
+      "num_waypoints": 5,
+      "num_segments": 4,
+      "path_length_m": 2.0789,
+      "segment_length_ratio": 1.26,
+      "max_turn_rad": 0.0,
+      "pinned_headings": 2
+    },
+    {
+      "id": "m001",
+      "profile": "uneven",
+      "file": "m001.json",
+      "num_waypoints": 7,
+      "num_segments": 6,
+      "path_length_m": 5.2038,
+      "segment_length_ratio": 8.38,
+      "max_turn_rad": 0.0,
+      "pinned_headings": 3
+    },
+    {
+      "id": "m002",
+      "profile": "turny",
+      "file": "m002.json",
+      "num_waypoints": 8,
+      "num_segments": 7,
+      "path_length_m": 3.0558,
+      "segment_length_ratio": 1.91,
+      "max_turn_rad": 3.023,
+      "pinned_headings": 6
+    },
+    {
+      "id": "m003",
+      "profile": "mixed",
+      "file": "m003.json",
+      "num_waypoints": 7,
+      "num_segments": 6,
+      "path_length_m": 3.3963,
+      "segment_length_ratio": 4.21,
+      "max_turn_rad": 2.7266,
+      "pinned_headings": 4
+    },
+    {
+      "id": "m004",
+      "profile": "even",
+      "file": "m004.json",
+      "num_waypoints": 8,
+      "num_segments": 7,
+      "path_length_m": 3.3877,
+      "segment_length_ratio": 1.68,
+      "max_turn_rad": 0.2005,
+      "pinned_headings": 3
+    },
+    {
+      "id": "m005",
+      "profile": "uneven",
+      "file": "m005.json",
+      "num_waypoints": 4,
+      "num_segments": 3,
+      "path_length_m": 1.5845,
+      "segment_length_ratio": 7.76,
+      "max_turn_rad": 0.0,
+      "pinned_headings": 1
+    },
+    {
+      "id": "m006",
+      "profile": "turny",
+      "file": "m006.json",
+      "num_waypoints": 7,
+      "num_segments": 6,
+      "path_length_m": 3.3563,
+      "segment_length_ratio": 1.46,
+      "max_turn_rad": 1.279,
+      "pinned_headings": 4
+    },
+    {
+      "id": "m007",
+      "profile": "mixed",
+      "file": "m007.json",
+      "num_waypoints": 6,
+      "num_segments": 5,
+      "path_length_m": 3.1133,
+      "segment_length_ratio": 4.36,
+      "max_turn_rad": 0.0,
+      "pinned_headings": 1
+    },
+    {
+      "id": "m008",
+      "profile": "even",
+      "file": "m008.json",
+      "num_waypoints": 5,
+      "num_segments": 4,
+      "path_length_m": 2.2541,
+      "segment_length_ratio": 1.18,
+      "max_turn_rad": 0.2082,
+      "pinned_headings": 2
+    },
+    {
+      "id": "m009",
+      "profile": "uneven",
+      "file": "m009.json",
+      "num_waypoints": 7,
+      "num_segments": 6,
+      "path_length_m": 2.3878,
+      "segment_length_ratio": 7.25,
+      "max_turn_rad": 3.0838,
+      "pinned_headings": 4
+    },
+    {
+      "id": "m010",
+      "profile": "turny",
+      "file": "m010.json",
+      "num_waypoints": 3,
+      "num_segments": 2,
+      "path_length_m": 0.8686,
+      "segment_length_ratio": 1.74,
+      "max_turn_rad": 0.0,
+      "pinned_headings": 1
+    },
+    {
+      "id": "m011",
+      "profile": "mixed",
+      "file": "m011.json",
+      "num_waypoints": 4,
+      "num_segments": 3,
+      "path_length_m": 1.8623,
+      "segment_length_ratio": 2.47,
+      "max_turn_rad": 0.0,
+      "pinned_headings": 1
+    },
+    {
+      "id": "m012",
+      "profile": "even",
+      "file": "m012.json",
+      "num_waypoints": 3,
+      "num_segments": 2,
+      "path_length_m": 0.8271,
+      "segment_length_ratio": 1.33,
+      "max_turn_rad": 0.0,
+      "pinned_headings": 1
+    },
+    {
+      "id": "m013",
+      "profile": "uneven",
+      "file": "m013.json",
+      "num_waypoints": 5,
+      "num_segments": 4,
+      "path_length_m": 2.1762,
+      "segment_length_ratio": 6.67,
+      "max_turn_rad": 0.0,
+      "pinned_headings": 2
+    },
+    {
+      "id": "m014",
+      "profile": "turny",
+      "file": "m014.json",
+      "num_waypoints": 7,
+      "num_segments": 6,
+      "path_length_m": 3.1694,
+      "segment_length_ratio": 2.27,
+      "max_turn_rad": 2.507,
+      "pinned_headings": 6
+    },
+    {
+      "id": "m015",
+      "profile": "mixed",
+      "file": "m015.json",
+      "num_waypoints": 3,
+      "num_segments": 2,
+      "path_length_m": 1.1447,
+      "segment_length_ratio": 6.62,
+      "max_turn_rad": 0.0,
+      "pinned_headings": 2
+    },
+    {
+      "id": "m016",
+      "profile": "even",
+      "file": "m016.json",
+      "num_waypoints": 3,
+      "num_segments": 2,
+      "path_length_m": 1.0118,
+      "segment_length_ratio": 1.36,
+      "max_turn_rad": 0.0,
+      "pinned_headings": 2
+    },
+    {
+      "id": "m017",
+      "profile": "uneven",
+      "file": "m017.json",
+      "num_waypoints": 3,
+      "num_segments": 2,
+      "path_length_m": 0.6066,
+      "segment_length_ratio": 2.34,
+      "max_turn_rad": 0.0948,
+      "pinned_headings": 2
+    },
+    {
+      "id": "m018",
+      "profile": "turny",
+      "file": "m018.json",
+      "num_waypoints": 3,
+      "num_segments": 2,
+      "path_length_m": 0.9843,
+      "segment_length_ratio": 2.03,
+      "max_turn_rad": 3.0935,
+      "pinned_headings": 3
+    },
+    {
+      "id": "m019",
+      "profile": "mixed",
+      "file": "m019.json",
+      "num_waypoints": 8,
+      "num_segments": 7,
+      "path_length_m": 5.5933,
+      "segment_length_ratio": 4.34,
+      "max_turn_rad": 0.0,
+      "pinned_headings": 3
+    },
+    {
+      "id": "m020",
+      "profile": "even",
+      "file": "m020.json",
+      "num_waypoints": 4,
+      "num_segments": 3,
+      "path_length_m": 1.3346,
+      "segment_length_ratio": 1.41,
+      "max_turn_rad": 0.1846,
+      "pinned_headings": 2
+    },
+    {
+      "id": "m021",
+      "profile": "uneven",
+      "file": "m021.json",
+      "num_waypoints": 3,
+      "num_segments": 2,
+      "path_length_m": 0.3847,
+      "segment_length_ratio": 1.43,
+      "max_turn_rad": 0.0,
+      "pinned_headings": 1
+    },
+    {
+      "id": "m022",
+      "profile": "turny",
+      "file": "m022.json",
+      "num_waypoints": 8,
+      "num_segments": 7,
+      "path_length_m": 2.7967,
+      "segment_length_ratio": 1.97,
+      "max_turn_rad": 0.0066,
+      "pinned_headings": 4
+    },
+    {
+      "id": "m023",
+      "profile": "mixed",
+      "file": "m023.json",
+      "num_waypoints": 6,
+      "num_segments": 5,
+      "path_length_m": 2.6096,
+      "segment_length_ratio": 4.04,
+      "max_turn_rad": 0.0,
+      "pinned_headings": 2
+    }
+  ]
+}

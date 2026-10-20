@@ -1,0 +1,456 @@
+challenge:
+  season: FLL UNEARTHED
+  match_duration_seconds: 150
+  year: 2025-2026
+  rules: https://firstinspires.blob.core.windows.net/fll/challenge/2025-26/fll-challenge-unearthed-rgr.pdf
+map:
+  unit_of_measurement: mm
+  width: 2362
+  height: 1143
+  startareas:
+    - id: Launch Area Red
+      type: quarter-circle
+      x: 181
+      y: 0
+      radius: 485
+      quadrant: 1
+    - id: Launch Area Blue
+      type: quarter-circle
+      x: 2181
+      y: 0
+      radius: 485
+      quadrant: 2
+  models:
+    EI:
+      name: Equipment Inspection
+      areas:
+        - x: 50
+          y: 4
+          width: 80
+          length: 80
+          height: 10
+          type: circle
+          placeholder: true
+        - x: 2232
+          y: 4
+          width: 80
+          length: 80
+          height: 10
+          type: circle
+          placeholder: true
+      score:
+        EIa:
+          description: If your robot and all your equipment fit completely in one launch area and are under a height limit of 12 in. (305 mm) during the pre-match inspection
+          score: 20
+    M01:
+      name: Surface Brushing
+      comment: 🖐️🚫 No-Equipment-Constraint
+      x: 203
+      y: 665.4
+      width: 72
+      length: 113
+      height: 55
+      rotation: 0
+      model:
+        path: m01.glb
+        rotation: -90
+        scale: 10
+      score:
+        M01a:
+          type: range
+          description: Soil deposits are completely cleared, touching the mat
+          score: 10
+          min: 0
+          max: 2
+        M01b:
+          type: binary
+          description: Archaeologist's brush is not touching the dig site
+          score: 10
+    M02:
+      name: Map Reveal
+      x: 268
+      y: 904
+      width: 186
+      length: 152
+      height: 25
+      rotation: -45
+      model:
+        path: m02.glb
+        rotation: 0
+        scale: 10
+      score:
+        M02a:
+          type: range
+          description: Topsoil sections completely cleared
+          score: 10
+          min: 0
+          max: 3
+    M03:
+      name: Mineshaft Explorer
+      areas:
+        - x: 742
+          y: 990
+          width: 189
+          length: 60
+          height: 110
+          rotation: 0
+          model:
+            path: m03.glb
+            rotation: 180
+            scale: 10
+            xoffset: 6
+            yoffset: 128
+        - x: 1483
+          y: 1062
+          width: 64
+          length: 65
+          height: 140
+          rotation: 0
+          passive: true
+          model:
+            path: m03.glb
+            rotation: 0
+            scale: 10
+            xoffset: 6
+            yoffset: 140
+      score:
+        M03a:
+          type: binary
+          description: Your team's minecart is on the opposing team's field
+          score: 30
+        M03b:
+          type: binary
+          description: "BONUS: Opposing team's minecart is on your field"
+          score: 10
+          requires: M03a
+    M04:
+      name: Careful Recovery
+      comment: 🖐️🚫 No-Equipment-Constraint
+      x: 742
+      y: 1055
+      width: 189
+      length: 72
+      height: 10
+      rotation: 0
+      score:
+        M04a:
+          type: binary
+          description: Precious artifact is not touching the mine
+          score: 30
+        M04b:
+          type: binary
+          description: Both support structures are standing
+          score: 10
+    M05:
+      name: Who Lived Here?
+      comment: 🖐️🚫 No-Equipment-Constraint
+      x: 1689
+      y: 1034
+      width: 185
+      length: 81
+      height: 70
+      rotation: 0
+      model:
+        path: m05.glb
+        rotation: 0
+        scale: 10
+        yoffset: -20
+      score:
+        M05a:
+          type: binary
+          description: Structure floor is completely upright
+          score: 30
+    M06:
+      name: Forge
+      x: 1884
+      y: 979
+      width: 188
+      length: 174
+      height: 95
+      rotation: 45
+      model:
+        path: m06.glb
+        rotation: -90
+        scale: 10
+        yoffset: 4
+        xoffset: 32
+      score:
+        M06a:
+          type: range
+          description: Ore blocks are not touching the forge
+          score: 10
+          min: 0
+          max: 3
+    M07:
+      name: Heavy Lifting
+      x: 2082
+      y: 1042
+      width: 66
+      length: 66
+      height: 90
+      rotation: 0
+      type: circle
+      model:
+        path: m07.glb
+        rotation: 45
+        scale: 10
+      score:
+        M07a:
+          type: binary
+          description: Millstone is no longer touching its base
+          score: 30
+    M08:
+      name: Silo
+      x: 2023
+      y: 634
+      width: 131
+      length: 64
+      height: 180
+      rotation: 0
+      model:
+        path: m08.glb
+        rotation: 180
+        scale: 10
+        xoffset: -6
+      score:
+        M08a:
+          type: range
+          description: Preserved pieces are outside the silo
+          score: 10
+          min: 0
+          max: 3
+    M09:
+      name: What's on Sale?
+      x: 1586
+      y: 528
+      width: 108
+      length: 172
+      height: 115
+      rotation: -45
+      comment: 🖐️🚫 No-Equipment-Constraint
+      model:
+        path: m09.glb
+        rotation: 180
+        scale: 10
+        yoffset: -18
+        xoffset: 26
+      score:
+        M09a:
+          type: binary
+          description: Roof is completely raised
+          score: 20
+        M09b:
+          type: binary
+          description: Market wares are raised
+          score: 10
+    M10:
+      name: Tip the Scales
+      x: 1370
+      y: 525
+      width: 98
+      length: 121
+      height: 80
+      rotation: 0
+      model:
+        path: m10.glb
+        rotation: 90
+        scale: 10
+        yoffset: 12
+        xoffset: 0
+      score:
+        M10a:
+          type: binary
+          description: Scale is tipped and touching the mat
+          score: 20
+        M10b:
+          type: binary
+          description: Scale pan is completely removed
+          score: 10
+    M11:
+      name: Angler Artifacts
+      comment: 🖐️🚫 No-Equipment-Constraint
+      x: 1218
+      y: 72
+      width: 224
+      length: 102
+      height: 135
+      rotation: 0
+      model:
+        path: m11.glb
+        rotation: 180
+        scale: 10
+        xoffset: -10
+        yoffset: 0
+      score:
+        M11a:
+          type: binary
+          description: Artifacts are raised above the ground layer
+          score: 20
+        M11b:
+          type: binary
+          description: 'BONUS: The crane flag is at least partly lowered'
+          score: 10
+          requires: M11a
+    M12:
+      name: Salvage Operation
+      comment: 🖐️🚫 No-Equipment-Constraint
+      x: 973
+      y: 63
+      width: 121
+      length: 98
+      height: 75
+      rotation: 0
+      model:
+        path: m12.glb
+        rotation: 0
+        scale: 10
+        xoffset: -48
+        yoffset: 10
+      score:
+        M12a:
+          type: binary
+          description: Sand is completely cleared
+          score: 20
+        M12b:
+          type: binary
+          description: Ship is completely raised
+          score: 10
+    M13:
+      name: Statue Rebuild
+      comment: 🖐️🚫 No-Equipment-Constraint
+      x: 965
+      y: 672
+      width: 43
+      length: 98
+      height: 125
+      rotation: 45
+      model:
+        path: m13.glb
+        rotation: 90
+        scale: 10
+        xoffset: 10
+        yoffset: -53
+      score:
+        M13a:
+          type: binary
+          description: Statue is completely raised
+          score: 30
+    M14:
+      name: Forum
+      comment: 🖐️🚫 No-Equipment-Constraint
+      placeholder: true
+      x: 728
+      y: 572
+      width: 240
+      length: 60
+      height: 5
+      rotation: 0
+      score:
+        M14a:
+          type: range
+          description: "Artifacts touching the mat and at least partly in the forum (Artifacts: Brush, Topsoil, Precious Artifact, Opposing Team's Minecart, Ore with Fossilized Artifact, Millstone, & Scale Pan)"
+          score: 5
+          min: 0
+          max: 7
+      connected:
+        - M01b
+        - M02a
+        - M04a
+        - M03b
+        - M06a
+        - M10b
+    M15:
+      name: Site Marking
+      areas:
+        - x: 562
+          y: 803
+          width: 37
+          length: 29
+          height: 20
+          rotation: 0
+          placeholder: true
+          model:
+            path: m15.glb
+            rotation: 45
+            scale: 10
+        - x: 1377
+          y: 1057
+          width: 43
+          length: 35
+          height: 20
+          rotation: 0
+          placeholder: true
+          model:
+            path: m15.glb
+            rotation: 45
+            scale: 10
+        - x: 1015
+          y: 63
+          width: 40
+          length: 32
+          height: 20
+          rotation: 0
+          placeholder: true
+          model:
+            path: m15.glb
+            rotation: 45
+            scale: 10
+      score:
+        M15a:
+          type: range
+          description: Sites with a flag at least partly inside and touching the mat
+          score: 10
+          min: 0
+          max: 3
+    PT:
+      name: Precision
+      areas:
+        - x: 50
+          y: 1040
+          width: 80
+          length: 80
+          height: 10
+          placeholder: true
+          type: circle
+          model:
+            path: pt.glb
+            rotation: 0
+            scale: 10
+      score:
+        PTa:
+          type: range
+          description: How many Precision Tokens are left on the field?
+          scores:
+            - 0
+            - 10
+            - 15
+            - 25
+            - 35
+            - 50
+            - 50
+    OBS:
+      name: Obstacles
+      areas:
+        - x: 651
+          y: 626
+          width: 97
+          length: 33
+          rotation: -22
+          passive: true
+          model:
+            path: obs2.glb
+            scale: 10
+            rotation: -90
+            yoffset: -4
+        - x: 773
+          y: 515
+          width: 162
+          length: 34
+          rotation: 0
+          passive: true
+          model:
+            path: obs1.glb
+            scale: 10
+            rotation: 90
+            yoffset: -4
+  imageurl: map.png

@@ -1,0 +1,470 @@
+challenge:
+  season: WRO 2026 Robomission Senior
+  year: 2026
+  match_duration_seconds: 120
+  rules: https://wro-association.org/wp-content/uploads/WRO-2026-RoboMission-Senior-Game-Rules.pdf
+map:
+  imageurl: map.jpg
+  imagesepia: true
+  width: 2362
+  height: 1143
+  models:
+    M01:
+      areas:
+        - length: 68
+          width: 125
+          x: 830
+          y: 49
+          passive: true
+          model:
+            path: recttrowel.glb
+            scale: 10
+            rotation: 90
+        - length: 171
+          width: 220
+          height: 10
+          x: 490
+          y: 0
+          placeholder: true
+      name: Rectangular trowel
+      comment: Either 15 or 5 points
+      score:
+        M01a:
+          description: The rectangular trowel is completely in the sponsor area.
+          score: 15
+        M01b:
+          description: The rectangular trowel is partially in the sponsor area.
+          score: 5
+          rule:
+            not: M01a
+    M02:
+      areas:
+        - length: 33
+          width: 36
+          x: 1164
+          y: 65
+          passive: true
+          model:
+            path: cementbowl.glb
+            scale: 10
+            rotation: 90
+        - length: 298
+          width: 185
+          height: 10
+          x: 1595
+          y: 324
+          placeholder: true
+      name: Cement bowl
+      comment: Either 15 or 5 points
+      score:
+        M02a:
+          description: The cement bowl is completely in the parking space.
+          score: 15
+        M02b:
+          description: The cement bowl is partially in the parking space.
+          score: 5
+          rule:
+            not: M02a
+    M03:
+      areas:
+        - length: 80
+          width: 87
+          x: 1446
+          y: 41
+          passive: true
+          model:
+            path: masonrytrowel.glb
+            scale: 10
+            rotation: 90
+            xoffset: 20
+        - length: 50
+          width: 50
+          height: 10
+          type: circle
+          x: 254
+          y: 68
+          placeholder: true
+      name: Masonry trowel
+      comment: Either 15 or 5 points
+      score:
+        M03a:
+          description: The masonry trowel is completely in the start area.
+          score: 15
+        M03b:
+          description: The masonry trowel is partially in the start area.
+          score: 5
+          rule:
+            not: M03a
+    M05:
+      areas:
+        - length: 220
+          width: 150
+          x: 2162
+          y: 837
+          passive: true
+          model:
+            path: cementyo.glb
+            scale: 10
+        - length: 220
+          rotation: 0
+          width: 150
+          x: 2162
+          y: 586
+          passive: true
+          model:
+            path: cementgo.glb
+            scale: 10
+        - length: 220
+          rotation: 0
+          width: 150
+          x: 2162
+          y: 337
+          passive: true
+          model:
+            path: cementbo.glb
+            scale: 10
+        - length: 220
+          rotation: 0
+          width: 150
+          x: 2162
+          y: 88
+          passive: true
+          model:
+            path: cementwo.glb
+            scale: 10
+
+        # goal areas
+        - length: 464
+          rotation: 0
+          width: 98
+          height: 10
+          x: 925
+          y: 464
+          placeholder: true
+        - length: 464
+          rotation: 0
+          width: 98
+          height: 10
+          x: 1340
+          y: 464
+          placeholder: true
+        - length: 100
+          rotation: 0
+          width: 316
+          height: 10
+          x: 1025
+          y: 828
+          placeholder: true
+        - length: 100
+          rotation: 0
+          width: 316
+          height: 10
+          x: 1024
+          y: 464
+          placeholder: true
+      name: Deliver the cement
+      score:
+        M05a:
+          description: Cement element is completely in corresponding-coloured cement target area.
+          max: 40
+          min: 0
+          score: 1
+          type: range
+    M06:
+      areas:
+        # bottom-left
+        - type: polygon
+          x: 861
+          y: 514
+          rotation: 180
+          points:
+            - {x: 0, y: 0}
+            - {x: 15, y: 0}
+            - {x: 15, y: 127}
+            - {x: -112, y: 127}
+            - {x: -112, y: 112}
+            - {x: -15, y: 112}
+            - {x: -15, y: 97}
+            - {x: 0, y: 97}
+          model:
+            path: barrier2.glb
+            scale: 10
+            xoffset: 5
+            yoffset: 5
+
+        # bottom-right
+        - type: polygon
+          x: 1389
+          y: 401
+          rotation: 90
+          points:
+            - {x: 0, y: 0}
+            - {x: 15, y: 0}
+            - {x: 15, y: 127}
+            - {x: -112, y: 127}
+            - {x: -112, y: 112}
+            - {x: -15, y: 112}
+            - {x: -15, y: 97}
+            - {x: 0, y: 97}
+          model:
+            path: barrier.glb
+            scale: 10
+            yoffset: 6
+            xoffset: 6
+
+        # top-right
+        - type: polygon
+          x: 1501
+          y: 879
+          rotation: 0
+          points:
+            - {x: 0, y: 0}
+            - {x: 15, y: 0}
+            - {x: 15, y: 127}
+            - {x: -112, y: 127}
+            - {x: -112, y: 112}
+            - {x: -15, y: 112}
+            - {x: -15, y: 97}
+            - {x: 0, y: 97}
+          model:
+            path: barrier2.glb
+            rotation: 0
+            scale: 10
+            xoffset: 5
+            yoffset: 5
+
+        # top-left
+        - type: polygon
+          x: 974
+          y: 992
+          rotation: 270
+          points:
+            - {x: 0, y: 0}
+            - {x: 15, y: 0}
+            - {x: 15, y: 127}
+            - {x: -112, y: 127}
+            - {x: -112, y: 112}
+            - {x: -15, y: 112}
+            - {x: -15, y: 97}
+            - {x: 0, y: 97}
+          model:
+            path: barrier.glb
+            scale: 10
+            yoffset: 6
+            xoffset: 6
+
+      name: Bonus for barriers
+      score:
+        M06a:
+          description: Barrier is not damaged or moved.
+          max: 4
+          min: 0
+          score: 7
+          type: range
+    M04:
+      areas:
+        - length: 32
+          width: 32
+          x: 107
+          y: 952
+          passive: true
+          model:
+            path: mosaicwo.glb
+        - length: 32
+          width: 32
+          x: 170
+          y: 952
+          passive: true
+          model:
+            path: mosaicwo.glb
+        - length: 32
+          width: 32
+          x: 235
+          y: 952
+          passive: true
+          model:
+            path: mosaicwo.glb
+        - length: 32
+          width: 32
+          x: 107
+          y: 889
+          passive: true
+          model:
+            path: mosaicwo.glb
+        - length: 32
+          width: 32
+          x: 170
+          y: 889
+          passive: true
+          model:
+            path: mosaicwo.glb
+        - length: 32
+          width: 32
+          x: 235
+          y: 889
+          passive: true
+          model:
+            path: mosaicwo.glb
+
+        - length: 32
+          width: 32
+          x: 106
+          y: 793
+          passive: true
+          model:
+            path: mosaicgo.glb
+        - length: 32
+          width: 32
+          x: 170
+          y: 793
+          passive: true
+          model:
+            path: mosaicgo.glb
+        - length: 32
+          width: 32
+          x: 235
+          y: 793
+          passive: true
+          model:
+            path: mosaicgo.glb
+        - length: 32
+          width: 32
+          x: 107
+          y: 729
+          passive: true
+          model:
+            path: mosaicgo.glb
+        - length: 32
+          width: 32
+          x: 170
+          y: 729
+          passive: true
+          model:
+            path: mosaicgo.glb
+        - length: 32
+          width: 32
+          x: 235
+          y: 729
+          passive: true
+          model:
+            path: mosaicgo.glb
+
+        - length: 32
+          width: 32
+          x: 107
+          y: 633
+          passive: true
+          model:
+            path: mosaicbo.glb
+        - length: 32
+          width: 32
+          x: 170
+          y: 633
+          passive: true
+          model:
+            path: mosaicbo.glb
+        - length: 32
+          width: 32
+          x: 235
+          y: 633
+          passive: true
+          model:
+            path: mosaicbo.glb
+        - length: 32
+          width: 32
+          x: 108
+          y: 570
+          passive: true
+          model:
+            path: mosaicbo.glb
+        - length: 32
+          width: 32
+          x: 170
+          y: 570
+          passive: true
+          model:
+            path: mosaicbo.glb
+        - length: 32
+          width: 32
+          x: 235
+          y: 570
+          passive: true
+          model:
+            path: mosaicbo.glb
+
+        - length: 32
+          width: 32
+          x: 107
+          y: 474
+          passive: true
+          model:
+            path: mosaicyo.glb
+        - length: 32
+          width: 32
+          x: 170
+          y: 474
+          passive: true
+          model:
+            path: mosaicyo.glb
+        - length: 32
+          width: 32
+          x: 235
+          y: 474
+          passive: true
+          model:
+            path: mosaicyo.glb
+        - length: 32
+          width: 32
+          x: 106
+          y: 410
+          passive: true
+          model:
+            path: mosaicyo.glb
+        - length: 32
+          width: 32
+          x: 170
+          y: 410
+          passive: true
+          model:
+            path: mosaicyo.glb
+        - length: 32
+          width: 32
+          x: 235
+          y: 410
+          passive: true
+          model:
+            path: mosaicyo.glb
+
+        # goal area
+        - length: 165
+          width: 216
+          height: 10
+          x: 1073
+          y: 614
+          placeholder: true
+      name: Put the mosaic in place
+      comment: A piece of the mosaic is either correctly or incorrectly placed in the mosaic frame.
+      score:
+        M04a:
+          description: Mosaic tile correctly placed in the mosaic frame.
+          score: 10
+          min: 0
+          max: 12
+          type: range
+        M04b:
+          description: Mosaic tile incorrectly placed in the mosaic frame.
+          score: 5
+          min: 0
+          max: 12
+          type: range
+          rule:
+            not: M04a
+
+  startareas:
+    - id: Launch Area
+      length: 250
+      type: rectangle
+      width: 250
+      x: 61
+      y: 61
+  unit_of_measurement: mm

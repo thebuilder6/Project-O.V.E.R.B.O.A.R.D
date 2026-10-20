@@ -34,11 +34,28 @@ def unroll_trajectory_headings(samples: List[Dict[str, Any]]) -> List[Dict[str, 
 
 # Number of reference updates per sample interval for the legacy/continuous
 # path used by the fake dynamics in tests. The real validator uses the
-# deployed controller's 20 ms sample-and-hold loop below.
+# deployed controller's sample-and-hold loop below.
 REACHABILITY_SUBSTEPS = 20
 
-# ramsete_fast.py runs a 20 ms control loop. Integrate the plant with a
-# smaller step so a held command is not applied as one large Euler step.
+# The control period of the controller that actually runs.
+#
+# The controllers in use hold the drive command for 20 ms:
+#   pybricks_code/ramsete_compact.py            _LOOP_MS = 20   (the SysId replay)
+#   pybricks_code/ramsete_compact_events.py     _LOOP_MS = 20   (the hub push)
+#   pybricks_code/ramsete.py                    CONTROL_MS = 20 (the IDE missions)
+# and the command is held until the next iteration. The validator used to
+# model a 20 ms tick of ramsete_fast.py's 50 Hz heartbeat, which is the same
+# period but a *rounded* command and a different gain; those are fixed below
+# too.
+#
+# The period is the expensive part of the model: the wheel-force hold error
+# is proportional to it, so a model that holds the command longer than the
+# robot does reports a bigger tracking error, and the 5 mm tracking gate is
+# decided on it (docs/research/RQ-A_tracking_error.md, findings F6 and F11).
+#
+# A synced heartbeat is what makes the modelled hold exact: the loop waits
+# for the slack to the next tick, so the period is 20 ms and not 20 ms plus
+# the loop's own compute time.
 CONTROL_DT = 0.02
 PLANT_SUBSTEPS = 4
 
@@ -78,10 +95,13 @@ def _interpolated_reference(s0: Dict[str, Any], s1: Dict[str, Any],
     # heading and the turn rate describe the same motion.
     ref_omega = dh / dt if dt > 0 else omega0
 
-    # ramsete_fast.py precomputes this per sample and linearly interpolates it.
-    kr0 = math.sqrt(omega0**2 + ramsete_b * v0**2)
-    kr1 = math.sqrt(omega1**2 + ramsete_b * v1**2)
-    ref_kr = kr0 + (kr1 - kr0) * s
+    # The Ramsete gain is recomputed from the interpolated speed and turn
+    # rate, exactly as the firmware's controller does (ramsete.py:104). The
+    # legacy ramsete_fast.py interpolates a per-sample gain instead; the
+    # controllers that are in use recompute it, and the difference is worth
+    # nothing on the tracking error (docs/research/RQ-A_tracking_error.md,
+    # finding F7).
+    ref_kr = math.sqrt(ref_omega**2 + ramsete_b * ref_v**2)
     return ref_x, ref_y, ref_heading, ref_v, ref_omega, ref_kr
 
 # ==============================================================================
@@ -265,10 +285,15 @@ class RamseteController:
         Float states used by the nominal feedback path should pass True so
         they match ramsete_fast.py's shortest-angle normalization.
 
-        ``quantize=True`` mirrors the firmware, which rounds the commanded
+        ``quantize=True`` models a firmware that rounds the commanded
         linear speed (mm/s) and turn rate (deg/s) before calling
-        ``DriveBase.drive()``. It stays off for the interval inclusion path,
-        which may only use operations Immrax can include.
+        ``DriveBase.drive()``. The two controllers that are actually in use
+        do NOT round: ``ramsete_compact_events.py:179`` and
+        ``ramsete.py:337`` pass floats straight through, so the nominal
+        path leaves it off. The two that do round
+        (``ramsete_fast.py``, ``ramsete_compact.py``) are the ones that are
+        not in use. It stays off for the interval inclusion path, which may
+        only use operations Immrax can include.
         """
         xr, yr, thetar, vr, omegar = u_ref[0], u_ref[1], u_ref[2], u_ref[3], u_ref[4]
         ref_k = u_ref[5] if len(u_ref) > 5 else None
@@ -479,7 +504,7 @@ class ImmraxValidator:
         # the one place the motor lives, so the optimizer, this audit, the
         # validator and the exported controller all use the same limit.
         t_max_interval = interval(self.cfg.t_max_nm)
-        
+
         tw_range = track_width_range if track_width_range else (self.cfg.track_width * 0.99, self.cfg.track_width * 1.01)
         wr_range = wheel_radius_range if wheel_radius_range else (self.cfg.wheel_radius * 0.99, self.cfg.wheel_radius * 1.01)
         ine_range = inertia_range if inertia_range else (self.cfg.inertia * 0.90, self.cfg.inertia * 1.10)
@@ -710,7 +735,7 @@ class ImmraxValidator:
                             x_center = self._odometry_pose(x_center, start_pose)
                         u_cmd = self.controller(
                             0.0, x_center, u_ref, w_interval, normalize=True,
-                            quantize=True)
+                            quantize=False)
 
                     if active_twin and delay_s > 0.0:
                         command_history.append((t, u_cmd))

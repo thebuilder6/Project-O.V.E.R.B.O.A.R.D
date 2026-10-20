@@ -1,0 +1,210 @@
+{
+  "m01": {
+    "file": "apps/desktop/resources/missions/m01.ldr",
+    "book": "m01",
+    "parts": 85,
+    "pose": {
+      "xMm": 882,
+      "yMm": 101,
+      "headingDeg": 3.5
+    },
+    "fitMeanMm": 8.25
+  },
+  "m02": {
+    "file": "apps/desktop/resources/missions/m02.ldr",
+    "book": "m02",
+    "parts": 180,
+    "pose": {
+      "xMm": 629,
+      "yMm": 533,
+      "headingDeg": 45.5
+    },
+    "fitMeanMm": 1.52
+  },
+  "m04": {
+    "file": "apps/desktop/resources/missions/m04.ldr",
+    "book": "m04",
+    "parts": 110,
+    "pose": {
+      "xMm": 103,
+      "yMm": 1036,
+      "headingDeg": 225.5
+    },
+    "fitMeanMm": 2.43
+  },
+  "m05": {
+    "file": "apps/desktop/resources/missions/m05.ldr",
+    "book": "m05",
+    "parts": 77,
+    "pose": {
+      "xMm": 396,
+      "yMm": 1107,
+      "headingDeg": 174.5
+    },
+    "fitMeanMm": 2.3
+  },
+  "m06-07": {
+    "file": "apps/desktop/resources/missions/m06-07.ldr",
+    "book": "m06-07",
+    "parts": 232,
+    "pose": {
+      "xMm": 1543,
+      "yMm": 1030,
+      "headingDeg": 356
+    },
+    "fitMeanMm": 5.03
+  },
+  "m01-stand": {
+    "file": "apps/desktop/resources/missions/m01-stand.ldr",
+    "book": "m01",
+    "parts": 43,
+    "pose": {
+      "xMm": 1039,
+      "yMm": 223,
+      "headingDeg": 218.5
+    },
+    "fitMeanMm": 3.87
+  },
+  "m03": {
+    "file": "apps/desktop/resources/missions/m03.ldr",
+    "book": "m03",
+    "parts": 133,
+    "pose": {
+      "xMm": 82,
+      "yMm": 660,
+      "headingDeg": 176.5
+    },
+    "fitMeanMm": 4.04
+  },
+  "m10a": {
+    "file": "apps/desktop/resources/missions/m10a.ldr",
+    "book": "m10",
+    "parts": 30,
+    "pose": {
+      "xMm": 739,
+      "yMm": 1023,
+      "headingDeg": 61.5
+    },
+    "fitMeanMm": 1.43
+  },
+  "m10b": {
+    "file": "apps/desktop/resources/missions/m10b.ldr",
+    "book": "m10",
+    "parts": 34,
+    "pose": {
+      "xMm": 1074,
+      "yMm": 734,
+      "headingDeg": 218
+    },
+    "fitMeanMm": 3.41
+  },
+  "m11": {
+    "file": "apps/desktop/resources/missions/m11.ldr",
+    "book": "m11",
+    "parts": 110,
+    "pose": {
+      "xMm": 1427,
+      "yMm": 578,
+      "headingDeg": 48
+    },
+    "fitMeanMm": 4.43
+  },
+  "m12": {
+    "file": "apps/desktop/resources/missions/m12.ldr",
+    "book": "m12",
+    "parts": 116,
+    "pose": {
+      "xMm": 1898,
+      "yMm": 790,
+      "headingDeg": 94
+    },
+    "fitMeanMm": 3.71
+  },
+  "m12-post": {
+    "file": "apps/desktop/resources/missions/m12-post.ldr",
+    "book": "m12",
+    "parts": 9,
+    "pose": {
+      "xMm": 1934,
+      "yMm": 537,
+      "headingDeg": 76
+    },
+    "fitMeanMm": 2.44
+  },
+  "m08-09": {
+    "file": "apps/desktop/resources/missions/m08-09.ldr",
+    "book": "m08-09",
+    "parts": 464,
+    "pose": {
+      "xMm": 537,
+      "yMm": 1048,
+      "headingDeg": 332
+    },
+    "fitMeanMm": 4.36
+  },
+  "m13": {
+    "file": "apps/desktop/resources/missions/m13.ldr",
+    "book": "m13",
+    "parts": 143,
+    "pose": {
+      "xMm": 1002,
+      "yMm": 627,
+      "headingDeg": 89.5
+    },
+    "fitMeanMm": 2.46,
+    "dock": {
+      "x": 0,
+      "z": 0,
+      "dirDeg": 90
+    }
+  },
+  "_docks": {
+    "farm": {
+      "xMm": 1002,
+      "yMm": 627,
+      "dirDeg": 179.5
+    },
+    "city": {
+      "xMm": 1281,
+      "yMm": 93,
+      "dirDeg": 180.5
+    },
+    "mine": {
+      "xMm": 1885.9,
+      "yMm": 1031,
+      "dirDeg": 135.5
+    }
+  },
+  "m14": {
+    "file": "apps/desktop/resources/missions/m14.ldr",
+    "book": "m14",
+    "parts": 133,
+    "pose": {
+      "xMm": 1281,
+      "yMm": 93,
+      "headingDeg": 90.5
+    },
+    "fitMeanMm": 1.88,
+    "dock": {
+      "x": 0,
+      "z": 0,
+      "dirDeg": 90
+    }
+  },
+  "m15": {
+    "file": "apps/desktop/resources/missions/m15.ldr",
+    "book": "m15",
+    "parts": 249,
+    "pose": {
+      "xMm": 1872,
+      "yMm": 1026,
+      "headingDeg": 225.5
+    },
+    "fitMeanMm": 1.81,
+    "dock": {
+      "x": -13.36,
+      "z": 6.42,
+      "dirDeg": -90
+    }
+  }
+}

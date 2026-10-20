@@ -336,3 +336,53 @@ class TestHubSessionPoses(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+_RATE_HEADER = (
+    "t_ms,loop_ms,v_cmd_mm_s,w_cmd_deg_s,l_deg,r_deg,"
+    "gyro_z_rad_s,ax_m_s2,ay_m_s2,batt_mv,batt_ma,l_load_mNm,r_load_mNm"
+)
+
+
+def _top_speed_run(name, run_id, speed_mm_s=600.0, command_mm_s=1000.0,
+                   wheel_radius_m=0.028):
+    """A free-running run: the wheels spin at a constant speed."""
+    times = np.arange(0.0, 3.0, 0.01)
+    omega_deg_s = speed_mm_s / 1000.0 / wheel_radius_m * 180.0 / math.pi
+    angle_deg = np.cumsum(np.full_like(times, omega_deg_s) * 0.01)
+    rows = [
+        [t * 1000.0, 10.0, command_mm_s, 0.0, angle_deg[i], angle_deg[i],
+         0.0, 0.0, 0.0, 8000.0, 0.0, 0.0, 0.0]
+        for i, t in enumerate(times)
+    ]
+    return name, run_id, _RATE_HEADER, rows
+
+
+class TestNoLoadSpeed(unittest.TestCase):
+    """The motor's free-running speed, measured with the wheels lifted."""
+
+    def test_the_free_running_speed_is_fitted(self):
+        parsed = parse_session(_session([_top_speed_run("top_speed", 9)]))
+        result = fit_session(parsed, wheel_radius_m=0.028)
+
+        drivetrain = result["drivetrain"]
+        self.assertTrue(drivetrain["calibrated"])
+        # 600 mm/s on a 28 mm wheel is 21.43 rad/s.
+        self.assertAlmostEqual(drivetrain["no_load_speed_rad_s"], 21.43,
+                               delta=0.2)
+
+    def test_a_run_that_reached_the_command_is_not_used(self):
+        """The command was the limit then, so the number is not the motor's."""
+        parsed = parse_session(_session([
+            _top_speed_run("top_speed", 9, speed_mm_s=1000.0,
+                           command_mm_s=1000.0)]))
+        result = fit_session(parsed, wheel_radius_m=0.028)
+
+        drivetrain = result["drivetrain"]
+        self.assertFalse(drivetrain["calibrated"])
+        self.assertTrue(drivetrain.get("rejected"))
+
+    def test_a_session_without_the_test_has_no_number(self):
+        parsed = parse_session(_session([_straight_run("straight_steps_fwd", 1)]))
+        result = fit_session(parsed, wheel_radius_m=0.028)
+        self.assertFalse(result["drivetrain"]["calibrated"])

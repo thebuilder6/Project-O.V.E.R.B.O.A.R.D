@@ -2,6 +2,15 @@ import umath as math
 import gc
 from pybricks.tools import StopWatch, wait
 
+# The control period, in milliseconds.
+#
+# The drive command is held until the next iteration, and that hold is what
+# the wheel-force error is proportional to, so the validator models it
+# (immrax_validator.py, CONTROL_DT) and the two have to agree. It is the same
+# period as the two compact controllers and as ramsete_fast.py's 50 Hz
+# heartbeat.
+CONTROL_MS = 20
+
 def normalize_angle(angle):
     """Normalize angle to [-pi, pi]."""
     while angle > math.pi:
@@ -256,7 +265,8 @@ async def follow_trajectory(drivebase, samples, config=None, b=2.0, zeta=0.7, de
     last_t = 0.0
     current_v = 0.0
     current_omega = 0.0
-    
+    next_loop = watch.time()
+
     # Profiling variables
     loop_count = 0
     total_calc_time = 0.0
@@ -346,10 +356,23 @@ async def follow_trajectory(drivebase, samples, config=None, b=2.0, zeta=0.7, de
             # Print telemetry for external plotting: LOG,time,x,y,ref_x,ref_y
             print(f"LOG,{t:.3f},{odom.x:.4f},{odom.y:.4f},{xr:.4f},{yr:.4f}")
         
-        # Await wait() to properly hand control back to the Pybricks multitask loop.
-        # wait(5) will sleep for 5ms, allowing other concurrent tasks (like attachments) to run
-        # while keeping our loop rate well above 50Hz.
-        await wait(5)
+        # The 20 ms heartbeat, synced so the period is exact.
+        #
+        # The drive command is held until the next iteration, and that hold
+        # is what the wheel-force error is proportional to, so the validator
+        # models it (immrax_validator.py, CONTROL_DT) and the two have to
+        # agree. A free-running loop would make the model's hold a lower
+        # bound on the robot's; a synced one is exact.
+        #
+        # Await wait() also hands control back to the Pybricks multitask
+        # loop, so other tasks (attachments) keep running.
+        next_loop += CONTROL_MS
+        slack = next_loop - watch.time()
+        if slack > 0:
+            await wait(slack)
+        else:
+            next_loop = watch.time()
+            await wait(1)
     # --- LOOP END ---
         
     print("Trajectory complete.")

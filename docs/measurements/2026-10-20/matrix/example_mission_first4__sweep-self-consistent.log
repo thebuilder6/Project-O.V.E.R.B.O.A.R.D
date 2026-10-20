@@ -1,0 +1,107 @@
+# command: C:\Users\jumpi\AppData\Local\Microsoft\WindowsApps\PythonSoftwareFoundation.Python.3.12_qbz5n2kfra8p0\python.exe main.py -c examples/fll_choreo.json -w examples/example_mission_first4.json -o C:\Users\jumpi\AppData\Local\Temp\tmpjgx9_tam\example_mission_first4.traj --validate --sweep --self-consistent
+# wall_seconds: 23.0
+# exit_code: 0
+
+Using the example robot config (examples/fll_choreo.json). Pass -c/--config with your own robot to plan for your build.
+Using the simple CasADi optimizer
+Solving 4 waypoints (samples=10, accuracy_weight=0.0, candidates=2, mixed equal-duration/per-segment dt)...
+Solving 10 candidates (in parallel)...
+Candidate 1/10 (guess_style=baseline, equal-duration dt, a=0)...
+  Running the Immrax robustness check...
+  Passed! envelope 0.32 cm, all segments within thresholds.
+Candidate 2/10 (guess_style=baseline, per-segment dt, a=0)...
+  Running the Immrax robustness check...
+  Passed! envelope 0.30 cm, all segments within thresholds.
+Candidate 3/10 (guess_style=baseline, equal-duration dt, a=0.001)...
+  Running the Immrax robustness check...
+  Passed! envelope 0.34 cm, all segments within thresholds.
+Candidate 4/10 (guess_style=baseline, per-segment dt, a=0.001)...
+  Running the Immrax robustness check...
+  Passed! envelope 0.33 cm, all segments within thresholds.
+Candidate 5/10 (guess_style=baseline, equal-duration dt, a=0.002)...
+  Running the Immrax robustness check...
+  Passed! envelope 0.34 cm, all segments within thresholds.
+Candidate 6/10 (guess_style=baseline, per-segment dt, a=0.002)...
+  Running the Immrax robustness check...
+  FAILED: tracking error 0.62 cm > 0.50 cm; forward-integration error 1.59 cm; final integration error 1.59 cm.
+Candidate 7/10 (guess_style=baseline, equal-duration dt, a=0.005)...
+  Running the Immrax robustness check...
+  Passed! envelope 0.34 cm, all segments within thresholds.
+Candidate 8/10 (guess_style=baseline, per-segment dt, a=0.005)...
+  Running the Immrax robustness check...
+  Passed! envelope 0.32 cm, all segments within thresholds.
+Candidate 9/10 (guess_style=baseline, equal-duration dt, a=0.01)...
+  Running the Immrax robustness check...
+  Passed! envelope 0.35 cm, all segments within thresholds.
+Candidate 10/10 (guess_style=baseline, per-segment dt, a=0.01)...
+  Running the Immrax robustness check...
+  Passed! envelope 0.34 cm, all segments within thresholds.
+  Candidate 1 (baseline, equal-dur, a=0):  2.184 s, envelope 0.32 cm (ok)
+      segment times: 0.73 0.73 0.73 s
+  Candidate 2 (baseline, per-seg, a=0):  1.680 s, envelope 0.30 cm (ok)
+      segment times: 0.58 0.37 0.73 s
+  Candidate 3 (baseline, equal-dur, a=0.001):  2.259 s, envelope 0.34 cm (ok)
+      segment times: 0.75 0.75 0.75 s
+  Candidate 4 (baseline, per-seg, a=0.001):  1.999 s, envelope 0.33 cm (ok)
+      segment times: 0.63 0.41 0.96 s
+  Candidate 5 (baseline, equal-dur, a=0.002):  2.311 s, envelope 0.34 cm (ok)
+      segment times: 0.77 0.77 0.77 s
+  Candidate 6 (baseline, per-seg, a=0.002):  2.221 s, envelope 0.35 cm (failed)
+      segment times: 0.70 0.51 1.01 s
+  Candidate 7 (baseline, equal-dur, a=0.005):  2.440 s, envelope 0.34 cm (ok)
+      segment times: 0.81 0.81 0.81 s
+  Candidate 8 (baseline, per-seg, a=0.005):  1.946 s, envelope 0.32 cm (ok)
+      segment times: 0.63 0.43 0.88 s
+  Candidate 9 (baseline, equal-dur, a=0.01):  2.575 s, envelope 0.35 cm (ok)
+      segment times: 0.86 0.86 0.86 s
+  Candidate 10 (baseline, per-seg, a=0.01):  2.141 s, envelope 0.34 cm (ok)
+      segment times: 0.64 0.46 1.03 s
+  Selected candidate 2.
+##OVERBOARD-VALIDATION## {"selected": 2, "candidates": [{"index": 1, "style": "baseline", "timing": "equal-duration", "accuracy_weight": 0.0, "duration_s": 2.183656194931746, "envelope_cm": 0.323096899739244, "tracking_cm": 0.2607794711366296, "heading_error_deg": 0.0077181137621144084, "ok": true, "converged": true, "reasons": [], "segments": [{"from": 0, "to": 1, "limit_m": 0.02, "envelope_m": 0.0019297170830114955, "drift_m": 0.00016106717186140944, "violations": 0, "slip_points": 0, "ok": true}, {"from": 1, "to": 2, "limit_m": 0.02, "envelope_m": 0.0024270729449037227, "drift_m": 0.0001223015645913186, "violations": 0, "slip_points": 0, "ok": true}, {"from": 2, "to": 3, "limit_m": 0.02, "envelope_m": 0.0032034524639692184, "drift_m": 0.00021621078013346913, "violations": 0, "slip_points": 0, "ok": true}]}, {"index": 2, "style": "baseline", "timing": "per-segment", "accuracy_weight": 0.0, "duration_s": 1.679835789230972, "envelope_cm": 0.30158195285125383, "tracking_cm": 0.2598189050331712, "heading_error_deg": 0.009097811974456985, "ok": true, "converged": true, "reasons": [], "segments": [{"from": 0, "to": 1, "limit_m": 0.02, "envelope_m": 0.0018799412002144932, "drift_m": 0.00022309345308755763, "violations": 0, "slip_points": 0, "ok": true}, {"from": 1, "to": 2, "limit_m": 0.02, "envelope_m": 0.0022505580888470783, "drift_m": 0.0002029781452582651, "violations": 0, "slip_points": 0, "ok": true}, {"from": 2, "to": 3, "limit_m": 0.02, "envelope_m": 0.0029879225451705615, "drift_m": 0.00015840714368799724, "violations": 0, "slip_points": 0, "ok": true}]}, {"index": 3, "style": "baseline", "timing": "equal-duration", "accuracy_weight": 0.001, "duration_s": 2.2594041583367535, "envelope_cm": 0.34188212867214934, "tracking_cm": 0.20276482682675123, "heading_error_deg": 0.005928604199571068, "ok": true, "converged": true, "reasons": [], "segments": [{"from": 0, "to": 1, "limit_m": 0.02, "envelope_m": 0.0019300968104920971, "drift_m": 0.0001520692377857552, "violations": 0, "slip_points": 0, "ok": true}, {"from": 1, "to": 2, "limit_m": 0.02, "envelope_m": 0.0024997868197753513, "drift_m": 0.00014598740260361728, "violations": 0, "slip_points": 0, "ok": true}, {"from": 2, "to": 3, "limit_m": 0.02, "envelope_m": 0.0033791182378427086, "drift_m": 0.0001312259482011833, "violations": 0, "slip_points": 0, "ok": true}]}, {"index": 4, "style": "baseline", "timing": "per-segment", "accuracy_weight": 0.001, "duration_s": 1.9994705672397732, "envelope_cm": 0.331787866109723, "tracking_cm": 0.28156766202300787, "heading_error_deg": 0.010805359266960171, "ok": true, "converged": true, "reasons": [], "segments": [{"from": 0, "to": 1, "limit_m": 0.02, "envelope_m": 0.0018994098429894791, "drift_m": 0.00038021082941546894, "violations": 0, "slip_points": 0, "ok": true}, {"from": 1, "to": 2, "limit_m": 0.02, "envelope_m": 0.0023056894798557243, "drift_m": 0.0006974535359053557, "violations": 0, "slip_points": 0, "ok": true}, {"from": 2, "to": 3, "limit_m": 0.02, "envelope_m": 0.0032296471633665408, "drift_m": 0.0009436752370071145, "violations": 0, "slip_points": 0, "ok": true}]}, {"index": 5, "style": "baseline", "timing": "equal-duration", "accuracy_weight": 0.002, "duration_s": 2.311098918981695, "envelope_cm": 0.3436390594841496, "tracking_cm": 0.20171692594885826, "heading_error_deg": 0.0046855097706287475, "ok": true, "converged": true, "reasons": [], "segments": [{"from": 0, "to": 1, "limit_m": 0.02, "envelope_m": 0.0019398120228856126, "drift_m": 0.00011137888619994279, "violations": 0, "slip_points": 0, "ok": true}, {"from": 1, "to": 2, "limit_m": 0.02, "envelope_m": 0.0025118136537414008, "drift_m": 5.188428772336005e-05, "violations": 0, "slip_points": 0, "ok": true}, {"from": 2, "to": 3, "limit_m": 0.02, "envelope_m": 0.003393007132963931, "drift_m": 0.00016241130758743927, "violations": 0, "slip_points": 0, "ok": true}]}, {"index": 6, "style": "baseline", "timing": "per-segment", "accuracy_weight": 0.002, "duration_s": 2.2205107692258443, "envelope_cm": 0.34641937544949997, "tracking_cm": 0.6183100398629904, "heading_error_deg": 0.021788303452340677, "ok": false, "converged": true, "reasons": ["tracking error 0.62 cm > 0.50 cm", "forward-integration error 1.59 cm", "final integration error 1.59 cm"], "segments": [{"from": 0, "to": 1, "limit_m": 0.02, "envelope_m": 0.0019167229405408826, "drift_m": 0.004292087443924739, "violations": 0, "slip_points": 0, "ok": true}, {"from": 1, "to": 2, "limit_m": 0.02, "envelope_m": 0.0023635551230429277, "drift_m": 0.011030783065906664, "violations": 0, "slip_points": 0, "ok": true}, {"from": 2, "to": 3, "limit_m": 0.02, "envelope_m": 0.003387824087258695, "drift_m": 0.015678468896200743, "violations": 0, "slip_points": 0, "ok": true}]}, {"index": 7, "style": "baseline", "timing": "equal-duration", "accuracy_weight": 0.005, "duration_s": 2.440401267290513, "envelope_cm": 0.34375369927961913, "tracking_cm": 0.21609256509691477, "heading_error_deg": 0.0029506417214455083, "ok": true, "converged": true, "reasons": [], "segments": [{"from": 0, "to": 1, "limit_m": 0.02, "envelope_m": 0.001944848877972783, "drift_m": 0.00016455357527867188, "violations": 0, "slip_points": 0, "ok": true}, {"from": 1, "to": 2, "limit_m": 0.02, "envelope_m": 0.0025187312177021273, "drift_m": 0.0002998945517342768, "violations": 0, "slip_points": 0, "ok": true}, {"from": 2, "to": 3, "limit_m": 0.02, "envelope_m": 0.0033848947020889714, "drift_m": 0.0004344112365099294, "violations": 0, "slip_points": 0, "ok": true}]}, {"index": 8, "style": "baseline", "timing": "per-segment", "accuracy_weight": 0.005, "duration_s": 1.9457323278768657, "envelope_cm": 0.3204756945552081, "tracking_cm": 0.22876993753015995, "heading_error_deg": 0.006502340089852139, "ok": true, "converged": true, "reasons": [], "segments": [{"from": 0, "to": 1, "limit_m": 0.02, "envelope_m": 0.0019020629730108756, "drift_m": 0.0001905457028114418, "violations": 0, "slip_points": 0, "ok": true}, {"from": 1, "to": 2, "limit_m": 0.02, "envelope_m": 0.0023223234285253587, "drift_m": 0.0001669249906535755, "violations": 0, "slip_points": 0, "ok": true}, {"from": 2, "to": 3, "limit_m": 0.02, "envelope_m": 0.0031520602705480414, "drift_m": 5.519557956657492e-05, "violations": 0, "slip_points": 0, "ok": true}]}, {"index": 9, "style": "baseline", "timing": "equal-duration", "accuracy_weight": 0.01, "duration_s": 2.5745594491046404, "envelope_cm": 0.3467319684649573, "tracking_cm": 0.19696003291755915, "heading_error_deg": 0.0030326039914856614, "ok": true, "converged": true, "reasons": [], "segments": [{"from": 0, "to": 1, "limit_m": 0.02, "envelope_m": 0.0019618267301970225, "drift_m": 0.00014358294483635557, "violations": 0, "slip_points": 0, "ok": true}, {"from": 1, "to": 2, "limit_m": 0.02, "envelope_m": 0.0025463950155701033, "drift_m": 0.00016656681754796557, "violations": 0, "slip_points": 0, "ok": true}, {"from": 2, "to": 3, "limit_m": 0.02, "envelope_m": 0.003415446123411943, "drift_m": 0.00010406510925878156, "violations": 0, "slip_points": 0, "ok": true}]}, {"index": 10, "style": "baseline", "timing": "per-segment", "accuracy_weight": 0.01, "duration_s": 2.141133956701693, "envelope_cm": 0.34026190555546343, "tracking_cm": 0.2613347955048084, "heading_error_deg": 0.011406415913921294, "ok": true, "converged": true, "reasons": [], "segments": [{"from": 0, "to": 1, "limit_m": 0.02, "envelope_m": 0.0019036698534301677, "drift_m": 0.00018411359638497105, "violations": 0, "slip_points": 0, "ok": true}, {"from": 1, "to": 2, "limit_m": 0.02, "envelope_m": 0.002329092930714654, "drift_m": 0.00018449066867433437, "violations": 0, "slip_points": 0, "ok": true}, {"from": 2, "to": 3, "limit_m": 0.02, "envelope_m": 0.003317715533788907, "drift_m": 0.00012179043154260719, "violations": 0, "slip_points": 0, "ok": true}]}]}
+
+=== Validation Report: C:\Users\jumpi\AppData\Local\Temp\tmpjgx9_tam\example_mission_first4.traj ===
+Samples: 31 | Config: examples/fll_choreo.json
+Safety margins: torque_headroom=0.85, speed_headroom=0.90
+
+-- Metrics --
+  total_time_s: 1.6798
+  path_length_m: 0.4609
+  max_linear_speed_m_s: 0.4654
+  avg_linear_speed_m_s: 0.2786
+  max_wheel_speed_m_s: 0.4699
+  max_accel_m_s2: 8.0688
+  max_jerk_m_s3: 239.2974
+  avg_jerk_m_s3: 38.3003
+  tortuosity: 1.1299
+  velocity_chattering: 7
+  avg_force_utilization: 0.3059
+  max_force_utilization: 0.8091
+
+-- Constraint Audit --
+  Violating samples: 0
+  Max left_motor_force violation: 0.000000 N
+  Max right_motor_force violation: 0.000000 N
+  Max traction_total violation: 0.000000 N
+  Max wheel speed: 0.4699 m/s (limit 0.5209 m/s)
+
+-- Wheel Slip Detection --
+  Slip points: 0
+  Max left wheel slip: 0.000000 N
+  Max right wheel slip: 0.000000 N
+
+-- Forward Integration (1 ms RK4) --
+  max_pos_error_m: 0.000351
+  rms_pos_error_m: 0.000163
+  max_heading_error_rad: 0.006073
+  final_pos_error_m: 0.000002
+  final_heading_error_rad: 0.000041
+
+-- Waypoint Check --
+  Final position error: 0.000000 m
+  Final heading error: 0.000000 rad
+
+PASS — trajectory is safe to run.
+
+Trajectory written to C:\Users\jumpi\AppData\Local\Temp\tmpjgx9_tam\example_mission_first4.traj
+  duration 1.680 s | path 0.461 m | peak wheel speed 0.47 m/s | 31 samples
+  validation: passed (envelope 0.30 cm)

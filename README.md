@@ -162,7 +162,9 @@ The `--preset safe` shortcut does the same in one flag:
 python main.py -w examples/example_straight.json --preset safe -o output.traj
 ```
 
-If you have run `pybricks_code/sysid_digital_twin.py` and fitted the logs with `sysid_fit.py`, add `--sysid-fit sysid_fit.json` to opt into the measured model. The default kinematic model is unchanged when the flag is omitted. The current integration applies the straight-line actuator gain range, first-order time constant, command delay, and odometry scale. Braking slip is loaded and reported but not applied yet because the plant has no braking state (KI-020).
+If you have run `pybricks_code/sysid_digital_twin.py` and fitted the logs with `sysid_fit.py`, add `--sysid-fit sysid_fit.json` to opt into the measured model. The default kinematic model is unchanged when the flag is omitted. The current integration applies the straight-line actuator gain range, first-order time constant, command delay, and odometry scale. Braking slip is loaded and reported but not applied yet because the plant has no braking state (KI-020). A fit also measures the motor: the stall torque (the robot is pushed into a wall) and the free-running speed (the robot is lifted off the ground), which are the two ends of the torque-speed line the planner uses. With the flag, those measured numbers replace the declared ones in the robot config, so the optimizer, the validator and the exported controller all plan against the same motor. The model itself is in `drivetrain.py`; see [docs/research/RQ-B_drivetrain_model.md](docs/research/RQ-B_drivetrain_model.md) for what it predicts and what an independent simulator says about it.
+
+The studio's **Field** block picks the season: the mission models standing on the mat come from `fields/<season>.json`, measured off FIRST's public field wireframe, and the mat's picture is the one you bring (FIRST's artwork is not ours to ship). After a solve the server reports where the planned path ran into a mission model and the studio marks those places on the field and lists them under the result. Nothing is planned around: the collisions are only marked, so you can decide what to do about them. A collision shallower than the field's placement uncertainty (50 mm) is reported as uncertain rather than as a hit, because two independent readings of the same wireframe disagree by up to 100 mm. See `research/field_maps/README.md` for the provenance. The studio can also fetch the season's mat picture for you: FIRST's mat artwork is copyrighted, so it is downloaded on request from the URL the field file records and kept in `mats/`, outside the repository.
 
 The host tools are drivebase-agnostic. A minimal profile only needs wheel radius and, optionally, track width:
 
@@ -220,17 +222,33 @@ python main.py --gui
 
 The studio opens in your browser: draw the mission on the field, set headings, stops and events, pick a preset, and solve. The result shows the trajectory, the reachability envelope and the numbers, and you can download the trajectory and the controller file.
 
+The page is three columns. The left one is what you set (tabs: **Mission**, **Robot**, **Field**, **Solve**), the canvas in the middle is the work, and the right one is what you read (tabs: **Result**, **Waypoint**, **Plots**, **Run**). The line in the header always carries the result, so a tabbed column can never hide the answer, and the field carries a key to its own colours. Every control is listed in [docs/STUDIO_UI_INVENTORY.md](docs/STUDIO_UI_INVENTORY.md), with the structure and how to extend it.
+
 The studio runs the same command line in the background, so the export gate, the validation rules and the file formats are identical to the terminal path. A failed validation shows the reason and offers no download.
 
-When a validation fails, the studio shows **where**: a row per path segment with the reachability envelope, the local limit and the drift, the failing segment marked in red on the field, and the reason the gate gave. The robot itself is editable in the studio — mass, wheel and track size, motor limits, friction and the uncertainty ranges — so the last JSON file you need to open by hand is gone.
+The studio also draws the plots the command line can make, from the same samples: the velocity profiles, the wheel forces against the force limit, the accelerations, the heading over time, and how the solve converged. The solver's first guess is drawn on the field as a dashed path, so you can see what the optimizer changed.
+
+The Advanced section has the same levers the command line has: **fast polish**, **self-consistent** samples, and **sweep** (the timing model x weight grid, ten candidates). The candidate chips are the leaderboard, and they say which weight each candidate used.
+
+When a validation fails, the studio shows **where**: a row per path segment with the reachability envelope, the local limit and the drift, the failing segment marked in red on the field, and the reason the gate gave. Under the table it names the lever that might fix it - the other timing model, a smaller accuracy weight, or the sweep - and each one is a button that re-solves. The robot itself is editable in the studio — mass, wheel and track size, motor limits, friction and the uncertainty ranges — so the last JSON file you need to open by hand is gone.
 
 Before you solve, the mission panel shows the path length and the fastest the robot could possibly do it, so a waypoint dragged five metres away is obvious. The Advanced section has the **fast polish** switch, which cuts the ten-waypoint complex mission from 26 s to 15 s for the same trajectory.
 
 When a solve passes, the **Run on the robot** section can push the approved trajectory to a Pybricks hub over Bluetooth or USB. The hub's console streams into the studio while the robot drives, and the pose it reports comes back as a marker on the field next to the plan, with the error in millimetres. The session is written next to the mission as `missions/<name>.session.csv`, so the plan and what the robot actually did travel together. The studio also checks the plan against the robot's own files: the event names the robot has actions for, and the wheel size it really has.
 
+A calibrated robot can be loaded into the studio (**Measured model** in the robot panel). The fit is kept with the robot, every solve then runs against the measured model instead of the nominal one, and the panel shows what was measured: the straight and turn gain with their 95% intervals, the response time and delay, the gyro bias, the odometry scales and the brake slip.
+
+After a push, the studio shows the plan against the robot in the same table the command line prints: the measured and planned pose per stop, the position and heading error, and whether the measured pose landed inside the reachability envelope.
+
+**Calibrate this robot** runs the whole calibration in the browser: push the test suite to the hub and watch the progress, type the tape measurements into a form instead of a sheet of paper, and fit the model from the session and the form. The session, the sheet, the measured poses and the fit are kept in `calibration/`, and a session collected in the studio can also be fitted with `sysid_fit.py` on the command line.
+
 While it solves, the header ticks the elapsed time and names the stage (*Solving… - 4.2 s - 3 candidates in parallel*). Stops and events are marked on the field, and when several candidates were compared the studio says which one won and what the others cost: *"equal-duration baseline won (7.21 s). per-segment baseline was 0.48 s faster but failed: tracking error 0.61 cm > 0.50 cm"*.
 
-Your work is never lost: every edit can be undone (Ctrl+Z / Ctrl+Shift+Z), the mission is kept in the browser and comes back after a reload, and **Download** saves a copy of the mission JSON to your machine. **Save** writes it to `missions/` so it shows up in the mission list and can be committed with the code.
+Your work is never lost: every edit can be undone (Ctrl+Z / Ctrl+Shift+Z) - the robot config included, not just the mission - the mission is kept in the browser and comes back after a reload, and **Download** saves a copy of the mission JSON to your machine. **Save** writes it to `missions/` so it shows up in the mission list.
+
+The missions folder is **its own git repository**: every save is a commit, so the **History** list under the mission name shows every version and can put an earlier one back. The commits need no git configuration on your machine, and your project repository is never touched.
+
+The arrow keys nudge the selected waypoint (1 cm; Shift is 10 cm, Alt is 1 mm), and a held key counts as one undo step.
 
 ### 6. Solve in the browser (optional)
 
@@ -634,6 +652,8 @@ See [docs/trajectory_tools_research.md](docs/trajectory_tools_research.md) for c
 - **[docs/CALIBRATION_PROCEDURE.md](docs/CALIBRATION_PROCEDURE.md)**: The human procedure for calibrating a drivebase: the setup for each test, the measurement convention, the commands, and the troubleshooting
 - **[docs/SYSID_QUICKSTART.md](docs/SYSID_QUICKSTART.md)**: The short path from a session to a fitted model
 - **[docs/HEURISTICS_AND_VERIFICATION.md](docs/HEURISTICS_AND_VERIFICATION.md)**: Path-planning heuristics, the verification chain, the failed-strategy ledger, and the research agenda
+- **[docs/research/pq_b/FINDINGS.md](docs/research/pq_b/FINDINGS.md)**: The research agenda measured on 32 missions instead of six — which of its claims survive, and which do not
+- **[docs/research/RQ-A_tracking_error.md](docs/research/RQ-A_tracking_error.md)**: Why the closed-loop tracking gate fails: it is a discretisation mismatch, not a physical tracking error
 - **[docs/STUDIO_HUB_PLAN.md](docs/STUDIO_HUB_PLAN.md)**: The "push to hub" feature for the browser studio, and how it ties the missions, the robot code and the sysid loop together
 - **[docs/CALIBRATION_STUDIO_PLAN.md](docs/CALIBRATION_STUDIO_PLAN.md)**: How the sysid loop (collect, measure, fit) and the studio's compare step fit together in one browser
 - **[KNOWN_ISSUES.md](KNOWN_ISSUES.md)**: Open and fixed issues

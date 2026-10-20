@@ -1,0 +1,20 @@
+challenge:
+  match_duration_seconds: 120
+  rules: https://educup.org/wp-content/uploads/2023/12/1.FINAL_ERC-Kids-game-rules-2023.pdf
+  season: EduCup 2023 Kids Engineering Challenge
+  year: '2023'
+id: educup23kids.yaml
+map:
+  width: 1414
+  height: 1000
+  imagesepia: true
+  imageurl: map.jpg
+  startareas:
+    - id: Start Area
+      length: 250
+      quadrant: 1
+      radius: 200
+      type: rectangle
+      width: 250
+      x: 1153
+      y: 11

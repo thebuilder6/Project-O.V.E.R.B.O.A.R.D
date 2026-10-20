@@ -227,6 +227,45 @@ class TestCandidateSpecs(unittest.TestCase):
         self.assertTrue(all(not s["per_segment_dt"] for s in specs))
 
 
+class TestSweepSpecs(unittest.TestCase):
+    """The sweep adds the timing-mode x accuracy-weight grid to the set."""
+
+    def setUp(self):
+        from main import _candidate_specs, SWEEP_WEIGHTS
+        self.specs = _candidate_specs
+        self.weights = SWEEP_WEIGHTS
+
+    def test_sweep_keeps_the_default_candidates(self):
+        plain = self.specs(0.0, 2, use_styles=True)
+        swept = self.specs(0.0, 2, use_styles=True, sweep=True)
+        for spec in plain:
+            self.assertIn(spec, swept)
+
+    def test_sweep_covers_both_timing_modes_at_every_weight(self):
+        swept = self.specs(0.0, 2, use_styles=True, sweep=True)
+        for weight in self.weights:
+            for per_segment_dt in (False, True):
+                self.assertIn(
+                    {"accuracy_weight": weight, "guess_style": "baseline",
+                     "per_segment_dt": per_segment_dt},
+                    swept)
+
+    def test_sweep_does_not_solve_the_same_combination_twice(self):
+        swept = self.specs(0.0, 2, use_styles=True, sweep=True)
+        keys = [(s["accuracy_weight"], s["guess_style"], s["per_segment_dt"])
+                for s in swept]
+        self.assertEqual(len(keys), len(set(keys)))
+
+    def test_sweep_includes_a_non_zero_base_weight(self):
+        swept = self.specs(0.005, 2, use_styles=True, sweep=True)
+        self.assertIn(0.005, [s["accuracy_weight"] for s in swept])
+        self.assertIn(0.0, [s["accuracy_weight"] for s in swept])
+
+    def test_sweep_is_off_by_default(self):
+        plain = self.specs(0.0, 2, use_styles=True)
+        self.assertEqual(len(plain), 2)
+
+
 @unittest.skipUnless(HAS_IMMRAX, "jax/immrax not installed")
 class TestExportGate(unittest.TestCase):
     """KI-001/KI-002: the write gate refuses failed solves and validation."""
@@ -348,7 +387,7 @@ class TestWriteGateIntegration(unittest.TestCase):
             return super().solve(*args, **kwargs)
 
     class _FailingImmrax:
-        def __init__(self, config, digital_twin=None):
+        def __init__(self, config, digital_twin=None, **kwargs):
             self.digital_twin = digital_twin
 
         def validate_trajectory(self, samples, cof_range, torque_range,
@@ -391,7 +430,7 @@ class TestWriteGateIntegration(unittest.TestCase):
     class _CapturingTwinImmrax(_PassingImmrax):
         last_twin = None
 
-        def __init__(self, config, digital_twin=None):
+        def __init__(self, config, digital_twin=None, **kwargs):
             super().__init__(config, digital_twin=digital_twin)
             type(self).last_twin = digital_twin
 

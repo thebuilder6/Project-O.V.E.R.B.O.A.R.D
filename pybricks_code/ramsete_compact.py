@@ -24,6 +24,8 @@ import ustruct
 from micropython import const
 from pybricks.tools import StopWatch, wait
 
+from ramsete import KinematicLimiter, Odometry, RamseteController
+
 _VERSION = const(1)
 _HEADER_SIZE = const(4)
 _RECORD_SIZE = const(24)
@@ -33,17 +35,23 @@ _TIME_FMT = "<f"
 
 _PI = const(3141593) / 1000000.0
 _TWO_PI = const(6283185) / 1000000.0
-_R2D = const(5729578) / 100000.0
-_D2R = const(17453) / 1000000.0
 _I1000 = const(1) / 1000.0
 
-_LOOP_MS = const(20)       # same 50 Hz heartbeat as ramsete_fast.py
+# The control period, in milliseconds.
+#
+# It is the same as the event-capable twin's (ramsete_compact_events.py) and
+# the same as ramsete.py's: the drive command is held until the next
+# iteration, and the hold is what the wheel-force error is proportional to.
+# The validator models it (immrax_validator.py, CONTROL_DT), so the two
+# firmwares and the model have to agree on it.
+#
+# 20 ms is the hub's budget: the loop does the odometry update, the
+# controller and the limiter every iteration, and a 50 Hz heartbeat leaves
+# the hub room to run everything else. It is also a *deterministic* period,
+# so the model can mirror it exactly; a free-running loop would make the
+# model's hold a lower bound on the robot's.
+_LOOP_MS = const(20)
 _GC_EVERY = const(50)      # collect about once per second, not every tick
-
-
-def _round(value):
-    """Round to the nearest integer; MicroPython's int() truncates."""
-    return int(value + 0.5) if value >= 0.0 else -int(-value + 0.5)
 
 
 def _check_blob(samples):
@@ -70,28 +78,26 @@ async def follow_trajectory(drivebase, samples, config=None, b=2.0, zeta=0.7):
     """Follow a packed trajectory with the Ramsete controller.
 
     samples: bytes/bytearray blob from --export-format python-compact.
-    config: accepted for drop-in compatibility with ramsete_fast.py; unused.
+    config: robot configuration for the KinematicLimiter (the same shape
+        ramsete.py takes). It is optional, but without it the limiter falls
+        back to its own defaults, which are not this robot's.
     """
     num_pts = _check_blob(samples)
 
-    db_distance = drivebase.distance
-    db_angle = drivebase.angle
     db_drive = drivebase.drive
-    m_cos, m_sin, m_sqrt = math.cos, math.sin, math.sqrt
     unpack_from = ustruct.unpack_from
 
     # Initial reference pose. The robot is assumed to start there.
-    _, x, y, h, _, _ = unpack_from(_RECORD_FMT, samples, _HEADER_SIZE)
+    _, x0, y0, h0, _, _ = unpack_from(_RECORD_FMT, samples, _HEADER_SIZE)
     total_time = unpack_from(
         _TIME_FMT, samples, _HEADER_SIZE + (num_pts - 1) * _RECORD_SIZE
     )[0]
 
-    # Initial hardware state. distance() is mm; angle() is float degrees
-    # (gyro when use_gyro(True)).
-    d_mm = db_distance()
-    a_deg = db_angle()
-    last_d = d_mm * _I1000
-    last_a = -a_deg * _D2R
+    # The same three pieces the event-capable twin uses, so the two follow a
+    # packed trajectory identically and the validator can mirror both.
+    odom = Odometry(drivebase, x0, y0, h0)
+    controller = RamseteController(b, zeta)
+    limiter = KinematicLimiter(config if config else {})
 
     # Metrics
     loop_count = 0
@@ -109,7 +115,7 @@ async def follow_trajectory(drivebase, samples, config=None, b=2.0, zeta=0.7):
     next_loop = now_time()
 
     gc.collect()
-    print("Mission Start: compact 20ms loop...")
+    print("Mission Start: compact %dms loop..." % _LOOP_MS)
 
     try:
         while True:
@@ -158,45 +164,27 @@ async def follow_trajectory(drivebase, samples, config=None, b=2.0, zeta=0.7):
             # describe different motions (KI-027).
             wr = dh / dt_traj if dt_traj > 0 else 0.0
 
-            # Precompute the gain per sample, then interpolate, matching the
-            # ramsete_fast.py / validator reference model for any b.
-            kr1 = m_sqrt(w1 * w1 + b * v1 * v1)
-            kr2 = m_sqrt(w2 * w2 + b * v2 * v2)
-            kr = kr1 + alpha * (kr2 - kr1)
-
-            # Synchronous odometry. Local on the hub; angle() keeps the
-            # gyro's fractional degrees.
-            d_mm = db_distance()
-            a_deg = db_angle()
-            d = d_mm * _I1000
-            a = -a_deg * _D2R
-            dd, da = d - last_d, a - last_a
-            avg_h = h + da * 0.5
-            x += dd * m_cos(avg_h)
-            y += dd * m_sin(avg_h)
-            h = (h + da + _PI) % _TWO_PI - _PI
-            last_d, last_a = d, a
-
-            # Ramsete
-            dx, dy = xr - x, yr - y
-            ct, st = m_cos(h), m_sin(h)
-            ex = ct * dx + st * dy
-            ey = -st * dx + ct * dy
-            et = (tr - h + _PI) % _TWO_PI - _PI
-
-            sinc = 1.0 if abs(et) < 1e-6 else m_sin(et) / et
-            kg = 2 * zeta * kr
-
-            current_v = vr * m_cos(et) + kg * ex
-            current_w = wr + b * vr * sinc * ey + kg * et
-
-            # Round first: Pybricks truncates float arguments toward zero.
-            db_drive(_round(current_v * 1000.0), _round(-current_w * _R2D))
+            # The same odometry, controller and limiter the event-capable twin
+            # uses. The gain is recomputed from the interpolated speed and turn
+            # rate inside the controller, so the two agree.
+            odom.update()
+            v_cmd, w_cmd = controller.calculate(
+                odom.x, odom.y, odom.heading, xr, yr, tr, vr, wr,
+            )
 
             dt_loop = t - last_t
-            if dt_loop > max_dt:
-                max_dt = dt_loop
+            if dt_loop > 0:
+                v_cmd, w_cmd = limiter.limit(
+                    v_cmd, w_cmd, current_v, current_w, dt_loop
+                )
+                if dt_loop > max_dt:
+                    max_dt = dt_loop
             last_t = t
+            current_v, current_w = v_cmd, w_cmd
+
+            # No rounding: the event-capable twin and ramsete.py pass floats
+            # straight through, and the validator does the same.
+            db_drive(v_cmd * 1000.0, math.degrees(-w_cmd))
 
             dur = now_time() - calc_start
             total_calc += dur

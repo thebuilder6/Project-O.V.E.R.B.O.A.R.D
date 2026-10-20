@@ -20,9 +20,38 @@ const state = {
     dirty: false,
     savedName: '',
     configEdited: false,
+    jobWallS: null,
     failingSegments: new Set(),
     worstSegment: -1,
     reportCandidate: null,
+    pollRetries: 0,
+    solveJobId: null,
+    solveHasTrajectory: false,
+    pushJobId: null,
+    measuredPoses: [],
+    robotInfo: { events: [], geometry: {} },
+    jobResult: null,
+    solveHistory: [],
+    ghostStates: null,
+    plot: 'speed',
+    hubConn: 'ble',
+    hubName: '',
+    /* The mat under the mission. FIRST's artwork is not ours to ship, so
+       the image is the user's; the size is ours to know. */
+    mat: { image: null, name: '', widthM: 2.004, heightM: 1.143 },
+    showMat: true,
+    /* The earlier solves, so a new one can be compared with them. */
+    runs: [],
+    showRuns: true,
+    /* What the pointer is over: a mission model or a waypoint. */
+    hoverObstacle: null,
+    hoverWaypoint: -1,
+    /* The field: the mission models standing on the mat, and the collisions
+       the last solve had with them. */
+    fields: {},
+    seasons: [],
+    season: '',
+    collisions: [],
 };
 
 /* Undo/redo history: a stack of mission snapshots. */
@@ -36,7 +65,144 @@ let sessionTimer = null;
 const camera = { scale: 400, offsetX: 0, offsetY: 0 };
 const playback = { time: 0, playing: false, duration: 0 };
 
+/* ------------------------------------------------------------------ tabs
+
+   Each side column is a strip of tabs over one panel. The markup declares
+   the tabs and the panels; this wires them: the ARIA state, the roving
+   focus and the arrow keys. Adding a tab is a button and a panel, and
+   nothing else in this file has to know about it. */
+const tabStrips = [];
+
+function setupTabs() {
+    document.querySelectorAll('[role="tablist"]').forEach((strip) => {
+        const buttons = Array.from(strip.querySelectorAll('[role="tab"]'));
+        if (!buttons.length) return;
+        const entry = { strip, buttons, panels: {} };
+        buttons.forEach((button) => {
+            const panelId = button.getAttribute('aria-controls');
+            entry.panels[panelId] = el(panelId);
+            button.addEventListener('click', () => showTab(strip, panelId));
+            button.addEventListener('keydown', (event) => {
+                const step = { ArrowRight: 1, ArrowLeft: -1 }[event.key];
+                if (!step && event.key !== 'Home' && event.key !== 'End') return;
+                event.preventDefault();
+                const current = buttons.indexOf(button);
+                let next = current;
+                if (event.key === 'Home') next = 0;
+                else if (event.key === 'End') next = buttons.length - 1;
+                else next = (current + step + buttons.length) % buttons.length;
+                buttons[next].focus();
+                showTab(strip, buttons[next].getAttribute('aria-controls'));
+            });
+        });
+        tabStrips.push(entry);
+        const first = buttons.find((button) => button.getAttribute('aria-selected') === 'true')
+            || buttons[0];
+        showTab(strip, first.getAttribute('aria-controls'));
+    });
+}
+
+/* Show one panel of a strip, and hide the rest. The scroll position of the
+   column belongs to the panel that was in it, so each panel keeps its own. */
+function showTab(strip, panelId) {
+    const entry = tabStrips.find((item) => item.strip === strip);
+    if (!entry) return;
+    const scroller = entry.strip.closest('.panel');
+    const current = entry.buttons.find((button) => button.getAttribute('aria-selected') === 'true');
+    const currentId = current ? current.getAttribute('aria-controls') : null;
+    if (scroller && currentId && currentId !== panelId) {
+        const leaving = entry.panels[currentId];
+        if (leaving) leaving._scroll = scroller.scrollTop;
+    }
+    entry.buttons.forEach((button) => {
+        const selected = button.getAttribute('aria-controls') === panelId;
+        button.setAttribute('aria-selected', selected ? 'true' : 'false');
+        button.tabIndex = selected ? 0 : -1;
+    });
+    Object.entries(entry.panels).forEach(([id, panel]) => {
+        if (panel) panel.hidden = id !== panelId;
+    });
+    if (scroller) {
+        const panel = entry.panels[panelId];
+        scroller.scrollTop = panel && panel._scroll !== undefined ? panel._scroll : 0;
+    }
+    // A hidden panel has no size, so anything drawn in it has to be drawn
+    // again now that it is on screen.
+    if (panelId === 'panel-plots') drawPlot();
+}
+
+/* Show a panel by its id, whichever strip it belongs to. */
+function showPanel(panelId) {
+    const entry = tabStrips.find((item) => item.panels[panelId]);
+    if (!entry) return false;
+    showTab(entry.strip, panelId);
+    return true;
+}
+
+/* ------------------------------------------------------------ the plots
+
+   The plots the studio can draw. The tab strip and the drawing both come
+   from this list, so a new plot is one entry and nothing else changes. */
+const PLOTS = [
+    { key: 'speed', label: 'Speed', build: buildSpeedPlot },
+    { key: 'force', label: 'Force', build: buildForcePlot },
+    { key: 'accel', label: 'Acceleration', build: buildAccelPlot },
+    { key: 'heading', label: 'Heading', build: buildHeadingPlot },
+    { key: 'convergence', label: 'Convergence', build: buildConvergencePlot },
+];
+
+/* The key to the field's colours. The legend is built from this list, so a
+   new drawn thing has one entry here and the key cannot go stale. */
+const CANVAS_LEGEND = [
+    { color: '#38bdf8', label: 'Planned trajectory' },
+    { color: 'rgba(52, 211, 153, 0.65)', label: 'Reachability envelope', dash: true },
+    { color: 'rgba(148, 163, 184, 0.85)', label: 'Path between waypoints', dash: true },
+    { color: 'rgba(226, 232, 240, 0.6)', label: "Solver's first guess", dash: true },
+    { color: 'rgba(148, 163, 184, 0.5)', label: 'Earlier solves' },
+    { color: '#f472b6', label: 'Waypoint with a heading', dot: true },
+    { color: '#94a3b8', label: 'Waypoint, heading free', dot: true },
+    { color: '#34d399', label: 'Measured pose from the robot', dot: true },
+    { color: 'rgba(56, 189, 248, 0.95)', label: 'Mission model on the mat' },
+    { color: 'rgba(248, 113, 113, 0.95)', label: 'Collision with a mission model' },
+    { color: 'rgba(251, 191, 36, 0.95)', label: 'Failing segment, uncertain collision' },
+];
+
 /* ------------------------------------------------------------------ api */
+
+/* The field the mission is drawn on. The server owns the geometry and the
+   collision maths; the browser draws what it is told. */
+async function loadFields() {
+    try {
+        const data = await api('/api/fields');
+        state.fields = data.fields || {};
+        state.seasons = data.seasons || [];
+    } catch (err) {
+        state.fields = {};
+        state.seasons = [];
+    }
+    const select = el('field-season');
+    if (!select) return;
+    select.innerHTML = '';
+    if (!state.seasons.length) {
+        const option = document.createElement('option');
+        option.textContent = 'no field data';
+        option.value = '';
+        select.appendChild(option);
+        select.disabled = true;
+        return;
+    }
+    select.disabled = false;
+    state.seasons.forEach((season) => {
+        const option = document.createElement('option');
+        option.value = season.id;
+        option.textContent = season.label || season.id;
+        select.appendChild(option);
+    });
+    if (!state.season || !state.fields[state.season]) {
+        state.season = state.seasons[0].id;
+    }
+    select.value = state.season;
+}
 
 const SERVER_GONE = 'Lost contact with the studio server. It may have stopped - '
     + 'restart it with: python main.py --gui';
@@ -79,6 +245,21 @@ function setStatus(text, kind = '') {
     const node = el('header-status');
     node.textContent = text;
     node.className = `status ${kind}`;
+}
+
+/* The one line in the header that says where the last solve stands: the
+   time, the path and the envelope. It is always on screen, so the answer
+   to "how did it go" is never somewhere else. */
+function resultHeadline() {
+    const summary = state.jobSummary;
+    if (!summary) return '';
+    const parts = [];
+    if (Number.isFinite(summary.duration_s)) parts.push(`${summary.duration_s.toFixed(2)} s`);
+    if (Number.isFinite(summary.path_length_m)) parts.push(`${summary.path_length_m.toFixed(2)} m`);
+    if (summary.has_envelope && Number.isFinite(summary.max_envelope_m)) {
+        parts.push(`envelope ${(summary.max_envelope_m * 100).toFixed(1)} cm`);
+    }
+    return parts.join(' | ');
 }
 
 /* -------------------------------------------------------------- mission */
@@ -135,14 +316,18 @@ function snapshot() {
     return {
         waypoints: JSON.parse(JSON.stringify(state.waypoints)),
         selected: state.selected,
+        robot: JSON.parse(JSON.stringify(robotFields())),
+        configName: state.configName,
     };
 }
 
-/* Record the current mission so it can be brought back. */
+/* Record the current mission so it can be brought back. The robot config is
+ * part of the snapshot, so a config edit can be undone like a waypoint edit. */
 function pushHistory() {
     const current = history.stack[history.index];
     const now = snapshot();
-    if (current && JSON.stringify(current.waypoints) === JSON.stringify(now.waypoints)) {
+    if (current && JSON.stringify(current.waypoints) === JSON.stringify(now.waypoints)
+        && JSON.stringify(current.robot) === JSON.stringify(now.robot)) {
         return;
     }
     history.stack = history.stack.slice(0, history.index + 1);
@@ -156,6 +341,13 @@ function pushHistory() {
 function applySnapshot(snap) {
     state.waypoints = JSON.parse(JSON.stringify(snap.waypoints));
     state.selected = Math.min(snap.selected, state.waypoints.length - 1);
+    if (snap.robot) {
+        setRobotFields(JSON.parse(JSON.stringify(snap.robot)));
+        state.configName = snap.configName || state.configName;
+        renderRobotFacts();
+        renderRobotEditor();
+        renderRobotChecks();
+    }
     state.dirty = true;
     renderAll();
     draw();
@@ -198,6 +390,13 @@ function saveSession() {
             configName: state.configName,
             configEdited: state.configEdited,
             options: collectOptions(),
+            hubConn: state.hubConn,
+            hubName: state.hubName,
+            model: state.model,
+            useModel: state.useModel,
+            matWidthM: state.mat.widthM,
+            matHeightM: state.mat.heightM,
+            season: state.season,
         }));
     } catch (err) {
         // Storage can be full or blocked; the mission is still undoable.
@@ -228,6 +427,7 @@ function applyOptionsToForm(options) {
     if (options.candidates !== undefined) el('opt-candidates').value = options.candidates;
     if (options.timing !== undefined) el('opt-timing').value = options.timing;
     if (options.validate !== undefined) el('opt-validate').checked = options.validate;
+    if (options.fast_polish !== undefined) el('opt-fast-polish').checked = options.fast_polish;
     if (options.export_format !== undefined) el('opt-export').value = options.export_format;
     if (options.controller_dt !== undefined) el('opt-controller-dt').value = options.controller_dt;
     updateCandidatesHint();
@@ -286,7 +486,61 @@ function parseValidationReport(logLines) {
     return null;
 }
 
+function timingName(entry) {
+    return entry.timing === 'per-segment' ? 'per-segment' : 'equal-duration';
+}
+
+/* Why the solver picked what it picked: the winner, and what the others cost. */
+function describeCandidates(report, winner) {
+    const candidates = report.candidates || [];
+    const parts = [];
+
+    if (candidates.length > 4) {
+        // A sweep has too many candidates to list: summarise them.
+        const passed = candidates.filter((entry) => entry.ok).length;
+        const failed = candidates.filter((entry) => !entry.ok && entry.duration_s !== null)
+            .sort((a, b) => a.duration_s - b.duration_s);
+        const weightOf = (entry) => (entry.accuracy_weight ? ` at weight ${entry.accuracy_weight}` : '');
+        if (winner) {
+            parts.push(`${candidates.length} candidates: ${timingName(winner)}`
+                + `${weightOf(winner)} won in ${winner.duration_s.toFixed(2)} s, ${passed} passed`);
+        }
+        if (failed.length) {
+            const best = failed[0];
+            parts.push(`the fastest that failed was ${timingName(best)}`
+                + `${weightOf(best)} in ${best.duration_s.toFixed(2)} s: `
+                + `${(best.reasons || []).join('; ')}`);
+        }
+        return parts.join('. ');
+    }
+
+    if (winner) {
+        const duration = winner.duration_s === null || winner.duration_s === undefined
+            ? '' : ` (${winner.duration_s.toFixed(2)} s)`;
+        const lead = winner.ok
+            ? `${timingName(winner)} ${winner.style || 'baseline'} won${duration}`
+            : `no candidate passed; ${timingName(winner)} ${winner.style || 'baseline'} came closest${duration}`;
+        parts.push(lead);
+    }
+    candidates.forEach((entry) => {
+        if (winner && entry === winner) return;
+        const other = entry.duration_s;
+        const mine = winner ? winner.duration_s : null;
+        let difference = '';
+        if (other !== null && other !== undefined && mine !== null && mine !== undefined) {
+            const delta = Math.abs(mine - other);
+            difference = other < mine
+                ? ` was ${delta.toFixed(2)} s faster` : ` was ${delta.toFixed(2)} s slower`;
+        }
+        const why = entry.reasons && entry.reasons.length ? `: ${entry.reasons.join('; ')}` : '';
+        parts.push(`${timingName(entry)} ${entry.style || 'baseline'}${difference} `
+            + `but ${entry.ok ? 'passed' : 'failed'}${why}`);
+    });
+    return parts.join('. ');
+}
+
 function renderValidationReport(report) {
+    state.validationReport = report || null;
     const box = el('validation-report');
     if (!report || !report.candidates || !report.candidates.length) {
         box.hidden = true;
@@ -308,14 +562,28 @@ function renderValidationReport(report) {
         const chip = document.createElement('button');
         chip.type = 'button';
         chip.className = `chip ${entry.ok ? 'ok' : 'bad'}${i === index ? ' active' : ''}`;
-        const timing = entry.timing === 'per-segment' ? 'per-seg' : 'uniform';
-        chip.textContent = `${i + 1}. ${entry.style || 'baseline'}, ${timing} - ${entry.ok ? 'ok' : 'failed'}`;
+        const timing = entry.timing === 'per-segment' ? 'per-seg' : 'equal-dur';
+        const duration = entry.duration_s === null || entry.duration_s === undefined
+            ? '' : ` ${entry.duration_s.toFixed(2)}s`;
+        const weight = (entry.accuracy_weight !== null && entry.accuracy_weight !== undefined
+            && entry.accuracy_weight > 0) ? ` @${entry.accuracy_weight}` : '';
+        chip.textContent = `${i + 1}. ${timing}${weight}${duration} `
+            + `${entry.ok ? 'ok' : 'failed'}`;
+        chip.title = `${entry.style || 'baseline'}, ${timing}, `
+            + `weight ${entry.accuracy_weight === null ? '-' : entry.accuracy_weight}`;
+        chip.title = (entry.reasons || []).join('; ');
         chip.addEventListener('click', () => {
             state.reportCandidate = i;
             renderValidationReport(report);
         });
         chips.appendChild(chip);
     });
+
+    // The trade-off between the candidates, in words.
+    const winner = report.candidates[(report.selected || 1) - 1] || report.candidates[0];
+    const explainer = el('validation-explainer');
+    explainer.textContent = describeCandidates(report, winner);
+    renderFixes(report);
 
     const table = el('validation-table');
     table.innerHTML = '';
@@ -361,14 +629,1277 @@ function renderValidationReport(report) {
     el('validation-note').textContent = notes.join('. ');
 }
 
+/* ------------------------------------------------------------- the report
+
+   The one-page report. It is built from the same numbers the Result tab
+   shows, so it cannot disagree with the studio, and it is a single
+   self-contained document: printable, and downloadable as it stands. */
+
+function collectReportData() {
+    const summary = state.jobSummary || {};
+    const report = state.validationReport;
+    const selected = report && report.candidates
+        ? ((report.selected || 1) - 1) : -1;
+    const candidate = report && report.candidates
+        ? (report.candidates[state.reportCandidate !== null
+            && state.reportCandidate < report.candidates.length
+            ? state.reportCandidate : selected] || null)
+        : null;
+    const events = state.waypoints.filter((point) => point.event).length;
+    return {
+        mission: {
+            name: el('mission-name').value,
+            waypoints: state.waypoints.map(waypointToJson),
+        },
+        robot: {
+            name: state.configName,
+            fields: robotFields(),
+            model: state.model,
+            useModel: Boolean(state.useModel),
+        },
+        field: {
+            season: state.season,
+            widthM: state.mat.widthM,
+            heightM: state.mat.heightM,
+        },
+        options: collectOptions(),
+        result: {
+            when: state.jobFinishedAt || new Date().toISOString(),
+            summary,
+            samples: state.trajectory || [],
+            candidates: report ? report.candidates : null,
+            selected: candidate ? report.candidates.indexOf(candidate) : -1,
+            segments: candidate ? (candidate.segments || []) : null,
+            tracking_cm: candidate ? candidate.tracking_cm : null,
+            validated: el('opt-validate').checked,
+            failed: Boolean(state.jobFailed),
+            reason: state.jobFailedReason || '',
+            wall_s: state.jobWallS,
+            path_length_m: summary.path_length_m !== undefined
+                ? summary.path_length_m : pathLength(),
+            min_time_s: minTime(),
+            events,
+        },
+    };
+}
+
+/* The fastest the robot could do the path at its top speed: the floor the
+   plan is measured against. */
+function minTime() {
+    const speed = topSpeed();
+    if (!speed) return null;
+    const length = pathLength();
+    return length > 0 ? length / speed : null;
+}
+
+function openMissionReport() {
+    if (state.waypoints.length < 2) {
+        toast('A report needs a mission with at least two waypoints.', true);
+        return;
+    }
+    const html = buildMissionReport(collectReportData());
+    // The tab is opened here, in the click, because a browser only allows a
+    // pop-up while the click is still the thing being handled.
+    const view = window.open('', '_blank');
+    if (!view) {
+        toast('The report window was blocked; allow pop-ups for this page.', true);
+        return;
+    }
+    if (!state.jobId) {
+        showReportIn(view, html);
+        return;
+    }
+    // The report is written next to the trajectory, so it is on disk with
+    // the rest of the solve.
+    api(`/api/jobs/${state.jobId}/report`, {
+        method: 'POST',
+        body: JSON.stringify({ html }),
+    }).then((result) => {
+        view.location.href = result.url;
+        addReportDownload(result);
+    }).catch((err) => {
+        // The file could not be written, but the page can still be shown.
+        showReportIn(view, html);
+        toast(err.message, true);
+    });
+}
+
+function showReportIn(view, html) {
+    view.document.open();
+    view.document.write(html);
+    view.document.close();
+}
+
+/* The report joins the other downloads of this solve. */
+function addReportDownload(result) {
+    const box = el('downloads');
+    if (!box || !result) return;
+    if (box.querySelector('[data-kind="report"]')) return;
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'btn small';
+    button.dataset.kind = 'report';
+    button.textContent = 'Report (one page)';
+    button.addEventListener('click', () => {
+        window.open(result.url, '_blank');
+    });
+    box.appendChild(button);
+}
+
+/* ------------------------------------------------------ the project file
+
+   One file with the mission, the robot, the solve options and the measured
+   model: a setup that can be handed to somebody else and opened as it
+   stands. */
+
+const PROJECT_FORMAT = 'overboard-project';
+const PROJECT_VERSION = 1;
+
+function collectProject() {
+    return {
+        format: PROJECT_FORMAT,
+        version: PROJECT_VERSION,
+        saved: new Date().toISOString(),
+        mission: {
+            name: el('mission-name').value,
+            waypoints: state.waypoints.map(waypointToJson),
+        },
+        robot: {
+            name: state.configName,
+            config: state.config,
+        },
+        options: collectOptions(),
+        model: state.useModel ? state.model : null,
+        field: {
+            season: state.season,
+            width_m: state.mat.widthM,
+            height_m: state.mat.heightM,
+        },
+    };
+}
+
+function downloadProject() {
+    if (state.waypoints.length < 2) {
+        toast('A project needs a mission with at least two waypoints.', true);
+        return;
+    }
+    const name = (el('mission-name').value || 'project').replace(/[^a-z0-9_-]+/gi, '-');
+    const blob = new Blob([JSON.stringify(collectProject(), null, 1)],
+        { type: 'application/json' });
+    const link = document.createElement('a');
+    link.href = URL.createObjectURL(blob);
+    link.download = `${name}.overboard.json`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    setTimeout(() => URL.revokeObjectURL(link.href), 1000);
+    toast(`Downloaded ${name}.overboard.json`);
+}
+
+/* Open a project file: the mission, the robot, the options and the model
+   all come back. A file that is not a project is refused with a reason. */
+function openProjectFile(file) {
+    const reader = new FileReader();
+    reader.onload = () => {
+        let data;
+        try {
+            data = JSON.parse(String(reader.result));
+        } catch (err) {
+            toast('That file is not JSON.', true);
+            return;
+        }
+        if (!data || data.format !== PROJECT_FORMAT) {
+            toast('That file is not an OVERBOARD project.', true);
+            return;
+        }
+        try {
+            if (data.mission && Array.isArray(data.mission.waypoints)) {
+                setWaypoints(data.mission.waypoints);
+                el('mission-name').value = data.mission.name || 'mission';
+            }
+            if (data.robot && data.robot.config) {
+                state.config = data.robot.config;
+                state.configName = data.robot.name || state.configName;
+                state.configEdited = false;
+                renderRobotFacts();
+                renderRobotEditor();
+                renderRobotChecks();
+            }
+            if (data.options) {
+                applyOptionsToForm(data.options);
+                if (data.options.sysid_fit) {
+                    const path = data.options.sysid_fit;
+                    const found = (state.models || []).find((model) => model.path === path);
+                    if (found) useModel(found);
+                }
+            }
+            if (data.model) {
+                state.model = data.model;
+                state.useModel = true;
+                el('opt-use-model').checked = true;
+                renderModel();
+                updateCandidatesHint();
+            }
+            if (data.field) {
+                if (data.field.season) {
+                    state.season = data.field.season;
+                    const select = el('field-season');
+                    if (select) select.value = data.field.season;
+                }
+                if (Number.isFinite(data.field.width_m) && data.field.width_m > 0) {
+                    state.mat.widthM = data.field.width_m;
+                    el('mat-width').value = String(Math.round(data.field.width_m * 1000));
+                }
+                if (Number.isFinite(data.field.height_m) && data.field.height_m > 0) {
+                    state.mat.heightM = data.field.height_m;
+                    el('mat-height').value = String(Math.round(data.field.height_m * 1000));
+                }
+            }
+            resetHistory();
+            frameAll();
+            draw();
+            scheduleSessionSave();
+            toast('Project opened.');
+        } catch (err) {
+            toast(err.message, true);
+        }
+    };
+    reader.readAsText(file);
+}
+
+/* ------------------------------------------------------- run on the robot */
+
+/* The robot's odometry starts where the robot physically is, which is the
+ * plan's first waypoint. The measured pose is therefore rotated by the plan's
+ * first heading and moved by its first position before it can be drawn next
+ * to the plan. */
+function measuredInPlanFrame(pose) {
+    if (!state.trajectory || !state.trajectory.length) return null;
+    const first = state.trajectory[0];
+    const heading = Number(first.heading) || 0;
+    const cos = Math.cos(heading);
+    const sin = Math.sin(heading);
+    return {
+        x: Number(first.x) + Number(pose.x_m) * cos - Number(pose.y_m) * sin,
+        y: Number(first.y) + Number(pose.x_m) * sin + Number(pose.y_m) * cos,
+        heading_deg: (Number(pose.heading_deg) || 0) + heading * 180 / Math.PI,
+    };
+}
+
+function pushSummary() {
+    /* The last planned pose and the measured one, in the plan's frame. */
+    if (!state.trajectory || !state.trajectory.length) return null;
+    const last = state.trajectory[state.trajectory.length - 1];
+    const measured = state.measuredPoses.length
+        ? measuredInPlanFrame(state.measuredPoses[state.measuredPoses.length - 1])
+        : null;
+    if (!measured) return null;
+    const error = Math.hypot(measured.x - last.x, measured.y - last.y);
+    let headingError = Math.abs(measured.heading_deg - (last.heading * 180 / Math.PI)) % 360;
+    if (headingError > 180) headingError = 360 - headingError;
+    const env = last.reachability_envelope;
+    let inside = null;
+    if (env) {
+        inside = (measured.x >= env.x_min && measured.x <= env.x_max
+            && measured.y >= env.y_min && measured.y <= env.y_max);
+    }
+    return {
+        error_mm: error * 1000,
+        heading_error_deg: headingError,
+        measured,
+        inside,
+    };
+}
+
+function renderPushResult(job) {
+    const result = job.result || {};
+    const box = el('push-result');
+    const facts = el('push-facts');
+    facts.innerHTML = '';
+    const rows = [];
+
+    const summary = pushSummary();
+    if (summary) {
+        rows.push(['Robot ended', `${summary.measured.x.toFixed(3)}, ${summary.measured.y.toFixed(3)} m`]);
+        rows.push(['Off the plan', `${summary.error_mm.toFixed(1)} mm`]);
+        rows.push(['Heading error', `${summary.heading_error_deg.toFixed(2)} deg`]);
+        if (summary.inside !== null) {
+            rows.push(['Inside envelope', summary.inside ? 'yes' : 'NO']);
+        }
+    }
+    if (result.events && result.events.length) {
+        rows.push(['Events', result.events.join(', ')]);
+    }
+    if (result.session_path) {
+        rows.push(['Session', result.session_path]);
+    }
+    rows.forEach(([key, value]) => {
+        const dt = document.createElement('dt');
+        dt.textContent = key;
+        const dd = document.createElement('dd');
+        dd.textContent = value;
+        facts.appendChild(dt);
+        facts.appendChild(dd);
+    });
+    box.hidden = rows.length === 0;
+    el('push-events').textContent = result.events && result.events.length
+        ? `The hub reported: ${result.events.join(', ')}.`
+        : '';
+
+    state.measuredPoses = result.poses || [];
+    renderComparison(result.report);
+    draw();
+}
+
+/* The plan against what the robot did, in the same table the command line
+ * prints. */
+function renderComparison(report) {
+    const box = el('compare-block');
+    if (!report || report.error || !report.rows || !report.rows.length) {
+        box.hidden = true;
+        el('fix-row').hidden = true;
+        return;
+    }
+    box.hidden = false;
+    const table = el('compare-table');
+    table.innerHTML = '';
+    const header = document.createElement('tr');
+    ['Stop', 't (s)', 'Measured x/y (mm)', 'Planned x/y (mm)', 'Error (mm)',
+        'Heading (deg)', 'Envelope'].forEach((label) => {
+        const th = document.createElement('th');
+        th.textContent = label;
+        header.appendChild(th);
+    });
+    table.appendChild(header);
+
+    report.rows.forEach((row) => {
+        const tr = document.createElement('tr');
+        const cells = [
+            String(row.stop),
+            row.t.toFixed(3),
+            `${(row.measured.x * 1000).toFixed(1)} / ${(row.measured.y * 1000).toFixed(1)}`,
+            `${(row.predicted.x * 1000).toFixed(1)} / ${(row.predicted.y * 1000).toFixed(1)}`,
+            (row.position_error_m * 1000).toFixed(2),
+            (row.heading_error_rad * 180 / Math.PI).toFixed(2),
+        ];
+        cells.forEach((value) => {
+            const td = document.createElement('td');
+            td.textContent = value;
+            tr.appendChild(td);
+        });
+        const envelope = document.createElement('td');
+        if (row.inside_envelope === null) envelope.textContent = '-';
+        else if (row.inside_envelope) envelope.textContent = 'inside';
+        else { envelope.textContent = 'OUTSIDE'; tr.className = 'bad'; }
+        tr.appendChild(envelope);
+        table.appendChild(tr);
+    });
+
+    const notes = [];
+    notes.push(`Max position error ${(report.max_position_error_m * 1000).toFixed(2)} mm`);
+    notes.push(`RMS ${(report.rms_position_error_m * 1000).toFixed(2)} mm`);
+    notes.push(`max heading error ${(report.max_heading_error_rad * 180 / Math.PI).toFixed(2)} deg`);
+    (report.geometry_warnings || []).forEach((warning) => notes.push(warning));
+    el('compare-note').textContent = notes.join(' | ');
+}
+
+async function pushToHub() {
+    if (!state.solveJobId || !state.solveHasTrajectory) {
+        toast('Solve a mission first: the push runs an approved trajectory.', true);
+        return;
+    }
+    setStatus(`Pushing to the hub over ${state.hubConn.toUpperCase()} - the robot is driving`);
+    el('push-status').textContent = 'Pushing. The robot is driving.';
+    el('btn-push').disabled = true;
+    el('log').textContent = '';
+    try {
+        const job = await api('/api/push', {
+            method: 'POST',
+            body: JSON.stringify({
+                job_id: state.solveJobId,
+                connection: state.hubConn,
+                hub_name: state.hubName,
+            }),
+        });
+        state.pushJobId = job.id;
+        pollPush();
+    } catch (err) {
+        el('push-status').textContent = err.message;
+        setStatus('Push failed', 'error');
+        toast(err.message, true);
+        updatePushButton();
+    }
+}
+
+function pollPush() {
+    clearTimeout(state.pollTimer);
+    state.pollTimer = setTimeout(async () => {
+        try {
+            const job = await api(`/api/jobs/${state.pushJobId}`);
+            el('log').textContent = (job.log || []).join('\n');
+            if (job.status === 'running') {
+                pollPush();
+                return;
+            }
+            if (job.status === 'ok') {
+                el('push-status').textContent = 'The hub ran the mission.';
+                setStatus('Pushed', 'ok');
+                renderPushResult(job);
+                renderDownloads(job.artifacts);
+                toast('The hub ran the mission.');
+            } else {
+                el('push-status').textContent = job.error || 'The push failed.';
+                setStatus('Push failed', 'error');
+                toast(job.error || 'The push failed.', true);
+            }
+            updatePushButton();
+        } catch (err) {
+            if (state.pushJobId && state.pollRetries < 3) {
+                state.pollRetries += 1;
+                pollPush();
+                return;
+            }
+            setStatus(err.message, 'error');
+            toast(err.message, true);
+            updatePushButton();
+        }
+    }, 400);
+}
+
+function updatePushButton() {
+    const ready = Boolean(state.solveJobId && state.solveHasTrajectory);
+    el('btn-push').disabled = !ready;
+    const status = el('push-status');
+    if (!ready) {
+        status.textContent = 'Solve a mission first.';
+    } else if (!status.textContent || status.textContent.startsWith('Solve a mission')) {
+        status.textContent = 'The approved trajectory is ready to run on the robot.';
+    }
+}
+
+/* --------------------------------------------- the robot's own files */
+
+function renderRobotChecks() {
+    const info = state.robotInfo || { events: [], geometry: {} };
+    const robot = robotFields();
+    const geometry = info.geometry || {};
+
+    // The packed mission carries the planned geometry to the hub, while the
+    // drivebase comes from the robot's own file. A mismatch means the
+    // controller is tuned for a wheel the robot does not have.
+    const warning = el('robot-geometry-warning');
+    const fix = el('robot-geometry-fix');
+    const plannedDiameter = (Number(robot.wheel_radius) || 0) * 2000;
+    const plannedTrack = (Number(robot.track_width) || 0) * 1000;
+    const differences = [];
+    if (geometry.WHEEL_DIAMETER_MM && plannedDiameter
+        && Math.abs(geometry.WHEEL_DIAMETER_MM - plannedDiameter) > 0.5) {
+        differences.push(`the plan assumes a ${plannedDiameter.toFixed(1)} mm wheel, `
+            + `the robot has ${geometry.WHEEL_DIAMETER_MM.toFixed(1)} mm`);
+    }
+    if (geometry.AXLE_TRACK_MM && plannedTrack
+        && Math.abs(geometry.AXLE_TRACK_MM - plannedTrack) > 0.5) {
+        differences.push(`the plan assumes a ${plannedTrack.toFixed(1)} mm track, `
+            + `the robot has ${geometry.AXLE_TRACK_MM.toFixed(1)} mm`);
+    }
+    warning.hidden = differences.length === 0;
+    fix.hidden = differences.length === 0;
+    if (differences.length) {
+        warning.textContent = `The robot's own file disagrees with the plan: `
+            + `${differences.join('; ')}.`;
+    }
+
+    // The event names the robot has actions for.
+    const eventWarning = el('robot-event-warning');
+    const used = state.waypoints.map((p) => p.event).filter(Boolean);
+    const unknown = used.filter((name) => !(info.events || []).includes(name));
+    eventWarning.hidden = unknown.length === 0;
+    if (unknown.length) {
+        eventWarning.textContent = `The robot has no action for `
+            + `${unknown.join(', ')}. The hub will report the event and carry on.`;
+    }
+}
+
+function useRobotGeometry() {
+    const geometry = (state.robotInfo || {}).geometry || {};
+    const fields = robotFields();
+    if (geometry.WHEEL_DIAMETER_MM) {
+        fields.wheel_radius = geometry.WHEEL_DIAMETER_MM / 2000;
+    }
+    if (geometry.AXLE_TRACK_MM) {
+        fields.track_width = geometry.AXLE_TRACK_MM / 1000;
+    }
+    setRobotFields(fields);
+    state.dirty = true;
+    renderRobotFacts();
+    renderRobotEditor();
+    renderRobotChecks();
+    updatePathSummary();
+    scheduleSessionSave();
+}
+
+/* ------------------------------------------------- the measured model */
+
+/* The fit that the plan is checked against. It belongs to the robot, not to
+ * the mission: one calibration makes every later mission better. */
+function renderModel() {
+    const facts = el('model-facts');
+    facts.innerHTML = '';
+    const model = state.model;
+    const status = el('model-status');
+    if (!model) {
+        status.textContent = 'No measured model: the plan uses the nominal one.';
+        el('model-hint').hidden = true;
+        return;
+    }
+    status.textContent = `Loaded from ${model.path}.`;
+
+    const rows = [];
+    const gain = (entry) => {
+        if (!entry || !entry.gain) return null;
+        const ci = entry.gain_ci95
+            ? ` [${entry.gain_ci95[0].toFixed(3)}, ${entry.gain_ci95[1].toFixed(3)}]`
+            : '';
+        return `${entry.gain.toFixed(3)}${ci}`;
+    };
+    if (model.straight && model.straight.calibrated) {
+        rows.push(['Straight gain', gain(model.straight)]);
+        rows.push(['Straight tau / delay',
+            `${model.straight.tau_s?.toFixed(3)} s / ${model.straight.delay_s?.toFixed(3)} s`]);
+    }
+    if (model.turn && model.turn.calibrated) {
+        rows.push(['Turn gain', gain(model.turn)]);
+        rows.push(['Turn tau / delay',
+            `${model.turn.tau_s?.toFixed(3)} s / ${model.turn.delay_s?.toFixed(3)} s`]);
+    }
+    if (model.gyro_z_bias_deg_s !== null && model.gyro_z_bias_deg_s !== undefined) {
+        rows.push(['Gyro z bias', `${model.gyro_z_bias_deg_s.toFixed(4)} deg/s`]);
+    }
+    if (model.odometry && model.odometry.calibrated) {
+        const ci = model.odometry.distance_scale_ci95
+            ? ` [${model.odometry.distance_scale_ci95[0].toFixed(4)}, ${model.odometry.distance_scale_ci95[1].toFixed(4)}]`
+            : '';
+        rows.push(['Distance scale', `${model.odometry.distance_scale?.toFixed(4)}${ci}`]);
+        rows.push(['Heading scale', model.odometry.heading_scale?.toFixed(4)]);
+    }
+    if (model.slip && model.slip.calibrated) {
+        rows.push(['Brake slip', `${model.slip.brake_ratio_median?.toFixed(4)} `
+            + `[${model.slip.brake_ratio_min?.toFixed(4)}, ${model.slip.brake_ratio_max?.toFixed(4)}]`]);
+    }
+    rows.forEach(([key, value]) => {
+        const dt = document.createElement('dt');
+        dt.textContent = key;
+        const dd = document.createElement('dd');
+        dd.textContent = value === null || value === undefined ? '-' : value;
+        facts.appendChild(dt);
+        facts.appendChild(dd);
+    });
+
+    // The gain band is the band the validator plans against, so a robot that
+    // varies by a percent is a percent of position error over the path. Say so
+    // before the solve fails on it.
+    const hint = el('model-hint');
+    const ci = model.straight && model.straight.gain_ci95;
+    if (ci && ci.length === 2) {
+        const spread = Math.max(Math.abs(1 - ci[0]), Math.abs(1 - ci[1]));
+        hint.textContent = `The gain band is ${(spread * 100).toFixed(1)}%. The controller `
+            + `corrects most of that speed error, so the tracking barely moves, but the `
+            + `reachable set widens with it and the envelope limit is 20 mm. See `
+            + `docs/research/RQ-A_tracking_error.md.`;
+        hint.hidden = false;
+    } else {
+        hint.hidden = true;
+    }
+}
+
+function useModel(model) {
+    state.model = model;
+    state.useModel = Boolean(model);
+    el('opt-use-model').checked = state.useModel;
+    if (state.useModel) {
+        // The fitted plant is only used by the validator, so validation is on.
+        el('opt-validate').checked = true;
+        updateCandidatesHint();
+    }
+    renderModel();
+    scheduleSessionSave();
+}
+
+async function loadModels() {
+    const data = await api('/api/robot/models');
+    const list = el('model-list');
+    list.innerHTML = '';
+    (data.models || []).forEach((model) => {
+        const option = document.createElement('option');
+        option.value = model.path;
+        option.textContent = model.name;
+        list.appendChild(option);
+    });
+    el('model-list-row').hidden = !(data.models || []).length;
+}
+
+async function loadModelFromPath() {
+    const path = el('model-path').value.trim();
+    if (!path) {
+        toast('Give the path of a sysid_fit.json.', true);
+        return;
+    }
+    try {
+        const model = await api('/api/robot/model/load', {
+            method: 'POST',
+            body: JSON.stringify({ path }),
+        });
+        useModel(model);
+        await loadModels();
+        toast(`Loaded the measured model from ${path}.`);
+    } catch (err) {
+        toast(err.message, true);
+    }
+}
+
+async function loadModelFromFile(file) {
+    try {
+        const fit = JSON.parse(await file.text());
+        const model = await api('/api/robot/model/store', {
+            method: 'POST',
+            body: JSON.stringify({ name: file.name.replace(/\.json$/i, ''), fit }),
+        });
+        useModel(model);
+        await loadModels();
+        toast('Stored the measured model with the robot.');
+    } catch (err) {
+        toast(err.message, true);
+    }
+}
+
+/* ------------------------------------------------- the calibration wizard */
+
+/* The three steps of the calibration: collect, measure, fit. The steps use the
+ * same tools the command line uses, so a session collected here can also be
+ * fitted with sysid_fit.py. */
+function calibrationName() {
+    return (el('cal-name').value || 'robot').trim() || 'robot';
+}
+
+function renderSheet(payload) {
+    const table = el('sheet-table');
+    table.innerHTML = '';
+    const rows = payload.rows || [];
+    if (!rows.length) {
+        el('sheet-status').textContent = 'No measurements yet. Collect a session first.';
+        return;
+    }
+    const header = document.createElement('tr');
+    ['Test', 'Repeat', 'Stop', 'x (mm)', 'y (mm)', 'Turn (deg)'].forEach((label) => {
+        const th = document.createElement('th');
+        th.textContent = label;
+        header.appendChild(th);
+    });
+    table.appendChild(header);
+
+    rows.forEach((row) => {
+        const tr = document.createElement('tr');
+        const key = document.createElement('td');
+        key.textContent = row.test;
+        const repeat = document.createElement('td');
+        repeat.textContent = row.repeat;
+        const stop = document.createElement('td');
+        stop.textContent = row.stop;
+        tr.appendChild(key);
+        tr.appendChild(repeat);
+        tr.appendChild(stop);
+        ['x_mm', 'y_mm', 'turn_right_deg'].forEach((field) => {
+            const td = document.createElement('td');
+            const input = document.createElement('input');
+            input.type = 'number';
+            input.step = 'any';
+            input.value = row[field] === undefined || row[field] === null ? '' : row[field];
+            input.dataset.test = row.test;
+            input.dataset.repeat = row.repeat;
+            input.dataset.stop = row.stop;
+            input.dataset.field = field;
+            input.addEventListener('input', () => { row[field] = input.value; });
+            td.appendChild(input);
+            tr.appendChild(td);
+        });
+        table.appendChild(tr);
+    });
+
+    const missing = payload.missing || 0;
+    // A measurement is only usable when all three numbers are in: the fitter
+    // drops a row that is not complete, and a test that does not turn has a
+    // turn of zero.
+    let partial = 0;
+    rows.forEach((row) => {
+        const filled = ['x_mm', 'y_mm', 'turn_right_deg']
+            .filter((field) => row[field] !== '' && row[field] !== null
+                && row[field] !== undefined).length;
+        if (filled > 0 && filled < 3) partial += 1;
+    });
+    let status;
+    if (missing) {
+        status = `${missing} of ${payload.total} measurements still needed. `
+            + `Fill them in from your tape.`;
+    } else {
+        status = `All ${payload.total} measurements are in. Fit the model.`;
+    }
+    if (partial) {
+        status += ` ${partial} row(s) need all three numbers: `
+            + `a test that does not turn has a turn of 0.`;
+    }
+    el('sheet-status').textContent = status;
+}
+
+async function loadSheet() {
+    try {
+        const payload = await api(
+            `/api/calibration/sheet?name=${encodeURIComponent(calibrationName())}`);
+        renderSheet(payload);
+        el('btn-fit').disabled = false;
+    } catch (err) {
+        el('sheet-status').textContent = err.message;
+        el('sheet-table').innerHTML = '';
+    }
+}
+
+async function saveSheet() {
+    const rows = Array.from(el('sheet-table').querySelectorAll('tr')).slice(1).map((tr) => {
+        const cells = tr.querySelectorAll('td');
+        const inputs = tr.querySelectorAll('input');
+        return {
+            test: cells[0].textContent,
+            repeat: cells[1].textContent,
+            stop: cells[2].textContent,
+            x_mm: inputs[0].value,
+            y_mm: inputs[1].value,
+            turn_right_deg: inputs[2].value,
+        };
+    });
+    try {
+        const payload = await api('/api/calibration/sheet', {
+            method: 'POST',
+            body: JSON.stringify({ name: calibrationName(), rows }),
+        });
+        renderSheet(payload);
+        toast('Saved the measurement sheet.');
+    } catch (err) {
+        toast(err.message, true);
+    }
+}
+
+async function fitModel() {
+    try {
+        const summary = await api('/api/calibration/fit', {
+            method: 'POST',
+            body: JSON.stringify({ name: calibrationName() }),
+        });
+        const problems = summary.problems || [];
+        el('fit-status').textContent = problems.length
+            ? `Fitted with warnings: ${problems.join('; ')}`
+            : `Fitted. The model is saved as ${summary.path}.`;
+        useModel(summary);
+        await loadModels();
+        toast('The measured model is ready.');
+    } catch (err) {
+        el('fit-status').textContent = err.message;
+        toast(err.message, true);
+    }
+}
+
+async function startCollect() {
+    el('btn-collect').disabled = true;
+    el('collect-status').textContent = 'Pushing the test suite to the hub...';
+    try {
+        const job = await api('/api/calibration/collect', {
+            method: 'POST',
+            body: JSON.stringify({
+                name: calibrationName(),
+                connection: state.hubConn,
+                hub_name: state.hubName,
+            }),
+        });
+        state.collectJobId = job.id;
+        pollCollect();
+    } catch (err) {
+        el('btn-collect').disabled = false;
+        el('collect-status').textContent = err.message;
+        toast(err.message, true);
+    }
+}
+
+function pollCollect() {
+    clearTimeout(state.pollTimer);
+    state.pollTimer = setTimeout(async () => {
+        try {
+            const job = await api(`/api/jobs/${state.collectJobId}`);
+            el('log').textContent = (job.log || []).join('\n');
+            const progress = job.progress || {};
+            const current = progress.current;
+            if (job.status === 'running') {
+                el('collect-status').textContent = current
+                    ? `Running ${current.test}${current.repeat !== undefined && current.repeat !== null ? `, repeat ${Number(current.repeat) + 1} of 3` : ''}. `
+                        + `Press the centre button on the hub. `
+                        + `${progress.needed || 0} measurements needed in total.`
+                    : 'Pushing the test suite to the hub...';
+                pollCollect();
+                return;
+            }
+            el('btn-collect').disabled = false;
+            if (job.status === 'ok') {
+                el('collect-status').textContent = 'The session is captured. Measure the robot and fill in the sheet.';
+                await loadSheet();
+            } else {
+                el('collect-status').textContent = job.error || 'The collection failed.';
+            }
+        } catch (err) {
+            el('btn-collect').disabled = false;
+            el('collect-status').textContent = err.message;
+        }
+    }, 400);
+}
+
+/* ------------------------------------------------------------- the plots */
+
+/* The plots the command line can make, drawn from the samples the studio
+ * already has. */
+const PLOT_COLORS = {
+    left: '#f87171',
+    right: '#34d399',
+    linear: '#e2e8f0',
+    limit: '#fbbf24',
+    convergence: '#38bdf8',
+};
+
+function drawPlot() {
+    const canvas = el('plot-canvas');
+    if (!canvas) return;
+    const ratio = window.devicePixelRatio || 1;
+    const width = canvas.clientWidth || 280;
+    const height = 190;
+    canvas.width = width * ratio;
+    canvas.height = height * ratio;
+    const ctx = canvas.getContext('2d');
+    ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
+    ctx.clearRect(0, 0, width, height);
+
+    const samples = state.trajectory || [];
+    const limits = (state.jobResult && state.jobResult.limits) || {};
+    const iterations = (state.jobResult && state.jobResult.iterations) || [];
+    const times = samples.map((s) => s.t);
+    const note = el('plot-note');
+
+    const plot = PLOTS.find((entry) => entry.key === state.plot) || PLOTS[0];
+    const built = plot.build({ samples, times, limits, iterations });
+
+    if (!samples.length && plot.key !== 'convergence') {
+        note.textContent = 'Solve a mission to see the plots.';
+        drawPlotFrame(ctx, width, height, [], built.xlabel, built.ylabel, built.title, null);
+        return;
+    }
+    note.textContent = built.note || '';
+    drawPlotFrame(ctx, width, height, built.series, built.xlabel, built.ylabel,
+        built.title, built.horizontal);
+}
+
+/* The plots. Each one says what it draws and against which limit. */
+function buildSpeedPlot({ samples, times, limits }) {
+    const series = [
+        { label: 'Left wheel', color: PLOT_COLORS.left, x: times, y: samples.map((s) => s.vl) },
+        { label: 'Right wheel', color: PLOT_COLORS.right, x: times, y: samples.map((s) => s.vr) },
+        { label: 'Linear', color: PLOT_COLORS.linear, x: times, y: samples.map((s) => (s.vl + s.vr) / 2) },
+    ];
+    return {
+        title: 'Velocity profiles',
+        xlabel: 'Time (s)',
+        ylabel: 'Velocity (m/s)',
+        series,
+        horizontal: limits.speed_limit_m_s
+            ? { value: limits.speed_limit_m_s, label: 'top speed' } : null,
+    };
+}
+
+function buildForcePlot({ samples, times, limits }) {
+    const series = [
+        { label: 'Left wheel', color: PLOT_COLORS.left, x: times, y: samples.map((s) => s.fl) },
+        { label: 'Right wheel', color: PLOT_COLORS.right, x: times, y: samples.map((s) => s.fr) },
+    ];
+    const limit = limits.force_limit_n;
+    if (limit && limit.length) {
+        series.push({ label: 'Force limit', color: PLOT_COLORS.limit, x: times, y: limit });
+    }
+    return {
+        title: 'Wheel forces',
+        xlabel: 'Time (s)',
+        ylabel: 'Force (N)',
+        series,
+    };
+}
+
+function buildAccelPlot({ samples, times }) {
+    return {
+        title: 'Wheel accelerations',
+        xlabel: 'Time (s)',
+        ylabel: 'Acceleration (m/s2)',
+        series: [
+            { label: 'Left wheel', color: PLOT_COLORS.left, x: times, y: samples.map((s) => s.al) },
+            { label: 'Right wheel', color: PLOT_COLORS.right, x: times, y: samples.map((s) => s.ar) },
+        ],
+    };
+}
+
+function buildHeadingPlot({ samples, times }) {
+    return {
+        title: 'Heading over time',
+        xlabel: 'Time (s)',
+        ylabel: 'Heading (deg)',
+        series: [
+            { label: 'Heading', color: PLOT_COLORS.convergence,
+                x: times, y: samples.map((s) => s.heading * 180 / Math.PI) },
+        ],
+    };
+}
+
+function buildConvergencePlot({ iterations }) {
+    const costs = iterations.map((entry) => entry.cost);
+    return {
+        title: 'How the solve converged',
+        xlabel: 'Step',
+        ylabel: 'Cost (s)',
+        series: costs.length
+            ? [{ label: 'Cost', color: PLOT_COLORS.convergence,
+                 x: iterations.map((entry, index) => index), y: costs, points: true }]
+            : [],
+        note: costs.length
+            ? `${iterations.map((entry) => entry.phase).join(' -> ')}. `
+              + `The dashed path on the field is the solver's first guess.`
+            : 'The solver did not record its iterations for this run.',
+    };
+}
+
+/* The plot strip, built from the registry. */
+function renderPlotTabs() {
+    const strip = el('plot-tabs');
+    if (!strip) return;
+    strip.innerHTML = '';
+    PLOTS.forEach((plot) => {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'btn small plot-tab';
+        button.dataset.plot = plot.key;
+        button.textContent = plot.label;
+        button.addEventListener('click', () => {
+            state.plot = plot.key;
+            renderPlotTabs();
+            drawPlot();
+        });
+        strip.appendChild(button);
+    });
+    strip.querySelectorAll('.plot-tab').forEach((button) => {
+        button.classList.toggle('active', button.dataset.plot === state.plot);
+    });
+}
+
+/* The key to the field's colours, built from the same list the drawing
+   uses. */
+function renderLegend() {
+    const box = el('legend-items');
+    if (!box) return;
+    box.innerHTML = '';
+    CANVAS_LEGEND.forEach((item) => {
+        const row = document.createElement('div');
+        row.className = 'legend-item';
+        const swatch = document.createElement('span');
+        swatch.className = `legend-swatch${item.dot ? ' dot' : ''}`;
+        swatch.style.background = item.dash
+            ? `repeating-linear-gradient(90deg, ${item.color} 0 4px, transparent 4px 7px)`
+            : item.color;
+        const label = document.createElement('span');
+        label.textContent = item.label;
+        row.appendChild(swatch);
+        row.appendChild(label);
+        box.appendChild(row);
+    });
+}
+
+function drawPlotFrame(ctx, width, height, series, xlabel, ylabel, title, horizontal) {
+    const left = 46;
+    const right = width - 10;
+    const top = 16;
+    const bottom = height - 26;
+    ctx.font = '10px system-ui, sans-serif';
+    ctx.fillStyle = '#93a4bf';
+    ctx.textAlign = 'left';
+    ctx.fillText(title, left, 11);
+    if (!series.length || !series.some((s) => s.x && s.x.length)) {
+        return;
+    }
+
+    let xMin = Infinity;
+    let xMax = -Infinity;
+    let yMin = Infinity;
+    let yMax = -Infinity;
+    series.forEach((entry) => {
+        entry.x.forEach((value, index) => {
+            const y = entry.y[index];
+            if (!Number.isFinite(value) || !Number.isFinite(y)) return;
+            xMin = Math.min(xMin, value);
+            xMax = Math.max(xMax, value);
+            yMin = Math.min(yMin, y);
+            yMax = Math.max(yMax, y);
+        });
+    });
+    if (horizontal && Number.isFinite(horizontal.value)) {
+        yMin = Math.min(yMin, horizontal.value);
+        yMax = Math.max(yMax, horizontal.value);
+    }
+    if (!Number.isFinite(xMin) || !Number.isFinite(yMin)) return;
+    if (xMax - xMin < 1e-9) xMax = xMin + 1;
+    if (yMax - yMin < 1e-9) { yMax = yMin + 1; yMin -= 0.5; }
+    const pad = (yMax - yMin) * 0.08;
+    yMin -= pad;
+    yMax += pad;
+
+    const px = (value) => left + ((value - xMin) / (xMax - xMin)) * (right - left);
+    const py = (value) => bottom - ((value - yMin) / (yMax - yMin)) * (bottom - top);
+
+    // Grid and axes.
+    ctx.strokeStyle = 'rgba(255,255,255,0.07)';
+    ctx.lineWidth = 1;
+    ctx.fillStyle = '#64748b';
+    ctx.textAlign = 'right';
+    for (let i = 0; i <= 3; i++) {
+        const value = yMin + ((yMax - yMin) * i) / 3;
+        const y = py(value);
+        ctx.beginPath();
+        ctx.moveTo(left, y);
+        ctx.lineTo(right, y);
+        ctx.stroke();
+        ctx.fillText(value.toFixed(Math.abs(value) < 10 ? 2 : 1), left - 4, y + 3);
+    }
+    ctx.textAlign = 'center';
+    for (let i = 0; i <= 3; i++) {
+        const value = xMin + ((xMax - xMin) * i) / 3;
+        ctx.fillText(value.toFixed(2), px(value), bottom + 13);
+    }
+    ctx.strokeStyle = 'rgba(255,255,255,0.18)';
+    ctx.beginPath();
+    ctx.moveTo(left, top);
+    ctx.lineTo(left, bottom);
+    ctx.lineTo(right, bottom);
+    ctx.stroke();
+
+    // A limit line.
+    if (horizontal && Number.isFinite(horizontal.value)) {
+        ctx.save();
+        ctx.setLineDash([4, 4]);
+        ctx.strokeStyle = PLOT_COLORS.limit;
+        const y = py(horizontal.value);
+        ctx.beginPath();
+        ctx.moveTo(left, y);
+        ctx.lineTo(right, y);
+        ctx.stroke();
+        ctx.restore();
+    }
+
+    // The series.
+    series.forEach((entry) => {
+        ctx.strokeStyle = entry.color;
+        ctx.lineWidth = 1.6;
+        ctx.beginPath();
+        let started = false;
+        entry.x.forEach((value, index) => {
+            const y = entry.y[index];
+            if (!Number.isFinite(value) || !Number.isFinite(y)) return;
+            if (!started) { ctx.moveTo(px(value), py(y)); started = true; }
+            else ctx.lineTo(px(value), py(y));
+        });
+        ctx.stroke();
+        if (entry.points) {
+            entry.x.forEach((value, index) => {
+                const y = entry.y[index];
+                if (!Number.isFinite(value) || !Number.isFinite(y)) return;
+                ctx.fillStyle = entry.color;
+                ctx.beginPath();
+                ctx.arc(px(value), py(y), 3, 0, Math.PI * 2);
+                ctx.fill();
+            });
+        }
+    });
+
+    // The legend.
+    ctx.textAlign = 'left';
+    let lx = left;
+    const ly = top - 4;
+    series.forEach((entry) => {
+        ctx.fillStyle = entry.color;
+        ctx.fillRect(lx, ly - 5, 8, 2);
+        ctx.fillStyle = '#93a4bf';
+        ctx.fillText(entry.label, lx + 11, ly);
+        lx += 13 + ctx.measureText(entry.label).width;
+    });
+
+    ctx.fillStyle = '#64748b';
+    ctx.textAlign = 'right';
+    ctx.fillText(ylabel, right, height - 4);
+    ctx.textAlign = 'center';
+    ctx.fillText(xlabel, (left + right) / 2, height - 4);
+}
+
+/* The solver's first guess, drawn on the field next to the answer. */
+function drawGhostPath() {
+    const ghost = state.ghostStates;
+    if (!ghost || ghost.length < 2) return;
+    const ratio = window.devicePixelRatio || 1;
+    ctx.save();
+    ctx.setLineDash([5 * ratio, 5 * ratio]);
+    ctx.strokeStyle = 'rgba(226, 232, 240, 0.35)';
+    ctx.lineWidth = 1.5 * ratio;
+    ctx.beginPath();
+    ghost.forEach((state, index) => {
+        const p = worldToScreen(state[0], state[1]);
+        if (index === 0) ctx.moveTo(p.x, p.y);
+        else ctx.lineTo(p.x, p.y);
+    });
+    ctx.stroke();
+    ctx.restore();
+}
+
+/* ------------------------------------------------- what to try next */
+
+/* When a validation fails, name the lever that might fix it and offer to
+ * pull it. The levers are the ones the measurements point at: the accuracy
+ * weight and the timing model. */
+function suggestFixes(report) {
+    const fixes = [];
+    if (!report || !report.candidates || !report.candidates.length) return fixes;
+    const selected = report.candidates[(report.selected || 1) - 1] || report.candidates[0];
+    if (selected && selected.ok) return fixes;
+
+    // A candidate that was faster but missed the gate: try its timing model.
+    const faster = report.candidates
+        .filter((entry) => !entry.ok && entry.duration_s !== null
+            && selected && entry.duration_s < selected.duration_s)
+        .sort((a, b) => a.duration_s - b.duration_s)[0];
+    if (faster && faster.timing && faster.timing !== selected.timing) {
+        fixes.push({
+            id: 'timing',
+            label: `the ${faster.timing} timing model`,
+            timing: faster.timing,
+        });
+    }
+
+    // The tracking gate with no weight: a small weight smooths the profile.
+    const tracking = report.candidates.some((entry) => (entry.reasons || [])
+        .some((reason) => reason.indexOf('tracking') >= 0));
+    const weight = Number(el('opt-accuracy').value);
+    if (tracking && (!weight || weight > 0.001)) {
+        fixes.push({ id: 'weight', label: 'a weight of 0.001', weight: 0.001 });
+    }
+
+    if (!el('opt-sweep').checked) {
+        fixes.push({ id: 'sweep', label: 'sweep for the best', sweep: true });
+    }
+    return fixes;
+}
+
+function applyFix(fix) {
+    if (fix.timing) el('opt-timing').value = fix.timing;
+    if (fix.weight !== undefined) el('opt-accuracy').value = fix.weight;
+    if (fix.sweep) el('opt-sweep').checked = true;
+    solve();
+}
+
+function renderFixes(report) {
+    const row = el('fix-row');
+    row.innerHTML = '';
+    const fixes = suggestFixes(report);
+    row.hidden = fixes.length === 0;
+    fixes.forEach((fix) => {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'btn small fix-btn';
+        button.textContent = fix.label;
+        button.addEventListener('click', () => applyFix(fix));
+        row.appendChild(button);
+    });
+}
+
+/* --------------------------------------------------------- nudging */
+
+/* Move the selected waypoint with the arrow keys. A held key is one undo
+ * step, not one per repeat. */
+const NUDGE_STEP = 0.01;      // 1 cm
+let lastNudge = { index: -1, time: 0 };
+
+function nudgeSelected(dx, dy) {
+    const point = currentWaypoint();
+    if (!point) return;
+    const now = Date.now();
+    const continuing = lastNudge.index === state.selected && (now - lastNudge.time) < 700;
+    point.x = Math.round((point.x + dx) * 1000) / 1000;
+    point.y = Math.round((point.y + dy) * 1000) / 1000;
+    state.dirty = true;
+    if (!continuing) {
+        // One undo step per gesture: the state before the nudge is still in
+        // the history, so the new state is what gets pushed.
+        pushHistory();
+    }
+    lastNudge = { index: state.selected, time: now };
+    renderEditor();
+    updatePathSummary();
+    updateMissionState();
+    draw();
+    scheduleSessionSave();
+}
+
+/* --------------------------------------------- how this solve compares */
+
+/* The faint paths on the field show the earlier solves; this is the number. */
+function describeSolveDiff(previousEntry, currentEntry) {
+    if (!previousEntry || !currentEntry) return '';
+    const previous = previousEntry.summary;
+    const current = currentEntry.summary;
+    if (!previous || !current) return '';
+    const parts = [];
+    const delta = current.duration_s - previous.duration_s;
+    if (Math.abs(delta) >= 0.005) {
+        parts.push(`${Math.abs(delta).toFixed(2)} s ${delta < 0 ? 'faster' : 'slower'}`);
+    }
+    if (current.has_envelope && previous.has_envelope) {
+        const width = (current.max_envelope_m - previous.max_envelope_m) * 1000;
+        if (Math.abs(width) >= 0.5) {
+            parts.push(`the envelope ${Math.abs(width).toFixed(1)} mm ${width < 0 ? 'tighter' : 'wider'}`);
+        }
+    }
+    const length = (current.path_length_m - previous.path_length_m) * 1000;
+    if (Math.abs(length) >= 1) {
+        parts.push(`the path ${Math.abs(length).toFixed(0)} mm ${length < 0 ? 'shorter' : 'longer'}`);
+    }
+    if (previousEntry.verdict !== currentEntry.verdict) {
+        parts.push(`and it now ${currentEntry.verdict === 'ok' ? 'passes' : 'fails'}`);
+    }
+    if (!parts.length) return 'The same as the previous solve.';
+    return `vs. the previous solve: ${parts.join(', ')}.`;
+}
+
+function recordSolve(summary, verdict) {
+    const entry = { summary, verdict, at: Date.now() };
+    const previous = state.solveHistory[state.solveHistory.length - 1];
+    state.solveHistory.push(entry);
+    if (state.solveHistory.length > 10) state.solveHistory.shift();
+    el('solve-diff').textContent = describeSolveDiff(previous, entry);
+}
+
 /* ------------------------------------------------------------- rendering */
 
 function renderAll() {
     renderWaypointList();
     renderEditor();
+    updateWaypointBadge();
     renderResult();
     updateWaypointCount();
     updateMissionState();
+    renderRobotChecks();
 }
 
 function updateWaypointCount() {
@@ -376,6 +1907,49 @@ function updateWaypointCount() {
     el('waypoint-count').textContent = count === 0
         ? 'No waypoints yet'
         : `${count} waypoint${count === 1 ? '' : 's'}`;
+    updatePathSummary();
+}
+
+/* The length of the path through the waypoints, and the fastest the robot
+ * could possibly do it. Both are known before the solve, so a waypoint that
+ * was dragged 5 m away shows up here instead of in the solve time. */
+function pathLength() {
+    let total = 0;
+    for (let i = 0; i < state.waypoints.length - 1; i++) {
+        const a = state.waypoints[i];
+        const b = state.waypoints[i + 1];
+        total += Math.hypot(b.x - a.x, b.y - a.y);
+    }
+    return total;
+}
+
+function topSpeed() {
+    const robot = robotFields();
+    const vMax = Number(robot.v_max_rad_s);
+    const radius = Number(robot.wheel_radius);
+    if (!Number.isFinite(vMax) || !Number.isFinite(radius) || vMax <= 0 || radius <= 0) {
+        return null;
+    }
+    const headroom = Number(robot.speed_headroom);
+    const factor = Number.isFinite(headroom) && headroom > 0 ? headroom : 1;
+    return vMax * radius * factor;
+}
+
+function updatePathSummary() {
+    const node = el('path-summary');
+    if (state.waypoints.length < 2) {
+        node.textContent = 'Add waypoints to see the path length.';
+        return;
+    }
+    const length = pathLength();
+    const speed = topSpeed();
+    if (!speed) {
+        node.textContent = `Path ${length.toFixed(2)} m`;
+        return;
+    }
+    const fastest = length / speed;
+    node.textContent = `Path ${length.toFixed(2)} m | at least ${fastest.toFixed(2)} s `
+        + `at ${speed.toFixed(2)} m/s top speed`;
 }
 
 function updateMissionState() {
@@ -417,6 +1991,7 @@ function renderEditor() {
     const point = currentWaypoint();
     el('no-selection').hidden = Boolean(point);
     el('waypoint-editor').hidden = !point;
+    updateWaypointBadge();
     if (!point) return;
 
     el('wp-x').value = point.x.toFixed(3);
@@ -430,6 +2005,16 @@ function renderEditor() {
     el('wp-precision').checked = point.precision_mode;
     el('wp-threshold').value = point.error_threshold === null
         ? '' : (point.error_threshold * 100).toFixed(2);
+}
+
+/* The Waypoint tab carries a mark when something is selected, so the
+   editor is never a hidden panel with something to say. */
+function updateWaypointBadge() {
+    const badge = el('tab-waypoint-badge');
+    if (!badge) return;
+    const has = state.selected >= 0 && state.selected < state.waypoints.length;
+    badge.hidden = !has;
+    badge.textContent = has ? `W${state.selected}` : '';
 }
 
 function renderResult() {
@@ -446,6 +2031,21 @@ function renderResult() {
     if (summary.has_envelope) {
         rows.push(['Max envelope', `${(summary.max_envelope_m * 100).toFixed(2)} cm`]);
     }
+    if (state.useModel && state.model) {
+        const gain = state.model.straight && state.model.straight.gain;
+        rows.push(['Model', gain
+            ? `measured (straight gain ${gain.toFixed(3)})`
+            : 'measured']);
+    }
+    if (state.jobWallS !== null && state.jobWallS !== undefined) {
+        rows.push(['Solve (wall)', `${state.jobWallS.toFixed(2)} s`]);
+        const speed = topSpeed();
+        if (speed && summary.path_length_m > 0) {
+            const fastest = summary.path_length_m / speed;
+            rows.push(['vs. top speed', `${(summary.duration_s / fastest).toFixed(2)}x`]);
+        }
+    }
+    renderCollisions(rows);
     rows.forEach(([key, value]) => {
         const dt = document.createElement('dt');
         dt.textContent = key;
@@ -454,6 +2054,42 @@ function renderResult() {
         facts.appendChild(dt);
         facts.appendChild(dd);
     });
+}
+
+/* What the planned path ran into, and how sure we are.
+
+   A collision shallower than the field's placement uncertainty is not a
+   hit: the footprint's own position on the mat is not known to better than
+   that, so it is marked as uncertain rather than reported as a fact. */
+function renderCollisions(rows) {
+    const box = el('collisions');
+    if (!box) return;
+    box.innerHTML = '';
+    if (!state.collisions.length) {
+        if (state.season) {
+            rows.push(['Field', `no collisions on ${state.season}`]);
+        }
+        return;
+    }
+    const solid = state.collisions.filter((item) => !item.uncertain).length;
+    const unsure = state.collisions.length - solid;
+    let text = `${solid} collision${solid === 1 ? '' : 's'}`;
+    if (unsure) {
+        text += `, ${unsure} within the placement uncertainty`;
+    }
+    rows.push(['Field', text]);
+
+    const list = document.createElement('ul');
+    list.className = 'collision-list';
+    state.collisions.forEach((item) => {
+        const entry = document.createElement('li');
+        entry.className = item.uncertain ? 'warn' : 'error';
+        entry.textContent = `${item.name} at ${item.t.toFixed(2)} s, `
+            + `${(item.depth_m * 1000).toFixed(0)} mm deep`
+            + (item.uncertain ? ' (within the placement uncertainty)' : '');
+        list.appendChild(entry);
+    });
+    box.appendChild(list);
 }
 
 function renderDownloads(artifacts) {
@@ -593,6 +2229,8 @@ function renderRobotEditor() {
                     || (spec.max !== undefined && value > spec.max));
             input.classList.toggle('invalid', invalid);
             if (invalid) return;
+            // The history entry is pushed on the commit, so a field that is
+            // typed into is one undo step, not one per keystroke.
             const updated = robotFields();
             if (input.value === '') {
                 delete updated[spec.key];
@@ -602,9 +2240,14 @@ function renderRobotEditor() {
             setRobotFields(updated);
             state.dirty = true;
             renderRobotFacts();
+            renderRobotChecks();
             updateMissionState();
+            updatePathSummary();
             scheduleSessionSave();
         });
+        // The undo step is taken when the field is committed, so a field that is
+        // typed into is one step, not one per keystroke.
+        input.addEventListener('change', () => pushHistory());
         box.appendChild(label);
         box.appendChild(input);
     });
@@ -647,6 +2290,7 @@ function renderRobotEditor() {
                 state.dirty = true;
                 scheduleSessionSave();
             });
+            input.addEventListener('change', () => pushHistory());
             ranges.appendChild(label);
             ranges.appendChild(input);
         });
@@ -739,8 +2383,14 @@ function collectOptions() {
         candidates: Number(el('opt-candidates').value),
         timing: el('opt-timing').value,
         validate: el('opt-validate').checked,
+        fast_polish: el('opt-fast-polish').checked,
+        self_consistent: el('opt-self-consistent').checked,
+        sweep: el('opt-sweep').checked,
+        iteration_history: true,
+        sysid_fit: (el('opt-use-model').checked && state.model) ? state.model.path : null,
         export_format: el('opt-export').value,
         controller_dt: Number(el('opt-controller-dt').value),
+        field: state.season,
     };
 }
 
@@ -754,10 +2404,20 @@ async function solve() {
         return;
     }
     setBusy(true);
-    setStatus('Solving...');
+    setStatus(el('opt-sweep').checked
+        ? 'Sweeping the timing model and weight - this solves ten candidates'
+        : 'Solving...');
     el('result-status').textContent = 'Solving...';
     el('log').textContent = '';
     state.jobSummary = null;
+    state.jobWallS = null;
+    state.collisions = [];
+    state.pollRetries = 0;
+    state.solveJobId = null;
+    state.solveHasTrajectory = false;
+    state.measuredPoses = [];
+    updatePushButton();
+    renderResult();
     renderDownloads([]);
     try {
         const job = await api('/api/solve', {
@@ -791,37 +2451,71 @@ function pollJob() {
                 renderValidationReport(report);
             }
             if (job.status === 'running') {
-                setStatus('Solving...');
+                setStatus(solveProgressText(job));
                 pollJob();
                 return;
             }
             setBusy(false);
             if (job.status === 'ok') {
                 state.jobSummary = job.summary;
+                state.jobWallS = job.wall_s;
                 state.trajectory = await api(`/api/jobs/${state.jobId}/trajectory`);
                 state.trajectory = state.trajectory.trajectory.samples;
+                rememberRun(state.trajectory);
                 playback.duration = state.trajectory.length
                     ? state.trajectory[state.trajectory.length - 1].t : 0;
                 playback.time = 0;
                 el('playback').value = 0;
+                state.solveJobId = state.jobId;
+                state.solveHasTrajectory = (job.artifacts || [])
+                    .some((artifact) => artifact.kind === 'traj');
+                updatePushButton();
+                state.jobResult = job.result || {};
+                state.collisions = state.jobResult.collisions || [];
+                const iterations = state.jobResult.iterations || [];
+                const guess = iterations.find((entry) => entry.phase === 'initial_guess');
+                state.ghostStates = guess ? guess.trajectory : null;
+                recordSolve(job.summary, 'ok');
+                state.jobFailed = false;
+                state.jobFailedReason = '';
+                state.jobFinishedAt = new Date().toISOString();
                 renderResult();
                 renderDownloads(job.artifacts);
+                drawPlot();
                 const validated = el('opt-validate').checked;
                 el('result-status').innerHTML = validated
                     ? '<span class="badge ok">Validated</span> trajectory written and checked.'
                     : '<span class="badge warn">Not validated</span> enable validation before driving.';
-                setStatus('Done', 'ok');
+                // The answer goes in the header, so it is on screen whatever
+                // the column is showing.
+                const headline = resultHeadline();
+                setStatus(headline
+                    ? `${headline} - ${validated ? 'validated' : 'not validated'}`
+                    : 'Done', 'ok');
+                showPanel('panel-result');
             } else if (job.status === 'cancelled') {
                 el('result-status').innerHTML = '<span class="badge warn">Cancelled</span>';
                 setStatus('Cancelled', 'warn');
             } else {
                 const reason = job.error || 'The solve failed.';
+                state.jobFailed = true;
+                state.jobFailedReason = reason;
+                state.jobFinishedAt = new Date().toISOString();
                 el('result-status').innerHTML = `<span class="badge error">Failed</span> ${reason}`;
                 setStatus('Failed', 'error');
+                // A failure is the one thing that must not be hidden behind a
+                // tab, so the result comes forward.
+                showPanel('panel-result');
                 toast(reason, true);
             }
             draw();
         } catch (err) {
+            // A blip (a reload, a closed connection) should not kill the poll.
+            if (state.jobId && state.pollRetries < 3) {
+                state.pollRetries += 1;
+                pollJob();
+                return;
+            }
             setBusy(false);
             setStatus(err.message, 'error');
             toast(err.message, true);
@@ -833,6 +2527,32 @@ function setBusy(busy) {
     el('btn-solve').disabled = busy;
     el('btn-cancel').hidden = !busy;
     el('btn-solve').textContent = busy ? 'Solving...' : 'Solve';
+}
+
+/* What the solver is doing right now: the elapsed time, the candidate it is
+ * on, and whether the candidates run in parallel. */
+function solveProgressText(job) {
+    const log = job.log || [];
+    let stage = '';
+    let candidate = '';
+    for (let i = log.length - 1; i >= 0; i--) {
+        const line = log[i];
+        if (!candidate) {
+            const match = line.match(/Candidate (\d+)\/(\d+)/);
+            if (match) candidate = `candidate ${match[1]}/${match[2]}`;
+        }
+        if (!stage) {
+            const parallel = line.match(/Solving (\d+) candidates \(in parallel\)/);
+            if (parallel) stage = `${parallel[1]} candidates in parallel`;
+        }
+        if (stage && candidate) break;
+    }
+    const started = job.started || 0;
+    const elapsed = started ? Math.max(0, Date.now() / 1000 - started) : 0;
+    const parts = ['Solving...', `${elapsed.toFixed(1)} s`];
+    if (stage) parts.push(stage);
+    if (candidate) parts.push(candidate);
+    return parts.join(' - ');
 }
 
 /* ---------------------------------------------------------------- canvas */
@@ -886,11 +2606,42 @@ function frameAll() {
     camera.offsetY = canvas.height / 2 - (center.y - camera.offsetY);
 }
 
+/* The earlier solves, so a new trajectory can be compared with the ones that
+   came before it. The history is the browser's session only: a reload
+   starts a fresh field. */
+const RUN_HISTORY_LIMIT = 8;
+
+function rememberRun(samples) {
+    if (!samples || samples.length < 2) return;
+    state.runs.push({
+        samples: samples.map((sample) => ({ x: sample.x, y: sample.y })),
+        duration: samples[samples.length - 1].t,
+    });
+    while (state.runs.length > RUN_HISTORY_LIMIT) state.runs.shift();
+    renderRunHistory();
+}
+
+function renderRunHistory() {
+    const hint = el('run-history');
+    if (!hint) return;
+    if (!state.runs.length) {
+        hint.textContent = 'No earlier runs yet.';
+        return;
+    }
+    const last = state.runs[state.runs.length - 1].duration;
+    hint.textContent = `${state.runs.length} earlier run`
+        + `${state.runs.length === 1 ? '' : 's'} on the field`
+        + ` (the last took ${last.toFixed(2)} s).`;
+}
+
 function draw() {
     if (!ctx) return;
     const ratio = window.devicePixelRatio || 1;
     ctx.clearRect(0, 0, canvas.width, canvas.height);
+    drawMat();
+    drawFieldEdges();
     drawGrid();
+    drawObstacles();
 
     if (state.showPath && state.waypoints.length > 1) {
         // Segment by segment, so a segment that failed validation stands out.
@@ -914,14 +2665,213 @@ function draw() {
     }
 
     if (state.trajectory) {
+        drawRunHistory();
         drawEnvelope(state.trajectory);
         drawPath(state.trajectory, 'rgba(56, 189, 248, 0.25)', 10 * ratio);
         drawPath(state.trajectory, '#38bdf8', 2.5 * ratio);
+    } else {
+        drawRunHistory();
     }
+    drawCollisionMarks();
 
+    drawGhostPath();
     drawWaypoints();
+    drawMeasuredPoses();
     drawRobot();
     updatePlaybackLabel();
+}
+
+/* The mat under the mission. Its south-west corner is the field's (0, 0)
+   and its north edge is up the screen, so the image is drawn from the two
+   corners of the mat's rectangle in world coordinates. */
+function drawMat() {
+    const mat = state.mat;
+    if (!state.showMat || !mat.image) return;
+    const a = worldToScreen(0, 0);
+    const b = worldToScreen(mat.widthM, mat.heightM);
+    const x = Math.min(a.x, b.x);
+    const y = Math.min(a.y, b.y);
+    const width = Math.abs(b.x - a.x);
+    const height = Math.abs(b.y - a.y);
+    ctx.save();
+    ctx.globalAlpha = 0.9;
+    ctx.drawImage(mat.image, x, y, width, height);
+    ctx.restore();
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.25)';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(x, y, width, height);
+}
+
+/* The field's walls: the mat's edge, and the launch areas' arcs. */
+function drawFieldEdges() {
+    const field = state.fields[state.season];
+    if (!field) return;
+    const ratio = window.devicePixelRatio || 1;
+    const mat = field.mat || state.mat;
+
+    ctx.save();
+    ctx.strokeStyle = 'rgba(226, 232, 240, 0.35)';
+    ctx.lineWidth = 2 * ratio;
+    const corner = worldToScreen(0, 0);
+    const far = worldToScreen(mat.width_m, mat.height_m);
+    ctx.strokeRect(
+        Math.min(corner.x, far.x), Math.min(corner.y, far.y),
+        Math.abs(far.x - corner.x), Math.abs(far.y - corner.y));
+
+    // The launch areas: quarter circles in the corners of the wall.
+    ctx.strokeStyle = 'rgba(56, 189, 248, 0.5)';
+    (field.launch_areas || []).forEach((area) => {
+        const start = area.quadrant === 2 ? Math.PI / 2 : 0;
+        const end = area.quadrant === 2 ? Math.PI : Math.PI / 2;
+        ctx.beginPath();
+        for (let i = 0; i <= 24; i++) {
+            const angle = start + (end - start) * i / 24;
+            const point = worldToScreen(
+                area.x_m + Math.cos(angle) * area.radius_m,
+                area.y_m + Math.sin(angle) * area.radius_m);
+            if (i === 0) ctx.moveTo(point.x, point.y);
+            else ctx.lineTo(point.x, point.y);
+        }
+        ctx.stroke();
+    });
+    ctx.restore();
+}
+
+/* Which mission model is under the pointer?
+
+   The test uses the same rotation the drawing does, so what lights up is
+   what the pointer is on. */
+function obstacleAt(x, y) {
+    const field = state.fields[state.season];
+    if (!field) return null;
+    for (const obstacle of field.obstacles) {
+        if (obstacle.kind === 'circle') {
+            const dx = x - obstacle.x_m;
+            const dy = y - obstacle.y_m;
+            if (Math.hypot(dx, dy) <= obstacle.w_m / 2) return obstacle;
+            continue;
+        }
+        const angle = obstacle.rot_deg * Math.PI / 180;
+        const dx = x - obstacle.x_m;
+        const dy = y - obstacle.y_m;
+        const localX = dx * Math.cos(angle) + dy * Math.sin(angle);
+        const localY = -dx * Math.sin(angle) + dy * Math.cos(angle);
+        if (Math.abs(localX) <= obstacle.w_m / 2
+                && Math.abs(localY) <= obstacle.h_m / 2) {
+            return obstacle;
+        }
+    }
+    return null;
+}
+
+/* Which waypoint is under the pointer? */
+function waypointAt(x, y, tolerance) {
+    for (let index = state.waypoints.length - 1; index >= 0; index--) {
+        const point = state.waypoints[index];
+        if (Math.hypot(point.x - x, point.y - y) <= tolerance) {
+            return index;
+        }
+    }
+    return -1;
+}
+
+/* The field: the mission models standing on the mat. They are measured off
+   FIRST's public field wireframe, and the server owns the collision maths;
+   the browser only draws what the server found. */
+function drawObstacles() {
+    const field = state.fields[state.season];
+    if (!field) return;
+    const ratio = window.devicePixelRatio || 1;
+    field.obstacles.forEach((obstacle) => {
+        const half = { x: obstacle.w_m / 2, y: obstacle.h_m / 2 };
+        const hovered = state.hoverObstacle === obstacle.id;
+        ctx.save();
+        ctx.translate(...Object.values(worldToScreen(obstacle.x_m, obstacle.y_m)));
+        ctx.rotate(-obstacle.rot_deg * Math.PI / 180);
+        if (hovered) {
+            ctx.strokeStyle = 'rgba(56, 189, 248, 0.95)';
+            ctx.fillStyle = 'rgba(56, 189, 248, 0.25)';
+            ctx.lineWidth = 2.5 * ratio;
+        } else {
+            ctx.strokeStyle = 'rgba(148, 163, 184, 0.55)';
+            ctx.fillStyle = 'rgba(148, 163, 184, 0.14)';
+            ctx.lineWidth = 1.5 * ratio;
+        }
+        if (obstacle.kind === 'circle') {
+            ctx.beginPath();
+            ctx.arc(0, 0, half.x * camera.scale, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.stroke();
+        } else {
+            const w = obstacle.w_m * camera.scale;
+            const h = obstacle.h_m * camera.scale;
+            ctx.fillRect(-w / 2, -h / 2, w, h);
+            ctx.strokeRect(-w / 2, -h / 2, w, h);
+        }
+        ctx.restore();
+        if (hovered) {
+            const at = worldToScreen(obstacle.x_m, obstacle.y_m);
+            ctx.save();
+            ctx.font = `${12 * ratio}px system-ui, sans-serif`;
+            ctx.fillStyle = '#38bdf8';
+            ctx.textAlign = 'center';
+            ctx.fillText(obstacle.name, at.x, at.y - 10 * ratio);
+            ctx.restore();
+        }
+    });
+}
+
+/* Where the planned path ran into something. The mark is the sample's
+   position; the badge names what it hit. */
+function drawCollisionMarks() {
+    const ratio = window.devicePixelRatio || 1;
+    state.collisions.forEach((collision) => {
+        const point = worldToScreen(collision.x_m, collision.y_m);
+        const shallow = collision.uncertain;
+        ctx.save();
+        ctx.strokeStyle = shallow ? 'rgba(251, 191, 36, 0.95)' : 'rgba(248, 113, 113, 0.95)';
+        ctx.fillStyle = shallow ? 'rgba(251, 191, 36, 0.25)' : 'rgba(248, 113, 113, 0.25)';
+        ctx.lineWidth = 2.5 * ratio;
+        ctx.beginPath();
+        ctx.arc(point.x, point.y, 11 * ratio, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.moveTo(point.x - 6 * ratio, point.y - 6 * ratio);
+        ctx.lineTo(point.x + 6 * ratio, point.y + 6 * ratio);
+        ctx.moveTo(point.x + 6 * ratio, point.y - 6 * ratio);
+        ctx.lineTo(point.x - 6 * ratio, point.y + 6 * ratio);
+        ctx.stroke();
+        ctx.font = `${12 * ratio}px system-ui, sans-serif`;
+        ctx.fillStyle = ctx.strokeStyle;
+        ctx.textAlign = 'left';
+        ctx.fillText(collision.name, point.x + 16 * ratio, point.y - 10 * ratio);
+        ctx.restore();
+    });
+}
+
+/* The earlier solves, as faint dashed paths, so a new trajectory can be
+   compared with the ones that came before it. */
+function drawRunHistory() {
+    if (!state.showRuns) return;
+    const ratio = window.devicePixelRatio || 1;
+    ctx.save();
+    ctx.setLineDash([4 * ratio, 5 * ratio]);
+    ctx.lineWidth = 1.5 * ratio;
+    state.runs.forEach((run, index) => {
+        const fade = 0.55 - 0.05 * index;
+        ctx.strokeStyle = `rgba(148, 163, 184, ${Math.max(fade, 0.15)})`;
+        const samples = run.samples || [];
+        if (samples.length < 2) return;
+        ctx.beginPath();
+        samples.forEach((sample, i) => {
+            const p = worldToScreen(sample.x, sample.y);
+            if (i === 0) ctx.moveTo(p.x, p.y);
+            else ctx.lineTo(p.x, p.y);
+        });
+        ctx.stroke();
+    });
+    ctx.restore();
 }
 
 function drawGrid() {
@@ -988,11 +2938,21 @@ function drawWaypoints() {
     state.waypoints.forEach((point, index) => {
         const p = worldToScreen(point.x, point.y);
         const active = index === state.selected;
+        const hovered = index === state.hoverWaypoint;
         const failing = state.failingSegments.has(index) || state.failingSegments.has(index - 1);
-        ctx.fillStyle = active ? '#38bdf8' : (point.heading === null ? '#94a3b8' : '#f472b6');
+        ctx.fillStyle = active ? '#38bdf8'
+            : (hovered ? '#7dd3fc'
+                : (point.heading === null ? '#94a3b8' : '#f472b6'));
         ctx.beginPath();
         ctx.arc(p.x, p.y, (active ? 7 : 5.5) * ratio, 0, Math.PI * 2);
         ctx.fill();
+        if (hovered && !active) {
+            ctx.strokeStyle = 'rgba(56, 189, 248, 0.8)';
+            ctx.lineWidth = 2 * ratio;
+            ctx.beginPath();
+            ctx.arc(p.x, p.y, 9 * ratio, 0, Math.PI * 2);
+            ctx.stroke();
+        }
 
         if (failing) {
             ctx.strokeStyle = '#f87171';
@@ -1012,9 +2972,85 @@ function drawWaypoints() {
             ctx.stroke();
         }
 
+        drawWaypointBadges(point, p, ratio);
+
         ctx.fillStyle = '#94a3b8';
         ctx.font = `${11 * ratio}px system-ui, sans-serif`;
         ctx.fillText(`W${index}`, p.x + 10 * ratio, p.y - 8 * ratio);
+    });
+}
+
+/* A stop is a square, an event a diamond, both with their name next to them. */
+function drawWaypointBadges(point, p, ratio) {
+    if (!point.stop && !point.event) return;
+    const above = p.y - 24 * ratio;
+    ctx.save();
+    if (point.stop) {
+        ctx.fillStyle = '#38bdf8';
+        const size = 5 * ratio;
+        ctx.fillRect(p.x - size / 2, above - size / 2, size, size);
+    }
+    if (point.event) {
+        ctx.fillStyle = '#f472b6';
+        const size = 6 * ratio;
+        ctx.beginPath();
+        ctx.moveTo(p.x, above - size);
+        ctx.lineTo(p.x + size, above);
+        ctx.lineTo(p.x, above + size);
+        ctx.lineTo(p.x - size, above);
+        ctx.closePath();
+        ctx.fill();
+    }
+    const labels = [];
+    if (point.stop) labels.push('stop');
+    if (point.event) labels.push(point.event);
+    ctx.font = `bold ${10 * ratio}px system-ui, sans-serif`;
+    ctx.fillStyle = point.event ? '#f9a8d4' : '#7dd3fc';
+    ctx.textAlign = 'left';
+    ctx.fillText(labels.join(' '), p.x + 11 * ratio, above + 4 * ratio);
+    ctx.textAlign = 'start';
+    ctx.restore();
+}
+
+/* Where the robot actually ended, next to where the plan said it would. */
+function drawMeasuredPoses() {
+    if (!state.measuredPoses.length) return;
+    const ratio = window.devicePixelRatio || 1;
+    const last = state.trajectory ? state.trajectory[state.trajectory.length - 1] : null;
+    state.measuredPoses.forEach((pose) => {
+        const p = measuredInPlanFrame(pose);
+        if (!p) return;
+        const s = worldToScreen(p.x, p.y);
+        if (last) {
+            const planned = worldToScreen(last.x, last.y);
+            ctx.save();
+            ctx.setLineDash([4 * ratio, 4 * ratio]);
+            ctx.strokeStyle = 'rgba(52, 211, 153, 0.7)';
+            ctx.lineWidth = 1.5 * ratio;
+            ctx.beginPath();
+            ctx.moveTo(planned.x, planned.y);
+            ctx.lineTo(s.x, s.y);
+            ctx.stroke();
+            ctx.restore();
+        }
+        ctx.save();
+        ctx.strokeStyle = '#34d399';
+        ctx.lineWidth = 2 * ratio;
+        ctx.beginPath();
+        ctx.moveTo(s.x - 9 * ratio, s.y);
+        ctx.lineTo(s.x + 9 * ratio, s.y);
+        ctx.moveTo(s.x, s.y - 9 * ratio);
+        ctx.lineTo(s.x, s.y + 9 * ratio);
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.arc(s.x, s.y, 6 * ratio, 0, Math.PI * 2);
+        ctx.stroke();
+        const angle = p.heading_deg * Math.PI / 180;
+        ctx.beginPath();
+        ctx.moveTo(s.x, s.y);
+        ctx.lineTo(s.x + Math.cos(angle) * 20 * ratio, s.y - Math.sin(angle) * 20 * ratio);
+        ctx.stroke();
+        ctx.restore();
     });
 }
 
@@ -1095,7 +3131,24 @@ canvas.addEventListener('pointerdown', (event) => {
 
 canvas.addEventListener('pointermove', (event) => {
     const ratio = window.devicePixelRatio || 1;
-    if (!drag) return;
+    if (!drag) {
+        // Nothing is being dragged, so this is a hover: light up whatever
+        // is under the pointer.
+        const world = screenToWorld(event.offsetX * ratio, event.offsetY * ratio);
+        const obstacle = obstacleAt(world.x, world.y);
+        const waypoint = waypointAt(world.x, world.y, 8 / camera.scale);
+        const obstacleId = obstacle ? obstacle.id : null;
+        const waypointIndex = waypoint;
+        if (obstacleId !== state.hoverObstacle
+                || waypointIndex !== state.hoverWaypoint) {
+            state.hoverObstacle = obstacleId;
+            state.hoverWaypoint = waypointIndex;
+            canvas.style.cursor = (obstacleId !== null || waypointIndex >= 0)
+                ? 'pointer' : 'default';
+            draw();
+        }
+        return;
+    }
     const sx = event.offsetX * ratio;
     const sy = event.offsetY * ratio;
     if (drag.kind === 'pan') {
@@ -1113,6 +3166,14 @@ canvas.addEventListener('pointermove', (event) => {
             renderEditor();
         }
     }
+    draw();
+});
+
+canvas.addEventListener('pointerleave', () => {
+    if (state.hoverObstacle === null && state.hoverWaypoint < 0) return;
+    state.hoverObstacle = null;
+    state.hoverWaypoint = -1;
+    canvas.style.cursor = 'default';
     draw();
 });
 
@@ -1134,7 +3195,12 @@ canvas.addEventListener('pointerup', (event) => {
         pushHistory();
     } else if (drag && drag.kind === 'waypoint' && drag.moved) {
         // One history entry per drag, not one per mouse move.
+        updatePathSummary();
         pushHistory();
+    } else if (drag && drag.kind === 'waypoint' && !drag.moved) {
+        // A click, not a drag: the user picked this waypoint to work with
+        // it, so the editor comes forward.
+        showPanel('panel-waypoint');
     }
     drag = null;
     draw();
@@ -1174,9 +3240,23 @@ document.addEventListener('keydown', (event) => {
     }
     const tag = (event.target.tagName || '').toLowerCase();
     if (tag === 'input' || tag === 'select' || tag === 'textarea') return;
+    // Shift is a coarse step, Alt a fine one.
+    const step = event.shiftKey ? NUDGE_STEP * 10 : (event.altKey ? NUDGE_STEP / 10 : NUDGE_STEP);
     if (event.key === ' ') {
         event.preventDefault();
         el('btn-play').click();
+        return;
+    }
+    const nudges = {
+        ArrowLeft: [-step, 0],
+        ArrowRight: [step, 0],
+        ArrowUp: [0, step],
+        ArrowDown: [0, -step],
+    };
+    if (nudges[event.key] && state.selected >= 0) {
+        event.preventDefault();
+        const [dx, dy] = nudges[event.key];
+        nudgeSelected(dx, dy);
         return;
     }
     if ((event.key === 'Delete' || event.key === 'Backspace') && state.selected >= 0) {
@@ -1261,6 +3341,49 @@ function moveSelected(delta) {
 }
 
 el('btn-solve').addEventListener('click', solve);
+el('btn-report').addEventListener('click', openMissionReport);
+el('btn-download-project').addEventListener('click', downloadProject);
+el('btn-upload-project').addEventListener('click', () => el('file-project').click());
+el('file-project').addEventListener('change', (e) => {
+    const file = e.target.files[0];
+    if (file) openProjectFile(file);
+    e.target.value = '';
+});
+el('btn-push').addEventListener('click', pushToHub);
+renderPlotTabs();
+el('btn-collect').addEventListener('click', startCollect);
+el('btn-save-sheet').addEventListener('click', saveSheet);
+el('btn-fit').addEventListener('click', fitModel);
+el('cal-name').addEventListener('change', () => { loadSheet(); });
+el('btn-load-model').addEventListener('click', () => el('file-model').click());
+el('file-model').addEventListener('change', async (e) => {
+    const file = e.target.files[0];
+    if (file) await loadModelFromFile(file);
+    e.target.value = '';
+});
+el('btn-load-model-path').addEventListener('click', loadModelFromPath);
+el('btn-use-model').addEventListener('click', () => {
+    const path = el('model-list').value;
+    const model = (state.models || []).find((m) => m.path === path);
+    if (model) useModel(model);
+});
+el('opt-use-model').addEventListener('change', (e) => {
+    state.useModel = e.target.checked && Boolean(state.model);
+    if (state.useModel) {
+        el('opt-validate').checked = true;
+        updateCandidatesHint();
+    }
+    scheduleSessionSave();
+});
+el('btn-use-robot-geometry').addEventListener('click', useRobotGeometry);
+el('hub-conn').addEventListener('change', (e) => {
+    state.hubConn = e.target.value;
+    scheduleSessionSave();
+});
+el('hub-name').addEventListener('input', (e) => {
+    state.hubName = e.target.value.trim();
+    scheduleSessionSave();
+});
 el('btn-cancel').addEventListener('click', async () => {
     if (!state.jobId) return;
     try {
@@ -1277,6 +3400,97 @@ el('toggle-envelope').addEventListener('change', (e) => {
 });
 el('toggle-path').addEventListener('change', (e) => {
     state.showPath = e.target.checked;
+    draw();
+});
+el('toggle-mat').addEventListener('change', (e) => {
+    state.showMat = e.target.checked;
+    draw();
+});
+el('toggle-runs').addEventListener('change', (e) => {
+    state.showRuns = e.target.checked;
+    draw();
+});
+el('field-season').addEventListener('change', (e) => {
+    state.season = e.target.value;
+    state.collisions = [];
+    scheduleSessionSave();
+    draw();
+});
+
+/* The mat image is the user's: FIRST's artwork is not ours to ship. The
+   image is not kept across a reload (a browser cannot store a file the
+   user picked without asking), but the size is. */
+el('file-mat').addEventListener('change', (event) => {
+    const file = event.target.files && event.target.files[0];
+    if (!file) return;
+    const url = URL.createObjectURL(file);
+    const image = new Image();
+    image.onload = () => {
+        state.mat.image = image;
+        state.mat.name = file.name;
+        el('mat-name').textContent = `Mat: ${file.name}`;
+        draw();
+    };
+    image.onerror = () => toast(`Could not read ${file.name}.`, true);
+    image.src = url;
+});
+
+/* Fetch the season's mat picture. FIRST's mat artwork is not ours to ship,
+   so the server downloads it on request and keeps it outside the repo. */
+el('btn-fetch-mat').addEventListener('click', async () => {
+    if (!state.season) {
+        toast('Pick a season first.', true);
+        return;
+    }
+    const button = el('btn-fetch-mat');
+    button.disabled = true;
+    button.textContent = 'Downloading...';
+    try {
+        const result = await api('/api/field/mat', {
+            method: 'POST',
+            body: JSON.stringify({ season: state.season }),
+        });
+        // The mat's size comes from the field, so the picture and the
+        // mission models line up.
+        state.mat.widthM = result.width_m;
+        state.mat.heightM = result.height_m;
+        el('mat-width').value = String(Math.round(result.width_m * 1000));
+        el('mat-height').value = String(Math.round(result.height_m * 1000));
+        el('mat-credit').textContent = result.credit || '';
+        await loadMatImage(result.url);
+        toast('The mat is ready.');
+    } catch (err) {
+        toast(err.message, true);
+    } finally {
+        button.disabled = false;
+        button.textContent = 'Download the mat';
+    }
+});
+
+function loadMatImage(url) {
+    return new Promise((resolve, reject) => {
+        const image = new Image();
+        image.onload = () => {
+            state.mat.image = image;
+            state.mat.name = url.split('/').pop() || url;
+            el('mat-name').textContent = `Mat: ${state.mat.name}`;
+            draw();
+            resolve(image);
+        };
+        image.onerror = () => reject(new Error('Could not read the mat.'));
+        image.src = url;
+    });
+}
+el('mat-width').addEventListener('change', (e) => {
+    const value = Number(e.target.value);
+    if (Number.isFinite(value) && value > 0) state.mat.widthM = value / 1000;
+    scheduleSessionSave();
+    draw();
+});
+el('mat-height').addEventListener('change', (e) => {
+    const value = Number(e.target.value);
+    if (Number.isFinite(value) && value > 0) state.mat.heightM = value / 1000;
+    scheduleSessionSave();
     draw();
 });
 
@@ -1320,16 +3534,74 @@ async function saveMission() {
         state.dirty = false;
         state.savedName = result.name;
         updateMissionState();
-        toast(`Saved missions/${result.name}.json`);
+        renderHistory(result.history || []);
+        const committed = result.commit
+            ? ` (commit ${result.commit.slice(0, 7)})`
+            : '';
+        toast(`Saved missions/${result.name}.json${committed}`);
         await loadExamples();
     } catch (err) {
         toast(err.message, true);
     }
 }
 
+/* ------------------------------------------------- the mission's history */
+
+/* The missions folder is a git repository, so every save is a commit and an
+ * earlier version can be brought back. */
+function renderHistory(entries) {
+    const list = el('history-list');
+    list.innerHTML = '';
+    if (!entries.length) {
+        list.innerHTML = '<p class="hint">No history yet. Saving the mission makes the '
+            + 'first commit.</p>';
+        return;
+    }
+    entries.forEach((entry) => {
+        const row = document.createElement('div');
+        row.className = 'history-row';
+        const text = document.createElement('span');
+        const when = (entry.when || '').slice(0, 16).replace('T', ' ');
+        text.textContent = `${when} - ${entry.message}`;
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'btn small';
+        button.textContent = 'Restore';
+        button.addEventListener('click', () => restoreMission(entry.sha));
+        row.appendChild(text);
+        row.appendChild(button);
+        list.appendChild(row);
+    });
+}
+
+async function loadHistory(name) {
+    try {
+        const payload = await api(
+            `/api/missions/history?name=${encodeURIComponent(name || '')}`);
+        renderHistory(payload.history || []);
+    } catch (err) {
+        el('history-list').innerHTML = `<p class="hint">${err.message}</p>`;
+    }
+}
+
+async function restoreMission(sha) {
+    try {
+        const payload = await api('/api/missions/restore', {
+            method: 'POST',
+            body: JSON.stringify({ name: el('mission-name').value, sha }),
+        });
+        setWaypoints(payload.waypoints);
+        renderHistory(payload.history || []);
+        toast('Restored that version.');
+    } catch (err) {
+        toast(err.message, true);
+    }
+}
+
 el('mission-list').addEventListener('change', (e) => {
-    const mission = state.missions.find((m) => m.name === e.target.value);
+    const mission = (state.missions || []).find((m) => m.name === e.target.value);
     if (!mission) return;
+    loadHistory(mission.name);
     // The previous mission stays in the undo history, so nothing is lost.
     setWaypoints(mission.data);
     el('mission-name').value = mission.name;
@@ -1339,7 +3611,7 @@ el('mission-list').addEventListener('change', (e) => {
 });
 
 el('config-list').addEventListener('change', (e) => {
-    const config = state.configs.find((c) => c.name === e.target.value);
+    const config = (state.configs || []).find((c) => c.name === e.target.value);
     if (!config) return;
     state.config = config.data;
     state.configName = config.name;
@@ -1400,7 +3672,7 @@ el('opt-validate').addEventListener('change', () => {
 
 el('mission-name').addEventListener('input', scheduleSessionSave);
 
-window.addEventListener('resize', resize);
+window.addEventListener('resize', () => { resize(); drawPlot(); });
 
 /* ------------------------------------------------------------------ loop */
 
@@ -1454,6 +3726,7 @@ async function loadExamples() {
 
 async function init() {
     try {
+        setupTabs();
         const health = await api('/api/health');
         state.health = health;
         state.presets = health.presets || {};
@@ -1468,7 +3741,25 @@ async function init() {
         // A mission left open in this browser comes back automatically.
         const session = loadSession();
         const restored = Boolean(session && Array.isArray(session.waypoints) && session.waypoints.length);
-        if (restored) {
+        // --live passes a mission and options on the command line: those win
+        // over whatever this browser had open.
+        const fromCli = Boolean(initial.auto_solve);
+        if (fromCli && initial.waypoints) {
+            setWaypoints(initial.waypoints);
+            el('mission-name').value = state.configName || 'mission';
+            if (initial.config) {
+                state.config = initial.config;
+                state.configName = initial.config_name || '';
+                state.configEdited = false;
+            }
+            applyOptionsToForm(initial.options);
+            if (initial.options && initial.options.hub_conn) {
+                state.hubConn = initial.options.hub_conn;
+            }
+            if (initial.options && initial.options.hub_name) {
+                state.hubName = initial.options.hub_name;
+            }
+        } else if (restored) {
             setWaypoints(session.waypoints);
             el('mission-name').value = session.name || 'mission';
             if (session.config) {
@@ -1477,10 +3768,29 @@ async function init() {
                 state.configEdited = Boolean(session.configEdited);
             }
             applyOptionsToForm(session.options);
+            if (session.hubConn) state.hubConn = session.hubConn;
+            if (session.hubName) state.hubName = session.hubName;
+            if (session.model) {
+                state.model = session.model;
+                state.useModel = Boolean(session.useModel);
+            }
+            if (Number.isFinite(session.matWidthM) && session.matWidthM > 0) {
+                state.mat.widthM = session.matWidthM;
+            }
+            if (Number.isFinite(session.matHeightM) && session.matHeightM > 0) {
+                state.mat.heightM = session.matHeightM;
+            }
+            if (session.season) {
+                state.season = session.season;
+            }
         } else if (initial.waypoints) {
             setWaypoints(initial.waypoints);
             el('mission-name').value = state.configName || 'mission';
-            applyPreset('balanced');
+            if (initial.options && Object.keys(initial.options).length) {
+                applyOptionsToForm(initial.options);
+            } else {
+                applyPreset('balanced');
+            }
         } else {
             setWaypoints([blankWaypoint(0, 0, 0)]);
             applyPreset('balanced');
@@ -1488,9 +3798,55 @@ async function init() {
         resetHistory();
 
         await loadExamples();
+        loadHistory(state.savedName || el('mission-name').value);
         renderRobotFacts();
         renderRobotEditor();
+        renderRobotChecks();
+        el('hub-conn').value = state.hubConn;
+        el('hub-name').value = state.hubName;
+        el('opt-use-model').checked = state.useModel && Boolean(state.model);
+        renderPlotTabs();
+        renderLegend();
+        drawPlot();
+        if (!el('cal-name').dataset.touched) {
+            el('cal-name').value = state.configName || 'robot';
+        }
+        renderModel();
+        updatePushButton();
         updateCandidatesHint();
+        el('mat-width').value = String(Math.round(state.mat.widthM * 1000));
+        el('mat-height').value = String(Math.round(state.mat.heightM * 1000));
+        renderRunHistory();
+        try {
+            state.robotInfo = await api('/api/robot');
+            renderRobotChecks();
+        } catch (err) {
+            // The robot's files are optional; the studio works without them.
+        }
+        try {
+            const models = await api('/api/robot/models');
+            state.models = models.models || [];
+            await loadModels();
+            if (state.model && !state.models.some((model) => model.path === state.model.path)) {
+                // The file is gone; do not keep pointing at it.
+                state.model = null;
+                state.useModel = false;
+                el('opt-use-model').checked = false;
+                renderModel();
+                toast('The measured model file is gone; the nominal model is used.');
+            }
+        } catch (err) {
+            // No measured model yet; the nominal one is used.
+        }
+        // A robot with a collected session reopens with its sheet.
+        loadSheet();
+        // The field: the mission models standing on the mat.
+        await loadFields();
+        if (session && session.season) {
+            state.season = session.season;
+            const select = el('field-season');
+            if (select) select.value = state.season;
+        }
 
         camera.offsetX = canvas.width / 2;
         camera.offsetY = canvas.height / 2;
@@ -1501,6 +3857,20 @@ async function init() {
         animate();
         if (restored) {
             toast(`Restored your last mission (${state.waypoints.length} waypoints).`);
+        }
+        if (initial.auto_solve) {
+            // --live: the studio opens on this mission and solves it right away.
+            // If a solve is already running (another tab, or a reload), show
+            // that one instead of starting a second.
+            const running = await api('/api/jobs/current');
+            if (running && running.job && running.job.status === 'running') {
+                state.jobId = running.job.id;
+                state.reportCandidate = null;
+                setBusy(true);
+                pollJob();
+            } else {
+                solve();
+            }
         }
     } catch (err) {
         setStatus(err.message, 'error');

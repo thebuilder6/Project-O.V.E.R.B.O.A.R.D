@@ -1,0 +1,19 @@
+challenge:
+  season: WRO 2026 Robomission Elementary
+  comment: map only, needs time or community to add models
+  year: 2026
+  match_duration_seconds: 120
+  rules: https://wro-association.org/wp-content/uploads/WRO-2026-RoboMission-Elementary-Game-Rules.pdf
+map:
+  imageurl: map.jpg
+  imagesepia: true
+  unit_of_measurement: mm
+  width: 2362
+  height: 1143
+  startareas:
+    - id: Launch Area
+      type: rectangle
+      width: 250
+      length: 250
+      x: 2050
+      y: 447

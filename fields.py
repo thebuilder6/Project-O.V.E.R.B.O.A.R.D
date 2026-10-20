@@ -1,0 +1,359 @@
+"""
+The field: the mat, the mission models standing on it, and whether a planned
+path drives into one.
+
+What this is for
+----------------
+A trajectory is a path on a real mat, and the mat has things on it. A plan
+that runs through a mission model is not a plan, whatever the optimiser
+thought. Nothing here *changes* a plan: the module only answers "does this
+path touch anything", so the studio can mark the touch and a human can
+decide.
+
+Where the geometry comes from
+-----------------------------
+The footprints are measured off FIRST's own field wireframe, which is public
+(``fields/*.json`` says which one, per season). The mat's picture is
+FIRST's copyright and is not in this repository: the operator supplies their
+own image of their mat, and the geometry is the *coordinates* on it.
+
+The measurement is good, but it is not a survey. Two independent readings of
+the same printed wireframe agree on the sizes to a few millimetres and place
+the features up to about 100 mm apart, so a footprint carries an uncertainty
+and a collision that is shallower than that uncertainty is reported as
+*uncertain* rather than as a hit.
+
+The frames
+----------
+Everything is in the **mat's** frame: the mat's south-west corner is
+``(0, 0)``, its north edge is up, and the units are metres. The studio's
+field canvas uses the same frame, so the footprints and the mat image line
+up. The table is bigger than the mat (2362 x 1143 mm against 2004 x 1143),
+with the mat centred in it, so the table's frame is the mat's frame plus
+181 mm in x.
+"""
+
+from dataclasses import dataclass
+from typing import Any, Dict, List, Optional, Tuple
+import json
+import math
+import os
+
+FIELDS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fields")
+
+
+@dataclass(frozen=True)
+class Obstacle:
+    """One thing standing on the mat.
+
+    Attributes:
+        id: a short name, unique in the field.
+        name: what it is, for the report.
+        kind: ``rect`` or ``circle``.
+        x_m: the centre, in the mat's frame.
+        y_m: the centre, in the mat's frame.
+        w_m: the width, or the diameter for a circle.
+        h_m: the height, or the diameter for a circle.
+        rot_deg: the rotation, for a rectangle.
+    """
+
+    id: str
+    name: str
+    kind: str
+    x_m: float
+    y_m: float
+    w_m: float
+    h_m: float
+    rot_deg: float = 0.0
+
+    def __post_init__(self) -> None:
+        if self.kind not in ("rect", "circle"):
+            raise ValueError(
+                f"obstacle {self.id}: kind must be rect or circle, "
+                f"got {self.kind!r}")
+        if self.w_m <= 0.0 or self.h_m <= 0.0:
+            raise ValueError(
+                f"obstacle {self.id}: a footprint needs a positive size")
+
+    @property
+    def radius_m(self) -> float:
+        """The distance from the centre to the edge, for a circle."""
+        return self.w_m / 2.0
+
+    def overlap(self, px: float, py: float, robot_radius_m: float) -> float:
+        """How deep a disc at ``(px, py)`` bites into this obstacle.
+
+        Args:
+            px: the point's x, in the mat's frame.
+            py: the point's y, in the mat's frame.
+            robot_radius_m: the radius of the disc.
+
+        Returns:
+            The overlap depth in metres. Zero means no overlap, and the
+            number is how far inside the footprint the disc reached.
+        """
+        if self.kind == "circle":
+            distance = math.hypot(px - self.x_m, py - self.y_m) - self.radius_m
+            return max(0.0, robot_radius_m - distance)
+
+        # A rectangle: turn the point into the rectangle's own frame, then
+        # measure the distance to the rectangle.
+        angle = math.radians(self.rot_deg)
+        cos_a, sin_a = math.cos(angle), math.sin(angle)
+        dx = px - self.x_m
+        dy = py - self.y_m
+        local_x = dx * cos_a + dy * sin_a
+        local_y = -dx * sin_a + dy * cos_a
+        half_w = self.w_m / 2.0
+        half_h = self.h_m / 2.0
+        outside_x = abs(local_x) - half_w
+        outside_y = abs(local_y) - half_h
+        if outside_x > 0.0 or outside_y > 0.0:
+            distance = math.hypot(max(outside_x, 0.0), max(outside_y, 0.0))
+        else:
+            distance = min(max(outside_x, outside_y), 0.0)
+        return max(0.0, robot_radius_m - distance)
+
+    def contains_point(self, px: float, py: float) -> bool:
+        """Whether a point is inside the footprint."""
+        return self.overlap(px, py, 0.0) > 0.0
+
+
+@dataclass(frozen=True)
+class Collision:
+    """A planned sample that runs into something."""
+
+    obstacle: Obstacle
+    index: int
+    t: float
+    x_m: float
+    y_m: float
+    depth_m: float
+    uncertain: bool
+
+    def as_dict(self) -> Dict[str, Any]:
+        """A JSON-safe row for the report."""
+        return {
+            "id": self.obstacle.id,
+            "name": self.obstacle.name,
+            "index": self.index,
+            "t": self.t,
+            "x_m": self.x_m,
+            "y_m": self.y_m,
+            "depth_m": self.depth_m,
+            "uncertain": self.uncertain,
+        }
+
+
+@dataclass(frozen=True)
+class FieldModel:
+    """A mat and what stands on it."""
+
+    season: str
+    label: str
+    mat_width_m: float
+    mat_height_m: float
+    placement_uncertainty_m: float
+    obstacles: Tuple[Obstacle, ...]
+    source: Dict[str, Any] = None  # type: ignore[assignment]
+    mat_image: Dict[str, Any] = None  # type: ignore[assignment]
+    mat_source: Dict[str, Any] = None  # type: ignore[assignment]
+    launch_areas: Tuple[Dict[str, Any], ...] = ()
+
+    def obstacle(self, obstacle_id: str) -> Optional[Obstacle]:
+        """The obstacle with that id, or None."""
+        for item in self.obstacles:
+            if item.id == obstacle_id:
+                return item
+        return None
+
+    def collisions(
+        self,
+        samples: List[Dict[str, Any]],
+        robot_radius_m: float = 0.0,
+    ) -> List[Collision]:
+        """Where the planned samples run into something.
+
+        The robot is treated as a disc of ``robot_radius_m`` centred on the
+        path, which is the axle-to-axle width of a differential drive. The
+        path between the samples is not checked: the samples are 20 ms
+        apart, so the path between them cannot leave the corridor the
+        samples cover.
+
+        A collision shallower than the placement uncertainty is still
+        reported, but marked ``uncertain``: the footprint's own position is
+        not known to better than that, so it is not a hit.
+
+        Args:
+            samples: the planned samples, each with ``x``, ``y`` and
+                optionally ``t``.
+            robot_radius_m: the radius of the robot's body.
+
+        Returns:
+            The collisions, in the order the samples appear. One entry per
+            obstacle: the deepest overlap wins.
+        """
+        found: Dict[str, Collision] = {}
+        for index, sample in enumerate(samples):
+            try:
+                x = float(sample["x"])
+                y = float(sample["y"])
+            except (KeyError, TypeError, ValueError):
+                continue
+            for obstacle in self.obstacles:
+                depth = obstacle.overlap(x, y, robot_radius_m)
+                if depth <= 0.0:
+                    continue
+                existing = found.get(obstacle.id)
+                if existing is not None and existing.depth_m >= depth:
+                    continue
+                found[obstacle.id] = Collision(
+                    obstacle=obstacle,
+                    index=index,
+                    t=float(sample.get("t", 0.0) or 0.0),
+                    x_m=x,
+                    y_m=y,
+                    depth_m=depth,
+                    uncertain=depth <= self.placement_uncertainty_m,
+                )
+        return sorted(found.values(), key=lambda item: item.index)
+
+    def as_dict(self) -> Dict[str, Any]:
+        """A JSON-safe description, for the browser."""
+        return {
+            "season": self.season,
+            "label": self.label,
+            "mat": {
+                "width_m": self.mat_width_m,
+                "height_m": self.mat_height_m,
+            },
+            "placement_uncertainty_m": self.placement_uncertainty_m,
+            "obstacles": [
+                {
+                    "id": item.id,
+                    "name": item.name,
+                    "kind": item.kind,
+                    "x_m": item.x_m,
+                    "y_m": item.y_m,
+                    "w_m": item.w_m,
+                    "h_m": item.h_m,
+                    "rot_deg": item.rot_deg,
+                }
+                for item in self.obstacles
+            ],
+            "source": dict(self.source or {}),
+            "mat_image": dict(self.mat_image or {}),
+            "mat_source": dict(self.mat_source or {}),
+            "launch_areas": [dict(area) for area in self.launch_areas],
+        }
+
+
+def _obstacle_from_dict(payload: Dict[str, Any]) -> Obstacle:
+    return Obstacle(
+        id=str(payload["id"]),
+        name=str(payload.get("name", payload["id"])),
+        kind=str(payload.get("kind", "rect")),
+        x_m=float(payload["x_m"]),
+        y_m=float(payload["y_m"]),
+        w_m=float(payload["w_m"]),
+        h_m=float(payload["h_m"]),
+        rot_deg=float(payload.get("rot_deg", 0.0) or 0.0),
+    )
+
+
+def field_from_dict(payload: Dict[str, Any]) -> FieldModel:
+    """Build a field model from its JSON description."""
+    mat = payload.get("mat", {}) or {}
+    obstacles = tuple(
+        _obstacle_from_dict(item)
+        for item in payload.get("obstacles", []) or [])
+    return FieldModel(
+        season=str(payload.get("season", "")),
+        label=str(payload.get("label", payload.get("season", ""))),
+        mat_width_m=float(mat.get("width_m", 0.0) or 0.0),
+        mat_height_m=float(mat.get("height_m", 0.0) or 0.0),
+        placement_uncertainty_m=float(
+            payload.get("placement_uncertainty_m", 0.0) or 0.0),
+        obstacles=obstacles,
+        source=dict(payload.get("source", {}) or {}),
+        mat_image=dict(payload.get("mat_image", {}) or {}),
+        mat_source=dict(payload.get("mat_source", {}) or {}),
+        launch_areas=tuple(
+            dict(area) for area in payload.get("launch_areas", []) or []),
+    )
+
+
+def list_fields() -> List[Dict[str, str]]:
+    """The fields this repository knows about.
+
+    Returns:
+        One row per season file: its id and its label.
+    """
+    rows: List[Dict[str, str]] = []
+    if not os.path.isdir(FIELDS_DIR):
+        return rows
+    for name in sorted(os.listdir(FIELDS_DIR)):
+        if not name.endswith(".json"):
+            continue
+        path = os.path.join(FIELDS_DIR, name)
+        try:
+            with open(path, "r", encoding="utf-8") as handle:
+                payload = json.load(handle)
+        except (OSError, ValueError):
+            continue
+        rows.append({
+            "id": str(payload.get("season") or os.path.splitext(name)[0]),
+            "label": str(payload.get("label")
+                         or payload.get("season")
+                         or os.path.splitext(name)[0]),
+        })
+    return rows
+
+
+def load_field(season: str) -> Optional[FieldModel]:
+    """Load one field by its season id, or None when there is no such file."""
+    if not season:
+        return None
+    safe = "".join(
+        ch for ch in str(season) if ch.isalnum() or ch in "-_").strip()
+    if not safe:
+        return None
+    path = os.path.join(FIELDS_DIR, f"{safe}.json")
+    if os.path.isfile(path):
+        with open(path, "r", encoding="utf-8") as handle:
+            return field_from_dict(json.load(handle))
+    # The file may be named after the season and its edition, so fall back to
+    # looking at what the files say they are.
+    if not os.path.isdir(FIELDS_DIR):
+        return None
+    for name in sorted(os.listdir(FIELDS_DIR)):
+        if not name.endswith(".json"):
+            continue
+        try:
+            with open(os.path.join(FIELDS_DIR, name), "r",
+                      encoding="utf-8") as handle:
+                payload = json.load(handle)
+        except (OSError, ValueError):
+            continue
+        if str(payload.get("season", "")) == str(season):
+            return field_from_dict(payload)
+    return None
+
+
+def load_all_fields() -> Dict[str, FieldModel]:
+    """Every field this repository knows about, by season id."""
+    result: Dict[str, FieldModel] = {}
+    if not os.path.isdir(FIELDS_DIR):
+        return result
+    for name in sorted(os.listdir(FIELDS_DIR)):
+        if not name.endswith(".json"):
+            continue
+        path = os.path.join(FIELDS_DIR, name)
+        try:
+            with open(path, "r", encoding="utf-8") as handle:
+                payload = json.load(handle)
+            model = field_from_dict(payload)
+        except (OSError, ValueError, KeyError):
+            continue
+        result[model.season or os.path.splitext(name)[0]] = model
+    return result

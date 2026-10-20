@@ -1,0 +1,23 @@
+# command: C:\Users\jumpi\AppData\Local\Microsoft\WindowsApps\PythonSoftwareFoundation.Python.3.12_qbz5n2kfra8p0\python.exe main.py -c examples/fll_choreo.json -w examples/example_s_curve.json -o C:\Users\jumpi\AppData\Local\Temp\tmp8k8vei06\example_s_curve.traj --validate
+# wall_seconds: 9.4
+# exit_code: 1
+
+Using the example robot config (examples/fll_choreo.json). Pass -c/--config with your own robot to plan for your build.
+Using the simple CasADi optimizer
+Solving 3 waypoints (samples=10, accuracy_weight=0.0, candidates=2, mixed equal-duration/per-segment dt)...
+Solving 2 candidates (in parallel)...
+Candidate 1/2 (guess_style=baseline, equal-duration dt)...
+  Running the Immrax robustness check...
+  FAILED: tracking error 1.55 cm > 0.50 cm; forward-integration error 1.33 cm; final integration error 1.31 cm.
+Candidate 2/2 (guess_style=baseline, per-segment dt)...
+  Running the Immrax robustness check...
+  FAILED: tracking error 1.47 cm > 0.50 cm; forward-integration error 1.19 cm; final integration error 1.14 cm.
+  Candidate 1 (baseline, equal-dur):  3.696 s, envelope 0.78 cm (failed)
+      segment times: 1.85 1.85 s
+  Candidate 2 (baseline, per-seg):  3.667 s, envelope 0.73 cm (failed)
+      segment times: 1.81 1.85 s
+  Selected candidate 2.
+##OVERBOARD-VALIDATION## {"selected": 2, "candidates": [{"index": 1, "style": "baseline", "timing": "equal-duration", "accuracy_weight": 0.0, "duration_s": 3.6964565730115204, "envelope_cm": 0.7770703520855394, "tracking_cm": 1.553298905491829, "heading_error_deg": 0.2991622856465585, "ok": false, "converged": true, "reasons": ["tracking error 1.55 cm > 0.50 cm", "forward-integration error 1.33 cm", "final integration error 1.31 cm"], "segments": [{"from": 0, "to": 1, "limit_m": 0.02, "envelope_m": 0.00314903620001614, "drift_m": 0.010381637899285793, "violations": 0, "slip_points": 0, "ok": true}, {"from": 1, "to": 2, "limit_m": 0.02, "envelope_m": 0.007437317058640565, "drift_m": 0.013343962684790442, "violations": 0, "slip_points": 0, "ok": true}]}, {"index": 2, "style": "baseline", "timing": "per-segment", "accuracy_weight": 0.0, "duration_s": 3.666649500674729, "envelope_cm": 0.7323674581137888, "tracking_cm": 1.4678212814033031, "heading_error_deg": 0.2733441705839103, "ok": false, "converged": true, "reasons": ["tracking error 1.47 cm > 0.50 cm", "forward-integration error 1.19 cm", "final integration error 1.14 cm"], "segments": [{"from": 0, "to": 1, "limit_m": 0.02, "envelope_m": 0.002941250726555973, "drift_m": 0.007685545241115741, "violations": 0, "slip_points": 0, "ok": true}, {"from": 1, "to": 2, "limit_m": 0.02, "envelope_m": 0.006999265292950204, "drift_m": 0.011895046257663317, "violations": 0, "slip_points": 0, "ok": true}]}]}
+
+--- stderr ---
+Error: Validation failed: tracking error 1.47 cm > 0.50 cm; forward-integration error 1.19 cm; final integration error 1.14 cm. No trajectory written to 'C:\Users\jumpi\AppData\Local\Temp\tmp8k8vei06\example_s_curve.traj'.

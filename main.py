@@ -381,6 +381,7 @@ def _emit_validation_report(attempts, selected_index):
             "index": number,
             "style": attempt.get("guess_style"),
             "timing": "per-segment" if attempt.get("per_segment_dt") else "equal-duration",
+            "accuracy_weight": _finite(attempt.get("accuracy_weight")),
             "duration_s": _finite(attempt.get("duration")),
             "envelope_cm": _finite(attempt.get("tube", 0.0) * 100.0),
             "tracking_cm": _finite(attempt.get("tracking_m", 0.0) * 100.0),
@@ -744,6 +745,12 @@ def _print_summary(output, samples_data, robot_cfg, validate, attempt_passed, tu
               default='none', help='Export format for controller consumption (python-compact is the packed Pybricks format).')
 @click.option('--controller-dt', default=0.02, type=click.FloatRange(min=0.001, max=1.0),
               help='Fixed timestep for controller export (seconds).')
+@click.option('--control-dt', default=0.02, type=click.FloatRange(min=0.001, max=0.2),
+              help='The control period the validator models, in seconds. The deployed '
+                   'controllers hold their command for 5 ms, but a robot that cannot '
+                   'sustain it runs slower; set this to the period the robot actually '
+                   'achieves (the pushed session reports it) so the gate is measured '
+                   'against the controller that will run.')
 @click.option('--benchmark', is_flag=True,
               help='Collect comprehensive benchmarking data for whitepaper.')
 
@@ -765,6 +772,9 @@ def _print_summary(output, samples_data, robot_cfg, validate, attempt_passed, tu
 @click.option('--live', is_flag=True,
               help='Open the browser studio on this mission and solve it there (blocking).')
 @click.option('--show-convergence', is_flag=True, help='Show convergence visualization.')
+@click.option('--iteration-history', type=click.Path(dir_okay=False), default=None,
+              help='Write the solver\'s iteration history to this JSON file, for the '
+                   'studio to plot how the trajectory converged.')
 @click.option('--convergence-mode', type=click.Choice(['parallel', 'best', 'layered'], case_sensitive=False),
               default='best', help='Convergence visualization mode.')
 
@@ -774,9 +784,11 @@ def _print_summary(output, samples_data, robot_cfg, validate, attempt_passed, tu
 @click.pass_context
 def main(ctx, config, waypoints, output, gui, gui_port, doctor, multiverse, simple, preset,
          samples, accuracy_weight, candidates, stop_waypoints, events, per_segment_dt, uniform_dt,
-         no_parallel, workers, fast_polish, sweep, self_consistent, validate, sysid_fit, export_format, controller_dt, benchmark,
+         no_parallel, workers, fast_polish, sweep, self_consistent, validate,
+         sysid_fit, export_format, controller_dt, control_dt, benchmark,
          push_hub, hub_conn, hub_name, hub_log,
-         plot, animate, live, show_convergence, convergence_mode, verbose, quiet):
+         plot, animate, live, show_convergence, convergence_mode, iteration_history,
+         verbose, quiet):
     """
     FLL Trajectory Optimizer CLI.
     Generates time-optimal trajectories for Lego robots.
@@ -883,6 +895,17 @@ def main(ctx, config, waypoints, output, gui, gui_port, doctor, multiverse, simp
             fg="yellow",
         )
 
+    # A motor written from memory is a guess. The published SPIKE Prime
+    # motors say whether the declared numbers are in the neighbourhood of a
+    # real LEGO motor; a measured robot does not need this.
+    if not quiet:
+        from drivetrain import compare_declared_motor
+        motor_check = compare_declared_motor(
+            robot_cfg.t_max_nm, robot_cfg.v_max_rad_s,
+            robot_cfg.wheel_radius, robot_cfg.gearing)
+        if motor_check.get("suspicious"):
+            click.secho(f"  Motor: {motor_check['note']}.", fg="yellow")
+
     digital_twin = None
     if sysid_fit:
         if not (validate or live):
@@ -952,6 +975,30 @@ def main(ctx, config, waypoints, output, gui, gui_port, doctor, multiverse, simp
                     "using the nominal model."
                 )
 
+        # A measured motor replaces the declared one in the config, so that
+        # the optimizer, the CPU audit, the Immrax validator and the exported
+        # controller all plan against the same motor. Before this, the
+        # optimizer planned against the declared motor while the validator
+        # checked the measured one, so a plan could satisfy its own
+        # constraint and still trip the validator (KI-010).
+        measured_motor = digital_twin.measured_motor(gearing=robot_cfg.gearing)
+        if measured_motor:
+            changes = robot_cfg.apply_measured_motor(**measured_motor)
+            if not quiet:
+                for name, change in changes.items():
+                    if isinstance(change, dict):
+                        click.echo(
+                            "  Measured motor: {n} {d:.4f} -> {m:.4f}".format(
+                                n=name, d=change["declared"], m=change["measured"])
+                        )
+                    else:
+                        click.echo(f"  Measured motor: {name} {change}")
+        elif not quiet:
+            click.echo(
+                "  The fit has no measured motor numbers; the config's "
+                "declared motor is used."
+            )
+
     # Choose optimizer
     if multiverse:
         if not quiet:
@@ -992,7 +1039,7 @@ def main(ctx, config, waypoints, output, gui, gui_port, doctor, multiverse, simp
             f"{dt_label})..."
         )
 
-    capture_iterations = show_convergence
+    capture_iterations = show_convergence or bool(iteration_history)
 
     # --- CANDIDATE LOOP (validate and select; KI-020) ---
     # Solve several candidates, score each with the same Immrax check, and let
@@ -1026,9 +1073,9 @@ def main(ctx, config, waypoints, output, gui, gui_port, doctor, multiverse, simp
         )
         if not multiverse:
             solve_kwargs["guess_style"] = spec["guess_style"]
+            solve_kwargs["per_segment_dt"] = spec.get("per_segment_dt", False)
             if self_consistent:
                 solve_kwargs["self_consistent"] = True
-            solve_kwargs["per_segment_dt"] = spec.get("per_segment_dt", False)
         if fast_polish:
             solve_kwargs["fast_polish"] = True
         solve_payloads.append((robot_cfg, wps, spec, solve_kwargs, multiverse))
@@ -1086,9 +1133,10 @@ def main(ctx, config, waypoints, output, gui, gui_port, doctor, multiverse, simp
             validator_cls, robot_config_cls = _ensure_jax_classes()
             jax_cfg = robot_config_cls(robot_cfg)
             if digital_twin is None:
-                immrax_val = validator_cls(jax_cfg)
+                immrax_val = validator_cls(jax_cfg, control_dt=control_dt)
             else:
-                immrax_val = validator_cls(jax_cfg, digital_twin=digital_twin)
+                immrax_val = validator_cls(jax_cfg, digital_twin=digital_twin,
+                                           control_dt=control_dt)
 
             # Use the uncertainty ranges declared in the config (KI-009).
             cof_range = robot_cfg.uncertainties["cof"]
@@ -1327,6 +1375,21 @@ def main(ctx, config, waypoints, output, gui, gui_port, doctor, multiverse, simp
         if hasattr(optimizer, 'iteration_history') and optimizer.iteration_history:
             from convergence_plotter import plot_convergence
             plot_convergence(optimizer.iteration_history, mode=convergence_mode, waypoints=wps, title=f"Convergence: {os.path.basename(output)}")
+
+    if iteration_history:
+        # The way the trajectory converged, for a tool that plots it.
+        history = getattr(optimizer, "iteration_history", []) or []
+        entries = []
+        for entry in history:
+            item = dict(entry)
+            for key, value in list(item.items()):
+                if hasattr(value, "tolist"):
+                    item[key] = value.tolist()
+            entries.append(item)
+        with open(iteration_history, "w", encoding="utf-8") as handle:
+            json.dump(entries, handle)
+        if not quiet:
+            click.echo(f"  wrote {len(entries)} iterations to {iteration_history}")
 
 
 if __name__ == '__main__':

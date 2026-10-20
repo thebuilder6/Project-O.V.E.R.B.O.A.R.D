@@ -1,0 +1,67 @@
+# command: C:\Users\jumpi\AppData\Local\Microsoft\WindowsApps\PythonSoftwareFoundation.Python.3.12_qbz5n2kfra8p0\python.exe main.py -c examples/fll_choreo.json -w examples/example_mission_first4.json -o C:\Users\jumpi\AppData\Local\Temp\tmpi2zdhguj\example_mission_first4.traj --validate
+# wall_seconds: 8.2
+# exit_code: 0
+
+Using the example robot config (examples/fll_choreo.json). Pass -c/--config with your own robot to plan for your build.
+Using the simple CasADi optimizer
+Solving 4 waypoints (samples=10, accuracy_weight=0.0, candidates=2, mixed equal-duration/per-segment dt)...
+Solving 2 candidates (in parallel)...
+Candidate 1/2 (guess_style=baseline, equal-duration dt)...
+  Running the Immrax robustness check...
+  Passed! envelope 0.32 cm, all segments within thresholds.
+Candidate 2/2 (guess_style=baseline, per-segment dt)...
+  Running the Immrax robustness check...
+  Passed! envelope 0.31 cm, all segments within thresholds.
+  Candidate 1 (baseline, equal-dur):  2.176 s, envelope 0.32 cm (ok)
+      segment times: 0.73 0.73 0.73 s
+  Candidate 2 (baseline, per-seg):  1.833 s, envelope 0.31 cm (ok)
+      segment times: 0.65 0.41 0.78 s
+  Selected candidate 2.
+##OVERBOARD-VALIDATION## {"selected": 2, "candidates": [{"index": 1, "style": "baseline", "timing": "equal-duration", "accuracy_weight": 0.0, "duration_s": 2.1760454431579066, "envelope_cm": 0.3203687628688845, "tracking_cm": 0.24352839682251215, "heading_error_deg": 0.002049056751003825, "ok": true, "converged": true, "reasons": [], "segments": [{"from": 0, "to": 1, "limit_m": 0.02, "envelope_m": 0.0019285754539230082, "drift_m": 0.00048207168917254394, "violations": 0, "slip_points": 0, "ok": true}, {"from": 1, "to": 2, "limit_m": 0.02, "envelope_m": 0.0024160345599804674, "drift_m": 0.00036717242627533266, "violations": 0, "slip_points": 0, "ok": true}, {"from": 2, "to": 3, "limit_m": 0.02, "envelope_m": 0.0031762836790009126, "drift_m": 0.0012064426531828074, "violations": 0, "slip_points": 0, "ok": true}]}, {"index": 2, "style": "baseline", "timing": "per-segment", "accuracy_weight": 0.0, "duration_s": 1.8333813555656195, "envelope_cm": 0.30987347116137565, "tracking_cm": 0.23540356196463108, "heading_error_deg": 0.002663773776304973, "ok": true, "converged": true, "reasons": [], "segments": [{"from": 0, "to": 1, "limit_m": 0.02, "envelope_m": 0.0019038443678549102, "drift_m": 0.00046240664595243087, "violations": 0, "slip_points": 0, "ok": true}, {"from": 1, "to": 2, "limit_m": 0.02, "envelope_m": 0.0022981822413222722, "drift_m": 0.00028014059604472395, "violations": 0, "slip_points": 0, "ok": true}, {"from": 2, "to": 3, "limit_m": 0.02, "envelope_m": 0.0030661288839365776, "drift_m": 0.0013448998584062997, "violations": 0, "slip_points": 0, "ok": true}]}]}
+
+=== Validation Report: C:\Users\jumpi\AppData\Local\Temp\tmpi2zdhguj\example_mission_first4.traj ===
+Samples: 31 | Config: examples/fll_choreo.json
+Safety margins: torque_headroom=0.85, speed_headroom=0.90
+
+-- Metrics --
+  total_time_s: 1.8334
+  path_length_m: 0.4623
+  max_linear_speed_m_s: 0.4103
+  avg_linear_speed_m_s: 0.2538
+  max_wheel_speed_m_s: 0.4336
+  max_accel_m_s2: 6.7187
+  max_jerk_m_s3: 185.7282
+  avg_jerk_m_s3: 22.8967
+  tortuosity: 1.1334
+  velocity_chattering: 6
+  avg_force_utilization: 0.1779
+  max_force_utilization: 0.6570
+
+-- Constraint Audit --
+  Violating samples: 0
+  Max left_motor_force violation: 0.000000 N
+  Max right_motor_force violation: 0.000000 N
+  Max traction_total violation: 0.000000 N
+  Max wheel speed: 0.4336 m/s (limit 0.5209 m/s)
+
+-- Wheel Slip Detection --
+  Slip points: 0
+  Max left wheel slip: 0.000000 N
+  Max right wheel slip: 0.000000 N
+
+-- Forward Integration (1 ms RK4) --
+  max_pos_error_m: 0.001488
+  rms_pos_error_m: 0.000627
+  max_heading_error_rad: 0.007566
+  final_pos_error_m: 0.001488
+  final_heading_error_rad: 0.000027
+
+-- Waypoint Check --
+  Final position error: 0.000000 m
+  Final heading error: 0.000000 rad
+
+PASS — trajectory is safe to run.
+
+Trajectory written to C:\Users\jumpi\AppData\Local\Temp\tmpi2zdhguj\example_mission_first4.traj
+  duration 1.833 s | path 0.462 m | peak wheel speed 0.43 m/s | 31 samples
+  validation: passed (envelope 0.31 cm)

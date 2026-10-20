@@ -1,0 +1,192 @@
+challenge:
+  season: WRO 2025 Robomission Senior
+  year: 2025
+  match_duration_seconds: 120
+  rules: https://wro-association.org/wp-content/uploads/WRO-2025-RoboMission-Senior-Game-Rules.pdf
+map:
+  imagesepia: true
+  imageurl: map.png
+  width: 2362
+  height: 1143
+  models:
+    M01:
+      areas:
+        - length: 180
+          role: start
+          rotation: 0
+          width: 75
+          x: 2075
+          y: 120
+          passive: true
+        - length: 180
+          role: start
+          rotation: 0
+          width: 75
+          x: 2170
+          y: 120
+          passive: true
+
+        # goal areas
+        - length: 240
+          role: target
+          rotation: 41
+          width: 90
+          x: 2004
+          y: 546
+          placeholder: true
+        - length: 240
+          role: target
+          rotation: -41
+          width: 92
+          x: 2162
+          y: 857
+          placeholder: true
+      name: Rocket Nose
+      score:
+        M01a:
+          description: The nose part is completely and upright in the correct coloured rocket nose target area.
+          max: 2
+          min: 0
+          score: 10
+          type: range
+        M01b:
+          description: The nose part is completely and upright in the wrong-coloured rocket nose target area.
+          max: 2
+          min: 0
+          score: 5
+          type: range
+          rule:
+            not: M01a
+    M02:
+      areas:
+        - length: 130
+          role: start
+          rotation: 0
+          width: 135
+          x: 99
+          y: 947
+          passive: true
+
+        # goal areas
+        - length: 145
+          role: target
+          rotation: 0
+          width: 66
+          x: 973
+          y: 924
+          placeholder: true
+        - length: 145
+          role: target
+          rotation: 0
+          width: 66
+          x: 1642
+          y: 923
+          placeholder: true
+      name: Rocket sections
+      score:
+        M02a:
+          description: Bolt is completely in the rocket integration area and its colour is matching the colour of the corresponding marking block
+          max: 4
+          min: 0
+          score: 12
+          type: range
+        M02b:
+          description: Bolt is partly touching any rocket integration area or completely in but not matching the colour of the corresponding marking block
+          max: 4
+          min: 0
+          score: 5
+          type: range
+          rule:
+            not: M02a
+    M03:
+      areas:
+        - length: 105
+          role: start
+          rotation: 0
+          width: 105
+          x: 200
+          y: 416
+          passive: true
+
+        # goal area
+        - length: 115
+          role: target
+          rotation: 0
+          width: 115
+          x: 925
+          y: 581
+          placeholder: true
+      name: Load the rocket
+      score:
+        M03a:
+          description: Payload is fully in the payload area and has the correct orientation
+          score: 28
+        M03b:
+          description: Payload is partly touching the payload area (no matter which orientation) or fully in but has the wrong orientation
+          score: 14
+          rule:
+            not: M03a
+    M04:
+      areas:
+        - length: 61
+          rotation: 0
+          width: 189
+          x: 477
+          y: 937
+      name: Check systems
+      score:
+        M04a:
+          description: Flag in system console is in upright position
+          max: 2
+          min: 0
+          score: 15
+          type: range
+    M05:
+      areas:
+        - length: 150
+          rotation: 0
+          width: 301
+          x: 951
+          y: 375
+        - length: 285
+          rotation: 0
+          width: 50
+          x: 1570
+          y: 605
+      name: Close the hatches
+      score:
+        M05a:
+          description: Hatches are closed
+          max: 2
+          min: 0
+          score: 9
+          type: range
+    M06:
+      areas:
+        - length: 338
+          rotation: 0
+          width: 36
+          x: 1068
+          y: 731
+        - length: 132
+          rotation: 0
+          width: 36
+          x: 1577
+          y: 938
+      name: Bonus for barriers
+      score:
+        M06a:
+          description: Barrier is not damaged or moved
+          max: 2
+          min: 0
+          score: 7
+          type: range
+  startareas:
+    - id: Launch Area
+      length: 252
+      rotation: 0
+      type: rectangle
+      width: 251
+      x: 125
+      y: 95
+  unit_of_measurement: mm

@@ -132,6 +132,12 @@ class RobotConfig:
                 ("t_max_range",), (self.t_max_nm * 0.75, self.t_max_nm * 0.95)),
         }
 
+        # Whether the config declared the stall-torque range itself. A
+        # measured stall torque replaces the declared number, and the range
+        # that was derived from the declared number has to follow it, unless
+        # the config pinned the range on purpose.
+        self.declared_t_max_range = "t_max_range" in uncertainty_cfg or "t_max_range" in robot_cfg
+
         # Store multiverse config if present
         self.multiverse_config = config_dict.get("multiverse", {})
 
@@ -222,6 +228,72 @@ class RobotConfig:
         torque = ca.fmax(0, torque)
         force = (torque / r_force) * self.gearing
         return force * headroom
+
+    def apply_measured_motor(
+        self,
+        t_max_nm: Optional[float] = None,
+        t_max_range: Optional[Tuple[float, float]] = None,
+        no_load_speed_rad_s: Optional[float] = None,
+    ) -> Dict[str, Any]:
+        """Replace the declared motor numbers with measured ones.
+
+        The motor's torque-speed line is fixed by its two ends: the stall
+        torque and the speed at which the torque reaches zero. The config
+        can only declare both, and a declared number is a guess until
+        somebody pushes the robot into a wall and lifts it off the ground.
+
+        When the calibration measured them, the measurement is the number
+        every tool uses: the optimizer's wheel-force constraint, the CPU
+        audit, the Immrax validator and the exported controller all read
+        this one config (KI-010). Before this, the optimizer planned
+        against the declared motor while the validator checked the measured
+        one, so a plan could satisfy its own constraint and still trip the
+        validator.
+
+        The stall-torque range follows the measured number as well, unless
+        the config pinned the range itself: the range that was derived from
+        the declared number describes the declared number.
+
+        Args:
+            t_max_nm: the measured stall torque, in N*m.
+            t_max_range: the measured stall torque's interval, in N*m.
+            no_load_speed_rad_s: the measured no-load speed, in rad/s at the
+                motor. This is the speed at which the motor makes no torque.
+
+        Returns:
+            What changed, for the report. Empty when nothing was applied.
+        """
+        changes: Dict[str, Any] = {}
+
+        if t_max_nm is not None and float(t_max_nm) > 0.0:
+            value = float(t_max_nm)
+            if abs(value - float(self.t_max_nm)) > 1e-12:
+                changes["t_max_nm"] = {
+                    "declared": float(self.t_max_nm),
+                    "measured": value,
+                }
+                self.t_max_nm = value
+                if not self.declared_t_max_range:
+                    # The range was derived from the declared number, so it
+                    # has to follow the measured one.
+                    self.uncertainties["t_max_range"] = (
+                        value * 0.75, value * 0.95)
+        if t_max_range is not None:
+            low, high = float(t_max_range[0]), float(t_max_range[1])
+            if low > 0.0 and high >= low:
+                self.uncertainties["t_max_range"] = (low, high)
+                changes["t_max_range"] = [low, high]
+
+        if no_load_speed_rad_s is not None and float(no_load_speed_rad_s) > 0.0:
+            value = float(no_load_speed_rad_s)
+            if abs(value - float(self.v_max_rad_s)) > 1e-12:
+                changes["v_max_rad_s"] = {
+                    "declared": float(self.v_max_rad_s),
+                    "measured": value,
+                }
+                self.v_max_rad_s = value
+
+        return changes
 
 
 class DifferentialDriveModel:

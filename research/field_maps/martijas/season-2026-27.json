@@ -1,0 +1,335 @@
+{
+  "id": "2026-27",
+  "name": "BIOGLOW",
+  "program": "FIRST LEGO League Challenge",
+  "sources": {
+    "table": "fll-challenge-bioglow-table-building-instructions.pdf",
+    "wireframe": "fll-challenge-bioglow-wireframe-grid.pdf (page 2)",
+    "rules": "fll-challenge-bioglow-rgr.pdf"
+  },
+  "table": {
+    "_note": "Interior of border walls. Table guide: L=93in (2362mm) x W=45in (1143mm); walls 1.5in x 2.5in (38x64mm).",
+    "interiorMm": {
+      "w": 2362,
+      "h": 1143
+    },
+    "wall": {
+      "thicknessMm": 38,
+      "heightMm": 64
+    },
+    "surfaceMm": {
+      "w": 2438,
+      "h": 1219
+    }
+  },
+  "mat": {
+    "_note": "Measured from the wireframe PDF: ten 20 cm grid columns = 2000 mm; aspect 1.7537 -> 1140 mm. Table guide: flush against south wall, centred, ~9 mm gap at north wall, ~181 mm free at each side (rulebook says ~171 mm). VERIFY with a tape measure on the real mat.",
+    "sizeMm": {
+      "w": 2000,
+      "h": 1140
+    },
+    "placement": "south-centered",
+    "image": {
+      "default": "resources/2026-27-bioglow/derived/mat-color.png",
+      "fallback": "resources/2026-27-bioglow/derived/mat-wireframe.png",
+      "pxPerMm": 2
+    }
+  },
+  "launchAreas": [
+    {
+      "id": "left",
+      "color": "red",
+      "shape": "quarter-circle",
+      "centerMm": {
+        "x": 0,
+        "y": 0
+      },
+      "radiusMm": 483
+    },
+    {
+      "id": "right",
+      "color": "blue",
+      "shape": "quarter-circle",
+      "centerMm": {
+        "x": 2000,
+        "y": 0
+      },
+      "radiusMm": 483
+    }
+  ],
+  "robotLimits": {
+    "heightMm": 305
+  },
+  "match": {
+    "durationS": 150,
+    "precisionTokens": 6
+  },
+  "missionModels": [
+    {
+      "id": "m01",
+      "missions": [
+        1
+      ],
+      "name": "Drone Survey",
+      "shape": {
+        "kind": "circle",
+        "cx": 1152,
+        "cy": 55,
+        "r": 34
+      },
+      "heightMm": 120,
+      "color": "#7d8a99",
+      "note": "Launch pad (3 dual-lock spots); survey area is printed at x 1000-1100, y 180-275"
+    },
+    {
+      "id": "m02",
+      "missions": [
+        2
+      ],
+      "name": "Exploding Seeds",
+      "shape": {
+        "kind": "rect",
+        "cx": 636,
+        "cy": 538,
+        "w": 62,
+        "h": 62,
+        "rot": 0
+      },
+      "heightMm": 150,
+      "color": "#6e8b3d"
+    },
+    {
+      "id": "m03",
+      "missions": [
+        3
+      ],
+      "name": "Flip the Rock",
+      "shape": {
+        "kind": "rect",
+        "cx": 84,
+        "cy": 657,
+        "w": 132,
+        "h": 66,
+        "rot": 0
+      },
+      "heightMm": 80,
+      "color": "#8a8a8a"
+    },
+    {
+      "id": "m04",
+      "missions": [
+        4
+      ],
+      "name": "Lucky Leaves (nest)",
+      "shape": {
+        "kind": "rect",
+        "cx": 121,
+        "cy": 1019,
+        "w": 132,
+        "h": 132,
+        "rot": 0
+      },
+      "heightMm": 90,
+      "color": "#5f8f3a",
+      "note": "Bold outline = leaf habitat"
+    },
+    {
+      "id": "m05",
+      "missions": [
+        5
+      ],
+      "name": "Reaching Roots",
+      "shape": {
+        "kind": "rect",
+        "cx": 406,
+        "cy": 1088,
+        "w": 42,
+        "h": 88,
+        "rot": 0
+      },
+      "heightMm": 170,
+      "color": "#7a5230"
+    },
+    {
+      "id": "m06-07",
+      "missions": [
+        6,
+        7
+      ],
+      "name": "Leafcutter Frenzy / Humongous Fungus",
+      "shape": {
+        "kind": "rect",
+        "cx": 1537,
+        "cy": 1070,
+        "w": 155,
+        "h": 124,
+        "rot": 0
+      },
+      "heightMm": 110,
+      "color": "#b0703a"
+    },
+    {
+      "id": "m08-09",
+      "missions": [
+        8,
+        9
+      ],
+      "name": "Tangled / Research Platform",
+      "shape": {
+        "kind": "rect",
+        "cx": 578,
+        "cy": 1059,
+        "w": 153,
+        "h": 128,
+        "rot": 0
+      },
+      "heightMm": 260,
+      "color": "#5d7c2e"
+    },
+    {
+      "id": "m10a",
+      "missions": [
+        10
+      ],
+      "name": "Fragile Microhabitats (habitat)",
+      "shape": {
+        "kind": "rect",
+        "cx": 751,
+        "cy": 1048,
+        "w": 42,
+        "h": 47,
+        "rot": 0
+      },
+      "heightMm": 50,
+      "color": "#a58a5a"
+    },
+    {
+      "id": "m10b",
+      "missions": [
+        10
+      ],
+      "name": "Fragile Microhabitats (habitat)",
+      "shape": {
+        "kind": "rect",
+        "cx": 1096,
+        "cy": 776,
+        "w": 36,
+        "h": 36,
+        "rot": 0
+      },
+      "heightMm": 50,
+      "color": "#a58a5a"
+    },
+    {
+      "id": "m11",
+      "missions": [
+        11
+      ],
+      "name": "Window to the Past",
+      "shape": {
+        "kind": "rect",
+        "cx": 1405,
+        "cy": 592,
+        "w": 95,
+        "h": 95,
+        "rot": 45
+      },
+      "heightMm": 110,
+      "color": "#7a5230"
+    },
+    {
+      "id": "m12",
+      "missions": [
+        12
+      ],
+      "name": "Forest Elder (tree)",
+      "shape": {
+        "kind": "circle",
+        "cx": 1937,
+        "cy": 755,
+        "r": 33
+      },
+      "heightMm": 260,
+      "color": "#6b4a2b"
+    },
+    {
+      "id": "m12-post",
+      "missions": [
+        12
+      ],
+      "name": "Forest Elder (post)",
+      "shape": {
+        "kind": "rect",
+        "cx": 1937,
+        "cy": 545,
+        "w": 25,
+        "h": 60,
+        "rot": 0
+      },
+      "heightMm": 90,
+      "color": "#6b4a2b"
+    },
+    {
+      "id": "dock-farm",
+      "missions": [
+        13,
+        14,
+        15
+      ],
+      "name": "Dock (farm)",
+      "dock": "farm",
+      "shape": {
+        "kind": "rect",
+        "cx": 1009,
+        "cy": 648,
+        "w": 130,
+        "h": 204,
+        "rot": 0
+      },
+      "heightMm": 40,
+      "color": "#c9c9c9",
+      "note": "Dock names assumed from the surrounding art (farm field / city / mine); verify with the Field Setup Video"
+    },
+    {
+      "id": "dock-city",
+      "missions": [
+        13,
+        14,
+        15
+      ],
+      "name": "Dock (city)",
+      "dock": "city",
+      "shape": {
+        "kind": "rect",
+        "cx": 1278,
+        "cy": 92,
+        "w": 95,
+        "h": 135,
+        "rot": 0
+      },
+      "heightMm": 40,
+      "color": "#c9c9c9"
+    },
+    {
+      "id": "dock-mine",
+      "missions": [
+        13,
+        14,
+        15
+      ],
+      "name": "Dock (mine)",
+      "dock": "mine",
+      "shape": {
+        "kind": "rect",
+        "cx": 1885,
+        "cy": 1031,
+        "w": 110,
+        "h": 150,
+        "rot": -40
+      },
+      "heightMm": 40,
+      "color": "#c9c9c9"
+    }
+  ],
+  "missionModelsNote": "Footprints measured from the wireframe PDF outlines (2 px/mm); heights are estimates until real LDraw models replace them."
+}

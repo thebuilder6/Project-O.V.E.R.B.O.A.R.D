@@ -1,0 +1,287 @@
+{
+  "season": "fll2026founders-robovibe",
+  "label": "FLL BIOGLOW Founders Edition (RoboVibe's field)",
+  "mat": {
+    "width_m": 2.004,
+    "height_m": 1.143
+  },
+  "launch_areas": [
+    {
+      "id": "Launch Area Left",
+      "x_m": 0.002,
+      "y_m": 0.0,
+      "radius_m": 0.485,
+      "quadrant": 1
+    },
+    {
+      "id": "Launch Area Right",
+      "x_m": 2.002,
+      "y_m": 0.0,
+      "radius_m": 0.485,
+      "quadrant": 2
+    }
+  ],
+  "placement_uncertainty_m": 0.02,
+  "obstacles": [
+    {
+      "id": "ei1",
+      "name": "Equipment Inspection (1 of 2)",
+      "kind": "circle",
+      "x_m": -0.089,
+      "y_m": 0.044,
+      "w_m": 0.08,
+      "h_m": 0.08,
+      "rot_deg": -0.0
+    },
+    {
+      "id": "ei2",
+      "name": "Equipment Inspection (2 of 2)",
+      "kind": "circle",
+      "x_m": 2.093,
+      "y_m": 0.044,
+      "w_m": 0.08,
+      "h_m": 0.08,
+      "rot_deg": -0.0
+    },
+    {
+      "id": "m011",
+      "name": "Drone Survey (1 of 3)",
+      "kind": "circle",
+      "x_m": 1.154,
+      "y_m": 0.057,
+      "w_m": 0.064,
+      "h_m": 0.064,
+      "rot_deg": -0.0
+    },
+    {
+      "id": "m012",
+      "name": "Drone Survey (2 of 3)",
+      "kind": "rect",
+      "x_m": 0.629,
+      "y_m": 0.058,
+      "w_m": 0.036,
+      "h_m": 0.036,
+      "rot_deg": -0.0
+    },
+    {
+      "id": "m013",
+      "name": "Drone Survey (3 of 3)",
+      "kind": "rect",
+      "x_m": 1.0555022320835454,
+      "y_m": 0.2262070600599758,
+      "w_m": 0.074,
+      "h_m": 0.097,
+      "rot_deg": -60.0
+    },
+    {
+      "id": "m02",
+      "name": "Exploding Seeds",
+      "kind": "rect",
+      "x_m": 0.6383050865276333,
+      "y_m": 0.5397071067811866,
+      "w_m": 0.056,
+      "h_m": 0.058,
+      "rot_deg": -45.0
+    },
+    {
+      "id": "m03",
+      "name": "Flip the Rock",
+      "kind": "rect",
+      "x_m": 0.0825,
+      "y_m": 0.6585,
+      "w_m": 0.137,
+      "h_m": 0.065,
+      "rot_deg": -0.0
+    },
+    {
+      "id": "m041",
+      "name": "Lucky Leaves (1 of 3)",
+      "kind": "rect",
+      "x_m": 0.0805,
+      "y_m": 0.9795,
+      "w_m": 0.049,
+      "h_m": 0.049,
+      "rot_deg": -0.0
+    },
+    {
+      "id": "m042",
+      "name": "Lucky Leaves (2 of 3)",
+      "kind": "rect",
+      "x_m": 0.10564823227814082,
+      "y_m": 1.037,
+      "w_m": 0.049,
+      "h_m": 0.049,
+      "rot_deg": -45.0
+    },
+    {
+      "id": "m043",
+      "name": "Lucky Leaves (3 of 3)",
+      "kind": "rect",
+      "x_m": 0.1635,
+      "y_m": 1.0635,
+      "w_m": 0.049,
+      "h_m": 0.049,
+      "rot_deg": -0.0
+    },
+    {
+      "id": "m05",
+      "name": "Reaching Roots",
+      "kind": "rect",
+      "x_m": 0.4055,
+      "y_m": 1.0915,
+      "w_m": 0.041,
+      "h_m": 0.091,
+      "rot_deg": -0.0
+    },
+    {
+      "id": "m06",
+      "name": "Leafcutter Frenzy",
+      "kind": "rect",
+      "x_m": 1.5191647365726362,
+      "y_m": 1.0719601551083915,
+      "w_m": 0.071,
+      "h_m": 0.102,
+      "rot_deg": -45.0
+    },
+    {
+      "id": "m07",
+      "name": "Humongous Fungus",
+      "kind": "rect",
+      "x_m": 1.595,
+      "y_m": 1.0565,
+      "w_m": 0.05,
+      "h_m": 0.033,
+      "rot_deg": -0.0
+    },
+    {
+      "id": "m08",
+      "name": "Tangled",
+      "kind": "rect",
+      "x_m": 0.566,
+      "y_m": 1.0625,
+      "w_m": 0.118,
+      "h_m": 0.125,
+      "rot_deg": -0.0
+    },
+    {
+      "id": "m09",
+      "name": "Research Platform",
+      "kind": "rect",
+      "x_m": 0.647,
+      "y_m": 1.0625,
+      "w_m": 0.022,
+      "h_m": 0.125,
+      "rot_deg": -0.0
+    },
+    {
+      "id": "m101",
+      "name": "Fragile Microhabitats (1 of 2)",
+      "kind": "rect",
+      "x_m": 0.7545705080756887,
+      "y_m": 1.0514855715851499,
+      "w_m": 0.04,
+      "h_m": 0.045,
+      "rot_deg": -30.0
+    },
+    {
+      "id": "m102",
+      "name": "Fragile Microhabitats (2 of 2)",
+      "kind": "rect",
+      "x_m": 1.0450520382004282,
+      "y_m": 0.7197677669529663,
+      "w_m": 0.04,
+      "h_m": 0.045,
+      "rot_deg": -45.0
+    },
+    {
+      "id": "m11",
+      "name": "Window to the Past",
+      "kind": "rect",
+      "x_m": 1.4078007755419575,
+      "y_m": 0.5954748737341529,
+      "w_m": 0.074,
+      "h_m": 0.081,
+      "rot_deg": -45.0
+    },
+    {
+      "id": "m121",
+      "name": "Forest Elder (1 of 2)",
+      "kind": "circle",
+      "x_m": 1.942,
+      "y_m": 0.758,
+      "w_m": 0.064,
+      "h_m": 0.064,
+      "rot_deg": -0.0
+    },
+    {
+      "id": "m122",
+      "name": "Forest Elder (2 of 2)",
+      "kind": "rect",
+      "x_m": 1.941,
+      "y_m": 0.546,
+      "w_m": 0.026,
+      "h_m": 0.062,
+      "rot_deg": -0.0
+    },
+    {
+      "id": "m13",
+      "name": "Keystone Species",
+      "kind": "rect",
+      "x_m": 1.002,
+      "y_m": 0.627,
+      "w_m": 0.088,
+      "h_m": 0.138,
+      "rot_deg": -0.0
+    },
+    {
+      "id": "m14",
+      "name": "Seeds of Renewal",
+      "kind": "rect",
+      "x_m": 1.282,
+      "y_m": 0.094,
+      "w_m": 0.088,
+      "h_m": 0.138,
+      "rot_deg": -0.0
+    },
+    {
+      "id": "m15",
+      "name": "Biocentric Architecture",
+      "kind": "rect",
+      "x_m": 1.89090306627408,
+      "y_m": 1.0336776695296637,
+      "w_m": 0.088,
+      "h_m": 0.138,
+      "rot_deg": -45.0
+    },
+    {
+      "id": "pt1",
+      "name": "Precision",
+      "kind": "circle",
+      "x_m": -0.089,
+      "y_m": 1.08,
+      "w_m": 0.08,
+      "h_m": 0.08,
+      "rot_deg": -0.0
+    }
+  ],
+  "source": {
+    "provenance": "Read from RoboVibe's field YAML for this season, which is embedded in the app's public bundle. RoboVibe measured it from FIRST's own field wireframe, the same document the footprints in the other field file came from.",
+    "frame": "RoboVibe's coordinates are in the table's frame with the mat centred in it, so x is shifted by 179 mm. A shape's x and y are the top-left corner of its box, not its centre.",
+    "checked_against": "With that reading, the models that have a single area agree with the other field file to a few millimetres.",
+    "rules": "https://firstinspires.blob.core.windows.net/fll/challenge/2026-27/fll-challenge-bioglow-wireframe-grid.pdf",
+    "adjust_it": "The operator can move a model on their own mat. A team that has measured their own field should trust their measurement over this file."
+  },
+  "mat_source": {
+    "kind": "pdf",
+    "url": "https://firstinspires.blob.core.windows.net/fll/challenge/2026-27/fll-challenge-bioglow-wireframe-grid.pdf",
+    "page": 2,
+    "mat_mm": "2004x1143",
+    "credit": "FIRST's 2026-27 field guide. The mat picture is composed from it on this machine, the same way the reference simulator does it, and is not ours to ship."
+  },
+  "mat_image": {
+    "url": "https://raw.githubusercontent.com/jaimeyu/fll_sim/b04157cb207d4b43b82d684fe35ef8609890599b/public/maps/bioglow_numbered_mat.png",
+    "width_px": 1908,
+    "height_px": 1076,
+    "credit": "FIRST's 2026-27 BIOGLOW mat artwork with the mission numbers added, read from jaimeyu/fll_sim (GPL-3.0) at commit b04157cb. It is the colour mat; it is not ours to ship, so the studio downloads it for you and keeps it outside the repository."
+  }
+}

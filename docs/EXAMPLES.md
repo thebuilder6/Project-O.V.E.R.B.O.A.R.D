@@ -343,7 +343,7 @@ python main.py -c examples/fll_choreo.json -w waypoints.json -o high_res.traj -n
 - `-n 10`: Good balance for most FLL paths
 - `-n 20`: Slower optimization, smoother curves, better for complex paths
 
-The candidate loop mixes uniform and per-segment timing by default: with `--validate`, candidate 1 is uniform baseline, candidate 2 is per-segment baseline, and selection keeps the passing candidate with the smallest envelope. To force one mode for an experiment:
+The candidate loop mixes the two timing modes by default: with `--validate`, candidate 1 is equal-duration baseline, candidate 2 is per-segment baseline, and selection keeps the passing candidate with the smallest envelope. A waypoint is a legitimate timing boundary only when the robot stops there *and* the heading is pinned; at every other waypoint the per-segment model keeps the wheel force profile continuous through the point (KI-024). To force one mode for an experiment:
 
 ```bash
 python main.py --per-segment-dt \
@@ -616,14 +616,14 @@ for w in weights:
 
 ### Example 19b: Comparing Initial-Guess Seeds and Timing Modes
 
-Each candidate combines an initial-guess seed with a timing mode. By default candidate 1 is uniform baseline, candidate 2 is per-segment baseline, and the remaining seeds alternate modes. To compare only the five seeds with uniform timing, force the uniform mode:
+Each candidate combines an initial-guess seed with a timing mode. By default candidate 1 is equal-duration baseline, candidate 2 is per-segment baseline, and the remaining seeds alternate modes. To compare only the five seeds with equal-duration timing, force that mode:
 
 ```bash
 python main.py --uniform-dt --validate -c examples/fll_choreo.json \
   -w examples/example_mission_first4.json -o first4.traj --candidates 5
 ```
 
-The seeds are `baseline`, `rolling`, `bow_left`, `bow_right`, and `turn_first`. The candidate table prints each candidate's duration and envelope, and selection keeps the passing one with the smallest envelope (shortest breaks ties). On the first four waypoints of the complex mission all five uniform seeds pass; `baseline` wins at 2.176 s / 0.27 cm. On the full mission the baseline also wins (6.068 s / 1.22 cm); the other uniform seeds converge to slower, wider paths (8.1-8.7 s), so they are rejected. Without `--uniform-dt`, the default candidate 2 is per-segment baseline; it is faster (1.661 s on first4, 5.447 s on the mission) but fails the local envelope/tracking gate.
+The seeds are `baseline`, `rolling`, `bow_left`, `bow_right`, and `turn_first`. The candidate table prints each candidate's duration and envelope, and selection keeps the passing one with the smallest envelope (shortest breaks ties). On the first four waypoints of the complex mission all five uniform seeds pass; `baseline` wins at 2.176 s / 0.27 cm. On the full mission the baseline also wins (6.068 s / 1.22 cm); the other uniform seeds converge to slower, wider paths (8.1-8.7 s), so they are rejected. Without `--uniform-dt`, the default candidate 2 is per-segment baseline; it is faster (1.833 s on first4, where it is selected, and 4.650 s on the mission), but on the mission its tracking is 0.84 cm and its motor force is 0.074 N over the limit, so it is rejected there.
 
 From Python, pass `guess_style` to `solve`; the default `per_segment_dt=False` reproduces the uniform seed comparison:
 
@@ -876,6 +876,22 @@ The browser opens at `http://127.0.0.1:8000` (use `--gui-port` for a different p
 4. Download the trajectory, the controller profile or the Python module from the result panel.
 5. **Save** writes the mission to `missions/<name>.json`; the file shows up in the mission list next time. **Download** gives you the same JSON as a file.
 
+**Before you solve:**
+
+- The mission panel shows the path length and the fastest the robot could possibly do it: *"Path 1.36 m | at least 2.85 s at 0.48 m/s top speed"*. A waypoint dragged 5 m away shows up here, not in the solve time.
+- **Fast polish** in the Advanced section gives the warm-start solve an iteration budget. On the ten-waypoint complex mission it takes the solve from 26 s to 15 s and returns the same trajectory (6.0677 s against 6.0690 s). Leave it off when you want the plain solver.
+
+**On the field:**
+
+- A **stop** is a blue square, an **event** a pink diamond, both with their name next to the waypoint, so you can see where the robot rests and what fires.
+- A segment that failed validation is drawn in red, the segment where the path drifts most in amber.
+- While the solver runs, the header ticks the elapsed time and names the stage: *"Solving... - 4.2 s - 3 candidates in parallel"*.
+
+**Which candidate won, and why:**
+
+- The line above the candidate chips says it in words: *"equal-duration baseline won (7.21 s). per-segment baseline was 0.48 s faster but failed: tracking error 0.61 cm > 0.50 cm"*. When nothing passes it says *"no candidate passed; equal-duration baseline came closest (3.70 s)"*.
+- Each chip carries the candidate's duration and its pass/fail state; hover it for the reasons.
+
 **When a validation fails:**
 
 - The result panel shows a row per path segment: the reachability envelope, the local limit and the drift.
@@ -904,28 +920,28 @@ The browser opens at `http://127.0.0.1:8000` (use `--gui-port` for a different p
 
 ---
 
-## Live Visualization
+## Solving in the Browser
 
-### Example 26: Live Visualization in Browser
+### Example 26: Solve a Mission in the Studio
 
-Monitor the optimization process in real-time using a web browser:
+Open the studio on a mission and solve it there, with the same options the command line would use:
 
 **Command:**
 
 ```bash
-python main.py -c examples/fll_choreo.json -w waypoints.json --live
+python main.py --live -w waypoints.json
 ```
 
 **Steps:**
 
-1. Run the command with the `--live` flag.
-2. The browser opens by itself at the live view.
-3. The trajectory is broadcast when the solve completes, and a reload replays the robot config, the waypoints and the last trajectory.
+1. Run the command. The studio opens in your browser with that mission loaded.
+2. The solve starts on its own; the header ticks the elapsed time and the result panel shows the trajectory, the envelope and the numbers.
+3. Everything the command line can do is there: validate, export the controller, edit the robot, draw more waypoints.
 
-**Current limitations:**
+**Notes:**
 
-- The server is blocking: the command waits for Enter before exiting.
-- The live view needs a browser with a WebSocket connection; it is a viewer, not an editor. Use the studio (`--gui`) to draw and solve a mission.
-- The page loads its styles from a CDN, so it looks unstyled without an internet connection. The studio has no such dependency.
+- `--live` and `--gui` open the same studio. `--live` adds the mission and starts the solve; `--gui` just opens it.
+- The server is blocking: stop it with Ctrl+C.
+- The studio runs the command line in a subprocess, so the export gate and the validation rules are the same as on the terminal.
 
-**Use case:** Inspecting the final trajectory and any attached reachability envelopes. It is not currently a reliable live debugging tool for configuration or topology exploration.
+**Use case:** Watching a solve you started from the terminal, or giving a mission to someone who will not read a README.
