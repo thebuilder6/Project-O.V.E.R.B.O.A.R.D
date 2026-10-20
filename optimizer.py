@@ -96,9 +96,16 @@ class TrajectoryOptimizer:
         #
         # 1. The warm pass with an iteration budget. A mission that converges
         #    inside the budget returns exactly what the single pass returns.
-        # 2. If the budget ran out, finish from that point with a cold pass.
-        #    The cold pass starts on the warm pass's own trajectory, so it
-        #    refines the same solution instead of searching a new basin.
+        # 2. If the budget ran out, solve it cold instead. The cold pass
+        #    restarts from the original guess, not from the warm pass's
+        #    half-finished trajectory: a cold restart is only cheap from a
+        #    good point. On the complex mission a restart from the warm
+        #    pass's 200-iteration trajectory took 3112 IPOPT iterations and
+        #    12 s, against 508 iterations and 2.3 s from the original
+        #    guess - and against 669 iterations for the plain warm pass
+        #    (KI-047). The fast path exists because the warm pass can
+        #    crawl; the answer is the cold solve, not a restart from a
+        #    half-finished one.
         # 3. If the cold finish does not converge, run the unbudgeted warm
         #    pass, so a mission that solves today still solves.
         budget = max(1, int(polish_iter_budget))
@@ -117,10 +124,8 @@ class TrajectoryOptimizer:
             stats["stage_costs"] = [stage_a_stats.get("final_cost")]
             return stage_a_samples, stats
 
-        guess_b = self.guess_from_samples(
-            stage_a_samples, num_segments, num_samples_per_segment)
         stage_b_samples, stage_b_stats = self._solve_once(
-            waypoints, initial_guess=guess_b, warm_start=False,
+            waypoints, initial_guess=initial_guess, warm_start=False,
             stage_label="2/2", solver_options=solver_options, **common)
 
         if stage_b_stats.get("converged", False):
@@ -601,6 +606,12 @@ class TrajectoryOptimizer:
                 "converged": False,
                 "error": str(e)
             }
+            if "Maximum_Iterations_Exceeded" in str(e):
+                # The pass ran out of iterations, so it used its whole
+                # budget. Say so: the fast path's report is the sum of the
+                # stages' iterations, and a stage that reports nothing
+                # looks like it did no work.
+                stats["iter_count"] = int(s_opts.get("max_iter", 0) or 0)
             return self.format_output(params, N, num_samples_per_segment, waypoint_events), stats
 
     def _compute_cost(self, params: np.ndarray, N: int, num_samples_per_segment: int, accuracy_weight: float, waypoints: List[Tuple[float, float, Optional[float]]]) -> float:
@@ -718,7 +729,7 @@ class TrajectoryOptimizer:
                 # short way round: averaging the two angles plainly gives
                 # a guess heading near zero for a path that turns through
                 # +/-180 degrees, which is the worst possible guess for
-                # exactly the missions that need another seed (KI-038).
+                # exactly the missions that need another seed (KI-039).
                 delta = (dir_to_p3 - dir_to_p2 + np.pi) % (2 * np.pi) - np.pi
                 theta = dir_to_p2 + delta * frac
             else:

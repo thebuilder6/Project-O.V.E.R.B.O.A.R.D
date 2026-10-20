@@ -905,7 +905,7 @@ The browser opens at `http://127.0.0.1:8000` (use `--gui-port` for a different p
 **Before you solve:**
 
 - The mission panel shows the path length and the fastest the robot could possibly do it: *"Path 1.36 m | at least 2.85 s at 0.48 m/s top speed"*. A waypoint dragged 5 m away shows up here, not in the solve time.
-- **Fast polish** in the Advanced section gives the warm-start solve an iteration budget. On the ten-waypoint complex mission it takes the solve from 26 s to 15 s and returns the same trajectory (6.0677 s against 6.0690 s). Leave it off when you want the plain solver.
+- **Fast polish** in the Advanced section gives the warm-start solve an iteration budget, and solves the mission cold from the original guess if the budget runs out. On the ten-waypoint complex mission the plain solve takes 1557 iterations on one machine and 669 on another - the count depends on the machine's floating point - and the fast one takes 354 and 708 respectively, for a trajectory within 1 % of the plain one. Leave it off when you want the plain solver.
 
 **On the field:**
 

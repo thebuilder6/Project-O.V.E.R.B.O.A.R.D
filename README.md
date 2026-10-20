@@ -683,7 +683,7 @@ Measured on the current working tree with the example config:
 - 1 m straight, simple optimizer: about **0.06 s** solve wall time, **2.377 s** trajectory time, **0.000407 m** max forward-integration error.
 - 3-waypoint pipeline benchmark: simple **0.1076 s**, Multi-Verse **0.1224 s**, both with a **6.7614 s** trajectory and **0.00 %** improvement.
 - Multi-Verse refinement phase: about **0.0115 s**; the refined trajectory is probed as a starting point for the polish and wins on the complex mission (4.617 s against 6.049 s), and `--refine` adds it to the candidate set (KI-004).
-- 10-waypoint complex mission, simple solver: about **26 s** for the IPOPT polish, which is **1557 iterations** for a 705-variable NLP. `--fast-polish` brings that to about **15 s** (**677 iterations**) for a trajectory that differs by **0.02 %** (6.0677 s → 6.0690 s). Every other example mission solves inside the iteration budget and returns a bit-identical trajectory.
+- 10-waypoint complex mission, simple solver: the IPOPT polish takes **1557 iterations** and about **35 s** on the machine it was measured on, and **669 iterations** and about **3 s** on another - the count depends on the machine's floating point, so IPOPT takes a different path through the same NLP. `--fast-polish` budgets the warm pass at 200 iterations and then solves the mission cold from the original guess: **354 iterations** and **7 s** on the first machine, **708** and **3 s** on the second, for a trajectory within 1 % of the plain one. Every other example mission solves inside the iteration budget and returns a bit-identical trajectory.
 
 `python benchmark.py --mode solver --config examples/fll_choreo.json` prints that table for every example mission; add `--fast-polish` for the fast path.
 

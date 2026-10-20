@@ -4,7 +4,7 @@ Last reviewed: 2026-10-19
 
 Scope: whole repository, reviewed as a single-user, offline desktop tool for one FLL robot. This is not a multi-user or server-scale review.
 
-Status: KI-001, KI-002, KI-003, KI-004, KI-005, KI-006, KI-007, KI-008, KI-009, KI-010, KI-011, KI-012, KI-013, KI-014, KI-015, KI-016, KI-018, KI-019, KI-021, KI-022, KI-023, KI-024, KI-025, KI-026, KI-027, KI-028, KI-029, KI-030, KI-031, KI-033, KI-034, KI-035, KI-036, KI-037, KI-038, KI-039, and KI-040 are **fixed in the working tree** (uncommitted). KI-032 is **mitigated**: the test cache is on by default and its rules are in `testcache.py`. All other items are open; KI-017 is partially fixed. KI-020 records the remaining digital-twin and optimization work. The user-facing docs were reconciled with this tree on 2026-10-19; the code remains the authority if they diverge again.
+Status: KI-001, KI-002, KI-003, KI-004, KI-005, KI-006, KI-007, KI-008, KI-009, KI-010, KI-011, KI-012, KI-013, KI-014, KI-015, KI-016, KI-018, KI-019, KI-021, KI-022, KI-023, KI-024, KI-025, KI-026, KI-027, KI-028, KI-029, KI-030, KI-031, KI-033, KI-034, KI-035, KI-036, KI-037, KI-038, KI-039, KI-040, and KI-047 are **fixed in the working tree** (uncommitted). KI-032 is **mitigated**: the test cache is on by default and its rules are in `testcache.py`. All other items are open; KI-017 is partially fixed. KI-020 records the remaining digital-twin and optimization work. The user-facing docs were reconciled with this tree on 2026-10-19; the code remains the authority if they diverge again.
 
 How to use this list: refer to an item by its ID, for example “fix KI-003”.
 
@@ -54,6 +54,7 @@ How to use this list: refer to an item by its ID, for example “fix KI-003”.
 | KI-040 | P1 | Robot runtime | ~~`--push-hub --hub-log` lost the whole hub log when the link dropped~~ (fixed) |
 | KI-044 | P1 | Studio | ~~The studio kept the last run's verdict, and a reload could not cancel a solve~~ (fixed) |
 | KI-045 | P2 | Cleanup | `sysid_solver.py` is a superseded prototype (open) |
+| KI-047 | P1 | Solver | ~~The fast solve path made the solver slower, and its test failed on the tree~~ (fixed) |
 | KI-049 | P1 | Validation | ~~The reachability envelope reported a 54 mm width that was the divergence guard's fingerprint, and the tube behind it was blown up by a dependency the interval arithmetic could not see~~ (fixed) |
 
 ## P0 — fix first
@@ -607,6 +608,39 @@ The report now also carries `envelope_truncated`, so a cut-off propagation says 
 
 ---
 
+### KI-047 — The fast solve path made the solver slower, and its test failed on the tree
+
+**Status:** Fixed in the working tree (uncommitted).
+
+**Files:** `optimizer.py` (`solve`, `_solve_once`), `tests/test_optimizer.py`, `AGENTS.md`, `README.md`, `docs/EXAMPLES.md`
+
+**Problem:** `--fast-polish` was designed when the warm-start IPOPT pass crawled through thousands of iterations on the 10-waypoint complex mission: it gave the warm pass a 200-iteration budget and then restarted **cold from the warm pass's half-finished trajectory**, which converged in 677 iterations where the plain pass took 1557.
+
+That premise no longer holds on this tree, and the restart from a half-finished point turned out to be the slowest thing the path could do.
+
+**Evidence.** The complex mission, measured two ways on two machines.
+
+On the machine the fast path was designed on, the plain warm pass crawls: 1557 iterations and about 35 s. The fast path (200 budgeted + 154 cold) is 354 iterations and about 7 s, for a trajectory 0.9 % slower. That is the design working.
+
+On a second machine the same code takes a different path through the same NLP: the plain warm pass is 669 iterations and 2.8 s, and the fast path as it was written - a cold restart from the warm pass's half-finished trajectory - took **3112 iterations and 12.7 s**, four times slower than the plain pass and four times slower than the cold restart from the original guess. The count is not a property of the code alone: a different CPU and a different BLAS change the last bits, and IPOPT on this poorly scaled NLP is chaotic enough that a 1-ULP difference early on sends it down a different path. `tests/test_optimizer.py::TestSolverIterationBudget` pins 1200 iterations, and on the second machine it failed with 3112.
+
+The measurements, both reproducible on their own machine (three runs, and the same with one BLAS thread):
+
+| path | machine A | machine B |
+|---|---|---|
+| plain (unbudgeted warm) | 1557 iterations, 6.068 s, 35 s | 669 iterations, 6.0715 s, 2.8 s |
+| warm pass, budget 200 | 200 (did not converge) | 200 (did not converge) |
+| cold from the warm pass's trajectory | 154 iterations, 6.124 s | 3112 iterations, 6.0737 s, 12.7 s |
+| cold from the original guess | - | 508 iterations, 6.0694 s, 2.3 s |
+| **the fix** (cold from the original guess) | **354 iterations, 7 s** | **708 iterations, 3.1 s** |
+
+So the cold restart is only cheap from a good point: from the warm pass's half-finished trajectory it was the slowest thing the path could do.
+
+**Fix (implemented):** The cold pass restarts from the **original guess**, not from the warm pass's half-finished trajectory. That is the fast path as it now stands on both machines: 354 iterations and 7 s where the plain pass crawls at 1557, and 708 iterations and 3.1 s where the plain pass is already quick. The budgeted stage now reports the iteration count it used (the budget), so the stage report is honest.
+
+**Workaround:** None needed. The flag stays off by default, and the test's 1200-iteration budget holds again.
+
+---
 ## P2 — cleanup
 
 ### KI-017 — Convergence flags do nothing

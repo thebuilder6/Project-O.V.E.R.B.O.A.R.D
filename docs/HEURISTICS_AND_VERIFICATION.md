@@ -945,7 +945,7 @@ Every number in the gate chain, in one place.
 | 13 | Speed violation | < 1e-6 m/s | `validator.py:337` | wheel speed over the limit |
 | 14 | Final waypoint position | ≤ 2 cm | `validator.py:302` | the plan must arrive |
 | 15 | Final waypoint heading | ≤ 2 cm (0.02 rad) | `validator.py:302` | the plan must arrive pointing the right way |
-| 16 | IPOPT iterations | ≤ 5000 | `optimizer.py` solver options | `max_iter`; the cold pass in fast-polish is budgeted to 200 |
+| 16 | IPOPT iterations | ≤ 5000 | `optimizer.py` solver options | `max_iter`; the **warm** pass in fast-polish is budgeted to 200, and the cold pass that follows it is not |
 | 17 | IPOPT tolerance | 1e-2 | solver options | `tol` and `constr_viol_tol`, deliberately loose for interactive use |
 | 18 | Refine-probe margin | 0.1 % | `multiverse_optimizer.py:112` | the refined guess must beat the primary solve by more than this |
 | 19 | Refine-probe iteration budget | 400 | `multiverse_optimizer.py:108` | the probe must not cost more than a fraction of the primary solve |
