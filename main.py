@@ -1627,15 +1627,15 @@ def main(ctx, config, waypoints, output, gui, gui_port, doctor, multiverse, simp
                 immrax_report=immrax_report,
                 cpu_summary=cpu_summary,
             )
-            attempt_record["fitness"] = float(fitness_info["fitness_score_s"])
+            attempt_record["fitness"] = float(fitness_info["fitness_score"])
             attempt_record["stop_spread_m"] = float(
-                fitness_info["components"]["stop_precision_spread_m"])
+                fitness_info["stop_precision_spread_m"])
             attempt_record["slip_risk"] = float(
-                fitness_info["components"]["slip_risk_penalty"])
+                fitness_info["slip_risk_penalty"])
             attempt_record["rms_force_n"] = float(
-                fitness_info["components"]["rms_wheel_force_n"])
+                fitness_info["rms_wheel_force_n"])
             attempt_record["rms_force_util"] = float(
-                fitness_info["components"]["rms_force_utilization"])
+                fitness_info["rms_force_utilization"])
             attempt_record["fitness_info"] = fitness_info
 
             # Per-segment detail, so a failure can be pinned to a part of the path.

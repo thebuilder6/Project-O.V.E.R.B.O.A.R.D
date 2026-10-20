@@ -762,6 +762,7 @@ class TrajectoryOptimizer:
         force_cost = 0.0
         if force_weight > 0 and N > 1:
             f_stall_ref = max(self.config.get_max_force_at_velocity_robust(0.0), 1e-6)
+            cof_min = min(self.config.uncertainties["cof"])
             for k in range(N - 1):
                 dt_k = dt_values[sample_to_segment[k]]
                 if dt_k <= 0:
@@ -770,8 +771,14 @@ class TrajectoryOptimizer:
                 vr_k = states[k, 4]
                 al_k = (states[k + 1, 3] - vl_k) / dt_k
                 ar_k = (states[k + 1, 4] - vr_k) / dt_k
-                fl_k, fr_k = self.model.get_wheel_forces(al_k, ar_k)
-                f_trac_ref = max(self.model.get_traction_limit(vl_k, vr_k, apply_headroom=True), 1e-6)
+                a_lin = 0.5 * (al_k + ar_k)
+                alpha_ang = (ar_k - al_k) / self.config.track_width
+                f_lin = 0.5 * self.config.mass * a_lin
+                f_ang = (self.config.inertia * alpha_ang) / self.config.track_width
+                fl_k = f_lin - f_ang
+                fr_k = f_lin + f_ang
+                nl_k, nr_k = self.model.get_wheel_normal_forces(vl_k, vr_k, al_k, ar_k)
+                f_trac_ref = max(cof_min * min(nl_k, nr_k), 1e-6)
                 force_cost += (
                     0.5 * ((fl_k / f_stall_ref) ** 2 + (fr_k / f_stall_ref) ** 2)
                     + 0.5 * ((fl_k / f_trac_ref) ** 2 + (fr_k / f_trac_ref) ** 2)

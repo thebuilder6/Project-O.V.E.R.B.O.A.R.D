@@ -29,6 +29,8 @@ from tests.test_optimizer import (
     TestMergeConditions,
     TestBenchmarkDryRun,
     TestSelfConsistentPlan,
+    TestSoftWheelForceCost,
+    TestPathFitnessScoring,
 )
 from tests.test_robot_model import (
     TestRobotConfig,
@@ -306,6 +308,8 @@ def test_classes():
         TestMergeConditions,
         TestBenchmarkDryRun,
         TestSelfConsistentPlan,
+        TestSoftWheelForceCost,
+        TestPathFitnessScoring,
         TestStudioRoutes,
         TestStudioSolve,
         TestStudioHelpers,

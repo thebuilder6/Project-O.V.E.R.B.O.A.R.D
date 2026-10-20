@@ -2,7 +2,7 @@ from typing import List, Dict, Tuple, Any, Optional
 import json
 import math
 import numpy as np
-from robot_model import RobotConfig, DifferentialDriveModel, wheel_normal_forces
+from robot_model import RobotConfig, DifferentialDriveModel, wheel_normal_forces, CG_HEIGHT_M
 
 
 # Default time-equivalent weights (in seconds) for the 5-part FLL path fitness
@@ -297,7 +297,7 @@ def compute_metrics(samples: List[Dict[str, Any]], robot_cfg: Optional[RobotConf
                 fr_util.append(u_r)
             cof_min = min(robot_cfg.uncertainties["cof"])
             nl, nr = wheel_normal_forces(
-                s["vl"], s["vr"], robot_cfg.track_width, robot_cfg.mass, robot_cfg.g)
+                robot_cfg.mass, robot_cfg.g, CG_HEIGHT_M, robot_cfg.track_width, 0.25 * (s["vr"] * s["vr"] - s["vl"] * s["vl"]) / robot_cfg.track_width)
             tr_l = abs(fl_val) / max(cof_min * nl, 1e-6)
             tr_r = abs(fr_val) / max(cof_min * nr, 1e-6)
             combined_util.append(max(u_l, u_r, tr_l, tr_r))
@@ -440,7 +440,7 @@ def compute_path_fitness(
             max_fl = max(robot_cfg.get_max_force_at_velocity_robust(s["vl"]), 1e-6)
             max_fr = max(robot_cfg.get_max_force_at_velocity_robust(s["vr"]), 1e-6)
             nl, nr = wheel_normal_forces(
-                s["vl"], s["vr"], robot_cfg.track_width, robot_cfg.mass, robot_cfg.g)
+                robot_cfg.mass, robot_cfg.g, CG_HEIGHT_M, robot_cfg.track_width, 0.25 * (s["vr"] * s["vr"] - s["vl"] * s["vl"]) / robot_cfg.track_width)
             tr_l = max(cof_min * nl, 1e-6)
             tr_r = max(cof_min * nr, 1e-6)
             combined_util.append(max(fl_val / max_fl, fr_val / max_fr, fl_val / tr_l, fr_val / tr_r))
@@ -466,7 +466,7 @@ def compute_path_fitness(
 
     if sample_track_errors:
         rms_tracking_error_m = float(math.sqrt(np.mean([e ** 2 for e in sample_track_errors])))
-        stop_tracking_error_m = float(sum(sample_track_errors[idx] for idx in checkpoints))
+        stop_tracking_error_m = float(sum(sample_track_errors[idx] for idx in checkpoints if idx < len(sample_track_errors)))
     elif immrax_report:
         max_tr = float(immrax_report.get("max_tracking_error_m", 0.0))
         rms_tr = float(immrax_report.get("rms_tracking_error_m", max_tr))

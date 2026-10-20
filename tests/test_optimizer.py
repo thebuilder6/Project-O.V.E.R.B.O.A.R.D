@@ -1143,6 +1143,159 @@ class TestSelfConsistentPlan(unittest.TestCase):
             self.assertAlmostEqual(samples[-1]["vr"], 0.0, places=3)
 
 
+class TestSoftWheelForceCost(unittest.TestCase):
+    """Stage 3: Soft wheel-force and traction-utilization objective penalty."""
+
+    CONFIG = {
+        "robot": {
+            "mass": 0.8,
+            "inertia": 0.002,
+            "track_width": 0.1,
+            "wheel_radius": 0.03,
+            "v_max_rad_s": 15.0,
+            "t_max_nm": 0.05,
+            "gearing": 1.0,
+            "cof": 0.5,
+        }
+    }
+
+    def test_force_weight_reduces_rms_wheel_force_and_peak_traction(self):
+        from validator import compute_metrics
+        config = RobotConfig(self.CONFIG)
+        optimizer = TrajectoryOptimizer(config)
+        waypoints = [(0.0, 0.0, 0.0), (0.35, 0.0, 0.0)]
+
+        samples_zero, stats_zero = optimizer.solve(
+            waypoints, num_samples_per_segment=8,
+            accuracy_weight=0.0, force_weight=0.0, verbose=False,
+        )
+        samples_soft, stats_soft = optimizer.solve(
+            waypoints, num_samples_per_segment=8,
+            accuracy_weight=0.0, force_weight=2.0, verbose=False,
+        )
+        self.assertTrue(stats_zero["converged"])
+        self.assertTrue(stats_soft["converged"])
+
+        m_zero = compute_metrics(samples_zero, config)
+        m_soft = compute_metrics(samples_soft, config)
+
+        self.assertLess(m_soft["rms_wheel_force_n"], m_zero["rms_wheel_force_n"])
+        self.assertLessEqual(
+            m_soft["peak_traction_utilization"],
+            m_zero["peak_traction_utilization"] + 1e-6,
+        )
+        self.assertGreater(m_soft["total_time_s"], m_zero["total_time_s"])
+
+
+class TestPathFitnessScoring(unittest.TestCase):
+    """Stage 3: 5-part time-equivalent path fitness score prioritizing precision."""
+
+    CONFIG = {
+        "robot": {
+            "mass": 0.8,
+            "inertia": 0.002,
+            "track_width": 0.1,
+            "wheel_radius": 0.03,
+            "v_max_rad_s": 15.0,
+            "t_max_nm": 0.05,
+            "gearing": 1.0,
+            "cof": 0.5,
+        }
+    }
+
+    def setUp(self):
+        from validator import compute_path_fitness
+        from main import _select_attempt
+        self.compute_path_fitness = compute_path_fitness
+        self.select = _select_attempt
+        self.robot_cfg = RobotConfig(self.CONFIG)
+
+    def _make_samples(self, f_wheel=0.5, duration=2.0, n=11):
+        samples = []
+        dt = duration / (n - 1)
+        for k in range(n):
+            t = k * dt
+            sign = 1.0 if k < n // 2 else -1.0
+            a = sign * f_wheel / (0.5 * self.robot_cfg.mass)
+            v = 0.2 if 0 < k < n - 1 else 0.0
+            samples.append({
+                "t": t,
+                "x": 0.5 * (k / (n - 1)),
+                "y": 0.0,
+                "heading": 0.0,
+                "vl": v,
+                "vr": v,
+                "al": a,
+                "ar": a,
+                "fl": sign * f_wheel,
+                "fr": sign * f_wheel,
+                "reachability_envelope": {
+                    "x_min": -0.002, "x_max": 0.002,
+                    "y_min": -0.002, "y_max": 0.002,
+                    "theta_min": -0.01, "theta_max": 0.01,
+                    "tracking_error_m": 0.001,
+                    "heading_error_rad": 0.005,
+                },
+            })
+        return samples
+
+    def test_fitness_computes_all_five_parts(self):
+        samples = self._make_samples(f_wheel=0.5, duration=2.0)
+        res = self.compute_path_fitness(
+            samples, self.robot_cfg, stop_sample_indices=[5, 10]
+        )
+        self.assertIn("fitness_score", res)
+        self.assertGreater(res["fitness_score"], 2.0)
+        self.assertGreater(res["stop_precision_spread_m"], 0.0)
+        self.assertEqual(res["slip_risk_penalty"], 0.0)  # well below 70% dead-zone
+        self.assertGreater(res["rms_force_utilization"], 0.0)
+        self.assertGreater(res["tracking_error_m"], 0.0)
+        self.assertAlmostEqual(res["travel_time_s"], 2.0, places=6)
+
+    def test_slip_risk_deadzone_activates_above_70_percent(self):
+        # f_stall_robust = 0.05 * 0.7 / 0.031 = 1.129 N
+        low_force = self._make_samples(f_wheel=0.5, duration=2.0)   # ~57% motor limit
+        high_force = self._make_samples(f_wheel=0.95, duration=2.0) # ~90% motor limit
+        res_low = self.compute_path_fitness(low_force, self.robot_cfg)
+        res_high = self.compute_path_fitness(high_force, self.robot_cfg)
+        self.assertEqual(res_low["slip_risk_penalty"], 0.0)
+        self.assertGreater(res_high["slip_risk_penalty"], 0.0)
+        self.assertGreater(res_high["fitness_score"], res_low["fitness_score"])
+
+    def test_stop_precision_prioritizes_stops_over_midpath_spread(self):
+        # Candidate A: wide mid-path envelope (1.5 cm), tight stop envelope (0.2 cm)
+        cand_a = self._make_samples(f_wheel=0.5, duration=2.0)
+        for k in range(1, len(cand_a) - 1):
+            cand_a[k]["reachability_envelope"] = {
+                "x_min": -0.015, "x_max": 0.015,
+                "y_min": 0.0, "y_max": 0.0,
+                "theta_min": -0.01, "theta_max": 0.01,
+            }
+        # Candidate B: uniform 0.8 cm envelope everywhere including final stop
+        cand_b = self._make_samples(f_wheel=0.5, duration=2.0)
+        for k in range(len(cand_b)):
+            cand_b[k]["reachability_envelope"] = {
+                "x_min": -0.008, "x_max": 0.008,
+                "y_min": 0.0, "y_max": 0.0,
+                "theta_min": -0.05, "theta_max": 0.05,
+            }
+        fit_a = self.compute_path_fitness(cand_a, self.robot_cfg)["fitness_score"]
+        fit_b = self.compute_path_fitness(cand_b, self.robot_cfg)["fitness_score"]
+        # Even though A has larger max tube (1.5 cm vs 0.8 cm), A has much tighter
+        # precision at the final stop and therefore wins on fitness!
+        self.assertLess(fit_a, fit_b)
+
+        attempts = [
+            {"samples": "B", "stats": {}, "cost": 2.0, "ok": True,
+             "converged": True, "tube": 0.008, "duration": 2.0, "fitness": fit_b},
+            {"samples": "A", "stats": {}, "cost": 2.0, "ok": True,
+             "converged": True, "tube": 0.015, "duration": 2.0, "fitness": fit_a},
+        ]
+        best, passed = self.select(attempts)
+        self.assertTrue(passed)
+        self.assertEqual(best["samples"], "A")
+
+
 if __name__ == "__main__":
     unittest.main()
 
