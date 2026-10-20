@@ -1212,7 +1212,7 @@ function pollPush() {
                 el('push-status').textContent = 'The hub ran the mission.';
                 setStatus('Pushed', 'ok');
                 renderPushResult(job);
-                renderDownloads(job.artifacts);
+                renderDownloads(job.artifacts, job.id);
                 toast('The hub ran the mission.');
             } else {
                 el('push-status').textContent = job.error || 'The push failed.';
@@ -2339,7 +2339,7 @@ function renderCollisions(rows) {
     box.appendChild(list);
 }
 
-function renderDownloads(artifacts) {
+function renderDownloads(artifacts, jobId) {
     const box = el('downloads');
     box.innerHTML = '';
     const labels = {
@@ -2348,13 +2348,17 @@ function renderDownloads(artifacts) {
         python: 'Python module',
         stats: 'Stats (.json)',
     };
+    /* The job the artifacts belong to, not the current one: after a push
+       the downloads box holds the push job's artifacts, and asking the
+       solve job for them is a 404. */
+    const owner = jobId || state.jobId;
     (artifacts || []).forEach((artifact) => {
         const button = document.createElement('button');
         button.type = 'button';
         button.className = 'btn small';
         button.textContent = labels[artifact.kind] || artifact.kind;
         button.addEventListener('click', () => {
-            window.location.href = `/api/jobs/${state.jobId}/artifact/${artifact.kind}`;
+            window.location.href = `/api/jobs/${owner}/artifact/${artifact.kind}`;
         });
         box.appendChild(button);
     });
@@ -2789,7 +2793,7 @@ function pollJob() {
                 state.jobFailedReason = '';
                 state.jobFinishedAt = new Date().toISOString();
                 renderResult();
-                renderDownloads(job.artifacts);
+                renderDownloads(job.artifacts, job.id);
                 drawPlot();
                 const validated = state.solveValidated;
                 el('result-status').innerHTML = validated

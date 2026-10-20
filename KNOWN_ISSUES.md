@@ -4,7 +4,7 @@ Last reviewed: 2026-10-19
 
 Scope: whole repository, reviewed as a single-user, offline desktop tool for one FLL robot. This is not a multi-user or server-scale review.
 
-Status: KI-001, KI-002, KI-003, KI-004, KI-005, KI-006, KI-007, KI-008, KI-009, KI-010, KI-011, KI-012, KI-013, KI-014, KI-015, KI-016, KI-018, KI-019, KI-021, KI-022, KI-023, KI-024, KI-025, KI-026, KI-027, KI-028, KI-029, KI-030, KI-031, KI-033, KI-034, KI-035, KI-036, KI-037, KI-038, KI-039, KI-040, and KI-047 are **fixed in the working tree** (uncommitted). KI-032 is **mitigated**: the test cache is on by default and its rules are in `testcache.py`. All other items are open; KI-017 is partially fixed. KI-020 records the remaining digital-twin and optimization work. The user-facing docs were reconciled with this tree on 2026-10-19; the code remains the authority if they diverge again.
+Status: KI-001, KI-002, KI-003, KI-004, KI-005, KI-006, KI-007, KI-008, KI-009, KI-010, KI-011, KI-012, KI-013, KI-014, KI-015, KI-016, KI-018, KI-019, KI-021, KI-022, KI-023, KI-024, KI-025, KI-026, KI-027, KI-028, KI-029, KI-030, KI-031, KI-033, KI-034, KI-035, KI-036, KI-037, KI-038, KI-039, KI-040, KI-044, and KI-047 are **fixed in the working tree** (uncommitted). KI-032 is **mitigated**: the test cache is on by default and its rules are in `testcache.py`. All other items are open; KI-017 is partially fixed. KI-020 records the remaining digital-twin and optimization work. The user-facing docs were reconciled with this tree on 2026-10-19; the code remains the authority if they diverge again.
 
 How to use this list: refer to an item by its ID, for example “fix KI-003”.
 
@@ -573,6 +573,8 @@ On the nine missions where both have a passing candidate, the refined family is 
 **Fix (implemented):** `renderValidationReport` is the one owner of the verdict and handles "no report" by clearing the table, the chips, the failing-segment set and the red marks on the field; `solve()` calls it with nothing, so a new run starts with no verdict. The Push button and the push itself both refuse a mission that has changed since the solve, and the reason is said plainly. `init()` always asks `/api/jobs/current` and adopts a running solve, so a reload attaches to it and Cancel works.
 
 **Workaround:** None needed. `tests/test_studio_honesty.py` pins the three rules.
+
+**Also fixed:** the download button asked the *solve* job for the *push* job's artifact, so it 404'd after a push. The downloads box now asks for the job that owns the file.
 
 ---
 

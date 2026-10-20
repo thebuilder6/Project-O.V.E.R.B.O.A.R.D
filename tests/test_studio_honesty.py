@@ -386,5 +386,30 @@ class TestTheSheetWithoutASession(unittest.TestCase):
         self.assertFalse(payload["session"])
 
 
+class TestTheDownloadsBelongToTheirJob(unittest.TestCase):
+    """A download must ask for the job that owns the file.
+
+    After a push the downloads box holds the *push* job's artifacts (the
+    session the hub printed), but the download asked for the solve job, so
+    the button 404'd (KI-044).
+    """
+
+    def setUp(self):
+        self.source = _read(VIZ / "studio.js")
+
+    def _function(self, name):
+        start = self.source.index(f"function {name}(")
+        end = self.source.find("\nfunction ", start + 1)
+        return self.source[start:end if end > 0 else len(self.source)]
+
+    def test_the_download_asks_for_the_job_it_was_given(self):
+        body = self._function("renderDownloads")
+        self.assertIn("jobId", body)
+        self.assertIn("${owner}", body)
+
+    def test_the_caller_passes_the_job_id(self):
+        self.assertIn("renderDownloads(job.artifacts, job.id);", self.source)
+
+
 if __name__ == "__main__":
     unittest.main()
