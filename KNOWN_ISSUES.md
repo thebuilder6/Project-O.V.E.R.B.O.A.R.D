@@ -4,7 +4,7 @@ Last reviewed: 2026-10-19
 
 Scope: whole repository, reviewed as a single-user, offline desktop tool for one FLL robot. This is not a multi-user or server-scale review.
 
-Status: KI-001, KI-002, KI-003, KI-004, KI-005, KI-006, KI-007, KI-008, KI-009, KI-010, KI-011, KI-012, KI-013, KI-014, KI-015, KI-016, KI-018, KI-019, KI-021, KI-022, KI-023, KI-024, KI-025, KI-026, KI-027, KI-028, KI-029, KI-030, KI-031, KI-033, KI-034, KI-035, KI-036, KI-037, KI-038, KI-039, KI-040, KI-044, and KI-047 are **fixed in the working tree** (uncommitted). KI-032 is **mitigated**: the test cache is on by default and its rules are in `testcache.py`. All other items are open; KI-017 is partially fixed. KI-020 records the remaining digital-twin and optimization work. The user-facing docs were reconciled with this tree on 2026-10-19; the code remains the authority if they diverge again.
+Status: KI-001, KI-002, KI-003, KI-004, KI-005, KI-006, KI-007, KI-008, KI-009, KI-010, KI-011, KI-012, KI-013, KI-014, KI-015, KI-016, KI-018, KI-019, KI-021, KI-022, KI-023, KI-024, KI-025, KI-026, KI-027, KI-028, KI-029, KI-030, KI-031, KI-033, KI-034, KI-035, KI-036, KI-037, KI-038, KI-039, KI-040, KI-041, KI-042, KI-043, KI-044, and KI-047 are **fixed in the working tree** (uncommitted). KI-032 is **mitigated**: the test cache is on by default and its rules are in `testcache.py`. All other items are open; KI-017 is partially fixed. KI-020 records the remaining digital-twin and optimization work. The user-facing docs were reconciled with this tree on 2026-10-19; the code remains the authority if they diverge again.
 
 How to use this list: refer to an item by its ID, for example “fix KI-003”.
 
@@ -53,8 +53,12 @@ How to use this list: refer to an item by its ID, for example “fix KI-003”.
 | KI-039 | P2 | Studio / solver | ~~Two mission names became one file, a restore wrote before it parsed, and the guess averaged two headings the long way~~ (fixed) |
 | KI-040 | P1 | Robot runtime | ~~`--push-hub --hub-log` lost the whole hub log when the link dropped~~ (fixed) |
 | KI-044 | P1 | Studio | ~~The studio kept the last run's verdict, and a reload could not cancel a solve~~ (fixed) |
+| KI-041 | P1 | SysId | ~~One corrupt cell in a session poisoned the whole calibration~~ (fixed) |
+| KI-042 | P1 | SysId | ~~A two-repeat calibration could not be loaded at all~~ (fixed) |
+| KI-043 | P1 | SysId | ~~The collector calibrated the odometry from the robot's own odometry~~ (fixed) |
 | KI-045 | P2 | Cleanup | `sysid_solver.py` is a superseded prototype (open) |
 | KI-047 | P1 | Solver | ~~The fast solve path made the solver slower, and its test failed on the tree~~ (fixed) |
+| KI-046 | P2 | Cleanup | Five smaller things the audit left open (open) |
 | KI-048 | P1 | Solver / output | ~~The solver gives up on a path instead of trying another candidate~~ (fixed; a rescue round tries the other seeds when the run produces nothing) |
 | KI-049 | P1 | Validation | ~~The reachability envelope reported a 54 mm width that was the divergence guard's fingerprint, and the tube behind it was blown up by a dependency the interval arithmetic could not see~~ (fixed) |
 
@@ -578,6 +582,73 @@ On the nine missions where both have a passing candidate, the refined family is 
 
 ---
 
+### KI-041 — One corrupt cell in a session poisoned the whole calibration
+
+**Status:** Fixed in the working tree (uncommitted).
+
+**Files:** `sysid_fit.py` (`parse_session`, `_step_fits_measured`, `_fit_first_order`, `_summary`, the CLI), `tests/test_sysid_fit.py`
+
+**Problem:** The fitter read a session row with `float(part)`, and `float("nan")` and `float("inf")` are valid Python. A single bad cell therefore became data: `np.median` carried it into that step's command, the gain became `nan`, and the summary still wrote `"calibrated": true`. The fit file was written with `json.dump`, which emitted a bare `NaN` token - not valid JSON - and the loader then refused it with "actuator.gain must be finite, got nan", so the operator was told the fit was broken and not that the *session* was.
+
+**Evidence:** A session with `nan` in the `v_cmd_mm_s` column produced `calibrated: true, gain: nan`, a file that `JSON.parse` cannot read, and a `ValueError` at load time.
+
+**Fix (implemented):** A row with a non-finite value is dropped and counted, the count is reported in the fit and printed by the CLI, and a step whose command or measured window is not finite is not fitted. The fit file is written with `allow_nan=False`, so a poisoned fit fails loudly **at write time** and no file is written, instead of writing a file that fails to load.
+
+**Workaround:** None needed. `tests/test_sysid_fit.py::TestBadRows` pins it.
+
+---
+
+### KI-042 — A two-repeat calibration could not be loaded at all
+
+**Status:** Fixed in the working tree (uncommitted).
+
+**Files:** `digital_twin.py` (`_actuator_from_dict`), `sysid_fit.py` (`_summary`), `tests/test_digital_twin.py`, `tests/test_sysid_fit.py`
+
+**Problem:** The gain's 95 % interval over the repeats is a t-interval, and with two repeats the multiplier is 12.706. An ordinary 20 % run-to-run spread therefore gives `ci95 = [-0.27, 2.27]`. The loader takes that interval as the validator's gain band and refuses a band whose lower bound is not positive, so the whole fit was rejected - and two repeats is exactly what a dropped Bluetooth link leaves behind.
+
+**Evidence:** `repeat_statistics([0.90, 1.10])` returns `ci95 = [-0.2706, 2.2706]`, and `DigitalTwinConfig.from_dict` raises `ValueError: actuator gain range (-0.2706, 2.2706) must be positive`.
+
+**Fix (implemented):** The loader uses the interval only when its lower bound is positive and the band is not inverted, and falls back to the observed `gain_min`/`gain_max` otherwise. The fitter clamps the interval's lower bound to a small positive number and keeps the raw t-interval under `<name>_ci95_raw`, so the file always loads and the operator can still see what the interval really was.
+
+**Workaround:** None needed.
+
+---
+
+### KI-043 — The collector calibrated the odometry from the robot's own odometry
+
+**Status:** Fixed in the working tree (uncommitted).
+
+**Files:** `sysid_collect.py`, `sysid_fit.py` (`_fit_odometry`), `tests/test_sysid_collect.py`, `tests/test_sysid_fit.py`
+
+**Problem:** Two things about the distance scale.
+
+1. `sysid_collect.py` handed the hub's own poses to the fit as measurements. The hub's distance reading **is** its odometry, so measured/odometry is exactly 1.0 by construction, and the fit wrote `"calibrated": true` for a block that carries no information. The validator uses that scale to advance the robot's own pose estimate, so it decides how well the modelled controller tracks the plan. The collector's own docstring promised the opposite.
+2. The fit pooled the tape samples and the wall-homing samples and took `np.median` of the union. With an even count that averages the two middle values, so the number used was neither estimate: tape 1.000 and wall 1.050 gave 1.025, while the file separately reported 1.0 and 1.05.
+
+**Fix (implemented):** The collector no longer passes the hub's poses to the fit; they are still written out for the operator, and the odometry block stays uncalibrated unless a real measurement is supplied. The scale is the tape estimate when there is one and the wall estimate otherwise, and both are reported with their disagreement, so the operator still sees the cross-check.
+
+**Workaround:** None needed. The wall still calibrates the distance scale in a collector run, because the wall is an independent reference and not the robot agreeing with itself; the heading scale and the brake slip need a tape measurement and stay uncalibrated.
+
+---
+
+### KI-046 — Five smaller things the audit left open
+
+**Status:** Open. None of them is a safety gate; each is small and each wants its own change.
+
+**Files:** `gui_server.py`, `hub_ble.py`, `sysid_fit.py`, `requirements-optional.txt`, `KNOWN_ISSUES.md`, `README.md`, `docs/CONFIGURATION.md`
+
+**The five:**
+
+1. **The studio flips a job's status to "ok" before it fills in the result.** `gui_server.py` sets the status and then reads the trajectory file and computes the force limits, so a poll that lands in that window reads an empty result and the convergence plot says the solver recorded no iterations. The window is under a millisecond against a 400 ms poll, so it is rare, but the comment in the code claims the opposite order.
+2. **A device whose name merely *contains* the wanted string is never probed.** `hub_ble.py` ranks an exact name match first and a substring match third, and the scan returns the first device that advertises the Pybricks UUID without asking the substring matches. On Windows, where the UUID is usually missing, that can hand the operator an unrelated device.
+3. **The hub session parser drops malformed rows silently.** The firmware prints `TEST_END,<n>` with its row count and the parser discards it, so a truncated capture is indistinguishable from a complete one and the operator sees "no usable step data" with no reason.
+4. **Two optional packages were imported but not declared.** `hub_ble.py` imports `bleak`, which `requirements-optional.txt` did not name (it happened to arrive with `pybricksdev`), and `mat_import.py` imports `pypdfium2`, which was not named at all - so the two mat tests failed on a machine that had installed the optional stack. Both are now named in `requirements-optional.txt`.
+5. **Some docs still describe a state that has moved on.** `KNOWN_ISSUES.md` and `README.md` say every fix is "fixed in the working tree (uncommitted)", although the fixes are committed; `docs/CONFIGURATION.md` still says the optional packages are not in the requirement files (KI-006 is closed).
+
+**Workaround:** None of them stops a mission from being planned, validated and driven. Each is a small change on its own.
+
+---
+
 ### KI-048 — The solver gives up on a path instead of trying another candidate
 
 **Status:** Fixed in the working tree (uncommitted). The rescue round is in.
@@ -774,7 +845,7 @@ The report now also carries `envelope_truncated`, so a cut-off propagation says 
 
 **Evidence:** The straight example passes with `max_tracking_error_m≈0.00346 m` and `max_envelope_radius_m≈0.0028 m` under the narrowed test ranges. Representative paths still expose the gap: the S-curve example reports `max_tracking_error_m≈0.0132 m` and `max_envelope_radius_m≈0.0077 m`; the stops example reports 0.0052-0.0060 m / 0.0093-0.0095 m; the events example reports 0.0053-0.0054 m / 0.0097 m; the complex mission now passes at 6.068 s with 0.0049 m / 0.0122 m. These are model predictions, not hardware measurements. There is no real tracking log in the repository yet; the logger and fitter have only been exercised with synthetic data. A synthetic fit with `gain=1.0, tau=0.08 s` already rejects the straight example with 3.44 cm tracking error, which shows why hardware calibration matters before enabling the fitted model. The old `accuracy_weight += 2.0` retry is removed: on the complex mission the slow 17.1 s candidate diverged, while the 6.07 s one stayed bounded. A uniform-timing five-seed sweep (`baseline`, `rolling`, `bow_left`, `bow_right`, `turn_first`) shows that on the complex mission all four non-baseline seeds converge to slower, wider paths (8.1-8.7 s, 1.55-1.76 cm, tracking 0.53-0.72 cm), so the 6.07 s / 1.22 cm baseline still wins. Guess diversity alone does not beat the equal-duration baseline; the default simple-path candidates now mix the two timing modes (KI-022). Per-segment timing is path-dependent: on an uneven 1.0 m + 0.2 m path, `accuracy_weight=0.005` passes all gates at 2.784 s / 0.32 cm envelope / 0.36 cm tracking versus 4.456 s / 0.37 cm / 0.36 cm equal-duration at the same weight, so the mixed loop selects per-segment; at `accuracy_weight=0` per-segment is 2.710 s / 0.32 cm but fails the Immrax and CPU gates, so the mixed loop falls back to the equal-duration candidate (4.463 s / 0.35 cm). On the complex mission at `accuracy_weight=0` per-segment is faster (4.650 s / 1.00 cm) but its tracking is 0.84 cm and its motor force is 0.074 N over the limit; at `accuracy_weight=0.02` it is 7.333 s / 1.58 cm with 0.53 cm tracking, still over the 5 mm gate, and worse than the uniform 6.068 s / 1.22 cm baseline. The candidate loop now mixes both timing modes by default (`--uniform-dt`/`--per-segment-dt` force one) and runs the CPU audit on every candidate, so a partial pass cannot block a later fully passing candidate.
 
-**Fix:** Collect and fit in one command with `python sysid_collect.py --conn ble --profile examples/drivebase_profile.example.json`: it pushes the logger, captures the session as it arrives, converts the hub's `POSE` lines to `poses.csv`, and writes `sysid_fit.json`. The poses are the hub's own odometry, so the distance and heading scale of the fit have no ground truth and stay at 1.0 until someone measures the robot with a tape and replaces those rows; the actuator part of the fit does not need a measurement. The written procedure is `docs/CALIBRATION_PROCEDURE.md`: the operator drives the robot through the collector tests, measures the end pose of the five that need a tape, and fills in a measurement sheet keyed by test name. `python sysid_fit.py <session.csv> --from-sheet <sheet> --out-poses poses.csv` turns that sheet into the measured poses, so the order the tests ran in does not matter and a skipped test is reported instead of guessed. The same thing step by step: push the logger and capture its session with `python hub_deploy.py pybricks_code/sysid_digital_twin.py --out session.csv` (or run it from the Pybricks IDE), record the stop/final poses in `poses.csv`, fit the logs with `sysid_fit.py --profile examples/drivebase_profile.example.json`, and pass the result with `main.py --sysid-fit sysid_fit.json --validate`. Compare the planned trajectory with the measured poses using `sysid_compare.py`; it prints position/heading errors and whether each measured pose is inside the reachability envelope, and it accepts a plain predicted-pose CSV and a drivebase profile. The pushed run gives the same comparison without hand-editing: `main.py --push-hub --hub-log session.log`, then `sysid_fit.py --from-hub-session session.log --out-poses poses.csv --run-id <id>`, then `sysid_compare.py output.traj poses.csv --run-id <id>`. Extend the plant to integrated odometry and a braking-slip state only after that comparison. The post-solve choice is made: `--candidates` scores several solutions (seed/timing combinations with `--simple`, accuracy-weight variants on the Multi-Verse path) and picks the passing one with the lowest envelope (then the shortest). Extend it to a hard constraint or differentiable proxy only if the candidate set cannot find a passing path. Do not tune the 5 mm/2 cm thresholds or b/zeta to one path.
+**Fix:** Collect and fit in one command with `python sysid_collect.py --conn ble --profile examples/drivebase_profile.example.json`: it pushes the logger, captures the session as it arrives, converts the hub's `POSE` lines to `poses.csv`, and writes `sysid_fit.json`. The poses are the hub's own odometry, so the distance and heading scale of the fit have no ground truth and stay at 1.0 until someone measures the robot with a tape and replaces those rows; the actuator part of the fit does not need a measurement. The written procedure is `docs/CALIBRATION_PROCEDURE.md`: the operator drives the robot through the collector tests, measures the end pose of the five that need a tape, and fills in a measurement sheet keyed by test name. `python sysid_fit.py <session.csv> --from-sheet <sheet> --out-poses poses.csv` turns that sheet into the measured poses, so the order the tests ran in does not matter and a skipped test is reported instead of guessed. The sheet is also fitted directly (`--sheet`), so there is no intermediate pose file, and it is written as a form in a browser (`--write-form`, `sheet_form.py`) so the operator types the numbers instead of editing a spreadsheet; the studio has the same form on the server. The same thing step by step: push the logger and capture its session with `python hub_deploy.py pybricks_code/sysid_digital_twin.py --out session.csv` (or run it from the Pybricks IDE), record the stop/final poses in `poses.csv`, fit the logs with `sysid_fit.py --profile examples/drivebase_profile.example.json`, and pass the result with `main.py --sysid-fit sysid_fit.json --validate`. Compare the planned trajectory with the measured poses using `sysid_compare.py`; it prints position/heading errors and whether each measured pose is inside the reachability envelope, and it accepts a plain predicted-pose CSV and a drivebase profile. The pushed run gives the same comparison without hand-editing: `main.py --push-hub --hub-log session.log`, then `sysid_fit.py --from-hub-session session.log --out-poses poses.csv --run-id <id>`, then `sysid_compare.py output.traj poses.csv --run-id <id>`. Extend the plant to integrated odometry and a braking-slip state only after that comparison. The post-solve choice is made: `--candidates` scores several solutions (seed/timing combinations with `--simple`, accuracy-weight variants on the Multi-Verse path) and picks the passing one with the lowest envelope (then the shortest). Extend it to a hard constraint or differentiable proxy only if the candidate set cannot find a passing path. Do not tune the 5 mm/2 cm thresholds or b/zeta to one path.
 
 **Workaround:** Use the straight example as a parity smoke test; treat predictions for curved/high-speed paths as uncalibrated until hardware logs are available. For planner testing, `examples/fll_choreo.json` temporarily narrows `track_width_range` to ≈±0.1% around 0.0965 m and `gear_backlash_m` to [0.4, 0.5] mm; these are test assumptions, not measured hardware values, and should be widened again once calibration data exists.
 

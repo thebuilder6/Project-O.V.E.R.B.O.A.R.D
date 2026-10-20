@@ -13,6 +13,22 @@ The procedure has two halves:
 Budget about half an hour. The robot drives for about six minutes of that;
 the rest is your setup between tests and the tape work.
 
+## The whole thing, in two commands and one form
+
+```bash
+# 1. collect: the robot runs the tests, you press the hub button between them
+python sysid_collect.py --conn ble --profile my_drivebase.json \
+  --session session.csv --sheet calibration_sheet.csv
+
+# 2. fill in calibration_sheet.html in a browser, click Download CSV
+
+# 3. fit: the sheet is the measurement, so there is no file to convert
+python sysid_fit.py session.csv --sheet calibration_sheet.csv \
+  --profile my_drivebase.json --out sysid_fit.json
+```
+
+The steps below are the same three things, in detail.
+
 ---
 
 ## What you need

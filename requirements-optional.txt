@@ -15,6 +15,14 @@ jaxopt
 immrax
 pandas
 pybricksdev
+# The PDF renderer for the mat import: FIRST's field guide is a PDF, and
+# the studio composes the mat picture from it. Without this the mat
+# download says what to install and the two mat tests fail (KI-046).
+pypdfium2
+# bleak is imported directly by hub_ble.py to find the hub over Bluetooth.
+# It arrives with pybricksdev, but it is a direct import, so it is named
+# here (KI-046).
+bleak
 # scipy is imported by immrax.utils, which the envelope experiment uses for
 # the Monte-Carlo check against the reachable set. Immrax declares shapely,
 # pypoman and matplotlib but not scipy, so it is named here (KI-049).

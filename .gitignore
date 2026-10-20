@@ -66,6 +66,7 @@ mats/
 calibration/
 session.csv
 calibration_sheet.csv
+calibration_sheet.html
 poses.csv
 hub_poses.csv
 sysid_fit.json
