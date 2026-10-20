@@ -167,6 +167,106 @@ def load_poses(path):
     return poses
 
 
+# The hub prints the pose of a run as "POSE,x_m,y_m,heading_deg" and every
+# exported event as "EVENT,name". These prefixes are a contract: the runner in
+# pybricks_code/hub_runner.py and this parser have to agree.
+HUB_POSE_PREFIX = "POSE,"
+HUB_EVENT_PREFIX = "EVENT,"
+
+POSES_CSV_FIELDS = ["run_id", "stop", "x_m", "y_m", "heading_deg"]
+
+
+def poses_from_hub_session(lines, run_id="hub"):
+    """Turn a captured hub session into measured-pose rows and event names.
+
+    ``lines`` is the hub console output, as written by ``hub_deploy.py`` or
+    ``main.py --push-hub --hub-log``. The fitter and the comparator read
+    measured poses as CSV rows with run_id, stop, x_m, y_m, heading_deg, so
+    the session is converted here instead of by hand.
+
+    A pose belongs to the test that is open when it is printed, so it takes
+    the run id of that test's ``META,run_id`` line. The ``run_id`` argument
+    is only the fallback for a session without META lines, such as the one a
+    pushed trajectory prints.
+
+    Returns (rows, events). The rows are in the order the hub printed them,
+    with ``stop`` counting the poses of each run.
+    """
+    rows = []
+    events = []
+    current_run = None
+    stops = {}
+    for line in lines:
+        if isinstance(line, bytes):
+            line = line.decode("utf-8", "replace")
+        text = line.strip()
+        if text.startswith("META,"):
+            parts = text.split(",", 2)
+            if len(parts) >= 3 and parts[1].strip() == "run_id":
+                current_run = parts[2].strip()
+            continue
+        if text.startswith(HUB_POSE_PREFIX):
+            parts = text.split(",")
+            if len(parts) < 4:
+                continue
+            try:
+                x_m = float(parts[1])
+                y_m = float(parts[2])
+                heading_deg = float(parts[3])
+            except ValueError:
+                continue
+            owner = current_run if current_run else run_id
+            stop = stops.get(owner, 0)
+            stops[owner] = stop + 1
+            rows.append({
+                "run_id": owner,
+                "stop": stop,
+                "x_m": x_m,
+                "y_m": y_m,
+                "heading_deg": heading_deg,
+            })
+        elif text.startswith(HUB_EVENT_PREFIX):
+            events.append(text[len(HUB_EVENT_PREFIX):].strip())
+    return rows, events
+
+
+def write_poses_csv(rows, path):
+    """Write measured-pose rows in the format load_poses() reads."""
+    with open(path, "w", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=POSES_CSV_FIELDS)
+        writer.writeheader()
+        for row in rows:
+            writer.writerow({key: row[key] for key in POSES_CSV_FIELDS})
+    return path
+
+
+def _convert_hub_session(args, parser):
+    """CLI mode: turn a captured hub session into a measured-pose CSV."""
+    if not args.out_poses:
+        parser.error("--from-hub-session needs --out-poses")
+    try:
+        with open(args.from_hub_session, "r", encoding="utf-8",
+                  errors="replace") as handle:
+            lines = handle.read().splitlines()
+    except OSError as exc:
+        print(f"error: cannot read {args.from_hub_session}: {exc}")
+        return 1
+
+    rows, events = poses_from_hub_session(lines, run_id=args.run_id)
+    if not rows:
+        print(f"No POSE lines in {args.from_hub_session}.")
+        return 1
+
+    write_poses_csv(rows, args.out_poses)
+    print(
+        f"Wrote {len(rows)} measured pose(s) to {args.out_poses} "
+        f"(run_id={args.run_id})."
+    )
+    if events:
+        print("Events: " + ", ".join(events))
+    return 0
+
+
 # ---------------------------------------------------------------------------
 # Column helpers and first-order fitting
 # ---------------------------------------------------------------------------
@@ -479,8 +579,12 @@ def _fit_odometry(runs, poses, distance_scale_default=1.0):
             )
         elif "odometry_turn" in run["name"] and db_heading is not None:
             if abs(db_heading) > 1e-6:
+                # The measured heading is counter-clockwise positive, like
+                # the planned trajectory, but the odometry angle is
+                # clockwise positive. Flip one of them so the ratio is the
+                # scale between them and not its negative.
                 heading_candidates.append(
-                    entries[-1]["heading_deg"] / db_heading
+                    entries[-1]["heading_deg"] / -db_heading
                 )
         elif run["name"].startswith("brake_from_") and db_distance > 1e-6:
             brake_pairs.append((
@@ -750,8 +854,23 @@ def main(argv=None):
     parser = argparse.ArgumentParser(
         description="Fit a digital-twin model from Pybricks SysId CSV logs."
     )
-    parser.add_argument("logs", nargs="+", help="CSV file(s) or a directory of CSV files")
+    parser.add_argument("logs", nargs="*", help="CSV file(s) or a directory of CSV files")
     parser.add_argument("--poses", help="measured pose CSV")
+    parser.add_argument(
+        "--from-hub-session",
+        help=(
+            "captured hub console output (hub_deploy.py --out, or "
+            "main.py --push-hub --hub-log); its POSE lines are converted to "
+            "--out-poses and nothing is fitted"
+        ),
+    )
+    parser.add_argument(
+        "--out-poses", help="measured pose CSV to write for --from-hub-session"
+    )
+    parser.add_argument(
+        "--run-id", default="hub",
+        help="fallback run id for poses in a session without META lines",
+    )
     parser.add_argument(
         "--profile",
         help="minimal drivebase profile JSON (wheel_radius_m, track_width_m)",
@@ -768,6 +887,9 @@ def main(argv=None):
     )
     parser.add_argument("--out", default="sysid_fit.json", help="output JSON path")
     args = parser.parse_args(argv)
+
+    if args.from_hub_session:
+        return _convert_hub_session(args, parser)
 
     if args.profile and args.robot_config:
         parser.error("use either --profile or --robot-config, not both")

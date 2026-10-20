@@ -338,6 +338,58 @@ class DigitalTwinConfig:
             return 0.0
         return max(0.0, float(self.actuator_straight.delay_s or 0.0))
 
+    def actuator_accel_limit(self) -> Optional[float]:
+        """Measured wheel-acceleration limit in m/s^2, or None if unknown.
+
+        The plant clamps the wheel-speed state to this rate, so the model
+        cannot accelerate faster than the robot did.
+        """
+        if not self.actuator_straight.calibrated:
+            return None
+        value = self.actuator_straight.accel_limit
+        if value is None:
+            return None
+        value = float(value)
+        return value if value > 0.0 else None
+
+    def odometry_distance_scale(self) -> float:
+        """Scale between the robot's distance reading and the truth."""
+        if not self.odometry.calibrated:
+            return 1.0
+        return float(self.odometry.distance_scale)
+
+    def odometry_heading_scale(self) -> float:
+        """Scale between the robot's heading rate and the truth."""
+        if not self.odometry.calibrated:
+            return 1.0
+        return float(self.odometry.heading_scale)
+
+    def gyro_z_bias_rad_s(self) -> float:
+        """Stationary gyro z bias as a yaw-rate offset, in rad/s.
+
+        The robot's heading estimate drifts by this much per second, which is
+        what separates the robot's belief from the truth over a run.
+        """
+        if not self.sensors.calibrated:
+            return 0.0
+        bias = self.sensors.gyro_z_bias_deg_s
+        if bias is None:
+            return 0.0
+        return math.radians(float(bias))
+
+    def brake_shortfall(self) -> float:
+        """Fraction by which a braking run travels less than its odometry says.
+
+        The fit stores 1 - measured/expected, so 0.1 means the robot covered
+        10% less ground than its encoders reported while braking.
+        """
+        if not self.slip.calibrated:
+            return 0.0
+        median = self.slip.brake_ratio_median
+        if median is None:
+            return 0.0
+        return float(median)
+
     def summary(self) -> Dict[str, Any]:
         """Compact JSON-safe description for reports and benchmark stats."""
         return {
@@ -371,7 +423,7 @@ class DigitalTwinConfig:
                 "brake_ratio_median": self.slip.brake_ratio_median,
                 "brake_ratio_min": self.slip.brake_ratio_min,
                 "brake_ratio_max": self.slip.brake_ratio_max,
-                "applied": False,
+                "applied": self.slip.calibrated,
             },
             "sensors": {
                 "calibrated": self.sensors.calibrated,
@@ -382,8 +434,11 @@ class DigitalTwinConfig:
                 "actuator_gain_range": list(self.actuator_gain_range()),
                 "actuator_tau_s": self.actuator_tau_s(),
                 "command_delay_s": self.actuator_delay_s(),
+                "actuator_accel_limit": self.actuator_accel_limit(),
                 "odometry_scale": self.odometry.calibrated,
-                "slip_model": False,
+                "integrated_odometry": self.odometry.calibrated,
+                "gyro_z_bias_rad_s": self.gyro_z_bias_rad_s(),
+                "slip_model": self.slip.calibrated,
             },
             "source": list(self.source),
         }

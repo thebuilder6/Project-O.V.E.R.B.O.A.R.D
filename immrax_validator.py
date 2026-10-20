@@ -143,11 +143,23 @@ class DigitalTwinOpenLoop(immrax.system.OpenLoopSystem):
     follow the held controller command through a first-order lag. The command
     delay is applied by the sampled-data loop in ``ImmraxValidator`` because
     it needs command history, which a memoryless ``f(t, x, u, w)`` cannot see.
+
+    Two measured behaviours are modelled, both inert unless the fit provides
+    them:
+
+    * the wheel speed cannot change faster than the measured limit,
+    * while braking, the wheels turn further than the robot travels, so the
+      truth covers less ground than the encoders report.
     """
 
     # Explicit Euler is stable while dt / tau <= 1. The sampled loop uses a
     # 5 ms plant step, so a fitted tau below 10 ms is treated as this floor.
     MIN_TAU_S = 0.01
+
+    # Below this commanded wheel speed the robot is braking, so the measured
+    # braking shortfall applies. The transition is smooth because Immrax's
+    # natural inclusion cannot compare or select.
+    BRAKE_SPEED_M_S = 0.05
 
     def __init__(self, config: JAXRobotConfig,
                  digital_twin: DigitalTwinConfig):
@@ -156,6 +168,8 @@ class DigitalTwinOpenLoop(immrax.system.OpenLoopSystem):
         self.config = config
         self.digital_twin = digital_twin
         self.tau_s = max(digital_twin.actuator_tau_s(), self.MIN_TAU_S)
+        self.brake_shortfall = digital_twin.brake_shortfall()
+        self.accel_limit = digital_twin.actuator_accel_limit()
 
     def f(self, t, x, u, w):
         gain = _wheel_gain(w)
@@ -170,11 +184,28 @@ class DigitalTwinOpenLoop(immrax.system.OpenLoopSystem):
         v_actual = (vl_actual + vr_actual) / 2.0
         omega_actual = (vr_actual - vl_actual) / track_width
 
-        dx = v_actual * jnp.cos(x[2])
-        dy = v_actual * jnp.sin(x[2])
-        dtheta = omega_actual
+        # Braking slip: the wheels turn without gripping, so the robot covers
+        # less than its encoders report. The factor goes to one at speed, so
+        # only the braking part of the run is affected.
+        if self.brake_shortfall:
+            commanded = (vl_target + vr_target) / 2.0
+            braking = 1.0 - jnp.tanh(
+                (commanded * commanded) / (self.BRAKE_SPEED_M_S ** 2))
+            grip = 1.0 - self.brake_shortfall * braking
+        else:
+            grip = 1.0
+
+        dx = grip * v_actual * jnp.cos(x[2])
+        dy = grip * v_actual * jnp.sin(x[2])
+        dtheta = grip * omega_actual
         dvl = (vl_target - vl_actual) / self.tau_s
         dvr = (vr_target - vr_actual) / self.tau_s
+
+        if self.accel_limit is not None:
+            # A soft limit: tanh is monotone, so the natural inclusion of it
+            # is exact, and it keeps the rate below the measured limit.
+            dvl = self.accel_limit * jnp.tanh(dvl / self.accel_limit)
+            dvr = self.accel_limit * jnp.tanh(dvr / self.accel_limit)
 
         return jnp.array([dx, dy, dtheta, dvl, dvr])
 
@@ -277,6 +308,22 @@ class ImmraxValidator:
             digital_twin.actuator_delay_s()
             if self._digital_twin_active else 0.0
         )
+        # The robot's own pose estimate. The deployed controller never sees
+        # the true pose: it integrates the wheel encoders and the gyro, so the
+        # belief drifts away from the truth by the measured scale error and
+        # the gyro bias. The controller is fed that belief, not the truth.
+        self.digital_twin_distance_scale = (
+            digital_twin.odometry_distance_scale()
+            if self._digital_twin_active else 1.0
+        )
+        self.digital_twin_heading_scale = (
+            digital_twin.odometry_heading_scale()
+            if self._digital_twin_active else 1.0
+        )
+        self.digital_twin_gyro_bias_rad_s = (
+            digital_twin.gyro_z_bias_rad_s()
+            if self._digital_twin_active else 0.0
+        )
 
         self.sys = ClosedLoopRobotSystem(
             config, self.ramsete_b, self.ramsete_zeta)
@@ -298,6 +345,32 @@ class ImmraxValidator:
     def _controller_command_interval(self, x, u_ref, w):
         """Interval inclusion of the controller for one control tick."""
         return self.controller(0.0, x, u_ref, w)
+
+    def _advance_belief(self, belief, x_flat, state_len, dt):
+        """Integrate the robot's own pose estimate from the wheel motion.
+
+        The deployed robot integrates the wheel encoders into a distance
+        reading and the gyro into a heading. This mirrors that: the belief
+        advances with the achieved wheel speeds, scaled by the measured
+        odometry error, and its heading drifts with the measured gyro bias.
+
+        It is kept out of the plant state on purpose. The belief is the
+        robot's estimate, not a physical quantity, so it does not belong in
+        the reachable tube; it only decides what the controller believes.
+        """
+        vl = float((x_flat[3] + x_flat[state_len + 3]) / 2.0)
+        vr = float((x_flat[4] + x_flat[state_len + 4]) / 2.0)
+        track_width = self.cfg.track_width
+
+        odo_v = (vl + vr) / 2.0 * self.digital_twin_distance_scale
+        odo_w = ((vr - vl) / track_width) * self.digital_twin_heading_scale
+        odo_w += self.digital_twin_gyro_bias_rad_s
+
+        x, y, heading = belief
+        heading = heading + odo_w * dt
+        x = x + odo_v * math.cos(heading) * dt
+        y = y + odo_v * math.sin(heading) * dt
+        return (x, y, heading)
 
     def _odometry_pose(self, pose, start_pose):
         """Apply the fitted static odometry scale to a feedback pose.
@@ -520,6 +593,16 @@ class ImmraxValidator:
         diverged = False
         command_history = []
 
+        # The robot's own pose estimate. It starts where the plan starts and
+        # then drifts away from the truth by the measured odometry error and
+        # the gyro bias, exactly as the deployed robot's estimate does. It
+        # needs the wheel-speed states, so it only exists with the
+        # actuator-aware plant.
+        belief = None
+        if active_twin and self.plant.xlen > 3:
+            belief = (float(start_pose[0]), float(start_pose[1]),
+                      float(start_pose[2]))
+
         for i in range(N - 1):
             s = samples[i]
             s_next = samples[i+1]
@@ -563,10 +646,15 @@ class ImmraxValidator:
                         # The real controller sees one measured state, not
                         # the whole tube. Use the tube midpoint for feedback,
                         # then propagate the interval through the plant.
-                        x_center = (
-                            x_flat[:3] + x_flat[state_len:state_len + 3]
-                        ) / 2.0
-                        x_center = self._odometry_pose(x_center, start_pose)
+                        if belief is not None:
+                            # With the digital twin on, the controller sees
+                            # the robot's own estimate, not the truth.
+                            x_center = jnp.array(belief)
+                        else:
+                            x_center = (
+                                x_flat[:3] + x_flat[state_len:state_len + 3]
+                            ) / 2.0
+                            x_center = self._odometry_pose(x_center, start_pose)
                         u_cmd = self.controller(
                             0.0, x_center, u_ref, w_interval, normalize=True,
                             quantize=True)
@@ -579,6 +667,13 @@ class ImmraxValidator:
                         u_applied = u_cmd
 
                     for _ in range(PLANT_SUBSTEPS):
+                        if belief is not None:
+                            # Advance the belief with the same speeds and the
+                            # same order as the plant, so a perfect odometry
+                            # keeps the belief on the truth.
+                            belief = self._advance_belief(
+                                belief, x_flat, state_len,
+                                dt_ctrl / PLANT_SUBSTEPS)
                         dx_dt_flat = self.plant_emb_sys.f(
                             0.0, x_flat, u_applied, w_interval)
                         x_flat = x_flat + dx_dt_flat * (

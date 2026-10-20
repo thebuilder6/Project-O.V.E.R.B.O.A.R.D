@@ -12,9 +12,12 @@ import numpy as np
 
 from sysid_fit import (
     fit_session,
+    load_poses,
     main as sysid_main,
     parse_session,
+    poses_from_hub_session,
     read_drivebase_profile,
+    write_poses_csv,
 )
 
 
@@ -244,6 +247,91 @@ class TestDrivebaseProfile(unittest.TestCase):
         self.assertAlmostEqual(result["drivebase"]["wheel_radius_m"], 0.028)
         self.assertAlmostEqual(result["drivebase"]["track_width_m"], 0.0965)
         self.assertEqual(result["drivebase"]["source"], profile_path)
+
+
+class TestHubSessionPoses(unittest.TestCase):
+    """KI-020: the hub session has to become a measured-pose CSV.
+
+    hub_runner.py prints the pose of a run as "POSE,x_m,y_m,heading_deg" and
+    every exported event as "EVENT,name". sysid_fit.py and sysid_compare.py
+    read measured poses as CSV rows with run_id, stop, x_m, y_m, heading_deg,
+    so the conversion has to exist somewhere or the robot run ends in a
+    hand-edited file.
+    """
+
+    SESSION = [
+        "Hub runner: following the pushed trajectory...",
+        "EVENT,lower_arm",
+        "POSE,0.4123,0.1000,-12.50",
+        "EVENT,release",
+        "POSE,1.2000,0.0500,3.25",
+        "Hub runner: done.",
+    ]
+
+    def test_pose_lines_become_rows(self):
+        rows, events = poses_from_hub_session(self.SESSION, run_id="run1")
+
+        self.assertEqual(len(rows), 2)
+        self.assertEqual(rows[0]["run_id"], "run1")
+        self.assertEqual(rows[0]["stop"], 0)
+        self.assertAlmostEqual(rows[0]["x_m"], 0.4123)
+        self.assertAlmostEqual(rows[0]["y_m"], 0.1000)
+        self.assertAlmostEqual(rows[0]["heading_deg"], -12.50)
+        self.assertEqual(rows[1]["stop"], 1)
+        self.assertEqual(events, ["lower_arm", "release"])
+
+    def test_other_lines_are_ignored(self):
+        rows, events = poses_from_hub_session([
+            "Battery Voltage: 8100 mV",
+            "POSE,not,a,number",
+            "POSE,0.1,0.2",
+            "Trajectory complete.",
+        ])
+        self.assertEqual(rows, [])
+        self.assertEqual(events, [])
+
+    def test_written_csv_reads_back(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "poses.csv")
+            rows, _ = poses_from_hub_session(self.SESSION, run_id="run1")
+            write_poses_csv(rows, path)
+            poses = load_poses(path)
+
+        self.assertIn("run1", poses)
+        entries = poses["run1"]
+        self.assertEqual(len(entries), 2)
+        self.assertAlmostEqual(entries[0]["x_m"], 0.4123)
+        self.assertAlmostEqual(entries[1]["heading_deg"], 3.25)
+
+    def test_cli_converts_a_session(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            session = os.path.join(tmp, "session.log")
+            poses_path = os.path.join(tmp, "poses.csv")
+            with open(session, "w", encoding="utf-8") as handle:
+                handle.write("\n".join(self.SESSION) + "\n")
+            with contextlib.redirect_stdout(io.StringIO()):
+                code = sysid_main([
+                    "--from-hub-session", session,
+                    "--out-poses", poses_path,
+                    "--run-id", "run1",
+                ])
+            poses = load_poses(poses_path)
+
+        self.assertEqual(code, 0)
+        self.assertEqual(len(poses["run1"]), 2)
+
+    def test_cli_reports_a_session_without_poses(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            session = os.path.join(tmp, "session.log")
+            poses_path = os.path.join(tmp, "poses.csv")
+            with open(session, "w", encoding="utf-8") as handle:
+                handle.write("Hub runner: done.\n")
+            with contextlib.redirect_stdout(io.StringIO()):
+                code = sysid_main([
+                    "--from-hub-session", session, "--out-poses", poses_path,
+                ])
+            self.assertFalse(os.path.exists(poses_path))
+        self.assertEqual(code, 1)
 
 
 if __name__ == "__main__":

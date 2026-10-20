@@ -1,6 +1,7 @@
 """Tests for the optional sysid_fit.json digital-twin integration."""
 
 import json
+import math
 import os
 import tempfile
 import unittest
@@ -118,6 +119,8 @@ class TestDigitalTwinConfig(unittest.TestCase):
         self.assertEqual(twin.actuator_tau_s(), 0.0)
         self.assertEqual(twin.actuator_delay_s(), 0.0)
         self.assertFalse(twin.summary()["applied"]["slip_model"])
+        self.assertFalse(twin.summary()["applied"]["integrated_odometry"])
+        self.assertIsNone(twin.summary()["applied"]["actuator_accel_limit"])
 
     def test_odometry_only_fit_enables_identity_actuator(self):
         twin = DigitalTwinConfig.from_dict({
@@ -229,6 +232,113 @@ class TestDigitalTwinValidator(unittest.TestCase):
         history = [(0.0, command)]
         selected = ImmraxValidator._delayed_command(history, -0.05)
         self.assertTrue(np.array_equal(np.asarray(selected), np.zeros(2)))
+
+
+@unittest.skipUnless(HAS_IMMRAX, "immrax not installed")
+class TestDigitalTwinMechanisms(unittest.TestCase):
+    """The measured behaviours the plant and the belief now model (KI-020)."""
+
+    def _twin(self, **overrides):
+        payload = json.loads(json.dumps(_FIT))
+        for key, value in overrides.items():
+            payload[key] = value
+        return DigitalTwinConfig.from_dict(payload)
+
+    def _validator(self, twin):
+        return ImmraxValidator(JAXRobotConfig(_TEST_ROBOT), digital_twin=twin)
+
+    def _flat(self, state_len, vl=0.0, vr=0.0):
+        """A flat state array with the given wheel speeds in both bounds."""
+        lower = np.zeros(state_len)
+        upper = np.zeros(state_len)
+        lower[3] = upper[3] = vl
+        lower[4] = upper[4] = vr
+        return jnp.concatenate([jnp.array(lower), jnp.array(upper)])
+
+    def test_belief_uses_the_odometry_scale_and_gyro_bias(self):
+        validator = self._validator(self._twin())
+        belief = (0.0, 0.0, 0.0)
+        x_flat = self._flat(5, vl=0.2, vr=0.2)
+
+        belief = validator._advance_belief(belief, x_flat, 5, 1.0)
+
+        # The wheel speed 0.2 m/s over one second, scaled by 0.98. The
+        # heading drifts while the step runs, so the path curves a little.
+        drift = math.radians(0.1)
+        self.assertAlmostEqual(belief[0], 0.2 * 0.98 * math.cos(drift),
+                               places=6)
+        self.assertAlmostEqual(belief[1], 0.2 * 0.98 * math.sin(drift),
+                               places=6)
+        # The heading drifts with the measured gyro bias: 0.1 deg/s.
+        self.assertAlmostEqual(belief[2], drift, places=6)
+
+    def test_belief_turns_with_the_wheel_difference(self):
+        validator = self._validator(self._twin())
+        belief = (0.0, 0.0, 0.0)
+        x_flat = self._flat(5, vl=0.1, vr=0.3)
+
+        belief = validator._advance_belief(belief, x_flat, 5, 1.0)
+
+        # (0.3 - 0.1) / 0.0965 rad/s, scaled by the heading scale 1.01.
+        expected = (0.3 - 0.1) / 0.0965 * 1.01 + math.radians(0.1)
+        self.assertAlmostEqual(belief[2], expected, places=6)
+
+    def test_no_fit_means_no_belief_parameters(self):
+        validator = ImmraxValidator(JAXRobotConfig(_TEST_ROBOT))
+
+        self.assertEqual(validator.digital_twin_distance_scale, 1.0)
+        self.assertEqual(validator.digital_twin_heading_scale, 1.0)
+        self.assertEqual(validator.digital_twin_gyro_bias_rad_s, 0.0)
+
+    def test_braking_slip_shortens_the_ground_covered(self):
+        w = jnp.array([1.37, 0.85, 0.0004, 0.0965, 0.028, 0.001, 1.0])
+        state = jnp.array([0.0, 0.0, 0.0, 0.01, 0.01])
+        command = jnp.array([0.01, 0.01])
+
+        slipping = self._validator(self._twin()).plant.f(0.0, state, command, w)
+        gripping = self._validator(
+            self._twin(slip={"calibrated": False})).plant.f(
+                0.0, state, command, w)
+
+        # The wheels turn the same amount, but the robot covers less ground.
+        self.assertLess(float(slipping[0]), float(gripping[0]))
+        self.assertAlmostEqual(
+            float(slipping[0]) / float(gripping[0]), 1.0 - 0.03, places=2)
+
+    def test_no_slip_when_the_robot_is_at_speed(self):
+        w = jnp.array([1.37, 0.85, 0.0004, 0.0965, 0.028, 0.001, 1.0])
+        state = jnp.array([0.0, 0.0, 0.0, 0.4, 0.4])
+        command = jnp.array([0.4, 0.4])
+
+        slipping = self._validator(self._twin()).plant.f(0.0, state, command, w)
+        gripping = self._validator(
+            self._twin(slip={"calibrated": False})).plant.f(
+                0.0, state, command, w)
+
+        self.assertAlmostEqual(float(slipping[0]), float(gripping[0]), places=6)
+
+    def test_accel_limit_caps_the_wheel_rate(self):
+        validator = self._validator(self._twin())
+        w = jnp.array([1.37, 0.85, 0.0004, 0.0965, 0.028, 0.001, 1.0])
+
+        # The measured limit is 1.2 m/s^2; ask for far more.
+        dx = validator.plant.f(0.0, jnp.array([0.0, 0.0, 0.0, 0.0, 0.0]),
+                                jnp.array([5.0, 5.0]), w)
+
+        self.assertLessEqual(abs(float(dx[3])), 1.2 + 1e-6)
+        self.assertGreater(float(dx[3]), 0.0)
+
+    def test_summary_reports_what_is_applied(self):
+        twin = self._twin()
+        summary = twin.summary()
+
+        self.assertAlmostEqual(summary["odometry"]["distance_scale"], 0.98)
+        self.assertAlmostEqual(summary["sensors"]["gyro_z_bias_deg_s"], 0.1)
+        self.assertTrue(summary["slip"]["calibrated"])
+        self.assertTrue(summary["applied"]["slip_model"])
+        self.assertTrue(summary["applied"]["integrated_odometry"])
+        self.assertAlmostEqual(
+            summary["applied"]["actuator_accel_limit"], 1.2)
 
 
 if __name__ == "__main__":
