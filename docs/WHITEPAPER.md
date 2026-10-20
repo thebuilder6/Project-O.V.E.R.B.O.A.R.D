@@ -214,7 +214,7 @@ On failure, `TrajectoryOptimizer.solve` still returns a best-effort sample list 
 
 ### 4.5 Limitations
 
-- `TrajectoryOptimizer.solve` now exposes deterministic `guess_style` seeds, but there is no path to pass a full refined sample matrix from Multi-Verse. The final polish therefore starts from the baseline seed (KI-004).
+- `TrajectoryOptimizer.solve` exposes deterministic `guess_style` seeds and takes a full `initial_guess`, so `main.py --refine` can hand it the Multi-Verse refinement. The refined trajectory therefore reaches the solver — it is a seed provider, not a second solver, and it is not better than the stock seeds (KI-004).
 - There are no obstacle or field-geometry constraints.
 - The solver is local; a bad waypoint/heading combination can converge to a poor local solution or fail.
 - The model is kinematic at the trajectory level. Motor lag, DriveBase response, odometry, and slip are handled only by the validation approximation, not the optimizer; the optional `--sysid-fit` plant adds fitted actuator/odometry response, but not full dynamics (KI-020).
@@ -346,7 +346,7 @@ The hardware calibration path is implemented but has not been validated on hardw
 
 ## 7. Multi-Verse pipeline as implemented
 
-> The five phases are documented phase by phase below. Why the pipeline never reaches the solver, and the ledger of Multi-Verse strategies that did not work (the JAX refinement, the refine probe, the degenerate Reeds-Shepp bootstrap, the unread config blocks, the dead `heuristic_wins` counter), are in [`docs/HEURISTICS_AND_VERIFICATION.md`](HEURISTICS_AND_VERIFICATION.md) §8 and §20.
+> The five phases are documented phase by phase below. How the pipeline reaches the solver as a seed provider, and the ledger of Multi-Verse strategies that did not work (the degenerate Reeds-Shepp bootstrap, the unread config blocks, the dead `heuristic_wins` counter), are in [`docs/HEURISTICS_AND_VERIFICATION.md`](HEURISTICS_AND_VERIFICATION.md) §8 and §20.
 
 `MasterTrajectoryOptimizer.solve` runs five phases and returns `(final_traj, stats)`.
 
@@ -386,7 +386,7 @@ This phase updates `global_traj`. The `stomp_variants`, `stomp_noise`, and `teb_
 
 ### 7.5 Phase 5: Global polish
 
-`_global_solve` converts `initial_samples` into a `new_guess` array, but it does not pass that array to `TrajectoryOptimizer.solve`. The solver now exposes `guess_style` seeds, but the Multi-Verse path does not pass the refined samples or select a seed, so the polish starts from the default baseline guess (KI-004). `enable_parallel`, `num_workers`, `--workers`, and `--no-parallel` are also not used to produce the final result.
+`_global_solve` converts `initial_samples` into a `new_guess` array and probes it as a second starting point for the polish. The probe was broken until KI-004: it read a guess whose per-segment intervals had been discarded (the equal-duration model keeps only the first one), so the states were read against a timing they did not belong to. With that fixed the probe wins — 4.617 s against 6.049 s on the complex mission. `enable_parallel`, `num_workers`, `--workers`, and `--no-parallel` are still not used to produce the final result.
 
 ### 7.6 Measured effect
 
