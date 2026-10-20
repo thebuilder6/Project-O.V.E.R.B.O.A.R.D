@@ -1,0 +1,5 @@
+{
+  "name": "Example FLL differential drive",
+  "wheel_radius_m": 0.028,
+  "track_width_m": 0.0965
+}
