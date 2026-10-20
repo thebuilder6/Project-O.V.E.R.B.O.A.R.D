@@ -74,23 +74,23 @@ body {
 h1 { font-size: 25px; line-height: 1.2; margin: 3px 0 0; font-weight: 650; letter-spacing: -.01em; }
 .meta { color: var(--muted); font-size: 12px; text-align: right; white-space: nowrap; }
 .meta div + div { margin-top: 2px; }
-.verdict { display: inline-flex; align-items: center; gap: 7px; margin-top: 16px;
-  padding: 7px 13px; border-radius: 5px; font-weight: 600; font-size: 13px; }
+.verdict { display: inline-flex; align-items: center; gap: 7px; margin-top: 12px;
+  padding: 6px 13px; border-radius: 5px; font-weight: 600; font-size: 13px; }
 .verdict.ok { background: #e4f3ea; color: var(--ok); }
 .verdict.warn { background: #fcf2da; color: var(--warn); }
 .verdict.bad { background: #fcebea; color: var(--bad); }
 .verdict .dot { width: 8px; height: 8px; border-radius: 50%; background: currentColor; }
-section { margin-top: 26px; }
+section { margin-top: 17px; }
 h2 { font-size: 10.5px; text-transform: uppercase; letter-spacing: .13em; color: var(--muted);
-  margin: 0 0 11px; padding-bottom: 6px; border-bottom: 1px solid var(--line); }
-h3 { font-size: 12px; margin: 16px 0 6px; font-weight: 600; }
-p.note { color: var(--muted); font-size: 12px; margin: 8px 0 0; }
-.facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(132px, 1fr));
-  gap: 12px 22px; margin: 0; }
+  margin: 0 0 8px; padding-bottom: 5px; border-bottom: 1px solid var(--line); }
+h3 { font-size: 12px; margin: 13px 0 5px; font-weight: 600; }
+p.note { color: var(--muted); font-size: 12px; margin: 7px 0 0; }
+.facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(128px, 1fr));
+  gap: 9px 20px; margin: 0; }
 .facts dt { color: var(--muted); font-size: 10px; text-transform: uppercase; letter-spacing: .07em; }
-.facts dd { margin: 3px 0 0; font-family: ui-monospace, "Cascadia Mono", Consolas, monospace; font-size: 15px; }
+.facts dd { margin: 2px 0 0; font-family: ui-monospace, "Cascadia Mono", Consolas, monospace; font-size: 15px; }
 .facts dd small { font-size: 11px; color: var(--muted); }
-.figures { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; align-items: start; margin-top: 12px; }
+.figures { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; align-items: start; margin-top: 9px; }
 figure { margin: 0; }
 figcaption { font-size: 10px; text-transform: uppercase; letter-spacing: .07em;
   color: var(--muted); margin-bottom: 5px; }
@@ -109,15 +109,15 @@ tr.ok td.verdict-cell { color: var(--ok); }
   border-radius: 3px; border: 1px solid var(--line); color: var(--muted); margin-left: 4px; }
 .tag.stop { border-color: #bcd9f0; color: #0b6fa4; background: #eef6fc; }
 .tag.event { border-color: #e6cfe3; color: #8a3a76; background: #fbf1f8; }
-.foot { margin-top: 30px; padding-top: 12px; border-top: 1px solid var(--line);
+.foot { margin-top: 20px; padding-top: 10px; border-top: 1px solid var(--line);
   color: var(--muted); font-size: 11px; display: flex; justify-content: space-between; gap: 16px; }
 @page { size: A4 portrait; margin: 14mm 13mm; }
 @media print {
   body { background: #fff; }
   .toolbar { display: none; }
   .page { max-width: none; margin: 0; padding: 0; border: none; border-radius: 0; box-shadow: none; }
-  section, figure, table { break-inside: avoid; }
-  h2 { break-after: avoid; }
+  figure, table { break-inside: avoid; }
+  h2, h3 { break-after: avoid; }
 }
 `;
 
@@ -196,17 +196,17 @@ tr.ok td.verdict-cell { color: var(--ok); }
             vmax = Math.max(vmax, Math.abs(Number(s.vl) || 0), Math.abs(Number(s.vr) || 0));
         });
         vmax = Math.max(vmax, 0.1);
-        const W = 100; const H = 46;
+        const W = 100; const H = 31;
         const px = (t) => (4 + ((Number(t) - t0) / span) * (W - 8)).toFixed(3);
-        const py = (v) => (H - 4 - ((Number(v) + vmax) / (2 * vmax)) * (H - 8)).toFixed(3);
+        const py = (v) => (H - 3.5 - ((Number(v) + vmax) / (2 * vmax)) * (H - 7)).toFixed(3);
         const line = (key) => samples.map((s, i) => `${i ? 'L' : 'M'} ${px(s.t)} ${py(s[key])}`).join(' ');
         const parts = [`<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="The wheel speeds over the run">`];
         parts.push(`<line x1="4" y1="${py(0)}" x2="${W - 4}" y2="${py(0)}" stroke="#c8d1dd" stroke-width="0.4"/>`);
         parts.push(`<path d="${line('vl')}" fill="none" stroke="#0b6fa4" stroke-width="1.1" stroke-linejoin="round"/>`);
         parts.push(`<path d="${line('vr')}" fill="none" stroke="#e08b2f" stroke-width="1.1" stroke-linejoin="round" stroke-dasharray="3 2"/>`);
-        parts.push(`<text x="4" y="${(H - 1).toFixed(3)}" font-size="3" fill="#5f6b7c" font-family="monospace">${t0.toFixed(2)}s</text>`);
-        parts.push(`<text x="${W - 4}" y="${(H - 1).toFixed(3)}" font-size="3" text-anchor="end" fill="#5f6b7c" font-family="monospace">${t1.toFixed(2)}s</text>`);
-        parts.push(`<text x="4" y="4" font-size="3" fill="#5f6b7c" font-family="monospace">${vmax.toFixed(2)} m/s</text>`);
+        parts.push(`<text x="4" y="${(H - 0.5).toFixed(3)}" font-size="2.6" fill="#5f6b7c" font-family="monospace">${t0.toFixed(2)}s</text>`);
+        parts.push(`<text x="${W - 4}" y="${(H - 0.5).toFixed(3)}" font-size="2.6" text-anchor="end" fill="#5f6b7c" font-family="monospace">${t1.toFixed(2)}s</text>`);
+        parts.push(`<text x="4" y="3.4" font-size="2.6" fill="#5f6b7c" font-family="monospace">${vmax.toFixed(2)} m/s</text>`);
         parts.push('</svg>');
         return parts.join('');
     }

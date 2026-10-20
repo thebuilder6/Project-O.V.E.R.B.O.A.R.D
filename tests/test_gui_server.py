@@ -60,7 +60,7 @@ class TestStudioRoutes(StudioTestCase):
         self.assertIn(b"OVERBOARD", body)
 
     def test_static_assets_are_served(self):
-        for path in ("/studio.css", "/studio.js"):
+        for path in ("/studio.css", "/studio.js", "/report.js"):
             status, body = _request(f"{self.base}{path}")
             self.assertEqual(status, 200, path)
             self.assertTrue(body)
@@ -346,6 +346,65 @@ class TestStudioPush(StudioTestCase):
         finally:
             if target.is_file():
                 target.unlink()
+
+class TestStudioReport(StudioTestCase):
+    """The report the browser built is written and served back."""
+
+    def _config(self):
+        with open(REPO_ROOT / "examples" / "fll_choreo.json", "r", encoding="utf-8") as handle:
+            return json.load(handle)
+
+    def _solve(self):
+        payload = {
+            "name": "unit test report",
+            "config": self._config(),
+            "waypoints": [{"x": 0.0, "y": 0.0, "heading": 0.0},
+                          {"x": 0.3, "y": 0.0, "heading": 0.0}],
+            "options": {"samples": 4, "candidates": 1, "accuracy_weight": 0.0,
+                        "timing": "auto", "validate": False, "export_format": "none"},
+        }
+        status, job = _request(f"{self.base}/api/solve", method="POST", payload=payload)
+        self.assertEqual(status, 202)
+        deadline = time.time() + 180
+        while time.time() < deadline:
+            status, done = _request(f"{self.base}/api/jobs/{job['id']}")
+            if done["status"] != "running":
+                self.assertEqual(done["status"], "ok", done["log"][-5:])
+                return job["id"]
+            time.sleep(0.3)
+        self.fail("the solve did not finish in time")
+
+    def test_the_report_is_written_and_served(self):
+        job_id = self._solve()
+        html = "<!DOCTYPE html><html><body><h1>report</h1></body></html>"
+        status, result = _request(f"{self.base}/api/jobs/{job_id}/report",
+                                   method="POST", payload={"html": html})
+        self.assertEqual(status, 200)
+        self.assertTrue(result["name"].endswith("_report.html"))
+        self.assertEqual(result["url"], f"/api/jobs/{job_id}/report")
+
+        status, body = _request(f"{self.base}/api/jobs/{job_id}/report")
+        self.assertEqual(status, 200)
+        self.assertIn(b"report", body)
+
+        # It is an artifact of the solve, so it is listed with the others.
+        status, done = _request(f"{self.base}/api/jobs/{job_id}")
+        kinds = [artifact["kind"] for artifact in done["artifacts"]]
+        self.assertIn("report", kinds)
+
+    def test_an_empty_report_is_refused(self):
+        job_id = self._solve()
+        with self.assertRaises(urllib.error.HTTPError) as ctx:
+            _request(f"{self.base}/api/jobs/{job_id}/report", method="POST",
+                     payload={"html": "  "})
+        self.assertEqual(ctx.exception.code, 400)
+
+    def test_a_report_for_an_unknown_job_is_not_found(self):
+        with self.assertRaises(urllib.error.HTTPError) as ctx:
+            _request(f"{self.base}/api/jobs/nope/report", method="POST",
+                     payload={"html": "<html></html>"})
+        self.assertEqual(ctx.exception.code, 404)
+
 
 class TestStudioModel(StudioTestCase):
     """The measured model belongs to the robot and is used when planning."""

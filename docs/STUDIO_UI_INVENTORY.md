@@ -94,6 +94,8 @@ The page carries **147 element ids**: **75 controls with an id** (35 buttons, 33
 | **Save** | Writes `missions/<name>.json` and commits it to the missions' git repository. |
 | **Download** | Saves the mission JSON to the machine. |
 | **Open file...** | Loads a mission JSON from disk. |
+| **Download project** | Saves one file with the mission, the robot, the options, the model and the field. |
+| **Open project...** | Loads such a project and brings all of it back. |
 | **Download project** | The mission, the robot and the options in one file. |
 | **Open project...** | Loads that file back. |
 | *waypoint count* | Readout: "10 waypoints". |
@@ -197,7 +199,8 @@ Canvas contents: the mat, the grid, the mission models, the earlier runs, the pa
 | *collisions* | Where the plan met a mission model. |
 | **Validation detail** (details) | The explainer, the candidate chips (the leaderboard), the per-segment table, the note, and the **Try** buttons (the other timing model, a weight of 0.001, the sweep). |
 | **Mission report** | The report of the last solve, as a file. |
-| *downloads* | The trajectory, the controller, the Python module, the stats, the session. |
+| *downloads* | The trajectory, the controller, the Python module, the stats, the session, and the report. |
+| **Mission report** | Writes the one-page report next to the trajectory and opens it: the mission, the robot and the result on one printable page. |
 | **Solver log** (details) | The command line's output. |
 
 ### Waypoint tab
@@ -255,5 +258,8 @@ The keys are ignored while a text field has the focus, so typing a heading does 
 | A plot | One entry in `PLOTS`: a key, a label and a build function. The tab strip and the drawing both come from it. |
 | Something on the field | Draw it, then add one entry to `CANVAS_LEGEND` so the key stays right. |
 | A control | Markup with an id, and the id in the script. The inventory test fails until this document names it. |
+| A section in the report | A block in `viz/report.js`. The report is built from the numbers the Result tab shows, so it cannot disagree with the studio. |
 
 `tests/test_studio_inventory.py` checks the document against the page: no dangling id lookups, the quoted counts are the real counts, every button in the page has a row here, and every generated region is named. A control added to the studio fails the test until this document is updated.
+
+`tests/test_studio_report.py` covers the report and the project file: the report escapes what the operator typed, it is printable and self-contained, the server writes it next to the trajectory and serves it back, and a file that is not a project is refused with a reason.

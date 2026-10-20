@@ -86,9 +86,14 @@ from tests.test_gui_server import (
     TestStudioModel,
     TestStudioCalibration,
     TestStudioHelpers,
+    TestStudioReport,
 )
 from tests.test_studio_inventory import (
     TestStudioInventory,
+)
+from tests.test_studio_report import (
+    TestReportBuilder,
+    TestProjectFile,
 )
 
 # Regression tests (no JAX required)
@@ -202,6 +207,9 @@ def run_tests():
     suite.addTests(loader.loadTestsFromTestCase(TestStudioSolve))
     suite.addTests(loader.loadTestsFromTestCase(TestStudioHelpers))
     suite.addTests(loader.loadTestsFromTestCase(TestStudioInventory))
+    suite.addTests(loader.loadTestsFromTestCase(TestStudioReport))
+    suite.addTests(loader.loadTestsFromTestCase(TestReportBuilder))
+    suite.addTests(loader.loadTestsFromTestCase(TestProjectFile))
     
     # Run tests
     runner = unittest.TextTestRunner(verbosity=2)

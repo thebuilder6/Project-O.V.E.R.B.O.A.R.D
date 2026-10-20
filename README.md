@@ -224,6 +224,10 @@ The studio opens in your browser: draw the mission on the field, set headings, s
 
 The page is three columns. The left one is what you set (tabs: **Mission**, **Robot**, **Field**, **Solve**), the canvas in the middle is the work, and the right one is what you read (tabs: **Result**, **Waypoint**, **Plots**, **Run**). The line in the header always carries the result, so a tabbed column can never hide the answer, and the field carries a key to its own colours. Every control is listed in [docs/STUDIO_UI_INVENTORY.md](docs/STUDIO_UI_INVENTORY.md), with the structure and how to extend it.
 
+**Mission report.** One button writes a single printable page - the mission, the robot and the result, with the planned path and the wheel speeds drawn - and opens it in a new tab. It is written next to the trajectory, so the report and the plan travel together, and it is built from the same numbers the studio shows, so it cannot disagree with the screen.
+
+**Project file.** One file with the mission, the robot config, the solve options, the measured model and the field. Send it to a team-mate and they open it and get the whole setup, not just the path.
+
 The studio runs the same command line in the background, so the export gate, the validation rules and the file formats are identical to the terminal path. A failed validation shows the reason and offers no download.
 
 The studio also draws the plots the command line can make, from the same samples: the velocity profiles, the wheel forces against the force limit, the accelerations, the heading over time, and how the solve converged. The solver's first guess is drawn on the field as a dashed path, so you can see what the optimizer changed.
