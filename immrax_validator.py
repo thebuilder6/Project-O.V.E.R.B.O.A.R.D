@@ -6,7 +6,7 @@ from immrax import Interval, interval
 from immrax.inclusion import natif
 from jax_robot_model import JAXRobotConfig, JAXDifferentialDriveModel
 from robot_model import CG_HEIGHT_M, wheel_normal_forces
-from jax_ramsete import JAXRamseteController
+from jax_ramsete import JAXRamseteController, quantize_drive_command
 from digital_twin import DigitalTwinConfig
 from typing import List, Dict, Any, Tuple, Optional
 import math
@@ -90,6 +90,17 @@ def _wheel_gain(w):
 
 
 class RobotOpenLoop(immrax.system.OpenLoopSystem):
+    """Kinematic plant: the commanded wheel speed becomes motion at once.
+
+    The firmware raises the DriveBase trajectory limits
+    (``drivebase.settings(straight_acceleration=..., turn_acceleration=...)``,
+    about 7800 mm/s² and 9300 deg/s² for 56 mm wheels) above the accelerations
+    the planner uses, so the inner reference follows the command instead of
+    ramping behind it. Instant tracking is therefore a fair model of the hub.
+    The DriveBase PID and the whole-millimeter distance reading are still not
+    modeled (KI-020).
+    """
+
     def __init__(self, config: JAXRobotConfig):
         self.evolution = 'continuous'
         self.xlen = 3
@@ -181,13 +192,19 @@ class RamseteController:
         # the plant; the deployed DriveBase does not change its axle track.
         self.track_width = track_width
 
-    def __call__(self, t, x, u_ref, w, normalize: bool = False):
+    def __call__(self, t, x, u_ref, w, normalize: bool = False,
+                 quantize: bool = False):
         """
         u_ref: Reference trajectory [xr, yr, thetar, vr, omegar, kr]
 
         ``normalize=False`` is for interval states with unrolled headings.
         Float states used by the nominal feedback path should pass True so
         they match ramsete_fast.py's shortest-angle normalization.
+
+        ``quantize=True`` mirrors the firmware, which rounds the commanded
+        linear speed (mm/s) and turn rate (deg/s) before calling
+        ``DriveBase.drive()``. It stays off for the interval inclusion path,
+        which may only use operations Immrax can include.
         """
         xr, yr, thetar, vr, omegar = u_ref[0], u_ref[1], u_ref[2], u_ref[3], u_ref[4]
         ref_k = u_ref[5] if len(u_ref) > 5 else None
@@ -196,6 +213,9 @@ class RamseteController:
         ref_pose = jnp.array([xr, yr, thetar])
         v_cmd, omega_cmd = self.controller.calculate(
             x, ref_pose, vr, omegar, ref_k=ref_k, normalize=normalize)
+
+        if quantize:
+            v_cmd, omega_cmd = quantize_drive_command(v_cmd, omega_cmd)
 
         vl_cmd = v_cmd - (omega_cmd * track_width) / 2.0
         vr_cmd = v_cmd + (omega_cmd * track_width) / 2.0
@@ -548,7 +568,8 @@ class ImmraxValidator:
                         ) / 2.0
                         x_center = self._odometry_pose(x_center, start_pose)
                         u_cmd = self.controller(
-                            0.0, x_center, u_ref, w_interval, normalize=True)
+                            0.0, x_center, u_ref, w_interval, normalize=True,
+                            quantize=True)
 
                     if active_twin and delay_s > 0.0:
                         command_history.append((t, u_cmd))

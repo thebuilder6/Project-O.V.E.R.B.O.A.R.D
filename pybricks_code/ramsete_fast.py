@@ -9,6 +9,13 @@ _2PI = const(6283185) / 1000000.0
 _R2D = const(5729578) / 100000.0
 _D2R = const(17453) / 1000000.0
 _I1000 = const(1) / 1000.0
+_GC_EVERY = const(50)
+
+
+def _round(value):
+    """Round to the nearest integer; MicroPython's int() truncates."""
+    return int(value + 0.5) if value >= 0.0 else -int(-value + 0.5)
+
 
 async def follow_trajectory(drivebase, samples, config=None, b=2.0, zeta=0.7):
     if not samples: return
@@ -28,13 +35,15 @@ async def follow_trajectory(drivebase, samples, config=None, b=2.0, zeta=0.7):
     total_time = data[(num_pts-1)*7]
     
     # Cache everything locally to bypass object attribute lookups
-    db_state = drivebase.state
+    db_distance = drivebase.distance
+    db_angle = drivebase.angle
     db_drive = drivebase.drive
     m_cos, m_sin = math.cos, math.sin
     
     # Get Initial Hardware State
-    # state() returns (dist_mm, speed_mms, angle_deg, turn_deg)
-    d_mm, _, a_deg, _ = db_state()
+    # distance() is mm; angle() is float degrees (gyro when use_gyro(True)).
+    d_mm = db_distance()
+    a_deg = db_angle()
     
     # Initial Pose
     x, y, h = data[1], data[2], data[3]
@@ -51,6 +60,7 @@ async def follow_trajectory(drivebase, samples, config=None, b=2.0, zeta=0.7):
     w_time = watch.time
     next_loop = w_time()
 
+    gc.collect()
     print("Mission Start: Perfect 50Hz Sync...")
 
     try:
@@ -81,8 +91,9 @@ async def follow_trajectory(drivebase, samples, config=None, b=2.0, zeta=0.7):
             kr = data[p1+6] + alpha * (data[p2+6] - data[p1+6])
 
             # 4. SYNCHRONOUS ODOMETRY
-            # db_state() blocks until the hardware bus is ready (~16-17ms).
-            d_mm, _, a_deg, _ = db_state()
+            # Local on the hub; angle() keeps the gyro's fractional degrees.
+            d_mm = db_distance()
+            a_deg = db_angle()
             d, a = d_mm * _I1000, -a_deg * _D2R
             
             dd, da = d - ld, a - la
@@ -105,7 +116,9 @@ async def follow_trajectory(drivebase, samples, config=None, b=2.0, zeta=0.7):
             c_w = wr + b * vr * sinc * ey + kg * et
 
             # 6. HARDWARE DRIVE
-            db_drive(c_v * 1000.0, -c_w * _R2D)
+            # Round first: Pybricks truncates float arguments toward zero, so
+            # small steering corrections would otherwise become zero.
+            db_drive(_round(c_v * 1000.0), _round(-c_w * _R2D))
             
             # 7. PERFORMANCE METRICS
             dt_loop = t - l_t
@@ -117,14 +130,14 @@ async def follow_trajectory(drivebase, samples, config=None, b=2.0, zeta=0.7):
             if dur > m_math: m_math = dur
             l_cnt += 1
 
-            # 8. PRECISION WAIT & MICRO-GC
-            # We target a 20ms window. If the loop finished in 18ms, 
-            # we have 2ms to clean memory.
+            # 8. PRECISION WAIT & PERIODIC GC
+            # Collect about once per second, and only when there is slack.
+            # A full collect every tick cost more than the math it cleaned.
             next_loop += LOOP_MS
             slack = next_loop - w_time()
             
-            if slack > 1:
-                gc.collect() # Quick clean
+            if l_cnt % _GC_EVERY == 0 and slack > 3:
+                gc.collect()
                 slack = next_loop - w_time()
             
             if slack > 0:

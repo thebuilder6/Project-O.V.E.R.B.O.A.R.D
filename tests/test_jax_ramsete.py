@@ -131,5 +131,63 @@ class TestJAXRamsete(unittest.TestCase):
         self.assertTrue(np.isfinite(float(om_cmd)))
 
 
+class TestJAXDriveQuantization(unittest.TestCase):
+    """The deployed controller rounds its drive() arguments, so must the model.
+
+    pybricks_code/ramsete_fast.py rounds the commanded linear speed (mm/s)
+    and turn rate (deg/s) before calling DriveBase.drive(), because Pybricks
+    truncates float arguments toward zero.
+    """
+
+    def test_round_half_away_from_zero(self):
+        from jax_ramsete import _round_half_away
+
+        cases = [
+            (0.4, 0.0), (0.5, 1.0), (1.5, 2.0), (2.5, 3.0),
+            (-0.4, 0.0), (-0.5, -1.0), (-1.5, -2.0), (-2.5, -3.0),
+        ]
+        for value, expected in cases:
+            self.assertEqual(
+                float(_round_half_away(jnp.array(value))), expected,
+                msg=f"round({value})")
+
+    def test_quantize_drive_command_units(self):
+        from jax_ramsete import quantize_drive_command
+
+        # 0.6 mm/s rounds up to 1 mm/s, 0.4 mm/s rounds down to 0.
+        v, _ = quantize_drive_command(jnp.array(0.0006), jnp.array(0.0))
+        self.assertAlmostEqual(float(v), 0.001, places=9)
+        v, _ = quantize_drive_command(jnp.array(0.0004), jnp.array(0.0))
+        self.assertAlmostEqual(float(v), 0.0, places=9)
+        v, _ = quantize_drive_command(jnp.array(-0.0006), jnp.array(0.0))
+        self.assertAlmostEqual(float(v), -0.001, places=9)
+
+        # Half a degree per second rounds to one degree per second.
+        _, omega = quantize_drive_command(
+            jnp.array(0.0), jnp.array(math.radians(0.5)))
+        self.assertAlmostEqual(float(omega), math.radians(1.0), places=6)
+        _, omega = quantize_drive_command(
+            jnp.array(0.0), jnp.array(math.radians(-0.5)))
+        self.assertAlmostEqual(float(omega), math.radians(-1.0), places=6)
+
+    def test_validator_controller_quantizes_drive_command(self):
+        from immrax_validator import RamseteController
+
+        controller = RamseteController(2.0, 0.7, track_width=0.0965)
+        pose = jnp.array([0.0, 0.0, 0.0])
+        # [xr, yr, thetar, ref_v, ref_omega, kr]
+        u_ref = jnp.array([0.0, 0.0, 0.0, 0.0006, 0.0, 0.0])
+        w = jnp.array([1.0, 1.0, 0.0, 0.0965, 0.028, 0.001, 1.0])
+
+        raw = controller(0.0, pose, u_ref, w, normalize=True)
+        quantized = controller(
+            0.0, pose, u_ref, w, normalize=True, quantize=True)
+
+        self.assertAlmostEqual(float(raw[0]), 0.0006, places=6)
+        self.assertAlmostEqual(float(quantized[0]), 0.001, places=6)
+        # The unquantized path must stay untouched for the interval inclusion.
+        self.assertAlmostEqual(float(raw[1]), float(raw[0]), places=9)
+
+
 if __name__ == '__main__':
     unittest.main()

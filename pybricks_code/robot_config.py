@@ -19,6 +19,7 @@ from pybricks.pupdevices import Motor, ColorSensor, UltrasonicSensor
 from pybricks.parameters import Button, Color, Direction, Port, Side, Stop, Axis
 from pybricks.robotics import DriveBase
 from pybricks.tools import wait, StopWatch, multitask, run_task
+import umath as math
 
 # Controllers are imported by the mission that uses them. Keeping them out of
 # this module avoids loading the event-capable reference controller on memory-
@@ -62,6 +63,24 @@ drivebase = DriveBase(motorLeft, motorRight,
 
 # Enable the built-in gyro for straight driving and accurate turns
 drivebase.use_gyro(True)
+
+# Raise the internal DriveBase trajectory limits. Pybricks defaults to 3/4 of
+# the motor's 2000 deg/s^2, which is only ~733 mm/s^2 with 56 mm wheels. The
+# optimized trajectories use up to ~6 m/s^2 and ~9k deg/s^2, so the default
+# makes the inner reference lag the plan. These are upper limits, not commands;
+# traction and the motor controller still bound the actual acceleration.
+#
+# Pybricks rejects acceleration limits above 20,000 deg/s^2 in motor units, so
+# the values are derived from this robot's geometry and kept at 80% of that
+# ceiling. A different wheel size or track width cannot make this call fail.
+_MAX_MOTOR_ACCEL_DEG_S2 = 20000
+_ACCEL_HEADROOM = 0.8
+drivebase.settings(
+    straight_acceleration=int(_ACCEL_HEADROOM * _MAX_MOTOR_ACCEL_DEG_S2
+                              * math.pi * WHEEL_DIAMETER_MM / 360.0),  # mm/s^2
+    turn_acceleration=int(_ACCEL_HEADROOM * _MAX_MOTOR_ACCEL_DEG_S2
+                          * WHEEL_DIAMETER_MM / AXLE_TRACK_MM),          # deg/s^2
+)
 
 # Diagnostics
 print("Battery Voltage:", hub.battery.voltage(), "mV")

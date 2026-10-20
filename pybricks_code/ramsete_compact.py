@@ -41,6 +41,11 @@ _LOOP_MS = const(20)       # same 50 Hz heartbeat as ramsete_fast.py
 _GC_EVERY = const(50)      # collect about once per second, not every tick
 
 
+def _round(value):
+    """Round to the nearest integer; MicroPython's int() truncates."""
+    return int(value + 0.5) if value >= 0.0 else -int(-value + 0.5)
+
+
 def _check_blob(samples):
     """Validate the packed header and return the sample count."""
     if not isinstance(samples, (bytes, bytearray)):
@@ -69,7 +74,8 @@ async def follow_trajectory(drivebase, samples, config=None, b=2.0, zeta=0.7):
     """
     num_pts = _check_blob(samples)
 
-    db_state = drivebase.state
+    db_distance = drivebase.distance
+    db_angle = drivebase.angle
     db_drive = drivebase.drive
     m_cos, m_sin, m_sqrt = math.cos, math.sin, math.sqrt
     unpack_from = ustruct.unpack_from
@@ -80,8 +86,10 @@ async def follow_trajectory(drivebase, samples, config=None, b=2.0, zeta=0.7):
         _TIME_FMT, samples, _HEADER_SIZE + (num_pts - 1) * _RECORD_SIZE
     )[0]
 
-    # Initial hardware state. state() is (dist_mm, speed_mms, angle_deg, turn_deg).
-    d_mm, _, a_deg, _ = db_state()
+    # Initial hardware state. distance() is mm; angle() is float degrees
+    # (gyro when use_gyro(True)).
+    d_mm = db_distance()
+    a_deg = db_angle()
     last_d = d_mm * _I1000
     last_a = -a_deg * _D2R
 
@@ -153,8 +161,10 @@ async def follow_trajectory(drivebase, samples, config=None, b=2.0, zeta=0.7):
             kr2 = m_sqrt(w2 * w2 + b * v2 * v2)
             kr = kr1 + alpha * (kr2 - kr1)
 
-            # Synchronous odometry. db_state() blocks until the bus is ready.
-            d_mm, _, a_deg, _ = db_state()
+            # Synchronous odometry. Local on the hub; angle() keeps the
+            # gyro's fractional degrees.
+            d_mm = db_distance()
+            a_deg = db_angle()
             d = d_mm * _I1000
             a = -a_deg * _D2R
             dd, da = d - last_d, a - last_a
@@ -177,7 +187,8 @@ async def follow_trajectory(drivebase, samples, config=None, b=2.0, zeta=0.7):
             current_v = vr * m_cos(et) + kg * ex
             current_w = wr + b * vr * sinc * ey + kg * et
 
-            db_drive(current_v * 1000.0, -current_w * _R2D)
+            # Round first: Pybricks truncates float arguments toward zero.
+            db_drive(_round(current_v * 1000.0), _round(-current_w * _R2D))
 
             dt_loop = t - last_t
             if dt_loop > max_dt:

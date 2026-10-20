@@ -41,6 +41,31 @@ def _normalize_angle(angle):
     return (angle + jnp.pi) % (2.0 * jnp.pi) - jnp.pi
 
 
+# The firmware rounds the arguments it hands to DriveBase.drive(), because
+# Pybricks truncates float arguments toward zero. These constants mirror the
+# unit conversions in pybricks_code/ramsete_fast.py.
+_MM_PER_M = 1000.0
+_DEG_PER_RAD = 180.0 / jnp.pi
+
+
+def _round_half_away(x):
+    """Round half away from zero, matching the firmware's _round()."""
+    return jnp.sign(x) * jnp.floor(jnp.abs(x) + 0.5)
+
+
+def quantize_drive_command(v_cmd, omega_cmd):
+    """Round a Ramsete command the way the deployed controller does.
+
+    ``pybricks_code/ramsete_fast.py`` rounds the commanded linear speed
+    (mm/s) and turn rate (deg/s) before calling ``DriveBase.drive()``.
+    The model applies the same rounding so the twin sees the resolution the
+    robot actually gets instead of a continuous command.
+    """
+    v_mm = _round_half_away(v_cmd * _MM_PER_M)
+    omega_deg = _round_half_away(omega_cmd * _DEG_PER_RAD)
+    return v_mm / _MM_PER_M, omega_deg / _DEG_PER_RAD
+
+
 class JAXRamseteController:
     def __init__(self, b: float = 2.0, zeta: float = 0.7):
         self.b = b
@@ -88,6 +113,9 @@ def ramsete_step_jax(current_pose: jnp.ndarray, ref_pose: jnp.ndarray, ref_v: fl
                      backlash_b: float = 0.0, b: float = 2.0, zeta: float = 0.7):
     controller = JAXRamseteController(b, zeta)
     v_cmd, omega_cmd = controller.calculate(current_pose, ref_pose, ref_v, ref_omega)
+    # The firmware rounds the drive() arguments, so the applied command has
+    # the same resolution the robot gets.
+    v_cmd, omega_cmd = quantize_drive_command(v_cmd, omega_cmd)
     v_actual = smooth_deadband(v_cmd, backlash_b)
     omega_actual = smooth_deadband(omega_cmd, backlash_b * 2.0)
     new_theta = current_pose[2] + omega_actual * dt
