@@ -254,8 +254,10 @@ out.
 - **Straight drift** — how much the robot curves per metre when it is told
   to drive straight. The plan's straight segments are straight, so this is a
   tracking error that grows with the distance: **1 deg/m is 8.7 mm of lateral
-  error per metre, and 78 mm over a 3 m path.** The fit takes the gyro's
-  estimate, with the measured bias removed, and checks it against the tape's
+  error per metre, and 78 mm over a 3 m path.** The fit takes it from the
+  step tests, where the robot drives straight at five speeds: the heading
+  rate against the speed is a straight line whose slope is the drift and
+  whose intercept is the gyro's bias. It checks that against the tape's
   lateral offset.
 - **Stall torque** — what the motors can actually push with, measured by
   pushing into a wall. The robot config can only declare it, so this
@@ -280,16 +282,20 @@ same distance twice at some point to get a feel for it.
 
 The drift is the one number that is measured twice, by two different
 instruments, because it is the one that matters most and the one that is
-hardest to get right. The **gyro** sees the heading change directly and
-precisely, but a gyro bias looks exactly like a drift over a long run, so
-the measured bias is subtracted first; if the hub warms up during the
-session, that subtraction is wrong. The **tape** sees the lateral offset
-the drift leaves behind, which is a pure length measurement with no sensor
-bias in it, but it carries the operator's placement error, and the
-placement error is the same every time. The fit reports both and the
-difference between them. If they disagree by more than a degree per metre,
-one of the two systematic errors is wrong, the report says so, and the drift
-term should not be used until you have found out which.
+hardest to get right. The **step tests** give it as a slope: the robot
+drives straight at five speeds, and the heading rate against the speed is a
+line whose slope is the drift and whose intercept is the gyro's bias. That
+matters because a bias that leaks into the drift is multiplied by the run's
+length over its distance, which is ten for the one-metre odometry run. As a
+slope, the bias is only an intercept and cannot leak. The **tape** gives an
+independent estimate from the lateral offset the drift leaves behind: a pure
+length measurement with no sensor bias in it, but it carries the operator's
+placement error, and the placement error is the same every time. The fit
+reports both, the difference between them, and the gyro's bias measured two
+ways (standing still and moving). If the two drift estimates disagree by
+more than a degree per metre, one of the two systematic errors is wrong,
+the report says so, and the drift term should not be used until you have
+found out which.
 
 ---
 

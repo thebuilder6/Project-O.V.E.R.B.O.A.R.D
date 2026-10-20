@@ -34,6 +34,8 @@ from tests.test_sysid_collect import (
     TestMeasurementSheet,
     TestRepeatStatistics,
     TestDriftAndStallTorque,
+    TestRefinedStepFit,
+    TestDriftRegression,
     TestCollectCommand,
 )
 from tests.test_firmware_events import (
@@ -123,6 +125,8 @@ def run_tests():
     suite.addTests(loader.loadTestsFromTestCase(TestMeasurementSheet))
     suite.addTests(loader.loadTestsFromTestCase(TestRepeatStatistics))
     suite.addTests(loader.loadTestsFromTestCase(TestDriftAndStallTorque))
+    suite.addTests(loader.loadTestsFromTestCase(TestRefinedStepFit))
+    suite.addTests(loader.loadTestsFromTestCase(TestDriftRegression))
     suite.addTests(loader.loadTestsFromTestCase(TestCollectCommand))
     suite.addTests(loader.loadTestsFromTestCase(TestCliBasics))
     suite.addTests(loader.loadTestsFromTestCase(TestLiveVisualizerPorts))

@@ -459,39 +459,104 @@ def _find_steps(times, command, threshold):
             if edges[i + 1] - edges[i] >= 10]
 
 
-def _fit_first_order(times, measured, command):
-    """Fit y(t) = yss + (y0 - yss) * exp(-(t - t0 - delay) / tau)."""
-    if len(times) < 10:
-        return None
+def _linear_step_fit(times, measured, delay, tau):
+    """Least-squares fit of a step response for a given delay and tau.
 
-    y0 = float(np.median(measured[:3]))
-    tail_start = max(3, int(0.65 * len(measured)))
-    yss = float(np.median(measured[tail_start:]))
-    if abs(yss) < 1e-5:
+    The model is ``y = y0 * e + yss * (1 - e)`` with
+    ``e = exp(-(t - t0 - delay) / tau)``, which is linear in the two
+    amplitudes, so they are solved in closed form instead of being read off
+    the data. That uses every sample of the step rather than the median of
+    the tail, and it gives the covariance of the amplitudes for free.
+
+    Returns (y0, yss, sse, se_yss).
+    """
+    t0 = float(times[0])
+    times = np.asarray(times)
+    measured = np.asarray(measured)
+    e = np.exp(-np.maximum(times - (t0 + delay), 0.0) / tau)
+    c1 = e
+    c2 = 1.0 - e
+    a11 = float(np.sum(c1 * c1))
+    a12 = float(np.sum(c1 * c2))
+    a22 = float(np.sum(c2 * c2))
+    b1 = float(np.sum(c1 * measured))
+    b2 = float(np.sum(c2 * measured))
+    det = a11 * a22 - a12 * a12
+    if abs(det) < 1e-18:
+        return None
+    y0 = (b1 * a22 - b2 * a12) / det
+    yss = (a11 * b2 - a12 * b1) / det
+    sse = float(np.sum(measured * measured) - (y0 * b1 + yss * b2))
+    sse = max(sse, 0.0)
+    dof = max(len(measured) - 2, 1)
+    sigma2 = sse / dof
+    se_yss = float(np.sqrt(max(sigma2 * a11 / det, 0.0)))
+    return y0, yss, sse, se_yss
+
+
+def _fit_first_order(times, measured, command):
+    """Fit y(t) = yss + (y0 - yss) * exp(-(t - t0 - delay) / tau).
+
+    Two passes. The first is a blind grid over the whole plausible range, so
+    it cannot be fooled by a local minimum. The second refines around that
+    answer at a thousandth of the resolution, because the first pass can only
+    land on a 10 ms boundary and that quantisation is a floor on the
+    reported time constant and delay.
+    """
+    if len(times) < 10:
         return None
 
     t0 = float(times[0])
     best_error = float("inf")
     best_delay = 0.0
     best_tau = 0.1
+    best_yss = None
+    best_se = None
 
     for delay in np.arange(0.0, 0.121, 0.01):
-        shifted = times - (t0 + delay)
         for tau in np.arange(0.01, 0.501, 0.01):
-            model = yss + (y0 - yss) * np.exp(-np.maximum(shifted, 0.0) / tau)
-            error = float(np.mean((measured - model) ** 2))
-            if error < best_error:
-                best_error = error
+            fit = _linear_step_fit(times, measured, float(delay), float(tau))
+            if fit is None:
+                continue
+            _y0, yss, sse, se_yss = fit
+            if sse < best_error:
+                best_error = sse
                 best_delay = float(delay)
                 best_tau = float(tau)
+                best_yss = yss
+                best_se = se_yss
+
+    if best_yss is None or abs(best_yss) < 1e-5:
+        return None
+
+    # Second pass: a fine grid around the first answer.
+    fine_error = best_error
+    for delay in np.arange(max(0.0, best_delay - 0.012),
+                            best_delay + 0.0121, 0.001):
+        for tau in np.arange(max(0.005, best_tau - 0.020),
+                             best_tau + 0.0201, 0.001):
+            fit = _linear_step_fit(times, measured, float(delay), float(tau))
+            if fit is None:
+                continue
+            _y0, yss, sse, se_yss = fit
+            if sse < fine_error:
+                fine_error = sse
+                best_delay = float(delay)
+                best_tau = float(tau)
+                best_yss = yss
+                best_se = se_yss
+
+    if abs(best_yss) < 1e-5:
+        return None
 
     gradient = np.abs(np.gradient(measured, times))
     return {
-        "gain": yss / command,
+        "gain": best_yss / command,
+        "gain_se": (best_se / abs(command)) if best_se is not None else None,
         "tau_s": best_tau,
         "delay_s": best_delay,
         "accel_limit": float(np.percentile(gradient, 95)),
-        "rmse": float(np.sqrt(best_error)),
+        "rmse": float(np.sqrt(fine_error / len(measured))),
     }
 
 
@@ -555,6 +620,7 @@ def _summary(fits):
         return float(np.max([fit[key] for fit in fits]))
 
     gains = [fit["gain"] for fit in fits]
+    step_se = [fit["gain_se"] for fit in fits if fit.get("gain_se") is not None]
     # One value per repeat, so the between-repeat spread is the honest
     # uncertainty. The steps inside a repeat are sequential and correlated,
     # so their spread is only the within-run precision.
@@ -569,6 +635,9 @@ def _summary(fits):
         "gain_min": minimum("gain"),
         "gain_max": maximum("gain"),
         "gain_std": float(np.std(gains)),
+        # How well one step determines the gain. The steps inside a run are
+        # sequential, so this is not a standard error over them.
+        "gain_se_step": (float(np.median(step_se)) if step_se else None),
         "tau_s": median("tau_s"),
         "tau_min": minimum("tau_s"),
         "tau_max": maximum("tau_s"),
@@ -890,6 +959,40 @@ def _fit_odometry(runs, poses, distance_scale_default=1.0):
 # Public fitting entry point
 # ---------------------------------------------------------------------------
 
+def _drift_points(runs):
+    """(speed, heading rate) points from the runs that drive straight.
+
+    The heading rate is the IMU's z rate, which is counter-clockwise
+    positive, and the speed is the measured one, so the drift is against the
+    motion the robot actually made. A robot that curves while going
+    backwards curves the other way, so the signed speed puts the forward and
+    the reverse run in the same fit.
+    """
+    points = []
+    for run in runs:
+        if not run["name"].startswith("straight_steps"):
+            continue
+        times = _column(run, "t_ms")
+        command = _column(run, "v_cmd_mm_s")
+        speed = _measured_column(run, "v_meas_m_s")
+        gyro = _column(run, "gyro_z_rad_s")
+        if times is None or command is None or speed is None or gyro is None:
+            continue
+        times = times / 1000.0
+        gyro_deg_s = np.degrees(gyro)
+        for start, end in _find_steps(times, command, 0.005):
+            # The steady part of the step: the transient is not the drift.
+            tail = max(start + 3, int(start + 0.65 * (end - start)))
+            if end - tail < 3:
+                continue
+            points.append((
+                _run_repeat(run),
+                float(np.median(speed[tail:end])),
+                float(np.median(gyro_deg_s[tail:end])),
+            ))
+    return points
+
+
 def _fit_drift(runs, poses, gyro_bias_deg_s):
     """The straight-line heading drift of the robot, in degrees per metre.
 
@@ -897,44 +1000,46 @@ def _fit_drift(runs, poses, gyro_bias_deg_s):
     drive straight. The plan's straight segments are straight, so the
     curvature is a tracking error that grows with the distance travelled.
 
-    Two independent estimates are made. The gyro sees the heading change
-    directly, but a gyro bias looks exactly like a drift over a long run, so
-    the measured bias is subtracted first. The tape sees the lateral offset
-    the drift leaves behind, which is a pure length measurement with no
-    sensor bias in it, but it also carries the operator's placement error.
-    The two are reported together: if they disagree, one of the two
-    systematic errors is wrong and the drift term should not be trusted.
+    The drift is a slope, not a subtraction. A run that drives straight at a
+    constant speed turns at ``drift * speed``, and the gyro also reads a
+    constant bias, so the heading rate against the speed is a straight line
+    whose slope is the drift and whose intercept is the bias. Regressing it
+    means the bias cannot leak into the drift: subtracting a separately
+    measured bias instead would multiply the bias error by the run's length
+    over its distance, which is ten for the one-metre odometry run.
+
+    The tape gives an independent estimate from the lateral offset the drift
+    leaves behind. That is a pure length measurement with no sensor bias in
+    it, but it carries the operator's placement error, so the two are
+    reported together with the disagreement between them.
     """
+    points = _drift_points(runs)
+    by_repeat = {}
+    for repeat, speed, rate in points:
+        by_repeat.setdefault(repeat, []).append((speed, rate))
+
     estimates = []
-    tape_estimates = []
-    for run in runs:
-        if "odometry_straight" not in run["name"]:
+    sources = []
+    for repeat in sorted(by_repeat):
+        group = by_repeat[repeat]
+        if len(group) < 2:
             continue
-        distance_m = _last(run, "db_d_mm")
-        heading_deg = _last(run, "db_a_deg")
-        if distance_m is None or heading_deg is None or distance_m <= 0:
+        x = np.array([point[0] for point in group])
+        y = np.array([point[1] for point in group])
+        if float(np.ptp(x)) < 1e-6:
             continue
-        distance_m = distance_m / 1000.0
-        duration_s = _last(run, "t_ms")
-        duration_s = (duration_s / 1000.0) if duration_s is not None else 0.0
-
-        # The DriveBase angle is clockwise positive and the IMU is
-        # counter-clockwise positive, so the sign flips once. A bias of b
-        # deg/s over t seconds is b * t of fake heading change.
-        bias = (gyro_bias_deg_s or 0.0) * duration_s
-        drift = (-heading_deg - bias) / distance_m
-        estimates.append((_run_repeat(run), float(drift)))
-
-        # The tape: a constant drift of k over a distance L leaves a lateral
-        # offset of about k * L^2 / 2 behind.
-        entries = poses.get(str(run["meta"].get("run_id")))
-        if entries:
-            lateral_m = float(entries[-1]["y_m"])
-            measured_m = _pose_distance(entries[-1])
-            if measured_m > 1e-6:
-                rad = 2.0 * lateral_m / (measured_m ** 2)
-                tape_estimates.append(
-                    (_run_repeat(run), float(np.degrees(rad))))
+        coeffs, cov = np.polyfit(x, y, 1, cov=True)
+        slope, intercept = float(coeffs[0]), float(coeffs[1])
+        estimates.append((repeat, slope))
+        sources.append({
+            "repeat": repeat,
+            "points": len(group),
+            "speed_range_m_s": [float(np.min(x)), float(np.max(x))],
+            "slope_se": float(np.sqrt(max(cov[0][0], 0.0))),
+            # The intercept is the gyro's bias, read off while the robot was
+            # moving. It is a second opinion on the static measurement.
+            "gyro_bias_deg_s": float(intercept),
+        })
 
     if not estimates:
         return {"calibrated": False, "n_sources": 0}
@@ -945,14 +1050,41 @@ def _fit_drift(runs, poses, gyro_bias_deg_s):
         "n_sources": len(estimates),
         "drift_deg_per_m": stats["mean"],
         "drift_deg_per_m_between_runs": stats,
+        "drift_sources": sources,
     }
     if stats.get("ci95"):
         result["drift_deg_per_m_ci95"] = stats["ci95"]
+
+    # The tape: a constant drift of k over a distance L leaves a lateral
+    # offset of about k * L^2 / 2 behind.
+    tape_estimates = []
+    for run in runs:
+        if "odometry_straight" not in run["name"]:
+            continue
+        entries = poses.get(str(run["meta"].get("run_id")))
+        if not entries:
+            continue
+        lateral_m = float(entries[-1]["y_m"])
+        measured_m = _pose_distance(entries[-1])
+        if measured_m > 1e-6:
+            tape_estimates.append((
+                _run_repeat(run),
+                float(np.degrees(2.0 * lateral_m / (measured_m ** 2))),
+            ))
     if tape_estimates:
         tape = _between_runs(tape_estimates)
         result["drift_deg_per_m_tape"] = tape["mean"]
         result["drift_disagreement_deg_per_m"] = abs(
             tape["mean"] - stats["mean"])
+
+    # The regression's intercept is the gyro's bias, read while the robot was
+    # moving. The static test measured it while the robot stood still, so the
+    # two are a check on each other.
+    if sources and gyro_bias_deg_s is not None:
+        moving = float(np.mean([s["gyro_bias_deg_s"] for s in sources]))
+        result["gyro_bias_deg_s_moving"] = moving
+        result["gyro_bias_disagreement_deg_s"] = abs(
+            moving - float(gyro_bias_deg_s))
     return result
 
 
@@ -995,6 +1127,76 @@ def _fit_stall_torque(runs):
     }
     if stats.get("ci95"):
         result["t_max_nm_ci95"] = stats["ci95"]
+    return result
+
+
+def _fit_no_load_speed(runs, wheel_radius_m):
+    """The motor's free-running speed, in rad/s at the wheel.
+
+    The top-speed test runs the robot with the wheels off the ground, so the
+    motor pushes nothing and runs up to the speed at which it makes no
+    torque. That is the other end of the torque-speed line the force model
+    uses: at this speed the motor's torque is zero.
+
+    The robot config has to declare that number, and a declared number is a
+    guess. This measures it.
+
+    The measurement is only valid when the motor was torque-limited: if the
+    robot reached the commanded speed, the firmware's speed limit was the
+    binding constraint and the number is not the motor's no-load speed. That
+    is why the test commands a speed no LEGO motor can reach.
+    """
+    estimates = []
+    rejected = []
+    for run in runs:
+        if run["name"] != "top_speed":
+            continue
+        times, speed = _straight_measured(run, wheel_radius_m)
+        if times is None or speed is None or len(speed) < 20:
+            continue
+        # The motor has settled over the last second of the run.
+        window = times >= (times[-1] - 1.0)
+        settled = speed[window]
+        command = _column(run, "v_cmd_mm_s")
+        if command is None:
+            continue
+        commanded = command[window]
+        settled = settled[np.isfinite(settled)]
+        commanded = commanded[np.isfinite(commanded)]
+        if settled.size < 5 or commanded.size < 5:
+            continue
+        measured_mm_s = float(np.median(settled)) * 1000.0
+        commanded_mm_s = float(np.median(commanded))
+        if commanded_mm_s <= 0.0:
+            continue
+        if measured_mm_s >= 0.98 * commanded_mm_s:
+            # The robot reached the command, so the command was the limit.
+            rejected.append(
+                "the robot reached the commanded {:.0f} mm/s, so the command "
+                "was the limit and not the motor".format(commanded_mm_s))
+            continue
+        value = float(np.median(settled)) / wheel_radius_m
+        if value <= 0.0:
+            continue
+        estimates.append((_run_repeat(run), value))
+
+    if not estimates:
+        result = {"calibrated": False, "n_sources": 0}
+        if rejected:
+            result["rejected"] = rejected
+        return result
+
+    stats = _between_runs(estimates)
+    result = {
+        "calibrated": True,
+        "n_sources": len(estimates),
+        "no_load_speed_rad_s": stats["mean"],
+        "no_load_speed_rad_s_between_runs": stats,
+    }
+    if stats.get("ci95"):
+        result["no_load_speed_rad_s_ci95"] = stats["ci95"]
+    if rejected:
+        result["rejected"] = rejected
     return result
 
 
@@ -1071,6 +1273,7 @@ def fit_session(runs, poses=None, wheel_radius_m=0.028):
     sensors = _static_summary(runs)
     drift = _fit_drift(runs, poses, sensors.get("gyro_z_bias_deg_s"))
     stall = _fit_stall_torque(runs)
+    drivetrain = _fit_no_load_speed(runs, wheel_radius_m)
 
     return {
         "wheel_radius_m": float(wheel_radius_m),
@@ -1092,6 +1295,7 @@ def fit_session(runs, poses=None, wheel_radius_m=0.028):
         "backlash": backlash,
         "drift": drift,
         "stall_torque": stall,
+        "drivetrain": drivetrain,
         "validation": {
             "chirp_straight_nrmse": chirp_straight,
             "chirp_turn_nrmse": chirp_turn,
@@ -1386,6 +1590,16 @@ def main(argv=None):
     stall = result.get("stall_torque", {})
     if stall.get("calibrated"):
         print("Stall torque: {t_max_nm:.4f} Nm".format(**stall))
+    drivetrain = result.get("drivetrain", {})
+    if drivetrain.get("calibrated"):
+        print(
+            "No-load speed: {no_load_speed_rad_s:.3f} rad/s at the wheel "
+            "(the speed at which the motor makes no torque)".format(
+                **drivetrain)
+        )
+        _print_interval(drivetrain, "no_load_speed_rad_s")
+    for reason in drivetrain.get("rejected", []) or []:
+        print(f"No-load speed: not used, {reason}.")
     print("The intervals cover the run-to-run variation of the robot. They do "
           "not cover the error of the tape measure, which is the same every "
           "time and never averages out.")

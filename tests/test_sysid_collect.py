@@ -547,24 +547,6 @@ class TestDriftAndStallTorque(unittest.TestCase):
         return fit_session(parse_session(self._session()), poses=poses,
                            wheel_radius_m=0.028)
 
-    def test_the_drift_comes_from_the_gyro_with_the_bias_removed(self):
-        result = self._fit()
-        drift = result["drift"]
-        self.assertTrue(drift["calibrated"])
-        # 2 deg/m of real curve. Without the bias correction the gyro would
-        # report 2.5 deg/m.
-        self.assertAlmostEqual(drift["drift_deg_per_m"], 2.0, places=6)
-        self.assertEqual(drift["n_sources"], 3)
-
-    def test_the_tape_gives_an_independent_estimate_of_the_drift(self):
-        poses = {"2": [{"stop": 0, "x_m": 0.998, "y_m": 0.01745,
-                        "heading_deg": 2.0}]}
-        result = self._fit(poses)
-        drift = result["drift"]
-        # A drift of k over a distance L leaves k * L^2 / 2 behind.
-        self.assertAlmostEqual(drift["drift_deg_per_m_tape"], 2.007, places=2)
-        self.assertLess(drift["drift_disagreement_deg_per_m"], 0.1)
-
     def test_the_stall_torque_ignores_the_impact(self):
         result = self._fit()
         stall = result["stall_torque"]
@@ -581,6 +563,128 @@ class TestDriftAndStallTorque(unittest.TestCase):
         result = fit_session(parse_session(session), wheel_radius_m=0.028)
         self.assertFalse(result["drift"]["calibrated"])
         self.assertFalse(result["stall_torque"]["calibrated"])
+
+
+class TestRefinedStepFit(unittest.TestCase):
+    """The step fit is a two-stage search, so it is not quantised."""
+
+    @staticmethod
+    def _step(gain=0.98, tau=0.08, delay=0.02, dt=0.01, n=90, command=0.4):
+        import math
+        times = [i * dt for i in range(n)]
+        measured = [
+            gain * command * (1.0 - math.exp(-max(t - delay, 0.0) / tau))
+            for t in times
+        ]
+        return times, measured, command
+
+    def test_it_recovers_a_known_step(self):
+        from sysid_fit import _fit_first_order
+
+        times, measured, command = self._step()
+        fit = _fit_first_order(times, measured, command)
+
+        self.assertAlmostEqual(fit["gain"], 0.98, places=6)
+        self.assertAlmostEqual(fit["tau_s"], 0.08, places=6)
+        self.assertAlmostEqual(fit["delay_s"], 0.02, places=6)
+        self.assertAlmostEqual(fit["rmse"], 0.0, places=9)
+
+    def test_the_answer_is_not_on_the_ten_millisecond_grid(self):
+        """The first pass can only land on a 10 ms boundary."""
+        from sysid_fit import _fit_first_order
+
+        times, measured, command = self._step(tau=0.0837, delay=0.0163)
+        fit = _fit_first_order(times, measured, command)
+
+        self.assertAlmostEqual(fit["tau_s"], 0.0837, places=3)
+        self.assertAlmostEqual(fit["delay_s"], 0.0163, places=3)
+
+
+class TestDriftRegression(unittest.TestCase):
+    """The drift is a slope against the speed, not a subtraction."""
+
+    @staticmethod
+    def _session(drift=2.0, bias=0.05, gain=0.98, dt=0.01):
+        import math
+        lines = []
+
+        def block(name, repeat, run_id, header, rows):
+            lines.append(f"TEST_START {name}")
+            lines.append(f"META,run_id,{run_id}")
+            lines.append(f"META,test,{name}")
+            lines.append(f"META,repeat,{repeat}")
+            lines.append("META,poses,0")
+            lines.append("DATA")
+            lines.append(header)
+            for row in rows:
+                lines.append(",".join(str(v) for v in row))
+            lines.append(f"TEST_END,{len(rows)}")
+
+        rate = ("t_ms,loop_ms,v_cmd_mm_s,w_cmd_deg_s,l_deg,r_deg,gyro_z_rad_s,"
+                "ax_m_s2,ay_m_s2,batt_mv,batt_ma,l_load_mNm,r_load_mNm")
+        block("static", 0, 1,
+              "t_ms,loop_ms,l_deg,r_deg,gyro_x_deg_s,gyro_y_deg_s,"
+              "gyro_z_deg_s,ax_mm_s2,ay_mm_s2,az_mm_s2,batt_mv,batt_ma",
+              [[i * 10, 10, 0, 0, 0, 0, bias, 0, 0, 9800, 8000, 0]
+               for i in range(50)])
+
+        run_id = 2
+        for repeat in range(3):
+            for direction, tag in ((1, "fwd"), (-1, "rev")):
+                rows = []
+                t = 0.0
+                angle = 0.0
+                for speed_mm_s in (50, 100, 200, 400, 600):
+                    command = direction * speed_mm_s
+                    for i in range(90):
+                        t += dt
+                        value = gain * (command / 1000.0)
+                        angle += value * dt / 0.028 * 180.0 / math.pi
+                        gyro = math.radians(drift * value + bias)
+                        rows.append([t * 1000, 10, command, 0, angle, angle,
+                                     gyro, 0, 0, 8000, 50, 0, 0])
+                block(f"straight_steps_{tag}", repeat, run_id, rate, rows)
+                run_id += 1
+            # The odometry run, for the tape's independent estimate.
+            block("odometry_straight", repeat, run_id,
+                  "t_ms,v_cmd_mm_s,w_cmd_deg_s,db_d_mm,db_v_mm_s,db_a_deg,"
+                  "db_w_deg_s,batt_mv",
+                  [[i * 1000, 100, 0, 0, 0, 0, 0, 8000] for i in range(11)])
+            run_id += 1
+        return "\n".join(lines) + "\n"
+
+    def _fit(self, poses=None, **kwargs):
+        from sysid_fit import fit_session, load_poses, parse_session
+        if poses is None:
+            poses = {}
+        return fit_session(parse_session(self._session(**kwargs)), poses=poses,
+                           wheel_radius_m=0.028)
+
+    def test_the_slope_is_the_drift(self):
+        drift = self._fit()["drift"]
+        self.assertTrue(drift["calibrated"])
+        self.assertAlmostEqual(drift["drift_deg_per_m"], 2.0, places=4)
+
+    def test_the_intercept_is_the_gyro_bias(self):
+        """The bias stops contaminating the drift: it is the intercept."""
+        drift = self._fit()["drift"]
+        self.assertAlmostEqual(drift["gyro_bias_deg_s_moving"], 0.05, places=6)
+        self.assertLess(drift["gyro_bias_disagreement_deg_s"], 1e-6)
+
+    def test_the_forward_and_reverse_runs_are_in_one_fit(self):
+        drift = self._fit()["drift"]
+        for source in drift["drift_sources"]:
+            low, high = source["speed_range_m_s"]
+            self.assertLess(low, 0.0)
+            self.assertGreater(high, 0.0)
+
+    def test_the_tape_gives_an_independent_estimate(self):
+        """A drift of k over a distance L leaves k * L^2 / 2 behind."""
+        poses = {"4": [{"stop": 0, "x_m": 0.998, "y_m": 0.01745,
+                        "heading_deg": 2.0}]}
+        drift = self._fit(poses)["drift"]
+        self.assertAlmostEqual(drift["drift_deg_per_m_tape"], 2.007, places=2)
+        self.assertLess(drift["drift_disagreement_deg_per_m"], 0.1)
 
 
 class TestCollectCommand(unittest.TestCase):
