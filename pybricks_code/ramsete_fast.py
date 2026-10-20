@@ -12,9 +12,8 @@ _I1000 = const(1) / 1000.0
 _GC_EVERY = const(50)
 
 
-def _round(value):
-    """Round to the nearest integer; MicroPython's int() truncates."""
-    return int(value + 0.5) if value >= 0.0 else -int(-value + 0.5)
+# _round is removed (KI-028): the controllers in use pass unrounded
+# floats to drive(), matching the validator's unquantized command model.
 
 
 async def follow_trajectory(drivebase, samples, config=None, b=2.0, zeta=0.7):
@@ -52,10 +51,16 @@ async def follow_trajectory(drivebase, samples, config=None, b=2.0, zeta=0.7):
     # Metric Trackers
     l_cnt, t_math, m_math, m_dt = 0, 0.0, 0.0, 0.0
     s_idx, l_t, c_v, c_w = 0, 0.0, 0.0, 0.0
+    current_v, current_w = 0.0, 0.0
+
+    limiter = None
+    if config:
+        from ramsete import KinematicLimiter
+        limiter = KinematicLimiter(config)
     
     # --- THE 50HZ HEARTBEAT ---
     # 20ms is the "Goldilocks" zone for Build HAT serial communication.
-    LOOP_MS = const(20) 
+    _LOOP_MS = const(20) 
     watch = StopWatch()
     w_time = watch.time
     next_loop = w_time()
@@ -91,7 +96,9 @@ async def follow_trajectory(drivebase, samples, config=None, b=2.0, zeta=0.7):
             # independent line: interpolating both separately makes them
             # describe different motions (KI-027).
             wr = dh / dt_traj if dt_traj > 0 else 0.0
-            kr = data[p1+6] + alpha * (data[p2+6] - data[p1+6])
+            # Recompute the Ramsete gain from the interpolated speed and turn
+            # rate, matching ramsete.py, ramsete_compact.py, and the validator model (KI-028).
+            kr = math.sqrt(wr**2 + b * vr**2)
 
             # 4. SYNCHRONOUS ODOMETRY
             # Local on the hub; angle() keeps the gyro's fractional degrees.
@@ -118,15 +125,19 @@ async def follow_trajectory(drivebase, samples, config=None, b=2.0, zeta=0.7):
             c_v = vr * m_cos(et) + kg * ex
             c_w = wr + b * vr * sinc * ey + kg * et
 
-            # 6. HARDWARE DRIVE
-            # Round first: Pybricks truncates float arguments toward zero, so
-            # small steering corrections would otherwise become zero.
-            db_drive(_round(c_v * 1000.0), _round(-c_w * _R2D))
-            
-            # 7. PERFORMANCE METRICS
+            # 6. KINEMATIC LIMITER (when config provided)
             dt_loop = t - l_t
             if dt_loop > m_dt: m_dt = dt_loop
+            if limiter and dt_loop > 0:
+                c_v, c_w = limiter.limit(c_v, c_w, current_v, current_w, dt_loop)
+            current_v = c_v
+            current_w = c_w
             l_t = t
+
+            # 7. HARDWARE DRIVE
+            # Pass unrounded floats to drive(), matching ramsete.py,
+            # ramsete_compact.py, and the validator's unquantized command model (KI-028).
+            db_drive(c_v * 1000.0, -c_w * _R2D)
             
             dur = w_time() - calc_start
             t_math += dur
@@ -136,7 +147,7 @@ async def follow_trajectory(drivebase, samples, config=None, b=2.0, zeta=0.7):
             # 8. PRECISION WAIT & PERIODIC GC
             # Collect about once per second, and only when there is slack.
             # A full collect every tick cost more than the math it cleaned.
-            next_loop += LOOP_MS
+            next_loop += _LOOP_MS
             slack = next_loop - w_time()
             
             if l_cnt % _GC_EVERY == 0 and slack > 3:
@@ -152,6 +163,7 @@ async def follow_trajectory(drivebase, samples, config=None, b=2.0, zeta=0.7):
 
     finally:
         db_drive(0, 0)
+        drivebase.stop()
         
     if l_cnt > 0:
         print("Final Hz:", (l_cnt / total_time))

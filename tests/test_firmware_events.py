@@ -45,9 +45,11 @@ sys.path.insert(0, _FIRMWARE_DIR)
 
 import ramsete  # noqa: E402  (firmware module, imported after the stubs)
 import ramsete_compact_events  # noqa: E402
+import ramsete_fast  # noqa: E402
 
 ramsete.gc = _GcStub()
 ramsete_compact_events.gc = _GcStub()
+ramsete_fast.gc = _GcStub()
 
 from export import encode_compact_trajectory  # noqa: E402
 
@@ -71,7 +73,7 @@ class TestFirmwareParity(unittest.TestCase):
         path = os.path.join(_FIRMWARE_DIR, module_name)
         with open(path, encoding="utf-8") as handle:
             text = handle.read()
-        match = re.search(r"_LOOP_MS\s*=\s*const\((\d+)\)", text)
+        match = re.search(r"_?LOOP_MS\s*=\s*const\((\d+)\)", text)
         if match:
             return int(match.group(1))
         match = re.search(r"CONTROL_MS\s*=\s*(\d+)", text)
@@ -84,7 +86,7 @@ class TestFirmwareParity(unittest.TestCase):
     def test_the_controllers_in_use_hold_the_command_for_the_same_time(self):
         periods = {}
         for module in ("ramsete_compact.py", "ramsete_compact_events.py",
-                       "ramsete.py"):
+                       "ramsete.py", "ramsete_fast.py"):
             periods[module] = self._declared_period_ms(module)
         self.assertEqual(len(set(periods.values())), 1,
                          f"the controllers disagree on the hold: {periods}")
@@ -113,9 +115,9 @@ class TestFirmwareParity(unittest.TestCase):
     def test_the_validator_does_not_round_the_command(self):
         """The controllers that are in use pass floats to drive().
 
-        The legacy ramsete_fast.py rounds, and so did the validator; a
+        The deployed controllers pass floats without rounding; a
         rounded command is a different command, so the model has to agree
-        with the firmware that runs.
+        with the firmware that runs (KI-028).
         """
         from immrax_validator import RamseteController
         import jax.numpy as jnp
@@ -126,6 +128,28 @@ class TestFirmwareParity(unittest.TestCase):
         rounded = controller(0.0, pose, ref, w, normalize=True, quantize=True)
         raw = controller(0.0, pose, ref, w, normalize=True, quantize=False)
         self.assertNotAlmostEqual(float(rounded[0]), float(raw[0]), places=6)
+
+    def test_kinematic_limiter_does_not_inject_backlash_velocity_boost(self):
+        """KI-028 / KI-025: Limiter must enforce torque/traction limits without
+        injecting artificial velocity boosts on direction reversal. Backlash
+        is accounted for in the reachability envelope, not in wheel velocity.
+        """
+        limiter = ramsete.KinematicLimiter({})
+        limiter.last_vl = -0.01
+        limiter.last_vr = -0.01
+        # Request a forward step of 0.05 m/s from 0.0
+        v_out, w_out = limiter.limit(0.05, 0.0, 0.0, 0.0, 0.02)
+        self.assertAlmostEqual(v_out, 0.05, places=5)
+        self.assertAlmostEqual(w_out, 0.0, places=5)
+
+    def test_ramsete_fast_passes_unrounded_floats_and_uses_limiter(self):
+        """ramsete_fast.py passes float commands to drive() and uses KinematicLimiter."""
+        db = _FakeDriveBase()
+        cfg = {"mass": 0.8, "wheel_radius": 0.028, "v_max_rad_s": 15.7, "t_max_nm": 0.04}
+        asyncio.run(ramsete_fast.follow_trajectory(db, _samples(), config=cfg))
+        self.assertTrue(len(db.commands) > 0)
+        self.assertIsInstance(db.commands[0][0], float)
+        self.assertIsInstance(db.commands[0][1], float)
 
 
 class _FakeDriveBase:

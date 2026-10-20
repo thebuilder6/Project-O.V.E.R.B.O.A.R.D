@@ -818,6 +818,8 @@ Unpacking a traced array is the JAX `unstack` primitive, and **Immrax's natural 
 
 **The rule for a calibrated robot: allowed, and it is the conservative direction.** With `--sysid-fit` the tick tube is *wider* than the plant tube (12.1 cm against 5.1 cm on the S-curve), and the reason is the twin's plant state - the two wheel speeds are interval coordinates whose spread feeds the command, and the interval arithmetic counts that growth twice - and not the belief (`docs/research/rq_a/exp23_twin_tick_belief.py`). A wider tube is a *tighter* bound on nothing: it is the same reachable set, enclosed more generously, so the gate is **harder** to pass, not easier. The flag is therefore allowed with a fit, and the report says which model produced the number, so a bigger envelope is read as what it is.
 
+**The obvious repair for that was tried and measured worse.** The estimate and the truth are perfectly correlated - the odometry reads the very wheel speeds the plant carries - so carrying the estimate's **error** instead of the estimate should stop the box from adding the estimate's spread to the truth's. It is implemented (`belief_mode` in `immrax_validator.py`, "error" against "estimate") and it does not pay: the S-curve goes from 5.1 cm with the plant propagation to **42.7 cm** with the error form and the Jacobian, and to 9.5 cm with the mixed-Jacobian. The reason is that the error's update differences two cosines of a heading interval that is itself wide, and the difference of two over-approximations is worse than either - the same shape as the problem it was meant to solve. The estimate therefore stays a state of its own, and the switch is kept so the next person does not have to derive it again.
+
 **Workaround:** None needed. The default stays on the plant propagation, so nothing changes for a run that does not ask for the tick map.
 
 ---
@@ -1056,7 +1058,9 @@ So there was no single behaviour for one validator to mirror: the plain compact 
 
 **What it does and does not change.** With the period the same on both sides, the remaining parity fixes are worth about 1 % (the rounding and the gain, which finding F7 measured as worth nothing), so the tracking numbers barely move: the legacy mirror and the deployed mirror now differ by 0.94-1.02x on every (mission, density) cell. What changes is that the model now says what the robot does, and that the two compact controllers can no longer drift apart. The gate is unchanged in its strictness relative to the 20 ms model the tree already used, and stricter than a 5 ms one would be.
 
-**Workaround:** None needed, but two gaps remain and are recorded in the RQ-A note: the `KinematicLimiter` is in the firmware and in no model, and the firmware's limiter still carries the old backlash model (a deficit subtracted from the wheel speed), which is the dimensional error KI-025 removed from the model but not from the firmware. `ramsete_fast.py` is still the legacy path and is not what the validator models.
+**Workaround:** None needed. The two gaps recorded in the RQ-A note are now resolved:
+1. `KinematicLimiter` no longer injects an artificial velocity boost on direction reversal; backlash is strictly treated as a position uncertainty in the reachable set (KI-025), and the limiter purely enforces physical torque and traction limits on commanded accelerations.
+2. `pybricks_code/ramsete_fast.py` now recomputes the Ramsete gain from interpolated reference speed and turn rate (`math.sqrt(wr**2 + b*vr**2)`), passes unrounded float commands to `DriveBase.drive()`, and applies `KinematicLimiter` when `config` is provided, bringing all four firmware controllers in `pybricks_code/` into parity with the validator's unquantized command model.
 
 ---
 

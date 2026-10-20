@@ -14,7 +14,8 @@ see.
 | `exp18_real_missions.txt` | the six example missions under the three inclusion functions, with and without a calibrated model |
 | `exp20_closed_loop_tick.txt` | the closed-loop tick map against the shipped open-loop propagation |
 | `exp21_curve_geometry.txt` | the envelope on a curve: the box against the sampled set, sample by sample |
-| `exp22_twin_propagation.txt` | the shipped validator with the two propagations, on the six missions, with and without a calibrated model |
+| `exp22_twin_propagation.txt` | the shipped validator with the two propagations, on the six missions, with and without a calibrated model, and the estimate's error against the estimate |
+| `exp23_twin_tick_belief.txt` | is the robot's pose estimate the reason the twin's tick tube is wider? The control: the same map with the controller fed the truth |
 | `exp10_gain_band.txt` | the gain band against the tracking and the envelope, re-measured after the fix |
 | `envelope_plain_*.png` | the plain plant: the interval box against the sampled reachable set, one figure per inclusion function |
 | `envelope_twin_wheels_*.png` | the digital twin carrying the two wheel speeds as states - the layout before the fix |
@@ -103,6 +104,22 @@ the two are perfectly correlated and an interval box cannot say so - the
 same lost correlation as the phantom turn rate, one level up. The tick
 propagation is the lever for the default plant; the twin needs the belief's
 correlation to be made explicit first.
+
+**But the belief is not the reason, and the control says so.** Feeding the
+controller the *truth* instead of the estimate (`exp23_twin_tick_belief.txt`)
+is **not** smaller (12.48 cm against 9.54 cm on the S-curve), and it is
+**unsound** while it is at it: it misses reachable poses by 1-2 mm, which is
+the size of the estimate's initial offset. The reason is the twin's *plant
+state*: the two wheel speeds are interval coordinates whose spread feeds the
+command, and the interval arithmetic counts that growth twice.
+
+**The obvious repair was tried and is worse.** Carrying the estimate's
+*error* instead of the estimate, so the box does not add the estimate's
+spread to the truth's, is implemented (`belief_mode`) and measured: the
+S-curve goes to 42.7 cm with the Jacobian and 9.5 cm with the
+mixed-Jacobian, because the error's update differences two cosines of a wide
+heading interval - the difference of two over-approximations is worse than
+either. The estimate stays a state of its own.
 
 ### And on the curve, where it matters
 

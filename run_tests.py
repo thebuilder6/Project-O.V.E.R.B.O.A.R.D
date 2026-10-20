@@ -157,6 +157,7 @@ from tests.test_studio_honesty import (
     TestTheMessageTheOperatorReads,
     TestTheResultExplainsItself,
     TestTheSheetWithoutASession,
+    TestTheEnvelopeNamesItsModel,
 )
 from tests.test_testcache import (
     TestCacheSkipsUnchangedCode,
@@ -321,6 +322,7 @@ def test_classes():
         TestTheMessageTheOperatorReads,
         TestTheResultExplainsItself,
         TestTheSheetWithoutASession,
+        TestTheEnvelopeNamesItsModel,
         TestCacheSkipsUnchangedCode,
         TestCacheFingerprints,
         TestCacheRecords,

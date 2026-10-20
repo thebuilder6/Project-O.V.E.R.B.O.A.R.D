@@ -883,6 +883,17 @@ ok = (errors["max_pos_error_m"] < 0.01
 
 `ImmraxValidator.validate_trajectory` (`immrax_validator.py:873`) simulates the closed loop with interval arithmetic. Details in [Section 12](#12-controller-and-plant-parity).
 
+**The tube is the width of a *model*, so the model is part of the number.** The reachability is computed by one of two **propagations** (`immrax_validator.py`, `PROPAGATION`), and every candidate in the `##OVERBOARD-VALIDATION##` line names the one that produced its envelope:
+
+| propagation | what it embeds | what the tube bounds |
+|---|---|---|
+| `plant` (the default) | the plant; the controller is evaluated *outside* the propagation, at the tube's midpoint, with the command held for the tick | the reachable set of an **open-loop** plant driven by a pre-recorded command — the feedback's contraction is not in the tube at all |
+| `tick` | one 20 ms tick of the **closed loop** — controller, pose estimate and delayed command — as a discrete map, propagated once per tick | the reachable set of the loop the robot actually runs; the map's Jacobian carries `dF/dx = dPhi/dx + (dPhi/du)(dN/dx)`, and the Ramsete feedback contracts the tube |
+
+The tick propagation needs a Jacobian inclusion: with the natural extension the closed-loop map explodes (627 mm on a 1 m straight). It costs 2-3x (`jac`) to 7-10x (`mjac`) the validation time, which is why it is opt-in (`main.py --propagation tick`). It is the lever on the paths where the plant propagation *diverges* rather than merely widens — the S-curve, the stops and the complex mission, where the mixed-Jacobian gives 1.88, 1.30 and 1.83 cm against 5.36, 5.31 and 5.07 cm, and every tube still contains the sampled reachable set. With the digital twin it is **wider**, and the reason is the twin's plant state, not the propagation (KI-049, KI-050).
+
+Two rules come with it. **The controller must not unpack the pose**: `x, y, theta = current_pose` is the JAX `unstack` primitive, Immrax's natural inclusion has no rule for it, and the tick map dies with "unstack not in inclusion_registry" — so the pose is read by indexing, which compiles to `slice`+`squeeze` and gives the same number. And **an envelope is never read without its model**: the report, the studio's validation note and the studio's chip tooltip all name the propagation, the same rule as `envelope_truncated`.
+
 The physical pass condition (`immrax_validator.py:969-976`):
 
 ```python

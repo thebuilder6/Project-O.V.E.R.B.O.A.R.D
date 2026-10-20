@@ -143,8 +143,6 @@ class KinematicLimiter:
         
         self.last_vl = 0.0
         self.last_vr = 0.0
-        self.backlash_deficit_l = 0.0
-        self.backlash_deficit_r = 0.0
         
     def max_force(self, v_wheel):
         omega = (abs(v_wheel) / self.wheel_radius) * self.gearing
@@ -204,33 +202,15 @@ class KinematicLimiter:
         vl_ach = vl_curr + al_ach * dt
         vr_ach = vr_curr + ar_ach * dt
         
-        if (vl_ach > 0 and self.last_vl <= 0) or (vl_ach < 0 and self.last_vl >= 0):
-            self.backlash_deficit_l += self.backlash_m * (1 if vl_ach > 0 else -1)
-            
-        if (vr_ach > 0 and self.last_vr <= 0) or (vr_ach < 0 and self.last_vr >= 0):
-            self.backlash_deficit_r += self.backlash_m * (1 if vr_ach > 0 else -1)
-            
-        max_boost = 0.1
-        
-        boost_l = 0.0
-        if abs(self.backlash_deficit_l) > 0:
-            boost_l = max_boost if self.backlash_deficit_l > 0 else -max_boost
-            if abs(boost_l * dt) > abs(self.backlash_deficit_l):
-                boost_l = self.backlash_deficit_l / dt
-            self.backlash_deficit_l -= boost_l * dt
-            
-        boost_r = 0.0
-        if abs(self.backlash_deficit_r) > 0:
-            boost_r = max_boost if self.backlash_deficit_r > 0 else -max_boost
-            if abs(boost_r * dt) > abs(self.backlash_deficit_r):
-                boost_r = self.backlash_deficit_r / dt
-            self.backlash_deficit_r -= boost_r * dt
-            
+        # Backlash is accounted for as a position uncertainty in the reachability
+        # envelope (KI-025), not as an artificial velocity boost on direction
+        # reversal (KI-028). The limiter purely enforces physical torque and
+        # traction limits on the commanded motion.
         self.last_vl = vl_ach
         self.last_vr = vr_ach
         
-        v_final = ((vl_ach + boost_l) + (vr_ach + boost_r)) / 2.0
-        omega_final = ((vr_ach + boost_r) - (vl_ach + boost_l)) / L
+        v_final = (vl_ach + vr_ach) / 2.0
+        omega_final = (vr_ach - vl_ach) / L
         
         return v_final, omega_final
 
