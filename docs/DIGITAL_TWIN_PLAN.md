@@ -49,6 +49,22 @@ needs a tape measure at the stops of an `odometry_straight`, an
 Each mechanism has a host test that pins its semantics, so the model is
 checkable before any hardware exists.
 
+## What this does not fix
+
+[`docs/research/RQ-A_tracking_error.md`](research/RQ-A_tracking_error.md) shows that
+the 5 mm tracking gate is measuring a discretisation mismatch — the
+optimizer's collocation, the controller's linear reference and the plant's
+integration are three different discretisations of the same trajectory — and
+not a tracking problem. So:
+
+- **This work will not move the number that blocks the missions.** The
+  tracking error is already ~100 % explained by the current model. What this
+  work makes honest is the *envelope*: the reachability tube now reflects the
+  robot's own odometry, its braking shortfall and its measured limits.
+- The two are complementary, not alternatives: RQ-A fixes what the gate
+  measures, the digital twin fixes what the envelope claims.
+- Do not read a change in the tracking number as evidence about the robot.
+
 ## What is still open after this build
 
 | Gap | What it needs | Why it is not built yet |
@@ -58,6 +74,10 @@ checkable before any hardware exists.
 | Slip during acceleration, not only braking | a slip model, not one measured number | the fit measures the braking case; the dynamic case needs a different test |
 | The reachability envelope as an optimizer term | a candidate set that cannot find a passing path | the KI defers this; the post-solve score already selects the candidate |
 | The interval feedback mode | a working interval Ramsete | it still sees the scaled truth rather than the belief, and it diverges on long fast paths; the nominal mode is the production path |
+
+The backlash is not on this list: KI-025 moved it out of the plant and into
+the reachable set as a position uncertainty, so the plant no longer loses
+backlash/2 in both directions.
 
 ## The order of work
 
