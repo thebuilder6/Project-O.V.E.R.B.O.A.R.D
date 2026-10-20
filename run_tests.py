@@ -20,6 +20,11 @@ from tests.test_sysid_fit import TestSysIdFit
 from tests.test_digital_twin import TestDigitalTwinConfig, TestDigitalTwinValidator
 from tests.test_sysid_compare import TestSysIdCompare
 from tests.test_export_compact import TestCompactExport
+from tests.test_export import TestResampleHeading
+from tests.test_firmware_events import (
+    TestFinalWaypointEvent,
+    TestFinalWaypointEventCompact,
+)
 
 # Regression tests (no JAX required)
 from tests.test_regressions import (
@@ -75,6 +80,9 @@ def run_tests():
     suite.addTests(loader.loadTestsFromTestCase(TestDigitalTwinValidator))
     suite.addTests(loader.loadTestsFromTestCase(TestSysIdCompare))
     suite.addTests(loader.loadTestsFromTestCase(TestCompactExport))
+    suite.addTests(loader.loadTestsFromTestCase(TestResampleHeading))
+    suite.addTests(loader.loadTestsFromTestCase(TestFinalWaypointEvent))
+    suite.addTests(loader.loadTestsFromTestCase(TestFinalWaypointEventCompact))
     
     # Run tests
     runner = unittest.TextTestRunner(verbosity=2)

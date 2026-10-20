@@ -161,6 +161,11 @@ def write_compact_python_file(input_traj_file: str, output_file: str) -> None:
     )
 
 
+def _wrap_pi(angle: float) -> float:
+    """Wrap an angle to [-pi, pi]."""
+    return float((angle + np.pi) % (2.0 * np.pi) - np.pi)
+
+
 def resample_to_fixed_dt(samples: List[Dict[str, Any]], target_dt: float = 0.02, track_width: float = 0.0965) -> List[Dict[str, Any]]:
     """
     Linearly resample a variable-timestep trajectory to a fixed controller dt.
@@ -174,7 +179,11 @@ def resample_to_fixed_dt(samples: List[Dict[str, Any]], target_dt: float = 0.02,
     t_src = np.array([s["t"] for s in samples])
     x_src = np.array([s["x"] for s in samples])
     y_src = np.array([s["y"] for s in samples])
-    h_src = np.array([s["heading"] for s in samples])
+    # Unwrap before interpolating: a heading that crosses +/-pi must not be
+    # interpolated the long way round (KI-011). The optimizer emits a
+    # continuous heading, but a hand-edited or external trajectory may jump
+    # from +pi to -pi.
+    h_src = np.unwrap(np.array([s["heading"] for s in samples]))
     vl_src = np.array([s["vl"] for s in samples])
     vr_src = np.array([s["vr"] for s in samples])
 
@@ -213,7 +222,7 @@ def resample_to_fixed_dt(samples: List[Dict[str, Any]], target_dt: float = 0.02,
             "t": round(float(t), 6),
             "x": round(lerp(t, t_src, x_src), 6),
             "y": round(lerp(t, t_src, y_src), 6),
-            "heading": round(lerp(t, t_src, h_src), 6),
+            "heading": round(_wrap_pi(lerp(t, t_src, h_src)), 6),
             "vl": round(vl, 6),
             "vr": round(vr, 6),
             "v": round(v, 6),

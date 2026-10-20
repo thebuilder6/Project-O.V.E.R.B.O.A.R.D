@@ -10,6 +10,29 @@ def normalize_angle(angle):
         angle += 2 * math.pi
     return angle
 
+def _fire_event(sample, event_map, debug=False, when=0.0):
+    """Fire the event attached to one sample, if it has one.
+
+    The sample is marked as fired, so the same event cannot fire twice.
+    Returns True when an action was actually run.
+    """
+    name = sample.get('event')
+    if not name or sample.get('event_fired', False):
+        return False
+
+    sample['event_fired'] = True
+
+    if debug:
+        print(f"[{when:.2f}s] Event triggered: {name}")
+
+    # If a dictionary was passed and the event exists in it
+    if event_map and name in event_map:
+        event_map[name]()
+        return True
+
+    return False
+
+
 class Odometry:
     """
     Tracks the global position of the robot using Pybricks DriveBase distance and angle.
@@ -260,17 +283,7 @@ async def follow_trajectory(drivebase, samples, config=None, b=2.0, zeta=0.7, de
         s2 = samples[sample_idx + 1]
 
         # --- EVENT HANDLING ---
-        if event_map and 'event' in s1 and not s1.get('event_fired', False):
-            event_name = s1['event']
-            s1['event_fired'] = True  # Ensure it only fires once
-            
-            if debug:
-                print(f"[{t:.2f}s] Event triggered: {event_name}")
-                
-            # If a dictionary was passed and the event exists in it
-            if event_name in event_map:
-                action = event_map[event_name]
-                action()
+        _fire_event(s1, event_map, debug, t)
 
         # Interpolate between s1 and s2
         if s2['t'] == s1['t']:
@@ -345,4 +358,9 @@ async def follow_trajectory(drivebase, samples, config=None, b=2.0, zeta=0.7, de
         print(f"Max Math Calc Time: {max_calc_time:.1f} ms")
         print("---------------------------")
     drivebase.stop()
+
+    # The loop stops before the last sample, so an event attached to the final
+    # waypoint never fired (KI-012). Fire it now: the robot has arrived.
+    _fire_event(samples[-1], event_map, debug, total_time)
+
     gc.threshold(-1)

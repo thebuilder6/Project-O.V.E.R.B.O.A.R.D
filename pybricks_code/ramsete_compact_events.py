@@ -125,9 +125,8 @@ async def follow_trajectory(
             ):
                 s_idx += 1
 
-            # Fire every event attached to a sample we have reached. A final
-            # sample event still does not fire because the loop breaks at
-            # total_time (KI-012).
+            # Fire every event attached to a sample we have reached. The event
+            # on the final sample is fired after the loop (KI-012).
             while ev_idx < n_events and events[ev_idx][0] <= s_idx:
                 event_name = events[ev_idx][1]
                 if debug:
@@ -194,6 +193,17 @@ async def follow_trajectory(
     finally:
         drivebase.stop()
         gc.threshold(-1)
+
+    # The loop stops before the final sample, so an event attached to the final
+    # waypoint never fired (KI-012). Fire whatever is left now: the robot has
+    # arrived at the last waypoint.
+    while ev_idx < n_events:
+        event_name = events[ev_idx][1]
+        if debug:
+            print("Event triggered: %s" % event_name)
+        if event_map and event_name in event_map:
+            event_map[event_name]()
+        ev_idx += 1
 
     print("Trajectory complete.")
     if loop_count > 0:

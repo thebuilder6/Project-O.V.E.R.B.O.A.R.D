@@ -167,7 +167,7 @@ Linearly resamples a variable-timestep trajectory to a fixed controller timestep
 - `t, x, y, heading, vl, vr, v, omega`
 - `event` (optional)
 
-Events from the source are attached to the nearest output sample within one timestep. Heading is interpolated as a raw number; a path that crosses ±π can currently take the long way around (KI-011).
+Events from the source are attached to the nearest output sample within one timestep. The heading is unwrapped before interpolation, so a path that crosses ±π is interpolated the short way and the output headings are wrapped back to [-π, π] (KI-011). A consumer that computes heading *differences* must use the shortest angle, as the deployed controllers do.
 
 ## `export_controller_json(samples, target_dt=0.02, track_width=0.0965)`
 
