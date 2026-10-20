@@ -3,144 +3,7206 @@
   "tag": "example_straight__default",
   "mission": "example_straight",
   "mode": "default",
-  "wall_s": 0.1,
-  "exit_code": 2,
-  "report": null
+  "wall_s": 7.9,
+  "exit_code": 0,
+  "report": {
+   "selected": 1,
+   "candidates": [
+    {
+     "index": 1,
+     "style": "baseline",
+     "timing": "equal-duration",
+     "accuracy_weight": 0.0,
+     "duration_s": 2.376600380817622,
+     "envelope_cm": 0.3047478396868473,
+     "tracking_cm": 0.34096911549568176,
+     "heading_error_deg": 0.0,
+     "ok": true,
+     "converged": true,
+     "reasons": [],
+     "segments": [
+      {
+       "from": 0,
+       "to": 1,
+       "limit_m": 0.02,
+       "envelope_m": 0.0029195810964199103,
+       "drift_m": 0.00022708421835531534,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      }
+     ]
+    },
+    {
+     "index": 2,
+     "style": "baseline",
+     "timing": "per-segment",
+     "accuracy_weight": 0.0,
+     "duration_s": 2.376600380817622,
+     "envelope_cm": 0.3047478396868473,
+     "tracking_cm": 0.34096911549568176,
+     "heading_error_deg": 0.0,
+     "ok": true,
+     "converged": true,
+     "reasons": [],
+     "segments": [
+      {
+       "from": 0,
+       "to": 1,
+       "limit_m": 0.02,
+       "envelope_m": 0.0029195810964199103,
+       "drift_m": 0.00022708421835531534,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      }
+     ]
+    }
+   ]
+  }
  },
  {
   "tag": "example_straight__sweep",
   "mission": "example_straight",
   "mode": "sweep",
-  "wall_s": 0.1,
-  "exit_code": 2,
-  "report": null
+  "wall_s": 21.7,
+  "exit_code": 0,
+  "report": {
+   "selected": 5,
+   "candidates": [
+    {
+     "index": 1,
+     "style": "baseline",
+     "timing": "equal-duration",
+     "accuracy_weight": 0.0,
+     "duration_s": 2.376600380817622,
+     "envelope_cm": 0.3047478396868473,
+     "tracking_cm": 0.34096911549568176,
+     "heading_error_deg": 0.0,
+     "ok": true,
+     "converged": true,
+     "reasons": [],
+     "segments": [
+      {
+       "from": 0,
+       "to": 1,
+       "limit_m": 0.02,
+       "envelope_m": 0.0029195810964199103,
+       "drift_m": 0.00022708421835531534,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      }
+     ]
+    },
+    {
+     "index": 2,
+     "style": "baseline",
+     "timing": "per-segment",
+     "accuracy_weight": 0.0,
+     "duration_s": 2.376600380817622,
+     "envelope_cm": 0.3047478396868473,
+     "tracking_cm": 0.34096911549568176,
+     "heading_error_deg": 0.0,
+     "ok": true,
+     "converged": true,
+     "reasons": [],
+     "segments": [
+      {
+       "from": 0,
+       "to": 1,
+       "limit_m": 0.02,
+       "envelope_m": 0.0029195810964199103,
+       "drift_m": 0.00022708421835531534,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      }
+     ]
+    },
+    {
+     "index": 3,
+     "style": "baseline",
+     "timing": "equal-duration",
+     "accuracy_weight": 0.001,
+     "duration_s": 2.3766012775687093,
+     "envelope_cm": 0.3047478010734041,
+     "tracking_cm": 0.3409702330827713,
+     "heading_error_deg": 0.0,
+     "ok": true,
+     "converged": true,
+     "reasons": [],
+     "segments": [
+      {
+       "from": 0,
+       "to": 1,
+       "limit_m": 0.02,
+       "envelope_m": 0.00291956446908862,
+       "drift_m": 0.00022721120698051213,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      }
+     ]
+    },
+    {
+     "index": 4,
+     "style": "baseline",
+     "timing": "per-segment",
+     "accuracy_weight": 0.001,
+     "duration_s": 2.3766012775687093,
+     "envelope_cm": 0.3047478010734041,
+     "tracking_cm": 0.3409702330827713,
+     "heading_error_deg": 0.0,
+     "ok": true,
+     "converged": true,
+     "reasons": [],
+     "segments": [
+      {
+       "from": 0,
+       "to": 1,
+       "limit_m": 0.02,
+       "envelope_m": 0.00291956446908862,
+       "drift_m": 0.00022721120698051213,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      }
+     ]
+    },
+    {
+     "index": 5,
+     "style": "baseline",
+     "timing": "equal-duration",
+     "accuracy_weight": 0.002,
+     "duration_s": 2.376600107713639,
+     "envelope_cm": 0.3047477211631591,
+     "tracking_cm": 0.34096911549568176,
+     "heading_error_deg": 0.0,
+     "ok": true,
+     "converged": true,
+     "reasons": [],
+     "segments": [
+      {
+       "from": 0,
+       "to": 1,
+       "limit_m": 0.02,
+       "envelope_m": 0.0029195804176605075,
+       "drift_m": 0.00022704552224987845,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      }
+     ]
+    },
+    {
+     "index": 6,
+     "style": "baseline",
+     "timing": "per-segment",
+     "accuracy_weight": 0.002,
+     "duration_s": 2.376600107713639,
+     "envelope_cm": 0.3047477211631591,
+     "tracking_cm": 0.34096911549568176,
+     "heading_error_deg": 0.0,
+     "ok": true,
+     "converged": true,
+     "reasons": [],
+     "segments": [
+      {
+       "from": 0,
+       "to": 1,
+       "limit_m": 0.02,
+       "envelope_m": 0.0029195804176605075,
+       "drift_m": 0.00022704552224987845,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      }
+     ]
+    },
+    {
+     "index": 7,
+     "style": "baseline",
+     "timing": "equal-duration",
+     "accuracy_weight": 0.005,
+     "duration_s": 2.37659967100301,
+     "envelope_cm": 0.3047478252010256,
+     "tracking_cm": 0.34096911549568176,
+     "heading_error_deg": 0.0,
+     "ok": true,
+     "converged": true,
+     "reasons": [],
+     "segments": [
+      {
+       "from": 0,
+       "to": 1,
+       "limit_m": 0.02,
+       "envelope_m": 0.0029195810746630415,
+       "drift_m": 0.00022698367410614655,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      }
+     ]
+    },
+    {
+     "index": 8,
+     "style": "baseline",
+     "timing": "per-segment",
+     "accuracy_weight": 0.005,
+     "duration_s": 2.37659967100301,
+     "envelope_cm": 0.3047478252010256,
+     "tracking_cm": 0.34096911549568176,
+     "heading_error_deg": 0.0,
+     "ok": true,
+     "converged": true,
+     "reasons": [],
+     "segments": [
+      {
+       "from": 0,
+       "to": 1,
+       "limit_m": 0.02,
+       "envelope_m": 0.0029195810746630415,
+       "drift_m": 0.00022698367410614655,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      }
+     ]
+    },
+    {
+     "index": 9,
+     "style": "baseline",
+     "timing": "equal-duration",
+     "accuracy_weight": 0.01,
+     "duration_s": 2.399829725993868,
+     "envelope_cm": 0.30557059229698935,
+     "tracking_cm": 0.32429436687380075,
+     "heading_error_deg": 2.7320756680051004e-05,
+     "ok": true,
+     "converged": true,
+     "reasons": [],
+     "segments": [
+      {
+       "from": 0,
+       "to": 1,
+       "limit_m": 0.02,
+       "envelope_m": 0.0029268622499243973,
+       "drift_m": 0.00022043584043957823,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      }
+     ]
+    },
+    {
+     "index": 10,
+     "style": "baseline",
+     "timing": "per-segment",
+     "accuracy_weight": 0.01,
+     "duration_s": 2.399829725993868,
+     "envelope_cm": 0.30557059229698935,
+     "tracking_cm": 0.32429436687380075,
+     "heading_error_deg": 2.7320756680051004e-05,
+     "ok": true,
+     "converged": true,
+     "reasons": [],
+     "segments": [
+      {
+       "from": 0,
+       "to": 1,
+       "limit_m": 0.02,
+       "envelope_m": 0.0029268622499243973,
+       "drift_m": 0.00022043584043957823,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      }
+     ]
+    }
+   ]
+  }
  },
  {
   "tag": "example_straight__sweep-self-consistent",
   "mission": "example_straight",
   "mode": "sweep-self-consistent",
-  "wall_s": 0.1,
-  "exit_code": 2,
-  "report": null
+  "wall_s": 22.5,
+  "exit_code": 0,
+  "report": {
+   "selected": 5,
+   "candidates": [
+    {
+     "index": 1,
+     "style": "baseline",
+     "timing": "equal-duration",
+     "accuracy_weight": 0.0,
+     "duration_s": 2.3766033547813055,
+     "envelope_cm": 0.30476343573946896,
+     "tracking_cm": 0.3409702330827713,
+     "heading_error_deg": 0.0,
+     "ok": true,
+     "converged": true,
+     "reasons": [],
+     "segments": [
+      {
+       "from": 0,
+       "to": 1,
+       "limit_m": 0.02,
+       "envelope_m": 0.002919722239484736,
+       "drift_m": 0.0002275055203302633,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      }
+     ]
+    },
+    {
+     "index": 2,
+     "style": "baseline",
+     "timing": "per-segment",
+     "accuracy_weight": 0.0,
+     "duration_s": 2.3766033547813055,
+     "envelope_cm": 0.30476343573946896,
+     "tracking_cm": 0.3409702330827713,
+     "heading_error_deg": 0.0,
+     "ok": true,
+     "converged": true,
+     "reasons": [],
+     "segments": [
+      {
+       "from": 0,
+       "to": 1,
+       "limit_m": 0.02,
+       "envelope_m": 0.002919722239484736,
+       "drift_m": 0.0002275055203302633,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      }
+     ]
+    },
+    {
+     "index": 3,
+     "style": "baseline",
+     "timing": "equal-duration",
+     "accuracy_weight": 0.001,
+     "duration_s": 2.376600467573528,
+     "envelope_cm": 0.30474770377342597,
+     "tracking_cm": 0.34096837043762207,
+     "heading_error_deg": 0.0,
+     "ok": true,
+     "converged": true,
+     "reasons": [],
+     "segments": [
+      {
+       "from": 0,
+       "to": 1,
+       "limit_m": 0.02,
+       "envelope_m": 0.002919595552782519,
+       "drift_m": 0.0002270964971959986,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      }
+     ]
+    },
+    {
+     "index": 4,
+     "style": "baseline",
+     "timing": "per-segment",
+     "accuracy_weight": 0.001,
+     "duration_s": 2.376600467573528,
+     "envelope_cm": 0.30474770377342597,
+     "tracking_cm": 0.34096837043762207,
+     "heading_error_deg": 0.0,
+     "ok": true,
+     "converged": true,
+     "reasons": [],
+     "segments": [
+      {
+       "from": 0,
+       "to": 1,
+       "limit_m": 0.02,
+       "envelope_m": 0.002919595552782519,
+       "drift_m": 0.0002270964971959986,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      }
+     ]
+    },
+    {
+     "index": 5,
+     "style": "baseline",
+     "timing": "equal-duration",
+     "accuracy_weight": 0.002,
+     "duration_s": 2.3765996029421608,
+     "envelope_cm": 0.3047476938853906,
+     "tracking_cm": 0.34096986055374146,
+     "heading_error_deg": 0.0,
+     "ok": true,
+     "converged": true,
+     "reasons": [],
+     "segments": [
+      {
+       "from": 0,
+       "to": 1,
+       "limit_m": 0.02,
+       "envelope_m": 0.0029195959287149,
+       "drift_m": 0.0002269740303009211,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      }
+     ]
+    },
+    {
+     "index": 6,
+     "style": "baseline",
+     "timing": "per-segment",
+     "accuracy_weight": 0.002,
+     "duration_s": 2.3765996029421608,
+     "envelope_cm": 0.3047476938853906,
+     "tracking_cm": 0.34096986055374146,
+     "heading_error_deg": 0.0,
+     "ok": true,
+     "converged": true,
+     "reasons": [],
+     "segments": [
+      {
+       "from": 0,
+       "to": 1,
+       "limit_m": 0.02,
+       "envelope_m": 0.0029195959287149,
+       "drift_m": 0.0002269740303009211,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      }
+     ]
+    },
+    {
+     "index": 7,
+     "style": "baseline",
+     "timing": "equal-duration",
+     "accuracy_weight": 0.005,
+     "duration_s": 2.376599616698764,
+     "envelope_cm": 0.30474789278205083,
+     "tracking_cm": 0.34096986055374146,
+     "heading_error_deg": 0.0,
+     "ok": true,
+     "converged": true,
+     "reasons": [],
+     "segments": [
+      {
+       "from": 0,
+       "to": 1,
+       "limit_m": 0.02,
+       "envelope_m": 0.0029195969232757328,
+       "drift_m": 0.00022697598727167687,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      }
+     ]
+    },
+    {
+     "index": 8,
+     "style": "baseline",
+     "timing": "per-segment",
+     "accuracy_weight": 0.005,
+     "duration_s": 2.376599616698764,
+     "envelope_cm": 0.30474789278205083,
+     "tracking_cm": 0.34096986055374146,
+     "heading_error_deg": 0.0,
+     "ok": true,
+     "converged": true,
+     "reasons": [],
+     "segments": [
+      {
+       "from": 0,
+       "to": 1,
+       "limit_m": 0.02,
+       "envelope_m": 0.0029195969232757328,
+       "drift_m": 0.00022697598727167687,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      }
+     ]
+    },
+    {
+     "index": 9,
+     "style": "baseline",
+     "timing": "equal-duration",
+     "accuracy_weight": 0.01,
+     "duration_s": 2.40126944645544,
+     "envelope_cm": 0.3056305996839248,
+     "tracking_cm": 0.3229476511478424,
+     "heading_error_deg": 1.3660378340025502e-05,
+     "ok": true,
+     "converged": true,
+     "reasons": [],
+     "segments": [
+      {
+       "from": 0,
+       "to": 1,
+       "limit_m": 0.02,
+       "envelope_m": 0.002927417075736659,
+       "drift_m": 0.00022422990313637333,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      }
+     ]
+    },
+    {
+     "index": 10,
+     "style": "baseline",
+     "timing": "per-segment",
+     "accuracy_weight": 0.01,
+     "duration_s": 2.40126944645544,
+     "envelope_cm": 0.3056305996839248,
+     "tracking_cm": 0.3229476511478424,
+     "heading_error_deg": 1.3660378340025502e-05,
+     "ok": true,
+     "converged": true,
+     "reasons": [],
+     "segments": [
+      {
+       "from": 0,
+       "to": 1,
+       "limit_m": 0.02,
+       "envelope_m": 0.002927417075736659,
+       "drift_m": 0.00022422990313637333,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      }
+     ]
+    }
+   ]
+  }
  },
  {
   "tag": "example_s_curve__default",
   "mission": "example_s_curve",
   "mode": "default",
-  "wall_s": 0.1,
-  "exit_code": 2,
-  "report": null
+  "wall_s": 9.4,
+  "exit_code": 1,
+  "report": {
+   "selected": 2,
+   "candidates": [
+    {
+     "index": 1,
+     "style": "baseline",
+     "timing": "equal-duration",
+     "accuracy_weight": 0.0,
+     "duration_s": 3.6964565730115204,
+     "envelope_cm": 0.7770703520855394,
+     "tracking_cm": 1.553298905491829,
+     "heading_error_deg": 0.2991622856465585,
+     "ok": false,
+     "converged": true,
+     "reasons": [
+      "tracking error 1.55 cm > 0.50 cm",
+      "forward-integration error 1.33 cm",
+      "final integration error 1.31 cm"
+     ],
+     "segments": [
+      {
+       "from": 0,
+       "to": 1,
+       "limit_m": 0.02,
+       "envelope_m": 0.00314903620001614,
+       "drift_m": 0.010381637899285793,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 1,
+       "to": 2,
+       "limit_m": 0.02,
+       "envelope_m": 0.007437317058640565,
+       "drift_m": 0.013343962684790442,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      }
+     ]
+    },
+    {
+     "index": 2,
+     "style": "baseline",
+     "timing": "per-segment",
+     "accuracy_weight": 0.0,
+     "duration_s": 3.666649500674729,
+     "envelope_cm": 0.7323674581137888,
+     "tracking_cm": 1.4678212814033031,
+     "heading_error_deg": 0.2733441705839103,
+     "ok": false,
+     "converged": true,
+     "reasons": [
+      "tracking error 1.47 cm > 0.50 cm",
+      "forward-integration error 1.19 cm",
+      "final integration error 1.14 cm"
+     ],
+     "segments": [
+      {
+       "from": 0,
+       "to": 1,
+       "limit_m": 0.02,
+       "envelope_m": 0.002941250726555973,
+       "drift_m": 0.007685545241115741,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 1,
+       "to": 2,
+       "limit_m": 0.02,
+       "envelope_m": 0.006999265292950204,
+       "drift_m": 0.011895046257663317,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      }
+     ]
+    }
+   ]
+  }
  },
  {
   "tag": "example_s_curve__sweep",
   "mission": "example_s_curve",
   "mode": "sweep",
-  "wall_s": 0.1,
-  "exit_code": 2,
-  "report": null
+  "wall_s": 31.1,
+  "exit_code": 1,
+  "report": {
+   "selected": 2,
+   "candidates": [
+    {
+     "index": 1,
+     "style": "baseline",
+     "timing": "equal-duration",
+     "accuracy_weight": 0.0,
+     "duration_s": 3.6964565730115204,
+     "envelope_cm": 0.7770703520855394,
+     "tracking_cm": 1.553298905491829,
+     "heading_error_deg": 0.2991622856465585,
+     "ok": false,
+     "converged": true,
+     "reasons": [
+      "tracking error 1.55 cm > 0.50 cm",
+      "forward-integration error 1.33 cm",
+      "final integration error 1.31 cm"
+     ],
+     "segments": [
+      {
+       "from": 0,
+       "to": 1,
+       "limit_m": 0.02,
+       "envelope_m": 0.00314903620001614,
+       "drift_m": 0.010381637899285793,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 1,
+       "to": 2,
+       "limit_m": 0.02,
+       "envelope_m": 0.007437317058640565,
+       "drift_m": 0.013343962684790442,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      }
+     ]
+    },
+    {
+     "index": 2,
+     "style": "baseline",
+     "timing": "per-segment",
+     "accuracy_weight": 0.0,
+     "duration_s": 3.666649500674729,
+     "envelope_cm": 0.7323674581137888,
+     "tracking_cm": 1.4678212814033031,
+     "heading_error_deg": 0.2733441705839103,
+     "ok": false,
+     "converged": true,
+     "reasons": [
+      "tracking error 1.47 cm > 0.50 cm",
+      "forward-integration error 1.19 cm",
+      "final integration error 1.14 cm"
+     ],
+     "segments": [
+      {
+       "from": 0,
+       "to": 1,
+       "limit_m": 0.02,
+       "envelope_m": 0.002941250726555973,
+       "drift_m": 0.007685545241115741,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 1,
+       "to": 2,
+       "limit_m": 0.02,
+       "envelope_m": 0.006999265292950204,
+       "drift_m": 0.011895046257663317,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      }
+     ]
+    },
+    {
+     "index": 3,
+     "style": "baseline",
+     "timing": "equal-duration",
+     "accuracy_weight": 0.001,
+     "duration_s": 3.6992143757011675,
+     "envelope_cm": 0.7779851824969345,
+     "tracking_cm": 1.5755180269479752,
+     "heading_error_deg": 0.2970176062471745,
+     "ok": false,
+     "converged": true,
+     "reasons": [
+      "tracking error 1.58 cm > 0.50 cm",
+      "forward-integration error 1.31 cm",
+      "final integration error 1.26 cm"
+     ],
+     "segments": [
+      {
+       "from": 0,
+       "to": 1,
+       "limit_m": 0.02,
+       "envelope_m": 0.0031460745550047848,
+       "drift_m": 0.010391205585941381,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 1,
+       "to": 2,
+       "limit_m": 0.02,
+       "envelope_m": 0.007444254575324721,
+       "drift_m": 0.012715977553005858,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      }
+     ]
+    },
+    {
+     "index": 4,
+     "style": "baseline",
+     "timing": "per-segment",
+     "accuracy_weight": 0.001,
+     "duration_s": 3.7151813916146885,
+     "envelope_cm": 0.7618283229146035,
+     "tracking_cm": 1.6002707183361053,
+     "heading_error_deg": 0.32431104217054546,
+     "ok": false,
+     "converged": true,
+     "reasons": [
+      "tracking error 1.60 cm > 0.50 cm",
+      "forward-integration error 1.34 cm",
+      "final integration error 1.29 cm"
+     ],
+     "segments": [
+      {
+       "from": 0,
+       "to": 1,
+       "limit_m": 0.02,
+       "envelope_m": 0.0031390004356303576,
+       "drift_m": 0.010405836955790271,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 1,
+       "to": 2,
+       "limit_m": 0.02,
+       "envelope_m": 0.007291446270809125,
+       "drift_m": 0.013241976605029177,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      }
+     ]
+    },
+    {
+     "index": 5,
+     "style": "baseline",
+     "timing": "equal-duration",
+     "accuracy_weight": 0.002,
+     "duration_s": 3.768140515175935,
+     "envelope_cm": 0.7618954336911788,
+     "tracking_cm": 1.7488781362771988,
+     "heading_error_deg": 0.22296469526589624,
+     "ok": false,
+     "converged": true,
+     "reasons": [
+      "tracking error 1.75 cm > 0.50 cm",
+      "forward-integration error 1.28 cm",
+      "final integration error 1.25 cm"
+     ],
+     "segments": [
+      {
+       "from": 0,
+       "to": 1,
+       "limit_m": 0.02,
+       "envelope_m": 0.0030143929486235502,
+       "drift_m": 0.00938194854870671,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 1,
+       "to": 2,
+       "limit_m": 0.02,
+       "envelope_m": 0.007312713760466907,
+       "drift_m": 0.012771521138215601,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      }
+     ]
+    },
+    {
+     "index": 6,
+     "style": "baseline",
+     "timing": "per-segment",
+     "accuracy_weight": 0.002,
+     "duration_s": 3.723082318436509,
+     "envelope_cm": 0.7555927329640652,
+     "tracking_cm": 1.5697849914431572,
+     "heading_error_deg": 0.31253579604144344,
+     "ok": false,
+     "converged": true,
+     "reasons": [
+      "tracking error 1.57 cm > 0.50 cm",
+      "forward-integration error 1.31 cm",
+      "final integration error 1.25 cm"
+     ],
+     "segments": [
+      {
+       "from": 0,
+       "to": 1,
+       "limit_m": 0.02,
+       "envelope_m": 0.003107852301152476,
+       "drift_m": 0.010277306236423688,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 1,
+       "to": 2,
+       "limit_m": 0.02,
+       "envelope_m": 0.007229863684018782,
+       "drift_m": 0.012817146166755396,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      }
+     ]
+    },
+    {
+     "index": 7,
+     "style": "baseline",
+     "timing": "equal-duration",
+     "accuracy_weight": 0.005,
+     "duration_s": 3.7935313876056984,
+     "envelope_cm": 0.799199156405251,
+     "tracking_cm": 1.538020372390747,
+     "heading_error_deg": 0.2446300553131767,
+     "ok": false,
+     "converged": true,
+     "reasons": [
+      "tracking error 1.54 cm > 0.50 cm",
+      "forward-integration error 1.38 cm",
+      "final integration error 1.27 cm"
+     ],
+     "segments": [
+      {
+       "from": 0,
+       "to": 1,
+       "limit_m": 0.02,
+       "envelope_m": 0.003223248602075169,
+       "drift_m": 0.01033691015805635,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 1,
+       "to": 2,
+       "limit_m": 0.02,
+       "envelope_m": 0.007662982885088143,
+       "drift_m": 0.013792780103291599,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      }
+     ]
+    },
+    {
+     "index": 8,
+     "style": "baseline",
+     "timing": "per-segment",
+     "accuracy_weight": 0.005,
+     "duration_s": 3.798866994263447,
+     "envelope_cm": 0.7839634729954442,
+     "tracking_cm": 1.5753014013171196,
+     "heading_error_deg": 0.26051707532262636,
+     "ok": false,
+     "converged": true,
+     "reasons": [
+      "tracking error 1.58 cm > 0.50 cm",
+      "forward-integration error 1.39 cm",
+      "final integration error 1.29 cm"
+     ],
+     "segments": [
+      {
+       "from": 0,
+       "to": 1,
+       "limit_m": 0.02,
+       "envelope_m": 0.003181583443481029,
+       "drift_m": 0.010466596590157239,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 1,
+       "to": 2,
+       "limit_m": 0.02,
+       "envelope_m": 0.007517190721566467,
+       "drift_m": 0.013945098785119146,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      }
+     ]
+    },
+    {
+     "index": 9,
+     "style": "baseline",
+     "timing": "equal-duration",
+     "accuracy_weight": 0.01,
+     "duration_s": 3.845149726190557,
+     "envelope_cm": 0.7984286098169421,
+     "tracking_cm": 1.5676205977797508,
+     "heading_error_deg": 0.25050401799938765,
+     "ok": false,
+     "converged": true,
+     "reasons": [
+      "tracking error 1.57 cm > 0.50 cm",
+      "forward-integration error 1.38 cm",
+      "final integration error 1.26 cm"
+     ],
+     "segments": [
+      {
+       "from": 0,
+       "to": 1,
+       "limit_m": 0.02,
+       "envelope_m": 0.003208996768837292,
+       "drift_m": 0.010402846541689797,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 1,
+       "to": 2,
+       "limit_m": 0.02,
+       "envelope_m": 0.007656113159624336,
+       "drift_m": 0.013600965252040355,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      }
+     ]
+    },
+    {
+     "index": 10,
+     "style": "baseline",
+     "timing": "per-segment",
+     "accuracy_weight": 0.01,
+     "duration_s": 3.871418811542755,
+     "envelope_cm": 0.8101814305407893,
+     "tracking_cm": 1.7083687707781792,
+     "heading_error_deg": 0.21963156295093003,
+     "ok": false,
+     "converged": true,
+     "reasons": [
+      "tracking error 1.71 cm > 0.50 cm",
+      "forward-integration error 1.35 cm",
+      "final integration error 1.20 cm"
+     ],
+     "segments": [
+      {
+       "from": 0,
+       "to": 1,
+       "limit_m": 0.02,
+       "envelope_m": 0.0031762494260266835,
+       "drift_m": 0.01050176348873458,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 1,
+       "to": 2,
+       "limit_m": 0.02,
+       "envelope_m": 0.007786608203816996,
+       "drift_m": 0.013548784445107697,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      }
+     ]
+    }
+   ]
+  }
  },
  {
   "tag": "example_s_curve__sweep-self-consistent",
   "mission": "example_s_curve",
   "mode": "sweep-self-consistent",
-  "wall_s": 0.1,
-  "exit_code": 2,
-  "report": null
+  "wall_s": 33.7,
+  "exit_code": 1,
+  "report": {
+   "selected": 9,
+   "candidates": [
+    {
+     "index": 1,
+     "style": "baseline",
+     "timing": "equal-duration",
+     "accuracy_weight": 0.0,
+     "duration_s": 3.7254459729343448,
+     "envelope_cm": 0.7791530095687716,
+     "tracking_cm": 0.9769169613718987,
+     "heading_error_deg": 0.12436408440759217,
+     "ok": false,
+     "converged": true,
+     "reasons": [
+      "tracking error 0.98 cm > 0.50 cm"
+     ],
+     "segments": [
+      {
+       "from": 0,
+       "to": 1,
+       "limit_m": 0.02,
+       "envelope_m": 0.00320225964574368,
+       "drift_m": 0.00019376769808151516,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 1,
+       "to": 2,
+       "limit_m": 0.02,
+       "envelope_m": 0.007459088527207299,
+       "drift_m": 0.00019023610187105097,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      }
+     ]
+    },
+    {
+     "index": 2,
+     "style": "baseline",
+     "timing": "per-segment",
+     "accuracy_weight": 0.0,
+     "duration_s": 3.6359359799339668,
+     "envelope_cm": 0.711722475659799,
+     "tracking_cm": 0.8751481771469116,
+     "heading_error_deg": 0.15246348265302462,
+     "ok": false,
+     "converged": true,
+     "reasons": [
+      "tracking error 0.88 cm > 0.50 cm"
+     ],
+     "segments": [
+      {
+       "from": 0,
+       "to": 1,
+       "limit_m": 0.02,
+       "envelope_m": 0.0029524295185546713,
+       "drift_m": 0.00019991277552293342,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 1,
+       "to": 2,
+       "limit_m": 0.02,
+       "envelope_m": 0.006856475062277221,
+       "drift_m": 0.0001838542922967014,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      }
+     ]
+    },
+    {
+     "index": 3,
+     "style": "baseline",
+     "timing": "equal-duration",
+     "accuracy_weight": 0.001,
+     "duration_s": 3.732788638748677,
+     "envelope_cm": 0.7799435181365463,
+     "tracking_cm": 1.1563340201973915,
+     "heading_error_deg": 0.1620394078693825,
+     "ok": false,
+     "converged": true,
+     "reasons": [
+      "tracking error 1.16 cm > 0.50 cm"
+     ],
+     "segments": [
+      {
+       "from": 0,
+       "to": 1,
+       "limit_m": 0.02,
+       "envelope_m": 0.00315434273660159,
+       "drift_m": 0.0001965286778515104,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 1,
+       "to": 2,
+       "limit_m": 0.02,
+       "envelope_m": 0.007461433239835745,
+       "drift_m": 0.000203066543073467,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      }
+     ]
+    },
+    {
+     "index": 4,
+     "style": "baseline",
+     "timing": "per-segment",
+     "accuracy_weight": 0.001,
+     "duration_s": 3.551060227543893,
+     "envelope_cm": 0.6798940093099762,
+     "tracking_cm": 0.8486819453537464,
+     "heading_error_deg": 0.1770248429083905,
+     "ok": false,
+     "converged": true,
+     "reasons": [
+      "tracking error 0.85 cm > 0.50 cm"
+     ],
+     "segments": [
+      {
+       "from": 0,
+       "to": 1,
+       "limit_m": 0.02,
+       "envelope_m": 0.00295596468665285,
+       "drift_m": 0.0001803101153621979,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 1,
+       "to": 2,
+       "limit_m": 0.02,
+       "envelope_m": 0.006725435581594064,
+       "drift_m": 0.00020550811630444695,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      }
+     ]
+    },
+    {
+     "index": 5,
+     "style": "baseline",
+     "timing": "equal-duration",
+     "accuracy_weight": 0.002,
+     "duration_s": 3.746867095318265,
+     "envelope_cm": 0.7709223622559297,
+     "tracking_cm": 1.1106094345450401,
+     "heading_error_deg": 0.17113721984383948,
+     "ok": false,
+     "converged": true,
+     "reasons": [
+      "tracking error 1.11 cm > 0.50 cm"
+     ],
+     "segments": [
+      {
+       "from": 0,
+       "to": 1,
+       "limit_m": 0.02,
+       "envelope_m": 0.0031378856795072556,
+       "drift_m": 0.00021995543359836452,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 1,
+       "to": 2,
+       "limit_m": 0.02,
+       "envelope_m": 0.007373765272548535,
+       "drift_m": 0.0002155726016539654,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      }
+     ]
+    },
+    {
+     "index": 6,
+     "style": "baseline",
+     "timing": "per-segment",
+     "accuracy_weight": 0.002,
+     "duration_s": 3.582263948284691,
+     "envelope_cm": 0.6859209779640335,
+     "tracking_cm": 0.8608296513557434,
+     "heading_error_deg": 0.18944212681947367,
+     "ok": false,
+     "converged": true,
+     "reasons": [
+      "motor force 0.066 N over limit",
+      "tracking error 0.86 cm > 0.50 cm",
+      "1 constraint violations"
+     ],
+     "segments": [
+      {
+       "from": 0,
+       "to": 1,
+       "limit_m": 0.02,
+       "envelope_m": 0.0029917928194135453,
+       "drift_m": 0.0003492047453693491,
+       "violations": 1,
+       "slip_points": 0,
+       "ok": false
+      },
+      {
+       "from": 1,
+       "to": 2,
+       "limit_m": 0.02,
+       "envelope_m": 0.006784715064507748,
+       "drift_m": 0.0002290025154101409,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      }
+     ]
+    },
+    {
+     "index": 7,
+     "style": "baseline",
+     "timing": "equal-duration",
+     "accuracy_weight": 0.005,
+     "duration_s": 3.829586494206145,
+     "envelope_cm": 0.7750165926002891,
+     "tracking_cm": 1.0222457349300385,
+     "heading_error_deg": 0.13480061345937167,
+     "ok": false,
+     "converged": true,
+     "reasons": [
+      "tracking error 1.02 cm > 0.50 cm"
+     ],
+     "segments": [
+      {
+       "from": 0,
+       "to": 1,
+       "limit_m": 0.02,
+       "envelope_m": 0.003114753240390257,
+       "drift_m": 0.00019971873244987816,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 1,
+       "to": 2,
+       "limit_m": 0.02,
+       "envelope_m": 0.007430080331615704,
+       "drift_m": 0.0001379239871831826,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      }
+     ]
+    },
+    {
+     "index": 8,
+     "style": "baseline",
+     "timing": "per-segment",
+     "accuracy_weight": 0.005,
+     "duration_s": 3.646860735004608,
+     "envelope_cm": 0.6995423433726133,
+     "tracking_cm": 0.875872652977705,
+     "heading_error_deg": 0.2086349583872095,
+     "ok": false,
+     "converged": true,
+     "reasons": [
+      "tracking error 0.88 cm > 0.50 cm"
+     ],
+     "segments": [
+      {
+       "from": 0,
+       "to": 1,
+       "limit_m": 0.02,
+       "envelope_m": 0.0030782107100199856,
+       "drift_m": 0.00021066630511248048,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 1,
+       "to": 2,
+       "limit_m": 0.02,
+       "envelope_m": 0.006903422378319148,
+       "drift_m": 0.00016416158935354003,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      }
+     ]
+    },
+    {
+     "index": 9,
+     "style": "baseline",
+     "timing": "equal-duration",
+     "accuracy_weight": 0.01,
+     "duration_s": 3.704831292401959,
+     "envelope_cm": 0.6705141822535606,
+     "tracking_cm": 0.8406038396060467,
+     "heading_error_deg": 0.18931918341441342,
+     "ok": false,
+     "converged": true,
+     "reasons": [
+      "tracking error 0.84 cm > 0.50 cm"
+     ],
+     "segments": [
+      {
+       "from": 0,
+       "to": 1,
+       "limit_m": 0.02,
+       "envelope_m": 0.002927387238789475,
+       "drift_m": 0.00022051095372793285,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 1,
+       "to": 2,
+       "limit_m": 0.02,
+       "envelope_m": 0.00660113507513214,
+       "drift_m": 0.0001658984905765191,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      }
+     ]
+    },
+    {
+     "index": 10,
+     "style": "baseline",
+     "timing": "per-segment",
+     "accuracy_weight": 0.01,
+     "duration_s": 3.8906136925907226,
+     "envelope_cm": 0.7903393940022003,
+     "tracking_cm": 1.0060749016702175,
+     "heading_error_deg": 0.1376146513974169,
+     "ok": false,
+     "converged": true,
+     "reasons": [
+      "tracking error 1.01 cm > 0.50 cm"
+     ],
+     "segments": [
+      {
+       "from": 0,
+       "to": 1,
+       "limit_m": 0.02,
+       "envelope_m": 0.003164173550036229,
+       "drift_m": 0.00019167042242669552,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 1,
+       "to": 2,
+       "limit_m": 0.02,
+       "envelope_m": 0.007578852407900726,
+       "drift_m": 0.0002037789115586959,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      }
+     ]
+    }
+   ]
+  }
  },
  {
   "tag": "example_mission_first4__default",
   "mission": "example_mission_first4",
   "mode": "default",
-  "wall_s": 0.1,
-  "exit_code": 2,
-  "report": null
+  "wall_s": 8.2,
+  "exit_code": 0,
+  "report": {
+   "selected": 2,
+   "candidates": [
+    {
+     "index": 1,
+     "style": "baseline",
+     "timing": "equal-duration",
+     "accuracy_weight": 0.0,
+     "duration_s": 2.1760454431579066,
+     "envelope_cm": 0.3203687628688845,
+     "tracking_cm": 0.24352839682251215,
+     "heading_error_deg": 0.002049056751003825,
+     "ok": true,
+     "converged": true,
+     "reasons": [],
+     "segments": [
+      {
+       "from": 0,
+       "to": 1,
+       "limit_m": 0.02,
+       "envelope_m": 0.0019285754539230082,
+       "drift_m": 0.00048207168917254394,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 1,
+       "to": 2,
+       "limit_m": 0.02,
+       "envelope_m": 0.0024160345599804674,
+       "drift_m": 0.00036717242627533266,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 2,
+       "to": 3,
+       "limit_m": 0.02,
+       "envelope_m": 0.0031762836790009126,
+       "drift_m": 0.0012064426531828074,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      }
+     ]
+    },
+    {
+     "index": 2,
+     "style": "baseline",
+     "timing": "per-segment",
+     "accuracy_weight": 0.0,
+     "duration_s": 1.8333813555656195,
+     "envelope_cm": 0.30987347116137565,
+     "tracking_cm": 0.23540356196463108,
+     "heading_error_deg": 0.002663773776304973,
+     "ok": true,
+     "converged": true,
+     "reasons": [],
+     "segments": [
+      {
+       "from": 0,
+       "to": 1,
+       "limit_m": 0.02,
+       "envelope_m": 0.0019038443678549102,
+       "drift_m": 0.00046240664595243087,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 1,
+       "to": 2,
+       "limit_m": 0.02,
+       "envelope_m": 0.0022981822413222722,
+       "drift_m": 0.00028014059604472395,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 2,
+       "to": 3,
+       "limit_m": 0.02,
+       "envelope_m": 0.0030661288839365776,
+       "drift_m": 0.0013448998584062997,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      }
+     ]
+    }
+   ]
+  }
  },
  {
   "tag": "example_mission_first4__sweep",
   "mission": "example_mission_first4",
   "mode": "sweep",
-  "wall_s": 0.1,
-  "exit_code": 2,
-  "report": null
+  "wall_s": 23.8,
+  "exit_code": 0,
+  "report": {
+   "selected": 2,
+   "candidates": [
+    {
+     "index": 1,
+     "style": "baseline",
+     "timing": "equal-duration",
+     "accuracy_weight": 0.0,
+     "duration_s": 2.1760454431579066,
+     "envelope_cm": 0.3203687628688845,
+     "tracking_cm": 0.24352839682251215,
+     "heading_error_deg": 0.002049056751003825,
+     "ok": true,
+     "converged": true,
+     "reasons": [],
+     "segments": [
+      {
+       "from": 0,
+       "to": 1,
+       "limit_m": 0.02,
+       "envelope_m": 0.0019285754539230082,
+       "drift_m": 0.00048207168917254394,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 1,
+       "to": 2,
+       "limit_m": 0.02,
+       "envelope_m": 0.0024160345599804674,
+       "drift_m": 0.00036717242627533266,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 2,
+       "to": 3,
+       "limit_m": 0.02,
+       "envelope_m": 0.0031762836790009126,
+       "drift_m": 0.0012064426531828074,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      }
+     ]
+    },
+    {
+     "index": 2,
+     "style": "baseline",
+     "timing": "per-segment",
+     "accuracy_weight": 0.0,
+     "duration_s": 1.8333813555656195,
+     "envelope_cm": 0.30987347116137565,
+     "tracking_cm": 0.23540356196463108,
+     "heading_error_deg": 0.002663773776304973,
+     "ok": true,
+     "converged": true,
+     "reasons": [],
+     "segments": [
+      {
+       "from": 0,
+       "to": 1,
+       "limit_m": 0.02,
+       "envelope_m": 0.0019038443678549102,
+       "drift_m": 0.00046240664595243087,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 1,
+       "to": 2,
+       "limit_m": 0.02,
+       "envelope_m": 0.0022981822413222722,
+       "drift_m": 0.00028014059604472395,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 2,
+       "to": 3,
+       "limit_m": 0.02,
+       "envelope_m": 0.0030661288839365776,
+       "drift_m": 0.0013448998584062997,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      }
+     ]
+    },
+    {
+     "index": 3,
+     "style": "baseline",
+     "timing": "equal-duration",
+     "accuracy_weight": 0.001,
+     "duration_s": 2.255619783903162,
+     "envelope_cm": 0.3369210238110114,
+     "tracking_cm": 0.22608223371207714,
+     "heading_error_deg": 0.008032302463934994,
+     "ok": true,
+     "converged": true,
+     "reasons": [],
+     "segments": [
+      {
+       "from": 0,
+       "to": 1,
+       "limit_m": 0.02,
+       "envelope_m": 0.0019324031100300084,
+       "drift_m": 0.00047743725473584244,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 1,
+       "to": 2,
+       "limit_m": 0.02,
+       "envelope_m": 0.0024826954292962093,
+       "drift_m": 0.00041037925329152604,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 2,
+       "to": 3,
+       "limit_m": 0.02,
+       "envelope_m": 0.003330399621819962,
+       "drift_m": 0.001407792529396192,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      }
+     ]
+    },
+    {
+     "index": 4,
+     "style": "baseline",
+     "timing": "per-segment",
+     "accuracy_weight": 0.001,
+     "duration_s": 1.7750819159846496,
+     "envelope_cm": 0.31149731527673935,
+     "tracking_cm": 0.2537840511649847,
+     "heading_error_deg": 0.003510717233386554,
+     "ok": false,
+     "converged": true,
+     "reasons": [
+      "motor force 0.001 N over limit",
+      "1 constraint violations"
+     ],
+     "segments": [
+      {
+       "from": 0,
+       "to": 1,
+       "limit_m": 0.02,
+       "envelope_m": 0.0018890027279933573,
+       "drift_m": 0.0004682765657867293,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 1,
+       "to": 2,
+       "limit_m": 0.02,
+       "envelope_m": 0.0022859869817801245,
+       "drift_m": 0.00030293458120164056,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 2,
+       "to": 3,
+       "limit_m": 0.02,
+       "envelope_m": 0.003073631847298805,
+       "drift_m": 0.0013719972255790555,
+       "violations": 1,
+       "slip_points": 0,
+       "ok": false
+      }
+     ]
+    },
+    {
+     "index": 5,
+     "style": "baseline",
+     "timing": "equal-duration",
+     "accuracy_weight": 0.002,
+     "duration_s": 2.300916286661688,
+     "envelope_cm": 0.3389642893811714,
+     "tracking_cm": 0.2067063469439745,
+     "heading_error_deg": 0.007280981655233593,
+     "ok": true,
+     "converged": true,
+     "reasons": [],
+     "segments": [
+      {
+       "from": 0,
+       "to": 1,
+       "limit_m": 0.02,
+       "envelope_m": 0.0019350749473124223,
+       "drift_m": 0.00046332247291919025,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 1,
+       "to": 2,
+       "limit_m": 0.02,
+       "envelope_m": 0.002489744789678684,
+       "drift_m": 0.0004511904747013262,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 2,
+       "to": 3,
+       "limit_m": 0.02,
+       "envelope_m": 0.003347011448763953,
+       "drift_m": 0.001369299263545275,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      }
+     ]
+    },
+    {
+     "index": 6,
+     "style": "baseline",
+     "timing": "per-segment",
+     "accuracy_weight": 0.002,
+     "duration_s": 1.835251380707131,
+     "envelope_cm": 0.3151933878288966,
+     "tracking_cm": 0.2481914358213544,
+     "heading_error_deg": 0.004207396528727854,
+     "ok": true,
+     "converged": true,
+     "reasons": [],
+     "segments": [
+      {
+       "from": 0,
+       "to": 1,
+       "limit_m": 0.02,
+       "envelope_m": 0.0018923051573646304,
+       "drift_m": 0.0004647959152322381,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 1,
+       "to": 2,
+       "limit_m": 0.02,
+       "envelope_m": 0.002296769363703119,
+       "drift_m": 0.0003126276383251932,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 2,
+       "to": 3,
+       "limit_m": 0.02,
+       "envelope_m": 0.003103365786520752,
+       "drift_m": 0.001436423556679074,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      }
+     ]
+    },
+    {
+     "index": 7,
+     "style": "baseline",
+     "timing": "equal-duration",
+     "accuracy_weight": 0.005,
+     "duration_s": 2.4242345328257815,
+     "envelope_cm": 0.3447651920430049,
+     "tracking_cm": 0.24338287767022848,
+     "heading_error_deg": 0.007390264681953797,
+     "ok": true,
+     "converged": true,
+     "reasons": [],
+     "segments": [
+      {
+       "from": 0,
+       "to": 1,
+       "limit_m": 0.02,
+       "envelope_m": 0.0019484825656194194,
+       "drift_m": 0.0004386468638627501,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 1,
+       "to": 2,
+       "limit_m": 0.02,
+       "envelope_m": 0.002526332043945487,
+       "drift_m": 0.0004276599577915457,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 2,
+       "to": 3,
+       "limit_m": 0.02,
+       "envelope_m": 0.0033955726194455434,
+       "drift_m": 0.0013887982188628641,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      }
+     ]
+    },
+    {
+     "index": 8,
+     "style": "baseline",
+     "timing": "per-segment",
+     "accuracy_weight": 0.005,
+     "duration_s": 1.9388136927363124,
+     "envelope_cm": 0.31912948531827223,
+     "tracking_cm": 0.23128797765821218,
+     "heading_error_deg": 0.005231924904229767,
+     "ok": true,
+     "converged": true,
+     "reasons": [],
+     "segments": [
+      {
+       "from": 0,
+       "to": 1,
+       "limit_m": 0.02,
+       "envelope_m": 0.0019014268601646644,
+       "drift_m": 0.0004734756535460823,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 1,
+       "to": 2,
+       "limit_m": 0.02,
+       "envelope_m": 0.0023211417020070745,
+       "drift_m": 0.00032993953368543717,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 2,
+       "to": 3,
+       "limit_m": 0.02,
+       "envelope_m": 0.0031407023296021806,
+       "drift_m": 0.0014718432375211963,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      }
+     ]
+    },
+    {
+     "index": 9,
+     "style": "baseline",
+     "timing": "equal-duration",
+     "accuracy_weight": 0.01,
+     "duration_s": 2.5584672812380123,
+     "envelope_cm": 0.349267347519785,
+     "tracking_cm": 0.24505602195858955,
+     "heading_error_deg": 0.007991321328914919,
+     "ok": true,
+     "converged": true,
+     "reasons": [],
+     "segments": [
+      {
+       "from": 0,
+       "to": 1,
+       "limit_m": 0.02,
+       "envelope_m": 0.0019655212860177486,
+       "drift_m": 0.000429186523593752,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 1,
+       "to": 2,
+       "limit_m": 0.02,
+       "envelope_m": 0.0025611221192595977,
+       "drift_m": 0.00043714126432669833,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 2,
+       "to": 3,
+       "limit_m": 0.02,
+       "envelope_m": 0.0034414251817246606,
+       "drift_m": 0.001470356587332603,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      }
+     ]
+    },
+    {
+     "index": 10,
+     "style": "baseline",
+     "timing": "per-segment",
+     "accuracy_weight": 0.01,
+     "duration_s": 2.2987008535409994,
+     "envelope_cm": 0.3481498513887511,
+     "tracking_cm": 0.4907833877950907,
+     "heading_error_deg": 0.027990115218712253,
+     "ok": true,
+     "converged": true,
+     "reasons": [],
+     "segments": [
+      {
+       "from": 0,
+       "to": 1,
+       "limit_m": 0.02,
+       "envelope_m": 0.0019349055511753458,
+       "drift_m": 0.0009654832618365504,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 1,
+       "to": 2,
+       "limit_m": 0.02,
+       "envelope_m": 0.002384376000080351,
+       "drift_m": 0.0015358385600407168,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 2,
+       "to": 3,
+       "limit_m": 0.02,
+       "envelope_m": 0.003398951495798072,
+       "drift_m": 0.0039046713704569253,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      }
+     ]
+    }
+   ]
+  }
  },
  {
   "tag": "example_mission_first4__sweep-self-consistent",
   "mission": "example_mission_first4",
   "mode": "sweep-self-consistent",
-  "wall_s": 0.1,
-  "exit_code": 2,
-  "report": null
+  "wall_s": 23.0,
+  "exit_code": 0,
+  "report": {
+   "selected": 2,
+   "candidates": [
+    {
+     "index": 1,
+     "style": "baseline",
+     "timing": "equal-duration",
+     "accuracy_weight": 0.0,
+     "duration_s": 2.183656194931746,
+     "envelope_cm": 0.323096899739244,
+     "tracking_cm": 0.2607794711366296,
+     "heading_error_deg": 0.0077181137621144084,
+     "ok": true,
+     "converged": true,
+     "reasons": [],
+     "segments": [
+      {
+       "from": 0,
+       "to": 1,
+       "limit_m": 0.02,
+       "envelope_m": 0.0019297170830114955,
+       "drift_m": 0.00016106717186140944,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 1,
+       "to": 2,
+       "limit_m": 0.02,
+       "envelope_m": 0.0024270729449037227,
+       "drift_m": 0.0001223015645913186,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 2,
+       "to": 3,
+       "limit_m": 0.02,
+       "envelope_m": 0.0032034524639692184,
+       "drift_m": 0.00021621078013346913,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      }
+     ]
+    },
+    {
+     "index": 2,
+     "style": "baseline",
+     "timing": "per-segment",
+     "accuracy_weight": 0.0,
+     "duration_s": 1.679835789230972,
+     "envelope_cm": 0.30158195285125383,
+     "tracking_cm": 0.2598189050331712,
+     "heading_error_deg": 0.009097811974456985,
+     "ok": true,
+     "converged": true,
+     "reasons": [],
+     "segments": [
+      {
+       "from": 0,
+       "to": 1,
+       "limit_m": 0.02,
+       "envelope_m": 0.0018799412002144932,
+       "drift_m": 0.00022309345308755763,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 1,
+       "to": 2,
+       "limit_m": 0.02,
+       "envelope_m": 0.0022505580888470783,
+       "drift_m": 0.0002029781452582651,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 2,
+       "to": 3,
+       "limit_m": 0.02,
+       "envelope_m": 0.0029879225451705615,
+       "drift_m": 0.00015840714368799724,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      }
+     ]
+    },
+    {
+     "index": 3,
+     "style": "baseline",
+     "timing": "equal-duration",
+     "accuracy_weight": 0.001,
+     "duration_s": 2.2594041583367535,
+     "envelope_cm": 0.34188212867214934,
+     "tracking_cm": 0.20276482682675123,
+     "heading_error_deg": 0.005928604199571068,
+     "ok": true,
+     "converged": true,
+     "reasons": [],
+     "segments": [
+      {
+       "from": 0,
+       "to": 1,
+       "limit_m": 0.02,
+       "envelope_m": 0.0019300968104920971,
+       "drift_m": 0.0001520692377857552,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 1,
+       "to": 2,
+       "limit_m": 0.02,
+       "envelope_m": 0.0024997868197753513,
+       "drift_m": 0.00014598740260361728,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 2,
+       "to": 3,
+       "limit_m": 0.02,
+       "envelope_m": 0.0033791182378427086,
+       "drift_m": 0.0001312259482011833,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      }
+     ]
+    },
+    {
+     "index": 4,
+     "style": "baseline",
+     "timing": "per-segment",
+     "accuracy_weight": 0.001,
+     "duration_s": 1.9994705672397732,
+     "envelope_cm": 0.331787866109723,
+     "tracking_cm": 0.28156766202300787,
+     "heading_error_deg": 0.010805359266960171,
+     "ok": true,
+     "converged": true,
+     "reasons": [],
+     "segments": [
+      {
+       "from": 0,
+       "to": 1,
+       "limit_m": 0.02,
+       "envelope_m": 0.0018994098429894791,
+       "drift_m": 0.00038021082941546894,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 1,
+       "to": 2,
+       "limit_m": 0.02,
+       "envelope_m": 0.0023056894798557243,
+       "drift_m": 0.0006974535359053557,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 2,
+       "to": 3,
+       "limit_m": 0.02,
+       "envelope_m": 0.0032296471633665408,
+       "drift_m": 0.0009436752370071145,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      }
+     ]
+    },
+    {
+     "index": 5,
+     "style": "baseline",
+     "timing": "equal-duration",
+     "accuracy_weight": 0.002,
+     "duration_s": 2.311098918981695,
+     "envelope_cm": 0.3436390594841496,
+     "tracking_cm": 0.20171692594885826,
+     "heading_error_deg": 0.0046855097706287475,
+     "ok": true,
+     "converged": true,
+     "reasons": [],
+     "segments": [
+      {
+       "from": 0,
+       "to": 1,
+       "limit_m": 0.02,
+       "envelope_m": 0.0019398120228856126,
+       "drift_m": 0.00011137888619994279,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 1,
+       "to": 2,
+       "limit_m": 0.02,
+       "envelope_m": 0.0025118136537414008,
+       "drift_m": 5.188428772336005e-05,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 2,
+       "to": 3,
+       "limit_m": 0.02,
+       "envelope_m": 0.003393007132963931,
+       "drift_m": 0.00016241130758743927,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      }
+     ]
+    },
+    {
+     "index": 6,
+     "style": "baseline",
+     "timing": "per-segment",
+     "accuracy_weight": 0.002,
+     "duration_s": 2.2205107692258443,
+     "envelope_cm": 0.34641937544949997,
+     "tracking_cm": 0.6183100398629904,
+     "heading_error_deg": 0.021788303452340677,
+     "ok": false,
+     "converged": true,
+     "reasons": [
+      "tracking error 0.62 cm > 0.50 cm",
+      "forward-integration error 1.59 cm",
+      "final integration error 1.59 cm"
+     ],
+     "segments": [
+      {
+       "from": 0,
+       "to": 1,
+       "limit_m": 0.02,
+       "envelope_m": 0.0019167229405408826,
+       "drift_m": 0.004292087443924739,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 1,
+       "to": 2,
+       "limit_m": 0.02,
+       "envelope_m": 0.0023635551230429277,
+       "drift_m": 0.011030783065906664,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 2,
+       "to": 3,
+       "limit_m": 0.02,
+       "envelope_m": 0.003387824087258695,
+       "drift_m": 0.015678468896200743,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      }
+     ]
+    },
+    {
+     "index": 7,
+     "style": "baseline",
+     "timing": "equal-duration",
+     "accuracy_weight": 0.005,
+     "duration_s": 2.440401267290513,
+     "envelope_cm": 0.34375369927961913,
+     "tracking_cm": 0.21609256509691477,
+     "heading_error_deg": 0.0029506417214455083,
+     "ok": true,
+     "converged": true,
+     "reasons": [],
+     "segments": [
+      {
+       "from": 0,
+       "to": 1,
+       "limit_m": 0.02,
+       "envelope_m": 0.001944848877972783,
+       "drift_m": 0.00016455357527867188,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 1,
+       "to": 2,
+       "limit_m": 0.02,
+       "envelope_m": 0.0025187312177021273,
+       "drift_m": 0.0002998945517342768,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 2,
+       "to": 3,
+       "limit_m": 0.02,
+       "envelope_m": 0.0033848947020889714,
+       "drift_m": 0.0004344112365099294,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      }
+     ]
+    },
+    {
+     "index": 8,
+     "style": "baseline",
+     "timing": "per-segment",
+     "accuracy_weight": 0.005,
+     "duration_s": 1.9457323278768657,
+     "envelope_cm": 0.3204756945552081,
+     "tracking_cm": 0.22876993753015995,
+     "heading_error_deg": 0.006502340089852139,
+     "ok": true,
+     "converged": true,
+     "reasons": [],
+     "segments": [
+      {
+       "from": 0,
+       "to": 1,
+       "limit_m": 0.02,
+       "envelope_m": 0.0019020629730108756,
+       "drift_m": 0.0001905457028114418,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 1,
+       "to": 2,
+       "limit_m": 0.02,
+       "envelope_m": 0.0023223234285253587,
+       "drift_m": 0.0001669249906535755,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 2,
+       "to": 3,
+       "limit_m": 0.02,
+       "envelope_m": 0.0031520602705480414,
+       "drift_m": 5.519557956657492e-05,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      }
+     ]
+    },
+    {
+     "index": 9,
+     "style": "baseline",
+     "timing": "equal-duration",
+     "accuracy_weight": 0.01,
+     "duration_s": 2.5745594491046404,
+     "envelope_cm": 0.3467319684649573,
+     "tracking_cm": 0.19696003291755915,
+     "heading_error_deg": 0.0030326039914856614,
+     "ok": true,
+     "converged": true,
+     "reasons": [],
+     "segments": [
+      {
+       "from": 0,
+       "to": 1,
+       "limit_m": 0.02,
+       "envelope_m": 0.0019618267301970225,
+       "drift_m": 0.00014358294483635557,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 1,
+       "to": 2,
+       "limit_m": 0.02,
+       "envelope_m": 0.0025463950155701033,
+       "drift_m": 0.00016656681754796557,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 2,
+       "to": 3,
+       "limit_m": 0.02,
+       "envelope_m": 0.003415446123411943,
+       "drift_m": 0.00010406510925878156,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      }
+     ]
+    },
+    {
+     "index": 10,
+     "style": "baseline",
+     "timing": "per-segment",
+     "accuracy_weight": 0.01,
+     "duration_s": 2.141133956701693,
+     "envelope_cm": 0.34026190555546343,
+     "tracking_cm": 0.2613347955048084,
+     "heading_error_deg": 0.011406415913921294,
+     "ok": true,
+     "converged": true,
+     "reasons": [],
+     "segments": [
+      {
+       "from": 0,
+       "to": 1,
+       "limit_m": 0.02,
+       "envelope_m": 0.0019036698534301677,
+       "drift_m": 0.00018411359638497105,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 1,
+       "to": 2,
+       "limit_m": 0.02,
+       "envelope_m": 0.002329092930714654,
+       "drift_m": 0.00018449066867433437,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 2,
+       "to": 3,
+       "limit_m": 0.02,
+       "envelope_m": 0.003317715533788907,
+       "drift_m": 0.00012179043154260719,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      }
+     ]
+    }
+   ]
+  }
  },
  {
   "tag": "example_complex_mission__default",
   "mission": "example_complex_mission",
   "mode": "default",
-  "wall_s": 0.1,
-  "exit_code": 2,
-  "report": null
+  "wall_s": 42.3,
+  "exit_code": 0,
+  "report": {
+   "selected": 1,
+   "candidates": [
+    {
+     "index": 1,
+     "style": "baseline",
+     "timing": "equal-duration",
+     "accuracy_weight": 0.0,
+     "duration_s": 6.06766842537402,
+     "envelope_cm": 1.1854394776362842,
+     "tracking_cm": 0.30326731503009796,
+     "heading_error_deg": 0.009548604459677826,
+     "ok": true,
+     "converged": true,
+     "reasons": [],
+     "segments": [
+      {
+       "from": 0,
+       "to": 1,
+       "limit_m": 0.02,
+       "envelope_m": 0.0019110065354634804,
+       "drift_m": 0.0004432425972775001,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 1,
+       "to": 2,
+       "limit_m": 0.02,
+       "envelope_m": 0.002387478845141673,
+       "drift_m": 0.00033412906888399287,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 2,
+       "to": 3,
+       "limit_m": 0.02,
+       "envelope_m": 0.003130353410912635,
+       "drift_m": 0.0008802851999285274,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 3,
+       "to": 4,
+       "limit_m": 0.02,
+       "envelope_m": 0.004317758704281067,
+       "drift_m": 0.0010784623669938547,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 4,
+       "to": 5,
+       "limit_m": 0.02,
+       "envelope_m": 0.005631481910187412,
+       "drift_m": 0.0010313107891380421,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 5,
+       "to": 6,
+       "limit_m": 0.02,
+       "envelope_m": 0.006974630219788868,
+       "drift_m": 0.0010639870154221874,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 6,
+       "to": 7,
+       "limit_m": 0.02,
+       "envelope_m": 0.008079839860761434,
+       "drift_m": 0.001128917755242837,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 7,
+       "to": 8,
+       "limit_m": 0.02,
+       "envelope_m": 0.009828898424223296,
+       "drift_m": 0.0010328715315417682,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 8,
+       "to": 9,
+       "limit_m": 0.02,
+       "envelope_m": 0.011793110207958845,
+       "drift_m": 0.0005640856035914091,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      }
+     ]
+    },
+    {
+     "index": 2,
+     "style": "baseline",
+     "timing": "per-segment",
+     "accuracy_weight": 0.0,
+     "duration_s": 4.650117726442579,
+     "envelope_cm": 0.9834452965695586,
+     "tracking_cm": 0.4279348533600569,
+     "heading_error_deg": 0.02368709604160422,
+     "ok": false,
+     "converged": true,
+     "reasons": [
+      "motor force 0.074 N over limit",
+      "3 constraint violations"
+     ],
+     "segments": [
+      {
+       "from": 0,
+       "to": 1,
+       "limit_m": 0.02,
+       "envelope_m": 0.0018780861304311092,
+       "drift_m": 0.00044197120968379126,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 1,
+       "to": 2,
+       "limit_m": 0.02,
+       "envelope_m": 0.002246135742337601,
+       "drift_m": 0.00029657665723953135,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 2,
+       "to": 3,
+       "limit_m": 0.02,
+       "envelope_m": 0.002990982015640788,
+       "drift_m": 0.001124416336772658,
+       "violations": 1,
+       "slip_points": 0,
+       "ok": false
+      },
+      {
+       "from": 3,
+       "to": 4,
+       "limit_m": 0.02,
+       "envelope_m": 0.003943713656859187,
+       "drift_m": 0.0016361404460119632,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 4,
+       "to": 5,
+       "limit_m": 0.02,
+       "envelope_m": 0.004893771923415594,
+       "drift_m": 0.001510786339358255,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 5,
+       "to": 6,
+       "limit_m": 0.02,
+       "envelope_m": 0.005984841042268737,
+       "drift_m": 0.0017240613206445344,
+       "violations": 1,
+       "slip_points": 0,
+       "ok": false
+      },
+      {
+       "from": 6,
+       "to": 7,
+       "limit_m": 0.02,
+       "envelope_m": 0.006836070779459063,
+       "drift_m": 0.001876923447018144,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 7,
+       "to": 8,
+       "limit_m": 0.02,
+       "envelope_m": 0.008225788377459598,
+       "drift_m": 0.0017696492957401686,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 8,
+       "to": 9,
+       "limit_m": 0.02,
+       "envelope_m": 0.009812682324533696,
+       "drift_m": 0.0013726476386461408,
+       "violations": 1,
+       "slip_points": 0,
+       "ok": false
+      }
+     ]
+    }
+   ]
+  }
  },
  {
   "tag": "example_complex_mission__sweep",
   "mission": "example_complex_mission",
   "mode": "sweep",
-  "wall_s": 0.1,
-  "exit_code": 2,
-  "report": null
+  "wall_s": 91.9,
+  "exit_code": 0,
+  "report": {
+   "selected": 1,
+   "candidates": [
+    {
+     "index": 1,
+     "style": "baseline",
+     "timing": "equal-duration",
+     "accuracy_weight": 0.0,
+     "duration_s": 6.06766842537402,
+     "envelope_cm": 1.1854394776362842,
+     "tracking_cm": 0.30326731503009796,
+     "heading_error_deg": 0.009548604459677826,
+     "ok": true,
+     "converged": true,
+     "reasons": [],
+     "segments": [
+      {
+       "from": 0,
+       "to": 1,
+       "limit_m": 0.02,
+       "envelope_m": 0.0019110065354634804,
+       "drift_m": 0.0004432425972775001,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 1,
+       "to": 2,
+       "limit_m": 0.02,
+       "envelope_m": 0.002387478845141673,
+       "drift_m": 0.00033412906888399287,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 2,
+       "to": 3,
+       "limit_m": 0.02,
+       "envelope_m": 0.003130353410912635,
+       "drift_m": 0.0008802851999285274,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 3,
+       "to": 4,
+       "limit_m": 0.02,
+       "envelope_m": 0.004317758704281067,
+       "drift_m": 0.0010784623669938547,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 4,
+       "to": 5,
+       "limit_m": 0.02,
+       "envelope_m": 0.005631481910187412,
+       "drift_m": 0.0010313107891380421,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 5,
+       "to": 6,
+       "limit_m": 0.02,
+       "envelope_m": 0.006974630219788868,
+       "drift_m": 0.0010639870154221874,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 6,
+       "to": 7,
+       "limit_m": 0.02,
+       "envelope_m": 0.008079839860761434,
+       "drift_m": 0.001128917755242837,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 7,
+       "to": 8,
+       "limit_m": 0.02,
+       "envelope_m": 0.009828898424223296,
+       "drift_m": 0.0010328715315417682,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 8,
+       "to": 9,
+       "limit_m": 0.02,
+       "envelope_m": 0.011793110207958845,
+       "drift_m": 0.0005640856035914091,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      }
+     ]
+    },
+    {
+     "index": 2,
+     "style": "baseline",
+     "timing": "per-segment",
+     "accuracy_weight": 0.0,
+     "duration_s": 4.650117726442579,
+     "envelope_cm": 0.9834452965695586,
+     "tracking_cm": 0.4279348533600569,
+     "heading_error_deg": 0.02368709604160422,
+     "ok": false,
+     "converged": true,
+     "reasons": [
+      "motor force 0.074 N over limit",
+      "3 constraint violations"
+     ],
+     "segments": [
+      {
+       "from": 0,
+       "to": 1,
+       "limit_m": 0.02,
+       "envelope_m": 0.0018780861304311092,
+       "drift_m": 0.00044197120968379126,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 1,
+       "to": 2,
+       "limit_m": 0.02,
+       "envelope_m": 0.002246135742337601,
+       "drift_m": 0.00029657665723953135,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 2,
+       "to": 3,
+       "limit_m": 0.02,
+       "envelope_m": 0.002990982015640788,
+       "drift_m": 0.001124416336772658,
+       "violations": 1,
+       "slip_points": 0,
+       "ok": false
+      },
+      {
+       "from": 3,
+       "to": 4,
+       "limit_m": 0.02,
+       "envelope_m": 0.003943713656859187,
+       "drift_m": 0.0016361404460119632,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 4,
+       "to": 5,
+       "limit_m": 0.02,
+       "envelope_m": 0.004893771923415594,
+       "drift_m": 0.001510786339358255,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 5,
+       "to": 6,
+       "limit_m": 0.02,
+       "envelope_m": 0.005984841042268737,
+       "drift_m": 0.0017240613206445344,
+       "violations": 1,
+       "slip_points": 0,
+       "ok": false
+      },
+      {
+       "from": 6,
+       "to": 7,
+       "limit_m": 0.02,
+       "envelope_m": 0.006836070779459063,
+       "drift_m": 0.001876923447018144,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 7,
+       "to": 8,
+       "limit_m": 0.02,
+       "envelope_m": 0.008225788377459598,
+       "drift_m": 0.0017696492957401686,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 8,
+       "to": 9,
+       "limit_m": 0.02,
+       "envelope_m": 0.009812682324533696,
+       "drift_m": 0.0013726476386461408,
+       "violations": 1,
+       "slip_points": 0,
+       "ok": false
+      }
+     ]
+    },
+    {
+     "index": 3,
+     "style": "baseline",
+     "timing": "equal-duration",
+     "accuracy_weight": 0.001,
+     "duration_s": 7.0490131476094655,
+     "envelope_cm": 1.4165917384894018,
+     "tracking_cm": 0.32490333542227745,
+     "heading_error_deg": 0.02569517165758797,
+     "ok": true,
+     "converged": true,
+     "reasons": [],
+     "segments": [
+      {
+       "from": 0,
+       "to": 1,
+       "limit_m": 0.02,
+       "envelope_m": 0.0019508065355439248,
+       "drift_m": 0.0004885135793556347,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 1,
+       "to": 2,
+       "limit_m": 0.02,
+       "envelope_m": 0.0024976105657004283,
+       "drift_m": 0.0004216315057752293,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 2,
+       "to": 3,
+       "limit_m": 0.02,
+       "envelope_m": 0.0033080012347333214,
+       "drift_m": 0.0012506336982576784,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 3,
+       "to": 4,
+       "limit_m": 0.02,
+       "envelope_m": 0.004741885316879582,
+       "drift_m": 0.0018553785375979464,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 4,
+       "to": 5,
+       "limit_m": 0.02,
+       "envelope_m": 0.006123046086788328,
+       "drift_m": 0.00185848810329625,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 5,
+       "to": 6,
+       "limit_m": 0.02,
+       "envelope_m": 0.007714962022918172,
+       "drift_m": 0.0019336927564621961,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 6,
+       "to": 7,
+       "limit_m": 0.02,
+       "envelope_m": 0.009095180652213316,
+       "drift_m": 0.001153200984406471,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 7,
+       "to": 8,
+       "limit_m": 0.02,
+       "envelope_m": 0.011610637977358054,
+       "drift_m": 0.0012333850739674821,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 8,
+       "to": 9,
+       "limit_m": 0.02,
+       "envelope_m": 0.01413780149472281,
+       "drift_m": 0.0013270858311008372,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      }
+     ]
+    },
+    {
+     "index": 4,
+     "style": "baseline",
+     "timing": "per-segment",
+     "accuracy_weight": 0.001,
+     "duration_s": 6.799587449848706,
+     "envelope_cm": 1.5046333136198096,
+     "tracking_cm": 0.9089992381632328,
+     "heading_error_deg": 0.08981698758566768,
+     "ok": false,
+     "converged": true,
+     "reasons": [
+      "tracking error 0.91 cm > 0.50 cm"
+     ],
+     "segments": [
+      {
+       "from": 0,
+       "to": 1,
+       "limit_m": 0.02,
+       "envelope_m": 0.001901375917778983,
+       "drift_m": 0.0005023203457542127,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 1,
+       "to": 2,
+       "limit_m": 0.02,
+       "envelope_m": 0.0023031050555945296,
+       "drift_m": 0.0003356623708107546,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 2,
+       "to": 3,
+       "limit_m": 0.02,
+       "envelope_m": 0.0032266335686469095,
+       "drift_m": 0.0023030198549023246,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 3,
+       "to": 4,
+       "limit_m": 0.02,
+       "envelope_m": 0.004265695994279019,
+       "drift_m": 0.0030731093432104298,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 4,
+       "to": 5,
+       "limit_m": 0.02,
+       "envelope_m": 0.005279065725254142,
+       "drift_m": 0.002994741188610791,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 5,
+       "to": 6,
+       "limit_m": 0.02,
+       "envelope_m": 0.006434149032513661,
+       "drift_m": 0.003151736074019692,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 6,
+       "to": 7,
+       "limit_m": 0.02,
+       "envelope_m": 0.008178631978360553,
+       "drift_m": 0.003408257137518077,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 7,
+       "to": 8,
+       "limit_m": 0.02,
+       "envelope_m": 0.01168824576695704,
+       "drift_m": 0.0028831277023442237,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 8,
+       "to": 9,
+       "limit_m": 0.02,
+       "envelope_m": 0.014862623378408185,
+       "drift_m": 0.002050742318900354,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      }
+     ]
+    },
+    {
+     "index": 5,
+     "style": "baseline",
+     "timing": "equal-duration",
+     "accuracy_weight": 0.002,
+     "duration_s": 7.079708111258443,
+     "envelope_cm": 1.4547723495259743,
+     "tracking_cm": 0.3128580516204238,
+     "heading_error_deg": 0.022525963882702053,
+     "ok": true,
+     "converged": true,
+     "reasons": [],
+     "segments": [
+      {
+       "from": 0,
+       "to": 1,
+       "limit_m": 0.02,
+       "envelope_m": 0.0019474789452009914,
+       "drift_m": 0.000472190107756719,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 1,
+       "to": 2,
+       "limit_m": 0.02,
+       "envelope_m": 0.0024989571329073644,
+       "drift_m": 0.00041047797809730066,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 2,
+       "to": 3,
+       "limit_m": 0.02,
+       "envelope_m": 0.003310385332382641,
+       "drift_m": 0.0012748303315686634,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 3,
+       "to": 4,
+       "limit_m": 0.02,
+       "envelope_m": 0.004796564549781402,
+       "drift_m": 0.0018184804427471093,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 4,
+       "to": 5,
+       "limit_m": 0.02,
+       "envelope_m": 0.00624385841306506,
+       "drift_m": 0.0018305507014425304,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 5,
+       "to": 6,
+       "limit_m": 0.02,
+       "envelope_m": 0.007889848232249329,
+       "drift_m": 0.001862182438823224,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 6,
+       "to": 7,
+       "limit_m": 0.02,
+       "envelope_m": 0.009315278025840939,
+       "drift_m": 0.0010502221265186657,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 7,
+       "to": 8,
+       "limit_m": 0.02,
+       "envelope_m": 0.011884453923993114,
+       "drift_m": 0.0012184455297483527,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 8,
+       "to": 9,
+       "limit_m": 0.02,
+       "envelope_m": 0.01450012362802536,
+       "drift_m": 0.0016350664428794598,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      }
+     ]
+    },
+    {
+     "index": 6,
+     "style": "baseline",
+     "timing": "per-segment",
+     "accuracy_weight": 0.002,
+     "duration_s": 8.603672583549383,
+     "envelope_cm": 1.5676804005575413,
+     "tracking_cm": 0.6717166863381863,
+     "heading_error_deg": 0.10713834732082002,
+     "ok": false,
+     "converged": true,
+     "reasons": [
+      "tracking error 0.67 cm > 0.50 cm"
+     ],
+     "segments": [
+      {
+       "from": 0,
+       "to": 1,
+       "limit_m": 0.02,
+       "envelope_m": 0.0019386413153499075,
+       "drift_m": 0.0004978728333681495,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 1,
+       "to": 2,
+       "limit_m": 0.02,
+       "envelope_m": 0.002393990120127642,
+       "drift_m": 0.0003931758185927399,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 2,
+       "to": 3,
+       "limit_m": 0.02,
+       "envelope_m": 0.003387643755931747,
+       "drift_m": 0.0027576000313804905,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 3,
+       "to": 4,
+       "limit_m": 0.02,
+       "envelope_m": 0.00450774523084736,
+       "drift_m": 0.0030996452380127647,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 4,
+       "to": 5,
+       "limit_m": 0.02,
+       "envelope_m": 0.005558741002787341,
+       "drift_m": 0.002858089280734179,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 5,
+       "to": 6,
+       "limit_m": 0.02,
+       "envelope_m": 0.006791140224692069,
+       "drift_m": 0.003040421830202636,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 6,
+       "to": 7,
+       "limit_m": 0.02,
+       "envelope_m": 0.008683604554140205,
+       "drift_m": 0.002132677304016475,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 7,
+       "to": 8,
+       "limit_m": 0.02,
+       "envelope_m": 0.01219441860367233,
+       "drift_m": 0.0017253948056115149,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 8,
+       "to": 9,
+       "limit_m": 0.02,
+       "envelope_m": 0.015562233441723892,
+       "drift_m": 0.0011383276930132856,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      }
+     ]
+    },
+    {
+     "index": 7,
+     "style": "baseline",
+     "timing": "equal-duration",
+     "accuracy_weight": 0.005,
+     "duration_s": 7.208048944724228,
+     "envelope_cm": 1.5266493301054596,
+     "tracking_cm": 0.31978641636669636,
+     "heading_error_deg": 0.01859177492077471,
+     "ok": true,
+     "converged": true,
+     "reasons": [],
+     "segments": [
+      {
+       "from": 0,
+       "to": 1,
+       "limit_m": 0.02,
+       "envelope_m": 0.001956180773192978,
+       "drift_m": 0.000445185307478949,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 1,
+       "to": 2,
+       "limit_m": 0.02,
+       "envelope_m": 0.002528988795493609,
+       "drift_m": 0.0004357404836782847,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 2,
+       "to": 3,
+       "limit_m": 0.02,
+       "envelope_m": 0.0033633087723776234,
+       "drift_m": 0.001245000581899027,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 3,
+       "to": 4,
+       "limit_m": 0.02,
+       "envelope_m": 0.004914753132302262,
+       "drift_m": 0.0019797229271167676,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 4,
+       "to": 5,
+       "limit_m": 0.02,
+       "envelope_m": 0.006438748653230334,
+       "drift_m": 0.0019342897489862548,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 5,
+       "to": 6,
+       "limit_m": 0.02,
+       "envelope_m": 0.00817782549477284,
+       "drift_m": 0.001737543327789651,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 6,
+       "to": 7,
+       "limit_m": 0.02,
+       "envelope_m": 0.009670890191652074,
+       "drift_m": 0.0008689803144116307,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 7,
+       "to": 8,
+       "limit_m": 0.02,
+       "envelope_m": 0.012362775195352152,
+       "drift_m": 0.0013250900481005955,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 8,
+       "to": 9,
+       "limit_m": 0.02,
+       "envelope_m": 0.015201709700371345,
+       "drift_m": 0.002208394777798074,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      }
+     ]
+    },
+    {
+     "index": 8,
+     "style": "baseline",
+     "timing": "per-segment",
+     "accuracy_weight": 0.005,
+     "duration_s": 7.250490660835003,
+     "envelope_cm": 1.571815904808124,
+     "tracking_cm": 0.713265361264348,
+     "heading_error_deg": 0.12070310301246534,
+     "ok": false,
+     "converged": true,
+     "reasons": [
+      "tracking error 0.71 cm > 0.50 cm"
+     ],
+     "segments": [
+      {
+       "from": 0,
+       "to": 1,
+       "limit_m": 0.02,
+       "envelope_m": 0.0019173719170887935,
+       "drift_m": 0.0005383310727760619,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 1,
+       "to": 2,
+       "limit_m": 0.02,
+       "envelope_m": 0.002346784891665627,
+       "drift_m": 0.00033553049412665936,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 2,
+       "to": 3,
+       "limit_m": 0.02,
+       "envelope_m": 0.0033312702691748763,
+       "drift_m": 0.0029353809329484932,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 3,
+       "to": 4,
+       "limit_m": 0.02,
+       "envelope_m": 0.004396529640615685,
+       "drift_m": 0.003388612625270528,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 4,
+       "to": 5,
+       "limit_m": 0.02,
+       "envelope_m": 0.005414564687983062,
+       "drift_m": 0.003346230087176549,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 5,
+       "to": 6,
+       "limit_m": 0.02,
+       "envelope_m": 0.0066830656535104335,
+       "drift_m": 0.003717256571365013,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 6,
+       "to": 7,
+       "limit_m": 0.02,
+       "envelope_m": 0.008432436059722529,
+       "drift_m": 0.00262347235490686,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 7,
+       "to": 8,
+       "limit_m": 0.02,
+       "envelope_m": 0.012060085900508166,
+       "drift_m": 0.00392442821297512,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 8,
+       "to": 9,
+       "limit_m": 0.02,
+       "envelope_m": 0.015526226133371799,
+       "drift_m": 0.003898779331527237,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      }
+     ]
+    },
+    {
+     "index": 9,
+     "style": "baseline",
+     "timing": "equal-duration",
+     "accuracy_weight": 0.01,
+     "duration_s": 9.323422059385026,
+     "envelope_cm": 1.9542032518821681,
+     "tracking_cm": 0.3243879647925496,
+     "heading_error_deg": 0.023468529988163813,
+     "ok": true,
+     "converged": true,
+     "reasons": [],
+     "segments": [
+      {
+       "from": 0,
+       "to": 1,
+       "limit_m": 0.02,
+       "envelope_m": 0.0020245158231495873,
+       "drift_m": 0.00046190700734909915,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 1,
+       "to": 2,
+       "limit_m": 0.02,
+       "envelope_m": 0.002658465343964194,
+       "drift_m": 0.000397608736585089,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 2,
+       "to": 3,
+       "limit_m": 0.02,
+       "envelope_m": 0.0035430314242983203,
+       "drift_m": 0.0013665326159152964,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 3,
+       "to": 4,
+       "limit_m": 0.02,
+       "envelope_m": 0.005354571425362263,
+       "drift_m": 0.002114816199726891,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 4,
+       "to": 5,
+       "limit_m": 0.02,
+       "envelope_m": 0.007101160652932735,
+       "drift_m": 0.002110056900481271,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 5,
+       "to": 6,
+       "limit_m": 0.02,
+       "envelope_m": 0.009166552843164833,
+       "drift_m": 0.0015012197392793515,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 6,
+       "to": 7,
+       "limit_m": 0.02,
+       "envelope_m": 0.011340792501876036,
+       "drift_m": 0.0031181912349697227,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 7,
+       "to": 8,
+       "limit_m": 0.02,
+       "envelope_m": 0.015389717996472013,
+       "drift_m": 0.002926922179545326,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 8,
+       "to": 9,
+       "limit_m": 0.02,
+       "envelope_m": 0.01934799191030397,
+       "drift_m": 0.0037353427877298527,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      }
+     ]
+    },
+    {
+     "index": 10,
+     "style": "baseline",
+     "timing": "per-segment",
+     "accuracy_weight": 0.01,
+     "duration_s": 6.984740654311902,
+     "envelope_cm": 1.5804778254435128,
+     "tracking_cm": 0.7904487662017345,
+     "heading_error_deg": 0.06405351403637959,
+     "ok": false,
+     "converged": true,
+     "reasons": [
+      "tracking error 0.79 cm > 0.50 cm"
+     ],
+     "segments": [
+      {
+       "from": 0,
+       "to": 1,
+       "limit_m": 0.02,
+       "envelope_m": 0.0019108983513129924,
+       "drift_m": 0.00047985270445855975,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 1,
+       "to": 2,
+       "limit_m": 0.02,
+       "envelope_m": 0.0023509276095964784,
+       "drift_m": 0.0003155717912564009,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 2,
+       "to": 3,
+       "limit_m": 0.02,
+       "envelope_m": 0.003233280401333635,
+       "drift_m": 0.0021303675323649787,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 3,
+       "to": 4,
+       "limit_m": 0.02,
+       "envelope_m": 0.004390626080543704,
+       "drift_m": 0.002776252862205778,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 4,
+       "to": 5,
+       "limit_m": 0.02,
+       "envelope_m": 0.00549170316632517,
+       "drift_m": 0.00261232156711457,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 5,
+       "to": 6,
+       "limit_m": 0.02,
+       "envelope_m": 0.00701314130353224,
+       "drift_m": 0.0030000905374764296,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 6,
+       "to": 7,
+       "limit_m": 0.02,
+       "envelope_m": 0.008839775123982865,
+       "drift_m": 0.005288038023332919,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 7,
+       "to": 8,
+       "limit_m": 0.02,
+       "envelope_m": 0.01226995068333009,
+       "drift_m": 0.005177193556212316,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 8,
+       "to": 9,
+       "limit_m": 0.02,
+       "envelope_m": 0.015639298149315504,
+       "drift_m": 0.005384437589272661,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      }
+     ]
+    }
+   ]
+  }
  },
  {
   "tag": "example_complex_mission__sweep-self-consistent",
   "mission": "example_complex_mission",
   "mode": "sweep-self-consistent",
-  "wall_s": 0.1,
-  "exit_code": 2,
-  "report": null
+  "wall_s": 77.2,
+  "exit_code": 0,
+  "report": {
+   "selected": 2,
+   "candidates": [
+    {
+     "index": 1,
+     "style": "baseline",
+     "timing": "equal-duration",
+     "accuracy_weight": 0.0,
+     "duration_s": 6.079354088125862,
+     "envelope_cm": 1.323675332259176,
+     "tracking_cm": 0.4223514813929796,
+     "heading_error_deg": 0.011201510238820912,
+     "ok": false,
+     "converged": true,
+     "reasons": [
+      "motor force 0.033 N over limit"
+     ],
+     "segments": [
+      {
+       "from": 0,
+       "to": 1,
+       "limit_m": 0.02,
+       "envelope_m": 0.0019111755143177641,
+       "drift_m": 0.00016644867091520767,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 1,
+       "to": 2,
+       "limit_m": 0.02,
+       "envelope_m": 0.0023991064056954094,
+       "drift_m": 0.00011887176896153425,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 2,
+       "to": 3,
+       "limit_m": 0.02,
+       "envelope_m": 0.003151675056846287,
+       "drift_m": 0.00012143937591241139,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 3,
+       "to": 4,
+       "limit_m": 0.02,
+       "envelope_m": 0.004361395874123256,
+       "drift_m": 0.00016354385951274376,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 4,
+       "to": 5,
+       "limit_m": 0.02,
+       "envelope_m": 0.0056946875731809276,
+       "drift_m": 0.00020919303933623177,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 5,
+       "to": 6,
+       "limit_m": 0.02,
+       "envelope_m": 0.007150510764585284,
+       "drift_m": 0.0001545273463901809,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 6,
+       "to": 7,
+       "limit_m": 0.02,
+       "envelope_m": 0.008608505535547832,
+       "drift_m": 0.000198518613639731,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 7,
+       "to": 8,
+       "limit_m": 0.02,
+       "envelope_m": 0.010799483311700199,
+       "drift_m": 0.00012263738409978777,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 8,
+       "to": 9,
+       "limit_m": 0.02,
+       "envelope_m": 0.01313661715905552,
+       "drift_m": 0.00017813726103876098,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      }
+     ]
+    },
+    {
+     "index": 2,
+     "style": "baseline",
+     "timing": "per-segment",
+     "accuracy_weight": 0.0,
+     "duration_s": 5.1997592018849925,
+     "envelope_cm": 1.0691716764051677,
+     "tracking_cm": 0.3499564714729786,
+     "heading_error_deg": 0.008633359110896117,
+     "ok": true,
+     "converged": true,
+     "reasons": [],
+     "segments": [
+      {
+       "from": 0,
+       "to": 1,
+       "limit_m": 0.02,
+       "envelope_m": 0.0019034053579497002,
+       "drift_m": 0.00018857015982604638,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 1,
+       "to": 2,
+       "limit_m": 0.02,
+       "envelope_m": 0.002299988739154849,
+       "drift_m": 0.000140756617330463,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 2,
+       "to": 3,
+       "limit_m": 0.02,
+       "envelope_m": 0.0030891879616804425,
+       "drift_m": 0.00014784812678516086,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 3,
+       "to": 4,
+       "limit_m": 0.02,
+       "envelope_m": 0.004144181150443902,
+       "drift_m": 0.00018935135949447863,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 4,
+       "to": 5,
+       "limit_m": 0.02,
+       "envelope_m": 0.005194871975839511,
+       "drift_m": 0.00018963870151369986,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 5,
+       "to": 6,
+       "limit_m": 0.02,
+       "envelope_m": 0.00631112069343581,
+       "drift_m": 0.00012552398910398643,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 6,
+       "to": 7,
+       "limit_m": 0.02,
+       "envelope_m": 0.0072579150645907505,
+       "drift_m": 0.00013090950257262242,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 7,
+       "to": 8,
+       "limit_m": 0.02,
+       "envelope_m": 0.0088611127840637,
+       "drift_m": 0.000134278895991667,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 8,
+       "to": 9,
+       "limit_m": 0.02,
+       "envelope_m": 0.010633979874846478,
+       "drift_m": 0.00013404673383772518,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      }
+     ]
+    },
+    {
+     "index": 3,
+     "style": "baseline",
+     "timing": "equal-duration",
+     "accuracy_weight": 0.001,
+     "duration_s": 7.069480151495997,
+     "envelope_cm": 1.4284521633067475,
+     "tracking_cm": 0.26138960383832455,
+     "heading_error_deg": 0.006707245764952521,
+     "ok": true,
+     "converged": true,
+     "reasons": [],
+     "segments": [
+      {
+       "from": 0,
+       "to": 1,
+       "limit_m": 0.02,
+       "envelope_m": 0.0019471401720966548,
+       "drift_m": 0.00016124452395633676,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 1,
+       "to": 2,
+       "limit_m": 0.02,
+       "envelope_m": 0.0024970029196590823,
+       "drift_m": 0.00014040924557830368,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 2,
+       "to": 3,
+       "limit_m": 0.02,
+       "envelope_m": 0.0033121735907819263,
+       "drift_m": 0.00010323618661656764,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 3,
+       "to": 4,
+       "limit_m": 0.02,
+       "envelope_m": 0.004763154660567678,
+       "drift_m": 0.0001566065760237566,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 4,
+       "to": 5,
+       "limit_m": 0.02,
+       "envelope_m": 0.006171899302469654,
+       "drift_m": 0.00015642417528407418,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 5,
+       "to": 6,
+       "limit_m": 0.02,
+       "envelope_m": 0.007795164748142629,
+       "drift_m": 0.00013922224641076293,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 6,
+       "to": 7,
+       "limit_m": 0.02,
+       "envelope_m": 0.009203765291832956,
+       "drift_m": 0.00010000737066432293,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 7,
+       "to": 8,
+       "limit_m": 0.02,
+       "envelope_m": 0.011747867379633277,
+       "drift_m": 0.00013555881790867282,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 8,
+       "to": 9,
+       "limit_m": 0.02,
+       "envelope_m": 0.014255620471560013,
+       "drift_m": 0.00011810306150481326,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      }
+     ]
+    },
+    {
+     "index": 4,
+     "style": "baseline",
+     "timing": "per-segment",
+     "accuracy_weight": 0.001,
+     "duration_s": 5.588444332969596,
+     "envelope_cm": 1.245965768676011,
+     "tracking_cm": 0.37638419307768345,
+     "heading_error_deg": 0.008428453435795735,
+     "ok": false,
+     "converged": true,
+     "reasons": [
+      "motor force 0.023 N over limit"
+     ],
+     "segments": [
+      {
+       "from": 0,
+       "to": 1,
+       "limit_m": 0.02,
+       "envelope_m": 0.0018902067106995614,
+       "drift_m": 0.0001933803680208506,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 1,
+       "to": 2,
+       "limit_m": 0.02,
+       "envelope_m": 0.0022886913569503593,
+       "drift_m": 0.0001337983400718596,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 2,
+       "to": 3,
+       "limit_m": 0.02,
+       "envelope_m": 0.003088432803677634,
+       "drift_m": 0.0001590331922107535,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 3,
+       "to": 4,
+       "limit_m": 0.02,
+       "envelope_m": 0.004155740348581206,
+       "drift_m": 0.0001170855611715779,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 4,
+       "to": 5,
+       "limit_m": 0.02,
+       "envelope_m": 0.005207171575149617,
+       "drift_m": 0.00016759576544958876,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 5,
+       "to": 6,
+       "limit_m": 0.02,
+       "envelope_m": 0.006498372843595686,
+       "drift_m": 0.00014852767876160714,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 6,
+       "to": 7,
+       "limit_m": 0.02,
+       "envelope_m": 0.007666513994133455,
+       "drift_m": 0.00019139303078565377,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 7,
+       "to": 8,
+       "limit_m": 0.02,
+       "envelope_m": 0.01000415056395211,
+       "drift_m": 0.00012403003215039494,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 8,
+       "to": 9,
+       "limit_m": 0.02,
+       "envelope_m": 0.01241991131495336,
+       "drift_m": 0.00011091402611749833,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      }
+     ]
+    },
+    {
+     "index": 5,
+     "style": "baseline",
+     "timing": "equal-duration",
+     "accuracy_weight": 0.002,
+     "duration_s": 7.105725739102621,
+     "envelope_cm": 1.4636665176517485,
+     "tracking_cm": 0.24992479011416435,
+     "heading_error_deg": 0.006447698576492037,
+     "ok": true,
+     "converged": true,
+     "reasons": [],
+     "segments": [
+      {
+       "from": 0,
+       "to": 1,
+       "limit_m": 0.02,
+       "envelope_m": 0.0019523426042135875,
+       "drift_m": 9.879645518743196e-05,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 1,
+       "to": 2,
+       "limit_m": 0.02,
+       "envelope_m": 0.0025056347980842745,
+       "drift_m": 3.073539051938293e-05,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 2,
+       "to": 3,
+       "limit_m": 0.02,
+       "envelope_m": 0.0033206830255526542,
+       "drift_m": 8.939262385562707e-05,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 3,
+       "to": 4,
+       "limit_m": 0.02,
+       "envelope_m": 0.004823138517069352,
+       "drift_m": 0.00013213160672389588,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 4,
+       "to": 5,
+       "limit_m": 0.02,
+       "envelope_m": 0.006284394001309125,
+       "drift_m": 0.00013058264664299576,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 5,
+       "to": 6,
+       "limit_m": 0.02,
+       "envelope_m": 0.007953809285237472,
+       "drift_m": 3.386025372597584e-05,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 6,
+       "to": 7,
+       "limit_m": 0.02,
+       "envelope_m": 0.009400599670107068,
+       "drift_m": 0.00014017232052109714,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 7,
+       "to": 8,
+       "limit_m": 0.02,
+       "envelope_m": 0.011999625148819878,
+       "drift_m": 3.657492147778583e-05,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 8,
+       "to": 9,
+       "limit_m": 0.02,
+       "envelope_m": 0.014593798887817406,
+       "drift_m": 0.00017394520044456893,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      }
+     ]
+    },
+    {
+     "index": 6,
+     "style": "baseline",
+     "timing": "per-segment",
+     "accuracy_weight": 0.002,
+     "duration_s": 5.827153508116578,
+     "envelope_cm": 1.2870492088652339,
+     "tracking_cm": 0.34243776462972164,
+     "heading_error_deg": 0.011283472508861065,
+     "ok": true,
+     "converged": true,
+     "reasons": [],
+     "segments": [
+      {
+       "from": 0,
+       "to": 1,
+       "limit_m": 0.02,
+       "envelope_m": 0.0018938362980907598,
+       "drift_m": 0.00022648653755925983,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 1,
+       "to": 2,
+       "limit_m": 0.02,
+       "envelope_m": 0.002300613677757404,
+       "drift_m": 0.0001232732948241756,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 2,
+       "to": 3,
+       "limit_m": 0.02,
+       "envelope_m": 0.0031257743268318515,
+       "drift_m": 0.00013457862295779207,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 3,
+       "to": 4,
+       "limit_m": 0.02,
+       "envelope_m": 0.00422566330342993,
+       "drift_m": 0.00018596235992069453,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 4,
+       "to": 5,
+       "limit_m": 0.02,
+       "envelope_m": 0.0052937994811353955,
+       "drift_m": 0.00019268647744659112,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 5,
+       "to": 6,
+       "limit_m": 0.02,
+       "envelope_m": 0.006549654865537176,
+       "drift_m": 0.00018789591017780312,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 6,
+       "to": 7,
+       "limit_m": 0.02,
+       "envelope_m": 0.007729717011707224,
+       "drift_m": 0.00016458116122412226,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 7,
+       "to": 8,
+       "limit_m": 0.02,
+       "envelope_m": 0.01003692651331495,
+       "drift_m": 0.00014965804418369863,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 8,
+       "to": 9,
+       "limit_m": 0.02,
+       "envelope_m": 0.01266278400672412,
+       "drift_m": 0.00015251738240797902,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      }
+     ]
+    },
+    {
+     "index": 7,
+     "style": "baseline",
+     "timing": "equal-duration",
+     "accuracy_weight": 0.005,
+     "duration_s": 7.735769913682729,
+     "envelope_cm": 1.5700260748466386,
+     "tracking_cm": 0.21947624627500772,
+     "heading_error_deg": 0.008332830787415556,
+     "ok": false,
+     "converged": false,
+     "reasons": [],
+     "segments": [
+      {
+       "from": 0,
+       "to": 1,
+       "limit_m": 0.02,
+       "envelope_m": 0.0019681914896136497,
+       "drift_m": 8.473079330789377e-05,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 1,
+       "to": 2,
+       "limit_m": 0.02,
+       "envelope_m": 0.002545205358045665,
+       "drift_m": 1.6866364089911768e-05,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 2,
+       "to": 3,
+       "limit_m": 0.02,
+       "envelope_m": 0.003380465983200732,
+       "drift_m": 9.353367762182195e-05,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 3,
+       "to": 4,
+       "limit_m": 0.02,
+       "envelope_m": 0.004967251569351919,
+       "drift_m": 0.00010522422666178383,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 4,
+       "to": 5,
+       "limit_m": 0.02,
+       "envelope_m": 0.006520643523700705,
+       "drift_m": 0.00011058041715298875,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 5,
+       "to": 6,
+       "limit_m": 0.02,
+       "envelope_m": 0.008344784285714606,
+       "drift_m": 5.7751185600538346e-05,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 6,
+       "to": 7,
+       "limit_m": 0.02,
+       "envelope_m": 0.009929645747760273,
+       "drift_m": 0.00014302533833697174,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 7,
+       "to": 8,
+       "limit_m": 0.02,
+       "envelope_m": 0.012672805655088023,
+       "drift_m": 2.953040271807907e-05,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 8,
+       "to": 9,
+       "limit_m": 0.02,
+       "envelope_m": 0.015476934744278272,
+       "drift_m": 0.00015577317843836822,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      }
+     ]
+    },
+    {
+     "index": 8,
+     "style": "baseline",
+     "timing": "per-segment",
+     "accuracy_weight": 0.005,
+     "duration_s": 6.087484144156161,
+     "envelope_cm": 1.342017341015939,
+     "tracking_cm": 0.30393756460398436,
+     "heading_error_deg": 0.013960906663506063,
+     "ok": true,
+     "converged": true,
+     "reasons": [],
+     "segments": [
+      {
+       "from": 0,
+       "to": 1,
+       "limit_m": 0.02,
+       "envelope_m": 0.0019054272764185002,
+       "drift_m": 0.00020272519110866186,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 1,
+       "to": 2,
+       "limit_m": 0.02,
+       "envelope_m": 0.0023287929020752115,
+       "drift_m": 0.00019975844655121714,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 2,
+       "to": 3,
+       "limit_m": 0.02,
+       "envelope_m": 0.0031910870542423754,
+       "drift_m": 0.00016029134261327232,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 3,
+       "to": 4,
+       "limit_m": 0.02,
+       "envelope_m": 0.004348087203427183,
+       "drift_m": 0.0001861287787261937,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 4,
+       "to": 5,
+       "limit_m": 0.02,
+       "envelope_m": 0.005454027045381332,
+       "drift_m": 0.00021464309056812538,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 5,
+       "to": 6,
+       "limit_m": 0.02,
+       "envelope_m": 0.00664415814450506,
+       "drift_m": 0.0001509697013094249,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 6,
+       "to": 7,
+       "limit_m": 0.02,
+       "envelope_m": 0.007976544462078933,
+       "drift_m": 8.897880134210265e-05,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 7,
+       "to": 8,
+       "limit_m": 0.02,
+       "envelope_m": 0.010505342133703705,
+       "drift_m": 0.000177819869483174,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 8,
+       "to": 9,
+       "limit_m": 0.02,
+       "envelope_m": 0.013255821905256515,
+       "drift_m": 0.00010287715550955589,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      }
+     ]
+    },
+    {
+     "index": 9,
+     "style": "baseline",
+     "timing": "equal-duration",
+     "accuracy_weight": 0.01,
+     "duration_s": 9.339065068729314,
+     "envelope_cm": 1.9511489837454734,
+     "tracking_cm": 0.2891593612730503,
+     "heading_error_deg": 0.015900680387789683,
+     "ok": true,
+     "converged": true,
+     "reasons": [],
+     "segments": [
+      {
+       "from": 0,
+       "to": 1,
+       "limit_m": 0.02,
+       "envelope_m": 0.0020227470703583707,
+       "drift_m": 0.00012389032682550384,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 1,
+       "to": 2,
+       "limit_m": 0.02,
+       "envelope_m": 0.0026542220178205865,
+       "drift_m": 8.491703960650769e-05,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 2,
+       "to": 3,
+       "limit_m": 0.02,
+       "envelope_m": 0.003536863093820341,
+       "drift_m": 0.00011062551998029685,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 3,
+       "to": 4,
+       "limit_m": 0.02,
+       "envelope_m": 0.0053723467317143515,
+       "drift_m": 0.0001363376198401826,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 4,
+       "to": 5,
+       "limit_m": 0.02,
+       "envelope_m": 0.00715085323788786,
+       "drift_m": 7.532900577084585e-05,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 5,
+       "to": 6,
+       "limit_m": 0.02,
+       "envelope_m": 0.009235535797368723,
+       "drift_m": 0.00015718578244829572,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 6,
+       "to": 7,
+       "limit_m": 0.02,
+       "envelope_m": 0.01136242144378876,
+       "drift_m": 6.580453111047382e-05,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 7,
+       "to": 8,
+       "limit_m": 0.02,
+       "envelope_m": 0.015481113871088732,
+       "drift_m": 0.00013616654505642096,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 8,
+       "to": 9,
+       "limit_m": 0.02,
+       "envelope_m": 0.01932277946563326,
+       "drift_m": 0.00011024875418975242,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      }
+     ]
+    },
+    {
+     "index": 10,
+     "style": "baseline",
+     "timing": "per-segment",
+     "accuracy_weight": 0.01,
+     "duration_s": 7.006555395639958,
+     "envelope_cm": 1.5550039282387411,
+     "tracking_cm": 0.396574754267931,
+     "heading_error_deg": 0.01849615227239453,
+     "ok": true,
+     "converged": true,
+     "reasons": [],
+     "segments": [
+      {
+       "from": 0,
+       "to": 1,
+       "limit_m": 0.02,
+       "envelope_m": 0.0019137420091261583,
+       "drift_m": 0.00014424068076975615,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 1,
+       "to": 2,
+       "limit_m": 0.02,
+       "envelope_m": 0.002356289434660722,
+       "drift_m": 0.0001669562178791021,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 2,
+       "to": 3,
+       "limit_m": 0.02,
+       "envelope_m": 0.0032730674827734932,
+       "drift_m": 0.00011015504656890424,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 3,
+       "to": 4,
+       "limit_m": 0.02,
+       "envelope_m": 0.00444261699323116,
+       "drift_m": 0.0001606054226717767,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 4,
+       "to": 5,
+       "limit_m": 0.02,
+       "envelope_m": 0.005550349743341569,
+       "drift_m": 0.00020413843789043076,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 5,
+       "to": 6,
+       "limit_m": 0.02,
+       "envelope_m": 0.0070420959009802,
+       "drift_m": 0.0001824972859628435,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 6,
+       "to": 7,
+       "limit_m": 0.02,
+       "envelope_m": 0.008746905129260053,
+       "drift_m": 0.00014165046215851225,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 7,
+       "to": 8,
+       "limit_m": 0.02,
+       "envelope_m": 0.012167467100973595,
+       "drift_m": 6.83888715917295e-05,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 8,
+       "to": 9,
+       "limit_m": 0.02,
+       "envelope_m": 0.015367121426209914,
+       "drift_m": 0.00010116551970345417,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      }
+     ]
+    }
+   ]
+  }
  },
  {
   "tag": "example_with_stops__default",
   "mission": "example_with_stops",
   "mode": "default",
-  "wall_s": 0.1,
-  "exit_code": 2,
-  "report": null
+  "wall_s": 13.0,
+  "exit_code": 1,
+  "report": {
+   "selected": 1,
+   "candidates": [
+    {
+     "index": 1,
+     "style": "baseline",
+     "timing": "equal-duration",
+     "accuracy_weight": 0.0,
+     "duration_s": 6.24625984335413,
+     "envelope_cm": 0.9162335046935668,
+     "tracking_cm": 0.9788794443011284,
+     "heading_error_deg": 0.18900499471259286,
+     "ok": false,
+     "converged": true,
+     "reasons": [
+      "tracking error 0.98 cm > 0.50 cm"
+     ],
+     "segments": [
+      {
+       "from": 0,
+       "to": 1,
+       "limit_m": 0.02,
+       "envelope_m": 0.0022870461067601667,
+       "drift_m": 0.0002989300605016227,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 1,
+       "to": 2,
+       "limit_m": 0.02,
+       "envelope_m": 0.003613315544972229,
+       "drift_m": 0.001458051456944425,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 2,
+       "to": 3,
+       "limit_m": 0.02,
+       "envelope_m": 0.006295898845160417,
+       "drift_m": 0.004718576789253371,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 3,
+       "to": 4,
+       "limit_m": 0.02,
+       "envelope_m": 0.009091468012506146,
+       "drift_m": 0.008160985259448071,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      }
+     ]
+    },
+    {
+     "index": 2,
+     "style": "baseline",
+     "timing": "per-segment",
+     "accuracy_weight": 0.0,
+     "duration_s": 5.138448943952964,
+     "envelope_cm": 0.944767715968278,
+     "tracking_cm": 2.1912600845098495,
+     "heading_error_deg": 0.44650312642207357,
+     "ok": false,
+     "converged": true,
+     "reasons": [
+      "tracking error 2.19 cm > 0.50 cm",
+      "forward-integration error 1.24 cm"
+     ],
+     "segments": [
+      {
+       "from": 0,
+       "to": 1,
+       "limit_m": 0.02,
+       "envelope_m": 0.002168876552661744,
+       "drift_m": 0.0003544776582929217,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 1,
+       "to": 2,
+       "limit_m": 0.02,
+       "envelope_m": 0.0032402032106674957,
+       "drift_m": 0.0012095452064705596,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 2,
+       "to": 3,
+       "limit_m": 0.02,
+       "envelope_m": 0.0069519686570392375,
+       "drift_m": 0.012410855307223486,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 3,
+       "to": 4,
+       "limit_m": 0.02,
+       "envelope_m": 0.009402310237691964,
+       "drift_m": 0.009454754588776353,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      }
+     ]
+    }
+   ]
+  }
  },
  {
   "tag": "example_with_stops__sweep",
   "mission": "example_with_stops",
   "mode": "sweep",
-  "wall_s": 0.1,
-  "exit_code": 2,
-  "report": null
+  "wall_s": 48.9,
+  "exit_code": 1,
+  "report": {
+   "selected": 10,
+   "candidates": [
+    {
+     "index": 1,
+     "style": "baseline",
+     "timing": "equal-duration",
+     "accuracy_weight": 0.0,
+     "duration_s": 6.24625984335413,
+     "envelope_cm": 0.9162335046935668,
+     "tracking_cm": 0.9788794443011284,
+     "heading_error_deg": 0.18900499471259286,
+     "ok": false,
+     "converged": true,
+     "reasons": [
+      "tracking error 0.98 cm > 0.50 cm"
+     ],
+     "segments": [
+      {
+       "from": 0,
+       "to": 1,
+       "limit_m": 0.02,
+       "envelope_m": 0.0022870461067601667,
+       "drift_m": 0.0002989300605016227,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 1,
+       "to": 2,
+       "limit_m": 0.02,
+       "envelope_m": 0.003613315544972229,
+       "drift_m": 0.001458051456944425,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 2,
+       "to": 3,
+       "limit_m": 0.02,
+       "envelope_m": 0.006295898845160417,
+       "drift_m": 0.004718576789253371,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 3,
+       "to": 4,
+       "limit_m": 0.02,
+       "envelope_m": 0.009091468012506146,
+       "drift_m": 0.008160985259448071,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      }
+     ]
+    },
+    {
+     "index": 2,
+     "style": "baseline",
+     "timing": "per-segment",
+     "accuracy_weight": 0.0,
+     "duration_s": 5.138448943952964,
+     "envelope_cm": 0.944767715968278,
+     "tracking_cm": 2.1912600845098495,
+     "heading_error_deg": 0.44650312642207357,
+     "ok": false,
+     "converged": true,
+     "reasons": [
+      "tracking error 2.19 cm > 0.50 cm",
+      "forward-integration error 1.24 cm"
+     ],
+     "segments": [
+      {
+       "from": 0,
+       "to": 1,
+       "limit_m": 0.02,
+       "envelope_m": 0.002168876552661744,
+       "drift_m": 0.0003544776582929217,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 1,
+       "to": 2,
+       "limit_m": 0.02,
+       "envelope_m": 0.0032402032106674957,
+       "drift_m": 0.0012095452064705596,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 2,
+       "to": 3,
+       "limit_m": 0.02,
+       "envelope_m": 0.0069519686570392375,
+       "drift_m": 0.012410855307223486,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 3,
+       "to": 4,
+       "limit_m": 0.02,
+       "envelope_m": 0.009402310237691964,
+       "drift_m": 0.009454754588776353,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      }
+     ]
+    },
+    {
+     "index": 3,
+     "style": "baseline",
+     "timing": "equal-duration",
+     "accuracy_weight": 0.001,
+     "duration_s": 9.222676494231328,
+     "envelope_cm": 1.8189290642133968,
+     "tracking_cm": 3.699064999818802,
+     "heading_error_deg": 0.5130155085596577,
+     "ok": false,
+     "converged": true,
+     "reasons": [
+      "tracking error 3.70 cm > 0.50 cm",
+      "forward-integration error 3.24 cm",
+      "final integration error 3.16 cm"
+     ],
+     "segments": [
+      {
+       "from": 0,
+       "to": 1,
+       "limit_m": 0.02,
+       "envelope_m": 0.002556365128268781,
+       "drift_m": 0.00043345994753118136,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 1,
+       "to": 2,
+       "limit_m": 0.02,
+       "envelope_m": 0.004359836847773857,
+       "drift_m": 0.0033108500148949604,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 2,
+       "to": 3,
+       "limit_m": 0.02,
+       "envelope_m": 0.009345348073000774,
+       "drift_m": 0.024503747950400008,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 3,
+       "to": 4,
+       "limit_m": 0.02,
+       "envelope_m": 0.01782238026738585,
+       "drift_m": 0.03241728623972634,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      }
+     ]
+    },
+    {
+     "index": 4,
+     "style": "baseline",
+     "timing": "per-segment",
+     "accuracy_weight": 0.001,
+     "duration_s": 4.832668923054491,
+     "envelope_cm": 0.8416535893691799,
+     "tracking_cm": 0.7547488901764154,
+     "heading_error_deg": 0.18766627763527036,
+     "ok": false,
+     "converged": true,
+     "reasons": [
+      "tracking error 0.75 cm > 0.50 cm"
+     ],
+     "segments": [
+      {
+       "from": 0,
+       "to": 1,
+       "limit_m": 0.02,
+       "envelope_m": 0.002163360273604979,
+       "drift_m": 0.0003540993819565092,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 1,
+       "to": 2,
+       "limit_m": 0.02,
+       "envelope_m": 0.0033104782964008222,
+       "drift_m": 0.0010130822180020706,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 2,
+       "to": 3,
+       "limit_m": 0.02,
+       "envelope_m": 0.0062134361260945525,
+       "drift_m": 0.005023575478560862,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 3,
+       "to": 4,
+       "limit_m": 0.02,
+       "envelope_m": 0.008354197535835214,
+       "drift_m": 0.005434160991259469,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      }
+     ]
+    },
+    {
+     "index": 5,
+     "style": "baseline",
+     "timing": "equal-duration",
+     "accuracy_weight": 0.002,
+     "duration_s": 7.776777896028789,
+     "envelope_cm": 1.3098866723316964,
+     "tracking_cm": 2.092880755662918,
+     "heading_error_deg": 0.2308194128114109,
+     "ok": false,
+     "converged": true,
+     "reasons": [
+      "tracking error 2.09 cm > 0.50 cm",
+      "forward-integration error 1.38 cm",
+      "final integration error 1.37 cm"
+     ],
+     "segments": [
+      {
+       "from": 0,
+       "to": 1,
+       "limit_m": 0.02,
+       "envelope_m": 0.0024082338897528674,
+       "drift_m": 0.0002357566181460462,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 1,
+       "to": 2,
+       "limit_m": 0.02,
+       "envelope_m": 0.003960324121592981,
+       "drift_m": 0.0021884507876107732,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 2,
+       "to": 3,
+       "limit_m": 0.02,
+       "envelope_m": 0.0077630767782531675,
+       "drift_m": 0.010739632662154322,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 3,
+       "to": 4,
+       "limit_m": 0.02,
+       "envelope_m": 0.012894467161936445,
+       "drift_m": 0.01370688740724304,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      }
+     ]
+    },
+    {
+     "index": 6,
+     "style": "baseline",
+     "timing": "per-segment",
+     "accuracy_weight": 0.002,
+     "duration_s": 5.220863555177383,
+     "envelope_cm": 0.9419498250089589,
+     "tracking_cm": 1.864687167108059,
+     "heading_error_deg": 0.4390308994700796,
+     "ok": false,
+     "converged": true,
+     "reasons": [
+      "tracking error 1.86 cm > 0.50 cm",
+      "forward-integration error 1.13 cm"
+     ],
+     "segments": [
+      {
+       "from": 0,
+       "to": 1,
+       "limit_m": 0.02,
+       "envelope_m": 0.0021675287636592987,
+       "drift_m": 0.00032352823888019173,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 1,
+       "to": 2,
+       "limit_m": 0.02,
+       "envelope_m": 0.003378227339670465,
+       "drift_m": 0.001072629364273809,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 2,
+       "to": 3,
+       "limit_m": 0.02,
+       "envelope_m": 0.006875235939616869,
+       "drift_m": 0.011041585993613856,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 3,
+       "to": 4,
+       "limit_m": 0.02,
+       "envelope_m": 0.009357807677606364,
+       "drift_m": 0.009977909500920316,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      }
+     ]
+    },
+    {
+     "index": 7,
+     "style": "baseline",
+     "timing": "equal-duration",
+     "accuracy_weight": 0.005,
+     "duration_s": 7.828555757329815,
+     "envelope_cm": 1.3156340043541952,
+     "tracking_cm": 1.8599426373839378,
+     "heading_error_deg": 0.20634001482608522,
+     "ok": false,
+     "converged": true,
+     "reasons": [
+      "tracking error 1.86 cm > 0.50 cm",
+      "forward-integration error 1.36 cm",
+      "final integration error 1.36 cm"
+     ],
+     "segments": [
+      {
+       "from": 0,
+       "to": 1,
+       "limit_m": 0.02,
+       "envelope_m": 0.002411911381680967,
+       "drift_m": 0.000210149088013793,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 1,
+       "to": 2,
+       "limit_m": 0.02,
+       "envelope_m": 0.003996796133919544,
+       "drift_m": 0.0023455647931155026,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 2,
+       "to": 3,
+       "limit_m": 0.02,
+       "envelope_m": 0.007847105341943801,
+       "drift_m": 0.010770908094241315,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 3,
+       "to": 4,
+       "limit_m": 0.02,
+       "envelope_m": 0.012987072576450579,
+       "drift_m": 0.013437792631269012,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      }
+     ]
+    },
+    {
+     "index": 8,
+     "style": "baseline",
+     "timing": "per-segment",
+     "accuracy_weight": 0.005,
+     "duration_s": 5.027537725822609,
+     "envelope_cm": 0.9233975692332242,
+     "tracking_cm": 0.5724664311856031,
+     "heading_error_deg": 0.14026476479538186,
+     "ok": false,
+     "converged": true,
+     "reasons": [
+      "tracking error 0.57 cm > 0.50 cm"
+     ],
+     "segments": [
+      {
+       "from": 0,
+       "to": 1,
+       "limit_m": 0.02,
+       "envelope_m": 0.0021692208508095213,
+       "drift_m": 0.00033617342734449166,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 1,
+       "to": 2,
+       "limit_m": 0.02,
+       "envelope_m": 0.0034220527603816297,
+       "drift_m": 0.0011180873066564088,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 2,
+       "to": 3,
+       "limit_m": 0.02,
+       "envelope_m": 0.006657266604151864,
+       "drift_m": 0.00396265621400506,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 3,
+       "to": 4,
+       "limit_m": 0.02,
+       "envelope_m": 0.009162725573450931,
+       "drift_m": 0.003720264509545529,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      }
+     ]
+    },
+    {
+     "index": 9,
+     "style": "baseline",
+     "timing": "equal-duration",
+     "accuracy_weight": 0.01,
+     "duration_s": 7.918014832663623,
+     "envelope_cm": 1.4553018875517028,
+     "tracking_cm": 1.7646292224526405,
+     "heading_error_deg": 0.2942991909575094,
+     "ok": false,
+     "converged": true,
+     "reasons": [
+      "tracking error 1.76 cm > 0.50 cm",
+      "forward-integration error 1.66 cm",
+      "final integration error 1.62 cm"
+     ],
+     "segments": [
+      {
+       "from": 0,
+       "to": 1,
+       "limit_m": 0.02,
+       "envelope_m": 0.0025655104989209046,
+       "drift_m": 0.0008370487157043161,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 1,
+       "to": 2,
+       "limit_m": 0.02,
+       "envelope_m": 0.004634365032554946,
+       "drift_m": 0.0037485971210708654,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 2,
+       "to": 3,
+       "limit_m": 0.02,
+       "envelope_m": 0.009260033245615227,
+       "drift_m": 0.0110518209105515,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 3,
+       "to": 4,
+       "limit_m": 0.02,
+       "envelope_m": 0.014389405918847608,
+       "drift_m": 0.016594533686977893,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      }
+     ]
+    },
+    {
+     "index": 10,
+     "style": "baseline",
+     "timing": "per-segment",
+     "accuracy_weight": 0.01,
+     "duration_s": 5.162301273483689,
+     "envelope_cm": 0.9708469999117137,
+     "tracking_cm": 0.5403113551437855,
+     "heading_error_deg": 0.1305385754172837,
+     "ok": false,
+     "converged": true,
+     "reasons": [
+      "tracking error 0.54 cm > 0.50 cm"
+     ],
+     "segments": [
+      {
+       "from": 0,
+       "to": 1,
+       "limit_m": 0.02,
+       "envelope_m": 0.0021888980978155806,
+       "drift_m": 0.00033491394445296874,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 1,
+       "to": 2,
+       "limit_m": 0.02,
+       "envelope_m": 0.003512630103985476,
+       "drift_m": 0.0011820710040498213,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 2,
+       "to": 3,
+       "limit_m": 0.02,
+       "envelope_m": 0.006944286174941944,
+       "drift_m": 0.003920696030019772,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 3,
+       "to": 4,
+       "limit_m": 0.02,
+       "envelope_m": 0.009636248654860699,
+       "drift_m": 0.003436922645417242,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      }
+     ]
+    }
+   ]
+  }
  },
  {
   "tag": "example_with_stops__sweep-self-consistent",
   "mission": "example_with_stops",
   "mode": "sweep-self-consistent",
-  "wall_s": 0.1,
-  "exit_code": 2,
-  "report": null
+  "wall_s": 54.0,
+  "exit_code": 0,
+  "report": {
+   "selected": 9,
+   "candidates": [
+    {
+     "index": 1,
+     "style": "baseline",
+     "timing": "equal-duration",
+     "accuracy_weight": 0.0,
+     "duration_s": 7.81281637113363,
+     "envelope_cm": 1.1613816562954746,
+     "tracking_cm": 1.2340424582362175,
+     "heading_error_deg": 0.23792280954822417,
+     "ok": false,
+     "converged": true,
+     "reasons": [
+      "tracking error 1.23 cm > 0.50 cm"
+     ],
+     "segments": [
+      {
+       "from": 0,
+       "to": 1,
+       "limit_m": 0.02,
+       "envelope_m": 0.0024164420390200194,
+       "drift_m": 0.00012650669773009017,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 1,
+       "to": 2,
+       "limit_m": 0.02,
+       "envelope_m": 0.0038353385099295437,
+       "drift_m": 9.641523864820357e-05,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 2,
+       "to": 3,
+       "limit_m": 0.02,
+       "envelope_m": 0.007594418702617377,
+       "drift_m": 0.00021239376074241707,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 3,
+       "to": 4,
+       "limit_m": 0.02,
+       "envelope_m": 0.011447067294411131,
+       "drift_m": 0.0001192855456654299,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      }
+     ]
+    },
+    {
+     "index": 2,
+     "style": "baseline",
+     "timing": "per-segment",
+     "accuracy_weight": 0.0,
+     "duration_s": 5.1890739978392295,
+     "envelope_cm": 0.9597965443802987,
+     "tracking_cm": 1.684664562344551,
+     "heading_error_deg": 0.20881254330562982,
+     "ok": false,
+     "converged": true,
+     "reasons": [
+      "tracking error 1.68 cm > 0.50 cm"
+     ],
+     "segments": [
+      {
+       "from": 0,
+       "to": 1,
+       "limit_m": 0.02,
+       "envelope_m": 0.0021732519551860064,
+       "drift_m": 0.00018972200543840802,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 1,
+       "to": 2,
+       "limit_m": 0.02,
+       "envelope_m": 0.00325057802143274,
+       "drift_m": 0.00011926928099032702,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 2,
+       "to": 3,
+       "limit_m": 0.02,
+       "envelope_m": 0.006943531275264381,
+       "drift_m": 0.00021471882818270156,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 3,
+       "to": 4,
+       "limit_m": 0.02,
+       "envelope_m": 0.009555308965971671,
+       "drift_m": 0.00010132777600599609,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      }
+     ]
+    },
+    {
+     "index": 3,
+     "style": "baseline",
+     "timing": "equal-duration",
+     "accuracy_weight": 0.001,
+     "duration_s": 7.882079583411605,
+     "envelope_cm": 1.2258613000795635,
+     "tracking_cm": 1.3587073422968388,
+     "heading_error_deg": 0.13753268912737676,
+     "ok": false,
+     "converged": true,
+     "reasons": [
+      "tracking error 1.36 cm > 0.50 cm"
+     ],
+     "segments": [
+      {
+       "from": 0,
+       "to": 1,
+       "limit_m": 0.02,
+       "envelope_m": 0.0024177689208197497,
+       "drift_m": 0.00010872890643134184,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 1,
+       "to": 2,
+       "limit_m": 0.02,
+       "envelope_m": 0.003986428810196891,
+       "drift_m": 0.00011250820788345667,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 2,
+       "to": 3,
+       "limit_m": 0.02,
+       "envelope_m": 0.007703034730031157,
+       "drift_m": 0.00018107811623566472,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 3,
+       "to": 4,
+       "limit_m": 0.02,
+       "envelope_m": 0.012088009434604302,
+       "drift_m": 0.0007000012039743253,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      }
+     ]
+    },
+    {
+     "index": 4,
+     "style": "baseline",
+     "timing": "per-segment",
+     "accuracy_weight": 0.001,
+     "duration_s": 5.219823754565418,
+     "envelope_cm": 0.9843574712028614,
+     "tracking_cm": 1.7408791929483414,
+     "heading_error_deg": 0.21097088308335385,
+     "ok": false,
+     "converged": true,
+     "reasons": [
+      "tracking error 1.74 cm > 0.50 cm"
+     ],
+     "segments": [
+      {
+       "from": 0,
+       "to": 1,
+       "limit_m": 0.02,
+       "envelope_m": 0.002167347518030924,
+       "drift_m": 0.00019583239071639368,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 1,
+       "to": 2,
+       "limit_m": 0.02,
+       "envelope_m": 0.0033213816356689758,
+       "drift_m": 5.52390522240737e-05,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 2,
+       "to": 3,
+       "limit_m": 0.02,
+       "envelope_m": 0.006959565739120644,
+       "drift_m": 0.0001498680065664346,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 3,
+       "to": 4,
+       "limit_m": 0.02,
+       "envelope_m": 0.009786801997177871,
+       "drift_m": 0.0001681502831123106,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      }
+     ]
+    },
+    {
+     "index": 5,
+     "style": "baseline",
+     "timing": "equal-duration",
+     "accuracy_weight": 0.002,
+     "duration_s": 7.829797224178075,
+     "envelope_cm": 1.3572846188572696,
+     "tracking_cm": 1.3276436366140842,
+     "heading_error_deg": 0.23786816803486407,
+     "ok": false,
+     "converged": true,
+     "reasons": [
+      "tracking error 1.33 cm > 0.50 cm"
+     ],
+     "segments": [
+      {
+       "from": 0,
+       "to": 1,
+       "limit_m": 0.02,
+       "envelope_m": 0.0024192062521321248,
+       "drift_m": 0.0001773270309036773,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 1,
+       "to": 2,
+       "limit_m": 0.02,
+       "envelope_m": 0.0040367821249489445,
+       "drift_m": 0.0002880775446908028,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 2,
+       "to": 3,
+       "limit_m": 0.02,
+       "envelope_m": 0.00811265268587707,
+       "drift_m": 0.0002517404836868707,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 3,
+       "to": 4,
+       "limit_m": 0.02,
+       "envelope_m": 0.013324322349983451,
+       "drift_m": 0.0011026995777830913,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      }
+     ]
+    },
+    {
+     "index": 6,
+     "style": "baseline",
+     "timing": "per-segment",
+     "accuracy_weight": 0.002,
+     "duration_s": 5.299757155709237,
+     "envelope_cm": 1.020095738465014,
+     "tracking_cm": 1.5235064551234245,
+     "heading_error_deg": 0.25380982955767384,
+     "ok": false,
+     "converged": true,
+     "reasons": [
+      "tracking error 1.52 cm > 0.50 cm"
+     ],
+     "segments": [
+      {
+       "from": 0,
+       "to": 1,
+       "limit_m": 0.02,
+       "envelope_m": 0.0021698923251584875,
+       "drift_m": 0.00021792818047540084,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 1,
+       "to": 2,
+       "limit_m": 0.02,
+       "envelope_m": 0.0033796816541767686,
+       "drift_m": 0.00019289405006239532,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 2,
+       "to": 3,
+       "limit_m": 0.02,
+       "envelope_m": 0.007280880552372359,
+       "drift_m": 0.000173981676126294,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 3,
+       "to": 4,
+       "limit_m": 0.02,
+       "envelope_m": 0.010137297474602467,
+       "drift_m": 0.00019676584627960773,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      }
+     ]
+    },
+    {
+     "index": 7,
+     "style": "baseline",
+     "timing": "equal-duration",
+     "accuracy_weight": 0.005,
+     "duration_s": 6.372933320366276,
+     "envelope_cm": 1.124414788778632,
+     "tracking_cm": 0.6492890883237123,
+     "heading_error_deg": 0.12126317852440638,
+     "ok": false,
+     "converged": true,
+     "reasons": [
+      "tracking error 0.65 cm > 0.50 cm"
+     ],
+     "segments": [
+      {
+       "from": 0,
+       "to": 1,
+       "limit_m": 0.02,
+       "envelope_m": 0.0023508992972916653,
+       "drift_m": 0.0001893220400877386,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 1,
+       "to": 2,
+       "limit_m": 0.02,
+       "envelope_m": 0.003937514147515185,
+       "drift_m": 0.00012805445534530213,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 2,
+       "to": 3,
+       "limit_m": 0.02,
+       "envelope_m": 0.007124283619851916,
+       "drift_m": 0.00019301376223676897,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 3,
+       "to": 4,
+       "limit_m": 0.02,
+       "envelope_m": 0.011069765706956084,
+       "drift_m": 0.00018086203129587784,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      }
+     ]
+    },
+    {
+     "index": 8,
+     "style": "baseline",
+     "timing": "per-segment",
+     "accuracy_weight": 0.005,
+     "duration_s": 5.3529275686982665,
+     "envelope_cm": 0.994702884495949,
+     "tracking_cm": 1.3298728503286839,
+     "heading_error_deg": 0.2676887739511397,
+     "ok": false,
+     "converged": true,
+     "reasons": [
+      "tracking error 1.33 cm > 0.50 cm"
+     ],
+     "segments": [
+      {
+       "from": 0,
+       "to": 1,
+       "limit_m": 0.02,
+       "envelope_m": 0.002172863123514715,
+       "drift_m": 0.00020864299148282007,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 1,
+       "to": 2,
+       "limit_m": 0.02,
+       "envelope_m": 0.0034477337262222457,
+       "drift_m": 0.00017813693513120805,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 2,
+       "to": 3,
+       "limit_m": 0.02,
+       "envelope_m": 0.007123089282043863,
+       "drift_m": 2.1073648868244203e-05,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 3,
+       "to": 4,
+       "limit_m": 0.02,
+       "envelope_m": 0.009877576630834254,
+       "drift_m": 0.00010150747902964027,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      }
+     ]
+    },
+    {
+     "index": 9,
+     "style": "baseline",
+     "timing": "equal-duration",
+     "accuracy_weight": 0.01,
+     "duration_s": 6.437133699826952,
+     "envelope_cm": 1.1661624919883116,
+     "tracking_cm": 0.48713977448642254,
+     "heading_error_deg": 0.06901223137380884,
+     "ok": true,
+     "converged": true,
+     "reasons": [],
+     "segments": [
+      {
+       "from": 0,
+       "to": 1,
+       "limit_m": 0.02,
+       "envelope_m": 0.0023720795624840377,
+       "drift_m": 9.406844825895913e-05,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 1,
+       "to": 2,
+       "limit_m": 0.02,
+       "envelope_m": 0.004140790237958745,
+       "drift_m": 0.00014759502074041312,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 2,
+       "to": 3,
+       "limit_m": 0.02,
+       "envelope_m": 0.007687828838173928,
+       "drift_m": 0.00019938440198442542,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 3,
+       "to": 4,
+       "limit_m": 0.02,
+       "envelope_m": 0.011524883935587375,
+       "drift_m": 4.6267821952563646e-05,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      }
+     ]
+    },
+    {
+     "index": 10,
+     "style": "baseline",
+     "timing": "per-segment",
+     "accuracy_weight": 0.01,
+     "duration_s": 5.168108939141987,
+     "envelope_cm": 0.9773827277979001,
+     "tracking_cm": 0.5802058149129152,
+     "heading_error_deg": 0.08450310041139776,
+     "ok": false,
+     "converged": true,
+     "reasons": [
+      "tracking error 0.58 cm > 0.50 cm"
+     ],
+     "segments": [
+      {
+       "from": 0,
+       "to": 1,
+       "limit_m": 0.02,
+       "envelope_m": 0.002190987099370914,
+       "drift_m": 0.00018700354328784143,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 1,
+       "to": 2,
+       "limit_m": 0.02,
+       "envelope_m": 0.0035155345143991763,
+       "drift_m": 0.00020647176314489543,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 2,
+       "to": 3,
+       "limit_m": 0.02,
+       "envelope_m": 0.006966919521133279,
+       "drift_m": 8.968885305061996e-05,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 3,
+       "to": 4,
+       "limit_m": 0.02,
+       "envelope_m": 0.0096991987143628,
+       "drift_m": 9.024428584552157e-05,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      }
+     ]
+    }
+   ]
+  }
  },
  {
   "tag": "example_with_events__default",
   "mission": "example_with_events",
   "mode": "default",
-  "wall_s": 0.1,
-  "exit_code": 2,
-  "report": null
+  "wall_s": 11.3,
+  "exit_code": 0,
+  "report": {
+   "selected": 2,
+   "candidates": [
+    {
+     "index": 1,
+     "style": "baseline",
+     "timing": "equal-duration",
+     "accuracy_weight": 0.0,
+     "duration_s": 4.63658359565579,
+     "envelope_cm": 0.8991134593433687,
+     "tracking_cm": 0.6809249054640532,
+     "heading_error_deg": 0.1664790308298908,
+     "ok": false,
+     "converged": true,
+     "reasons": [
+      "tracking error 0.68 cm > 0.50 cm"
+     ],
+     "segments": [
+      {
+       "from": 0,
+       "to": 1,
+       "limit_m": 0.02,
+       "envelope_m": 0.002733449749076001,
+       "drift_m": 0.0021348101809165526,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 1,
+       "to": 2,
+       "limit_m": 0.02,
+       "envelope_m": 0.0052219020092167875,
+       "drift_m": 0.0019288573321702455,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 2,
+       "to": 3,
+       "limit_m": 0.02,
+       "envelope_m": 0.008820824678035272,
+       "drift_m": 0.004477966487096877,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      }
+     ]
+    },
+    {
+     "index": 2,
+     "style": "baseline",
+     "timing": "per-segment",
+     "accuracy_weight": 0.0,
+     "duration_s": 4.415647619918159,
+     "envelope_cm": 0.8161726666950142,
+     "tracking_cm": 0.4585851449519396,
+     "heading_error_deg": 0.06656702365094427,
+     "ok": true,
+     "converged": true,
+     "reasons": [],
+     "segments": [
+      {
+       "from": 0,
+       "to": 1,
+       "limit_m": 0.02,
+       "envelope_m": 0.0026573196992892693,
+       "drift_m": 0.0023096883504622728,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 1,
+       "to": 2,
+       "limit_m": 0.02,
+       "envelope_m": 0.0047870412788036465,
+       "drift_m": 0.001305423416686109,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 2,
+       "to": 3,
+       "limit_m": 0.02,
+       "envelope_m": 0.008007257439319845,
+       "drift_m": 0.0028680556987865148,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      }
+     ]
+    }
+   ]
+  }
  },
  {
   "tag": "example_with_events__sweep",
   "mission": "example_with_events",
   "mode": "sweep",
-  "wall_s": 0.1,
-  "exit_code": 2,
-  "report": null
+  "wall_s": 39.4,
+  "exit_code": 0,
+  "report": {
+   "selected": 2,
+   "candidates": [
+    {
+     "index": 1,
+     "style": "baseline",
+     "timing": "equal-duration",
+     "accuracy_weight": 0.0,
+     "duration_s": 4.63658359565579,
+     "envelope_cm": 0.8991134593433687,
+     "tracking_cm": 0.6809249054640532,
+     "heading_error_deg": 0.1664790308298908,
+     "ok": false,
+     "converged": true,
+     "reasons": [
+      "tracking error 0.68 cm > 0.50 cm"
+     ],
+     "segments": [
+      {
+       "from": 0,
+       "to": 1,
+       "limit_m": 0.02,
+       "envelope_m": 0.002733449749076001,
+       "drift_m": 0.0021348101809165526,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 1,
+       "to": 2,
+       "limit_m": 0.02,
+       "envelope_m": 0.0052219020092167875,
+       "drift_m": 0.0019288573321702455,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 2,
+       "to": 3,
+       "limit_m": 0.02,
+       "envelope_m": 0.008820824678035272,
+       "drift_m": 0.004477966487096877,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      }
+     ]
+    },
+    {
+     "index": 2,
+     "style": "baseline",
+     "timing": "per-segment",
+     "accuracy_weight": 0.0,
+     "duration_s": 4.415647619918159,
+     "envelope_cm": 0.8161726666950142,
+     "tracking_cm": 0.4585851449519396,
+     "heading_error_deg": 0.06656702365094427,
+     "ok": true,
+     "converged": true,
+     "reasons": [],
+     "segments": [
+      {
+       "from": 0,
+       "to": 1,
+       "limit_m": 0.02,
+       "envelope_m": 0.0026573196992892693,
+       "drift_m": 0.0023096883504622728,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 1,
+       "to": 2,
+       "limit_m": 0.02,
+       "envelope_m": 0.0047870412788036465,
+       "drift_m": 0.001305423416686109,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 2,
+       "to": 3,
+       "limit_m": 0.02,
+       "envelope_m": 0.008007257439319845,
+       "drift_m": 0.0028680556987865148,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      }
+     ]
+    },
+    {
+     "index": 3,
+     "style": "baseline",
+     "timing": "equal-duration",
+     "accuracy_weight": 0.001,
+     "duration_s": 4.677720270374502,
+     "envelope_cm": 0.8794857121977343,
+     "tracking_cm": 0.5357019137591124,
+     "heading_error_deg": 0.10569034721677731,
+     "ok": false,
+     "converged": true,
+     "reasons": [
+      "tracking error 0.54 cm > 0.50 cm"
+     ],
+     "segments": [
+      {
+       "from": 0,
+       "to": 1,
+       "limit_m": 0.02,
+       "envelope_m": 0.0027081053068013445,
+       "drift_m": 0.001724574670876715,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 1,
+       "to": 2,
+       "limit_m": 0.02,
+       "envelope_m": 0.005042465207505253,
+       "drift_m": 0.0010324570183724388,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 2,
+       "to": 3,
+       "limit_m": 0.02,
+       "envelope_m": 0.00862907175770725,
+       "drift_m": 0.0031602824165833173,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      }
+     ]
+    },
+    {
+     "index": 4,
+     "style": "baseline",
+     "timing": "per-segment",
+     "accuracy_weight": 0.001,
+     "duration_s": 4.969228449122625,
+     "envelope_cm": 0.9619071732978857,
+     "tracking_cm": 2.441730909049511,
+     "heading_error_deg": 0.6575559717754675,
+     "ok": false,
+     "converged": true,
+     "reasons": [
+      "tracking error 2.44 cm > 0.50 cm",
+      "forward-integration error 1.59 cm",
+      "final integration error 1.58 cm"
+     ],
+     "segments": [
+      {
+       "from": 0,
+       "to": 1,
+       "limit_m": 0.02,
+       "envelope_m": 0.0026566371733785683,
+       "drift_m": 0.0023083132849110815,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 1,
+       "to": 2,
+       "limit_m": 0.02,
+       "envelope_m": 0.004850852093970365,
+       "drift_m": 0.0019597608407197495,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 2,
+       "to": 3,
+       "limit_m": 0.02,
+       "envelope_m": 0.009345656494729617,
+       "drift_m": 0.015653586028128257,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      }
+     ]
+    },
+    {
+     "index": 5,
+     "style": "baseline",
+     "timing": "equal-duration",
+     "accuracy_weight": 0.002,
+     "duration_s": 4.679141547200922,
+     "envelope_cm": 0.8872884449756266,
+     "tracking_cm": 0.5288793239742517,
+     "heading_error_deg": 0.10254846019857145,
+     "ok": false,
+     "converged": true,
+     "reasons": [
+      "tracking error 0.53 cm > 0.50 cm"
+     ],
+     "segments": [
+      {
+       "from": 0,
+       "to": 1,
+       "limit_m": 0.02,
+       "envelope_m": 0.002708144666527762,
+       "drift_m": 0.0014709517076846703,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 1,
+       "to": 2,
+       "limit_m": 0.02,
+       "envelope_m": 0.005074407960151997,
+       "drift_m": 0.0010712646999032744,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 2,
+       "to": 3,
+       "limit_m": 0.02,
+       "envelope_m": 0.00870574862204443,
+       "drift_m": 0.0030464328188157465,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      }
+     ]
+    },
+    {
+     "index": 6,
+     "style": "baseline",
+     "timing": "per-segment",
+     "accuracy_weight": 0.002,
+     "duration_s": 4.420267643330224,
+     "envelope_cm": 0.8174950403229381,
+     "tracking_cm": 0.45902878046035767,
+     "heading_error_deg": 0.06745494824304593,
+     "ok": true,
+     "converged": true,
+     "reasons": [],
+     "segments": [
+      {
+       "from": 0,
+       "to": 1,
+       "limit_m": 0.02,
+       "envelope_m": 0.0026535691009861406,
+       "drift_m": 0.002286078589419578,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 1,
+       "to": 2,
+       "limit_m": 0.02,
+       "envelope_m": 0.004782848676240504,
+       "drift_m": 0.0013993228769579936,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 2,
+       "to": 3,
+       "limit_m": 0.02,
+       "envelope_m": 0.008020252377981558,
+       "drift_m": 0.002854180766708538,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      }
+     ]
+    },
+    {
+     "index": 7,
+     "style": "baseline",
+     "timing": "equal-duration",
+     "accuracy_weight": 0.005,
+     "duration_s": 4.703852214960996,
+     "envelope_cm": 0.8832071359096378,
+     "tracking_cm": 0.510390242561698,
+     "heading_error_deg": 0.09351895011581458,
+     "ok": false,
+     "converged": true,
+     "reasons": [
+      "tracking error 0.51 cm > 0.50 cm"
+     ],
+     "segments": [
+      {
+       "from": 0,
+       "to": 1,
+       "limit_m": 0.02,
+       "envelope_m": 0.0027098457473241967,
+       "drift_m": 0.001481844858537325,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 1,
+       "to": 2,
+       "limit_m": 0.02,
+       "envelope_m": 0.005059468695661219,
+       "drift_m": 0.0012981008273051974,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 2,
+       "to": 3,
+       "limit_m": 0.02,
+       "envelope_m": 0.008665876445296103,
+       "drift_m": 0.0028807703607507,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      }
+     ]
+    },
+    {
+     "index": 8,
+     "style": "baseline",
+     "timing": "per-segment",
+     "accuracy_weight": 0.005,
+     "duration_s": 4.461776150924283,
+     "envelope_cm": 0.8216168616901818,
+     "tracking_cm": 0.4548447672277689,
+     "heading_error_deg": 0.06574740095054274,
+     "ok": true,
+     "converged": true,
+     "reasons": [],
+     "segments": [
+      {
+       "from": 0,
+       "to": 1,
+       "limit_m": 0.02,
+       "envelope_m": 0.002658371814708875,
+       "drift_m": 0.0018346008039921845,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 1,
+       "to": 2,
+       "limit_m": 0.02,
+       "envelope_m": 0.004790196635178114,
+       "drift_m": 0.001377568828395022,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 2,
+       "to": 3,
+       "limit_m": 0.02,
+       "envelope_m": 0.0080592413206916,
+       "drift_m": 0.002773745147788884,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      }
+     ]
+    },
+    {
+     "index": 9,
+     "style": "baseline",
+     "timing": "equal-duration",
+     "accuracy_weight": 0.01,
+     "duration_s": 4.720725285701331,
+     "envelope_cm": 0.8885943268553246,
+     "tracking_cm": 0.49234130419790745,
+     "heading_error_deg": 0.08519977970673906,
+     "ok": true,
+     "converged": true,
+     "reasons": [],
+     "segments": [
+      {
+       "from": 0,
+       "to": 1,
+       "limit_m": 0.02,
+       "envelope_m": 0.0027104560581901085,
+       "drift_m": 0.0014595184693898676,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 1,
+       "to": 2,
+       "limit_m": 0.02,
+       "envelope_m": 0.005060703128996243,
+       "drift_m": 0.001279297216184485,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 2,
+       "to": 3,
+       "limit_m": 0.02,
+       "envelope_m": 0.008717861990304939,
+       "drift_m": 0.0027278992552100907,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      }
+     ]
+    },
+    {
+     "index": 10,
+     "style": "baseline",
+     "timing": "per-segment",
+     "accuracy_weight": 0.01,
+     "duration_s": 4.504163883322468,
+     "envelope_cm": 0.8274917200542106,
+     "tracking_cm": 0.4514561500400305,
+     "heading_error_deg": 0.06488679711512113,
+     "ok": true,
+     "converged": true,
+     "reasons": [],
+     "segments": [
+      {
+       "from": 0,
+       "to": 1,
+       "limit_m": 0.02,
+       "envelope_m": 0.0026617307001608587,
+       "drift_m": 0.0019227105176733738,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 1,
+       "to": 2,
+       "limit_m": 0.02,
+       "envelope_m": 0.004801716256255934,
+       "drift_m": 0.0012171244114516592,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 2,
+       "to": 3,
+       "limit_m": 0.02,
+       "envelope_m": 0.00811628397257903,
+       "drift_m": 0.0027630029611098094,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      }
+     ]
+    }
+   ]
+  }
  },
  {
   "tag": "example_with_events__sweep-self-consistent",
   "mission": "example_with_events",
   "mode": "sweep-self-consistent",
-  "wall_s": 0.1,
-  "exit_code": 2,
-  "report": null
+  "wall_s": 36.5,
+  "exit_code": 0,
+  "report": {
+   "selected": 4,
+   "candidates": [
+    {
+     "index": 1,
+     "style": "baseline",
+     "timing": "equal-duration",
+     "accuracy_weight": 0.0,
+     "duration_s": 4.6540227436739565,
+     "envelope_cm": 0.8951013309443765,
+     "tracking_cm": 0.44109150767326355,
+     "heading_error_deg": 0.10194740355161032,
+     "ok": true,
+     "converged": true,
+     "reasons": [],
+     "segments": [
+      {
+       "from": 0,
+       "to": 1,
+       "limit_m": 0.02,
+       "envelope_m": 0.0027254493709307223,
+       "drift_m": 0.0001908756227216677,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 1,
+       "to": 2,
+       "limit_m": 0.02,
+       "envelope_m": 0.005192943105264783,
+       "drift_m": 0.00022993340250838072,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 2,
+       "to": 3,
+       "limit_m": 0.02,
+       "envelope_m": 0.008780437793104421,
+       "drift_m": 0.000196120205137544,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      }
+     ]
+    },
+    {
+     "index": 2,
+     "style": "baseline",
+     "timing": "per-segment",
+     "accuracy_weight": 0.0,
+     "duration_s": 4.9906493871085065,
+     "envelope_cm": 0.9459929516439638,
+     "tracking_cm": 1.4541461132466793,
+     "heading_error_deg": 0.41929165276874275,
+     "ok": false,
+     "converged": true,
+     "reasons": [
+      "tracking error 1.45 cm > 0.50 cm"
+     ],
+     "segments": [
+      {
+       "from": 0,
+       "to": 1,
+       "limit_m": 0.02,
+       "envelope_m": 0.002657263153535362,
+       "drift_m": 0.00022372887856374413,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 1,
+       "to": 2,
+       "limit_m": 0.02,
+       "envelope_m": 0.0048194557833174025,
+       "drift_m": 0.00018267889772152193,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 2,
+       "to": 3,
+       "limit_m": 0.02,
+       "envelope_m": 0.009206789791455266,
+       "drift_m": 0.00020249976404852226,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      }
+     ]
+    },
+    {
+     "index": 3,
+     "style": "baseline",
+     "timing": "equal-duration",
+     "accuracy_weight": 0.001,
+     "duration_s": 4.673484531336548,
+     "envelope_cm": 0.8812525142107422,
+     "tracking_cm": 0.4095517098903656,
+     "heading_error_deg": 0.07102030698979259,
+     "ok": true,
+     "converged": true,
+     "reasons": [],
+     "segments": [
+      {
+       "from": 0,
+       "to": 1,
+       "limit_m": 0.02,
+       "envelope_m": 0.002705688027571999,
+       "drift_m": 0.00019155560390539123,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 1,
+       "to": 2,
+       "limit_m": 0.02,
+       "envelope_m": 0.0050422842350176305,
+       "drift_m": 0.00023207635458387794,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 2,
+       "to": 3,
+       "limit_m": 0.02,
+       "envelope_m": 0.008645780027095812,
+       "drift_m": 0.00023179025702979814,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      }
+     ]
+    },
+    {
+     "index": 4,
+     "style": "baseline",
+     "timing": "per-segment",
+     "accuracy_weight": 0.001,
+     "duration_s": 4.413118152820799,
+     "envelope_cm": 0.8161151254961496,
+     "tracking_cm": 0.3431235207244754,
+     "heading_error_deg": 0.051349362180155865,
+     "ok": true,
+     "converged": true,
+     "reasons": [],
+     "segments": [
+      {
+       "from": 0,
+       "to": 1,
+       "limit_m": 0.02,
+       "envelope_m": 0.0026559192123714955,
+       "drift_m": 0.00019768828141361922,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 1,
+       "to": 2,
+       "limit_m": 0.02,
+       "envelope_m": 0.00478058260390079,
+       "drift_m": 0.0002033349777119701,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 2,
+       "to": 3,
+       "limit_m": 0.02,
+       "envelope_m": 0.008006934476760036,
+       "drift_m": 0.0002125839950750915,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      }
+     ]
+    },
+    {
+     "index": 5,
+     "style": "baseline",
+     "timing": "equal-duration",
+     "accuracy_weight": 0.002,
+     "duration_s": 7.112530165465553,
+     "envelope_cm": 1.192023546527491,
+     "tracking_cm": 2.191844955086708,
+     "heading_error_deg": 0.33241164652618055,
+     "ok": false,
+     "converged": true,
+     "reasons": [
+      "tracking error 2.19 cm > 0.50 cm"
+     ],
+     "segments": [
+      {
+       "from": 0,
+       "to": 1,
+       "limit_m": 0.02,
+       "envelope_m": 0.002959534854532643,
+       "drift_m": 0.00019439835440192434,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 1,
+       "to": 2,
+       "limit_m": 0.02,
+       "envelope_m": 0.005650398804024453,
+       "drift_m": 0.0003133478470675164,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 2,
+       "to": 3,
+       "limit_m": 0.02,
+       "envelope_m": 0.011458845049702569,
+       "drift_m": 0.0002013075639456387,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      }
+     ]
+    },
+    {
+     "index": 6,
+     "style": "baseline",
+     "timing": "per-segment",
+     "accuracy_weight": 0.002,
+     "duration_s": 4.41738094875109,
+     "envelope_cm": 0.8166264542839952,
+     "tracking_cm": 0.34315153025090694,
+     "heading_error_deg": 0.05148596596355612,
+     "ok": true,
+     "converged": true,
+     "reasons": [],
+     "segments": [
+      {
+       "from": 0,
+       "to": 1,
+       "limit_m": 0.02,
+       "envelope_m": 0.0026539982882011898,
+       "drift_m": 0.0002196652248687349,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 1,
+       "to": 2,
+       "limit_m": 0.02,
+       "envelope_m": 0.004778287495201507,
+       "drift_m": 0.00021102761966289527,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 2,
+       "to": 3,
+       "limit_m": 0.02,
+       "envelope_m": 0.008011747446468577,
+       "drift_m": 0.000233093528010691,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      }
+     ]
+    },
+    {
+     "index": 7,
+     "style": "baseline",
+     "timing": "equal-duration",
+     "accuracy_weight": 0.005,
+     "duration_s": 4.698212009430952,
+     "envelope_cm": 0.8813888028080893,
+     "tracking_cm": 0.3864880185574293,
+     "heading_error_deg": 0.06364370268617882,
+     "ok": true,
+     "converged": true,
+     "reasons": [],
+     "segments": [
+      {
+       "from": 0,
+       "to": 1,
+       "limit_m": 0.02,
+       "envelope_m": 0.002705832309745958,
+       "drift_m": 0.00021408255845321007,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 1,
+       "to": 2,
+       "limit_m": 0.02,
+       "envelope_m": 0.005041767226703869,
+       "drift_m": 0.00022547698885265884,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 2,
+       "to": 3,
+       "limit_m": 0.02,
+       "envelope_m": 0.00864771447568674,
+       "drift_m": 0.00022823677711310316,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      }
+     ]
+    },
+    {
+     "index": 8,
+     "style": "baseline",
+     "timing": "per-segment",
+     "accuracy_weight": 0.005,
+     "duration_s": 5.140619322727961,
+     "envelope_cm": 1.0137474412036542,
+     "tracking_cm": 1.4753734692931175,
+     "heading_error_deg": 0.34364047752168153,
+     "ok": false,
+     "converged": true,
+     "reasons": [
+      "tracking error 1.48 cm > 0.50 cm"
+     ],
+     "segments": [
+      {
+       "from": 0,
+       "to": 1,
+       "limit_m": 0.02,
+       "envelope_m": 0.0026604530378785004,
+       "drift_m": 0.00019823409079195556,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 1,
+       "to": 2,
+       "limit_m": 0.02,
+       "envelope_m": 0.004919327884636459,
+       "drift_m": 0.00018764793241651709,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 2,
+       "to": 3,
+       "limit_m": 0.02,
+       "envelope_m": 0.009796977591267709,
+       "drift_m": 0.0001889804013673615,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      }
+     ]
+    },
+    {
+     "index": 9,
+     "style": "baseline",
+     "timing": "equal-duration",
+     "accuracy_weight": 0.01,
+     "duration_s": 4.714416526440306,
+     "envelope_cm": 0.8913362130645073,
+     "tracking_cm": 0.3724550362676382,
+     "heading_error_deg": 0.060488155289632924,
+     "ok": true,
+     "converged": true,
+     "reasons": [],
+     "segments": [
+      {
+       "from": 0,
+       "to": 1,
+       "limit_m": 0.02,
+       "envelope_m": 0.0027089439788738024,
+       "drift_m": 0.00021068980937712203,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 1,
+       "to": 2,
+       "limit_m": 0.02,
+       "envelope_m": 0.0050870586279329515,
+       "drift_m": 0.00019144375112677386,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 2,
+       "to": 3,
+       "limit_m": 0.02,
+       "envelope_m": 0.008744737687165481,
+       "drift_m": 0.00022236237772874703,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      }
+     ]
+    },
+    {
+     "index": 10,
+     "style": "baseline",
+     "timing": "per-segment",
+     "accuracy_weight": 0.01,
+     "duration_s": 5.221235002892012,
+     "envelope_cm": 1.019073192249146,
+     "tracking_cm": 1.426627766340971,
+     "heading_error_deg": 0.3252399478976672,
+     "ok": false,
+     "converged": true,
+     "reasons": [
+      "tracking error 1.43 cm > 0.50 cm"
+     ],
+     "segments": [
+      {
+       "from": 0,
+       "to": 1,
+       "limit_m": 0.02,
+       "envelope_m": 0.0026661054490807663,
+       "drift_m": 0.00015078767191192038,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 1,
+       "to": 2,
+       "limit_m": 0.02,
+       "envelope_m": 0.004949908663848568,
+       "drift_m": 0.00020373334178656056,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      },
+      {
+       "from": 2,
+       "to": 3,
+       "limit_m": 0.02,
+       "envelope_m": 0.00983141294219563,
+       "drift_m": 0.0001912794647681008,
+       "violations": 0,
+       "slip_points": 0,
+       "ok": true
+      }
+     ]
+    }
+   ]
+  }
  }
 ]
