@@ -31,7 +31,7 @@ def main():
             break
 
     if not t_vals:
-        print("No LOG lines found. Make sure debug=True is set in follow_trajectory().")
+        print("No LOG lines found. Use ramsete.py with debug=True for tracking logs.")
         return
 
     # Plot X/Y Tracking

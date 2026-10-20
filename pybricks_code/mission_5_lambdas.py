@@ -5,6 +5,7 @@ Runs the optimized path imported from complete_mission.py with lambda functions 
 """
 
 from robot_config import *
+from ramsete import follow_trajectory
 from complete_mission import samples as mission_samples
 from complete_mission import config as mission_config
 

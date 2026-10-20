@@ -1,15 +1,17 @@
 """
 ROBOT CONFIGURATION
 -------------------
-This file defines the physical hardware of the robot and provides helper functions.
-It is the central place to configure motors, sensors, and the drive base.
+This file defines the physical hardware of the robot. It is the central place
+to configure motors, sensors, and the drive base.
 
 Key Concepts:
 - Hub Orientation: The `PrimeHub` must be told which way is UP and FORWARD using Axis 
   parameters so the gyro works correctly if mounted sideways.
 - Motor Reversal: Left motors are usually mounted mirrored, so we reverse them.
-- Async Helpers: `async def` allows functions to be used in `multitask()`.
-- Advanced Transmissions: For absolute encoders, use `reset_angle=False` when defining the motor.
+- DriveBase geometry: `WHEEL_DIAMETER_MM` and `AXLE_TRACK_MM` are also logged by
+  the SysId collector, so keep them here instead of duplicating literals.
+- Controllers are imported by each mission: pathing uses `ramsete_fast`, events
+  use `ramsete`.
 """
 
 from pybricks.hubs import PrimeHub
@@ -18,7 +20,9 @@ from pybricks.parameters import Button, Color, Direction, Port, Side, Stop, Axis
 from pybricks.robotics import DriveBase
 from pybricks.tools import wait, StopWatch, multitask, run_task
 
-from ramsete import follow_trajectory
+# Controllers are imported by the mission that uses them. Keeping them out of
+# this module avoids loading the event-capable reference controller on memory-
+# constrained pathing runs.
 
 # ------------------------------------------------------------------
 # HUB & HARDWARE INITIALIZATION
@@ -50,7 +54,11 @@ colorSensorRight = ColorSensor(Port.A)
 # DriveBase simplifies moving the robot. 
 # Arguments: left motor, right motor, wheel diameter (mm), axle track (distance between wheels in mm)
 # You will need to change these values for your robot!
-drivebase = DriveBase(motorLeft, motorRight, wheel_diameter=56, axle_track=96.5)
+WHEEL_DIAMETER_MM = 56
+AXLE_TRACK_MM = 96.5
+drivebase = DriveBase(motorLeft, motorRight,
+                      wheel_diameter=WHEEL_DIAMETER_MM,
+                      axle_track=AXLE_TRACK_MM)
 
 # Enable the built-in gyro for straight driving and accurate turns
 drivebase.use_gyro(True)

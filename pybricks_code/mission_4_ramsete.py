@@ -5,6 +5,7 @@ Runs the optimized path imported from complex_mission.py
 """
 
 from robot_config import *
+from ramsete_fast import follow_trajectory
 from complex_mission import samples as mission_samples
 from complex_mission import config as mission_config
 
@@ -15,8 +16,9 @@ async def main():
     # initial_h = mission_samples[0]['heading']
     # hub.imu.reset_heading(math.degrees(initial_h))
     
-    # Follow the optimized trajectory with physical constraints
-    await follow_trajectory(drivebase, mission_samples, config=mission_config, debug=True, b=3.0, zeta=0.8)
+    # Pathing uses the lean controller; its defaults are the calibrated source
+    # of truth (b=2.0, zeta=0.7). Do not pass the event controller's gains.
+    await follow_trajectory(drivebase, mission_samples, config=mission_config)
     
     print("Mission Complete!")
 
