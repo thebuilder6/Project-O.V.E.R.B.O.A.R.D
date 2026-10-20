@@ -16,18 +16,31 @@ sys.path.insert(0, str(project_root))
 from tests.test_optimizer import TestTrajectoryOptimizer
 from tests.test_robot_model import TestRobotConfig, TestDifferentialDriveModel
 from tests.test_validator import TestForwardIntegrate, TestAuditConstraints, TestComputeMetrics, TestValidateTrajectory
+from tests.test_sysid_fit import TestSysIdFit
+from tests.test_digital_twin import TestDigitalTwinConfig, TestDigitalTwinValidator
+from tests.test_sysid_compare import TestSysIdCompare
+from tests.test_export_compact import TestCompactExport
 
-# JAX-dependent tests (skip if jax not installed)
+# Regression tests (no JAX required)
+from tests.test_regressions import (
+    TestExportConfig,
+    TestAttemptSelection,
+    TestReachabilityEnvelope,
+    TestBenchmarkValidationConfig,
+    TestExportGate,
+    TestValidatorGates,
+    TestWriteGateIntegration,
+)
+
+# JAX-dependent tests (skip if jax is not installed)
 try:
     from tests.test_jax_heuristics import TestJAXHeuristics
     from tests.test_jax_ramsete import TestJAXRamsete
     from tests.test_refinement_accuracy import TestRefinementAccuracy
-    from tests.test_stomp_variants import TestSTOMPVariants
-    from tests.test_teb_topologies import TestTEBTopologies
     from tests.test_critic_metrics import TestCriticMetrics
     JAX_AVAILABLE = True
 except ImportError as e:
-    print(f"Warning: jax not installed, skipping JAX-dependent tests ({e})")
+    print(f"Warning: JAX-dependent tests skipped ({e})")
     JAX_AVAILABLE = False
 
 
@@ -42,9 +55,14 @@ def run_tests():
         suite.addTests(loader.loadTestsFromTestCase(TestJAXHeuristics))
         suite.addTests(loader.loadTestsFromTestCase(TestJAXRamsete))
         suite.addTests(loader.loadTestsFromTestCase(TestRefinementAccuracy))
-        suite.addTests(loader.loadTestsFromTestCase(TestSTOMPVariants))
-        suite.addTests(loader.loadTestsFromTestCase(TestTEBTopologies))
         suite.addTests(loader.loadTestsFromTestCase(TestCriticMetrics))
+    suite.addTests(loader.loadTestsFromTestCase(TestExportConfig))
+    suite.addTests(loader.loadTestsFromTestCase(TestAttemptSelection))
+    suite.addTests(loader.loadTestsFromTestCase(TestReachabilityEnvelope))
+    suite.addTests(loader.loadTestsFromTestCase(TestBenchmarkValidationConfig))
+    suite.addTests(loader.loadTestsFromTestCase(TestExportGate))
+    suite.addTests(loader.loadTestsFromTestCase(TestValidatorGates))
+    suite.addTests(loader.loadTestsFromTestCase(TestWriteGateIntegration))
     suite.addTests(loader.loadTestsFromTestCase(TestTrajectoryOptimizer))
     suite.addTests(loader.loadTestsFromTestCase(TestRobotConfig))
     suite.addTests(loader.loadTestsFromTestCase(TestDifferentialDriveModel))
@@ -52,6 +70,11 @@ def run_tests():
     suite.addTests(loader.loadTestsFromTestCase(TestAuditConstraints))
     suite.addTests(loader.loadTestsFromTestCase(TestComputeMetrics))
     suite.addTests(loader.loadTestsFromTestCase(TestValidateTrajectory))
+    suite.addTests(loader.loadTestsFromTestCase(TestSysIdFit))
+    suite.addTests(loader.loadTestsFromTestCase(TestDigitalTwinConfig))
+    suite.addTests(loader.loadTestsFromTestCase(TestDigitalTwinValidator))
+    suite.addTests(loader.loadTestsFromTestCase(TestSysIdCompare))
+    suite.addTests(loader.loadTestsFromTestCase(TestCompactExport))
     
     # Run tests
     runner = unittest.TextTestRunner(verbosity=2)
