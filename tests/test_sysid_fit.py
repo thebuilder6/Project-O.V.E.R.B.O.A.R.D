@@ -386,3 +386,208 @@ class TestNoLoadSpeed(unittest.TestCase):
         parsed = parse_session(_session([_straight_run("straight_steps_fwd", 1)]))
         result = fit_session(parsed, wheel_radius_m=0.028)
         self.assertFalse(result["drivetrain"]["calibrated"])
+
+
+def _reject_constant(name):
+    """A bare NaN or Infinity is not JSON, so the file must not carry one."""
+    raise ValueError(f"{name} is not valid JSON")
+
+
+class TestBadRows(unittest.TestCase):
+    """A non-finite cell is a bad cell, not data.
+
+    One NaN in the command column used to turn the whole fit into NaN, and
+    the fit file was written with a bare NaN in it, which is not JSON and
+    fails later, far from the cause.
+    """
+
+    @staticmethod
+    def _session_with_nan():
+        name, run_id, header, rows = _straight_run("straight_steps_fwd", 1)
+        rows[50][1] = float("nan")
+        return _session([(name, run_id, header, rows)])
+
+    def test_the_nan_row_is_dropped_and_counted(self):
+        parsed = parse_session(self._session_with_nan())
+        result = fit_session(parsed, wheel_radius_m=0.028)
+
+        straight = result["actuator"]["straight"]
+        self.assertTrue(straight["calibrated"])
+        self.assertTrue(np.isfinite(straight["gain"]))
+        self.assertAlmostEqual(straight["gain"], 0.95, delta=0.05)
+        self.assertEqual(result["bad_rows"], 1)
+
+    def test_the_written_file_is_valid_json(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            session = os.path.join(tmp, "session.csv")
+            out = os.path.join(tmp, "fit.json")
+            with open(session, "w", encoding="utf-8") as handle:
+                handle.write(self._session_with_nan())
+            buffer = io.StringIO()
+            with contextlib.redirect_stdout(buffer):
+                code = sysid_main([session, "--wheel-radius", "0.028",
+                                   "--out", out])
+            with open(out, "r", encoding="utf-8") as handle:
+                text = handle.read()
+
+        self.assertEqual(code, 0)
+        # A strict reader refuses a bare NaN, so this is the real test.
+        result = json.loads(text, parse_constant=_reject_constant)
+        self.assertTrue(
+            np.isfinite(result["actuator"]["straight"]["gain"]))
+
+    def test_the_summary_says_how_many_rows_were_dropped(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            session = os.path.join(tmp, "session.csv")
+            out = os.path.join(tmp, "fit.json")
+            with open(session, "w", encoding="utf-8") as handle:
+                handle.write(self._session_with_nan())
+            buffer = io.StringIO()
+            with contextlib.redirect_stdout(buffer):
+                code = sysid_main([session, "--wheel-radius", "0.028",
+                                   "--out", out])
+
+        self.assertEqual(code, 0)
+        self.assertIn("1 row", buffer.getvalue())
+
+
+class TestDistanceScale(unittest.TestCase):
+    """The scale the validator plans against has to be one of the estimates.
+
+    The tape and the wall are two estimates of the same number. Pooling them
+    into one median gave a number that was neither, so the fit could not be
+    reproduced from the numbers it reported.
+    """
+
+    @staticmethod
+    def _homing_run(run_id, odometry_mm=1000.0, wall_distance_m=1.05):
+        """A run that drove into a wall: the wall is the reference."""
+        rows = [[0, 60.0, 0, 0, 60.0, 0, 0, 8000, 0, 0],
+                [1000, 60.0, 0, odometry_mm, 0.0, 0, 0, 8000, 0, 0],
+                [16000, 0, 0, odometry_mm, 0.0, 0.3, 0, 8000, 130, 130]]
+        return "\n".join([
+            "TEST_START wall_homing",
+            f"META,run_id,{run_id}",
+            "META,test,wall_homing",
+            "META,repeat,0",
+            "META,poses,0",
+            "DATA",
+            "t_ms,v_cmd_mm_s,w_cmd_deg_s,db_d_mm,db_v_mm_s,db_a_deg,"
+            "db_w_deg_s,batt_mv,l_load_mNm,r_load_mNm",
+        ] + [",".join(str(v) for v in row) for row in rows] + ["TEST_END,3"])
+
+    @staticmethod
+    def _odometry_run(run_id):
+        """A run with a tape-measured pose: the tape says 990 mm."""
+        return "\n".join([
+            "TEST_START odometry_straight",
+            f"META,run_id,{run_id}",
+            "META,test,odometry_straight",
+            "META,repeat,0",
+            "META,poses,1",
+            "DATA",
+            "t_ms,v_cmd_mm_s,w_cmd_deg_s,db_d_mm,db_v_mm_s,db_a_deg,"
+            "db_w_deg_s,batt_mv",
+            "0,100,0,0,0,0,0,8000",
+            "10000,0,0,1000,0,0,0,8000",
+            "TEST_END,2",
+        ])
+
+    def _odometry(self):
+        session = self._homing_run(1) + "\n" + self._odometry_run(2) + "\n"
+        poses = {"2": [{"stop": 0, "x_m": 0.990, "y_m": 0.0,
+                        "heading_deg": 0.0}]}
+        parsed = parse_session(session)
+        return fit_session(parsed, poses=poses, wheel_radius_m=0.028,
+                           wall_distance_m=1.05)["odometry"]
+
+    def test_the_scale_is_the_tape_estimate(self):
+        odometry = self._odometry()
+
+        self.assertAlmostEqual(odometry["distance_scale_tape"], 0.990,
+                               places=6)
+        self.assertAlmostEqual(odometry["distance_scale_homing"], 1.05,
+                               places=6)
+        # The number the validator plans against is the tape's number, not
+        # the average of the two.
+        self.assertAlmostEqual(odometry["distance_scale"],
+                               odometry["distance_scale_tape"], places=9)
+        # The cross-check is still reported.
+        self.assertAlmostEqual(odometry["distance_scale_disagreement"], 0.06,
+                               places=6)
+
+    def test_the_wall_is_used_when_there_is_no_tape(self):
+        session = self._homing_run(1) + "\n"
+        odometry = fit_session(parse_session(session),
+                               wheel_radius_m=0.028,
+                               wall_distance_m=1.05)["odometry"]
+
+        self.assertAlmostEqual(odometry["distance_scale"], 1.05, places=6)
+        self.assertNotIn("distance_scale_tape", odometry)
+
+
+class TestFitWithoutPoses(unittest.TestCase):
+    """The actuator needs no measurement, so it is fitted without poses."""
+
+    def test_the_actuator_is_fitted_without_a_measurement(self):
+        parsed = parse_session(_session([_straight_run("straight_steps_fwd", 1)]))
+        result = fit_session(parsed, poses={}, wheel_radius_m=0.028)
+
+        straight = result["actuator"]["straight"]
+        self.assertTrue(straight["calibrated"])
+        self.assertAlmostEqual(straight["gain"], 0.95, delta=0.03)
+        # The odometry needs a measurement, so it stays at its default.
+        self.assertFalse(result["odometry"]["calibrated"])
+        self.assertFalse(result["slip"]["calibrated"])
+        self.assertAlmostEqual(result["odometry"]["distance_scale"], 1.0,
+                               places=9)
+
+
+class TestIntervalLowerBound(unittest.TestCase):
+    """The interval over two repeats can reach below zero.
+
+    A gain band that is not positive is refused by the loader, so the fit
+    file has to be usable: the raw interval is kept, and the reported one
+    is clamped.
+    """
+
+    def _two_repeat_fit(self):
+        lines = []
+        for repeat in range(2):
+            _name, _run_id, header, rows = _straight_run(
+                "straight_steps_fwd", repeat + 1, gain=0.90 + 0.20 * repeat)
+            lines += [
+                "TEST_START straight_steps_fwd",
+                f"META,run_id,{repeat + 1}",
+                "META,test,straight_steps_fwd",
+                f"META,repeat,{repeat}",
+                "META,poses,0",
+                "DATA",
+                header,
+            ]
+            lines += [",".join(str(v) for v in row) for row in rows]
+            lines.append(f"TEST_END,{len(rows)}")
+        return parse_session("\n".join(lines) + "\n")
+
+    def test_the_reported_interval_has_a_positive_lower_bound(self):
+        result = fit_session(self._two_repeat_fit(), wheel_radius_m=0.028)
+        straight = result["actuator"]["straight"]
+
+        self.assertIsNotNone(straight.get("gain_ci95"))
+        self.assertGreater(straight["gain_ci95"][0], 0.0)
+        # The raw t-interval is kept, so the operator can see what it was.
+        self.assertIsNotNone(straight.get("gain_ci95_raw"))
+        self.assertLess(straight["gain_ci95_raw"][0], 0.0)
+
+    def test_the_fit_file_loads(self):
+        from digital_twin import load_sysid_fit
+
+        result = fit_session(self._two_repeat_fit(), wheel_radius_m=0.028)
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "fit.json")
+            with open(path, "w", encoding="utf-8") as handle:
+                json.dump(result, handle)
+            twin = load_sysid_fit(path)
+
+        self.assertTrue(twin.enabled)
+        self.assertGreater(twin.actuator_gain_range()[0], 0.0)

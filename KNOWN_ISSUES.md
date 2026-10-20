@@ -4,7 +4,7 @@ Last reviewed: 2026-10-19
 
 Scope: whole repository, reviewed as a single-user, offline desktop tool for one FLL robot. This is not a multi-user or server-scale review.
 
-Status: KI-001, KI-002, KI-003, KI-005, KI-006, KI-007, KI-008, KI-009, KI-010, KI-011, KI-012, KI-013, KI-014, KI-015, KI-016, KI-018, KI-019, KI-021, KI-022, KI-023, KI-024, KI-025, KI-026, KI-027, KI-028, KI-029, KI-030, and KI-031 are **fixed in the working tree** (uncommitted). KI-032 is **mitigated**: the test cache is on by default and its rules are in `testcache.py`. All other items are open; KI-017 is partially fixed. KI-020 records the remaining digital-twin and optimization work. The user-facing docs were reconciled with this tree on 2026-10-19; the code remains the authority if they diverge again.
+Status: KI-001, KI-002, KI-003, KI-004, KI-005, KI-006, KI-007, KI-008, KI-009, KI-010, KI-011, KI-012, KI-013, KI-014, KI-015, KI-016, KI-018, KI-019, KI-021, KI-022, KI-023, KI-024, KI-025, KI-026, KI-027, KI-028, KI-029, KI-030, KI-031, and KI-033 are **fixed in the working tree** (uncommitted). KI-032 is **mitigated**: the test cache is on by default and its rules are in `testcache.py`. All other items are open; KI-017 is partially fixed. KI-020 records the remaining digital-twin and optimization work. The user-facing docs were reconciled with this tree on 2026-10-19; the code remains the authority if they diverge again.
 
 How to use this list: refer to an item by its ID, for example “fix KI-003”.
 
@@ -15,7 +15,7 @@ How to use this list: refer to an item by its ID, for example “fix KI-003”.
 | KI-001 | P0 | Solver / output | ~~A failed solve is exported as a successful trajectory~~ (fixed) |
 | KI-002 | P0 | Validation | ~~`--validate` cannot block output or change the exit code~~ (fixed) |
 | KI-003 | P0 | Safety | ~~Immrax ignores upper uncertainty bounds~~ (fixed) |
-| KI-004 | P0 | Multi-Verse | Refinement has no effect on the final trajectory |
+| KI-004 | P0 | Multi-Verse | ~~Refinement has no effect on the final trajectory~~ (fixed; the pipeline is now a seed provider) |
 | KI-005 | P0 | Live view | ~~The visualizer kills whatever owns port 8765~~ (fixed; the live view is gone) |
 | KI-006 | P0 | Install | ~~A fresh install cannot run the default command~~ (fixed) |
 | KI-007 | P1 | Tests | ~~The JAX test suite is silently skipped~~ (fixed) |
@@ -44,6 +44,7 @@ How to use this list: refer to an item by its ID, for example “fix KI-003”.
 | KI-030 | P1 | Studio | ~~The studio told the operator an unchecked trajectory was "approved", and kept the last solve's path on the field~~ (fixed) |
 | KI-031 | P1 | Install | ~~A new user could not install the project: the two requirement files contradicted each other, and the first run died with an ImportError~~ (fixed) |
 | KI-032 | P1 | Tests | A test cache can hide a regression (mitigated: the fingerprint is wide, only a passed test is skipped, and the summary says what was skipped) |
+| KI-033 | P1 | Robot runtime | ~~The host could not find the hub over Bluetooth, while the Pybricks IDE could~~ (fixed) |
 
 ## P0 — fix first
 
@@ -97,19 +98,47 @@ How to use this list: refer to an item by its ID, for example “fix KI-003”.
 
 ### KI-004 — Multi-Verse refinement has no effect
 
-**Status:** Partially fixed in the working tree (uncommitted).
+**Status:** Fixed in the working tree (uncommitted). The pipeline is repaired and re-envisioned: it is no longer a second solver whose result is discarded, but a **seed provider** for the solver that has the right objective. The repair is four changes, and each of them was necessary.
 
-**Files:** `multiverse_optimizer.py` (`_global_solve`, `_probe_refined_guess`), `optimizer.py` (`initial_guess`)
+**Files:** `multiverse_optimizer.py` (`_refine_segments`, `_refine_segment`, `_propagate_timing`, `_refresh_forces`, `_probe_refined_guess`), `jax_optimizer.py` (`local_trajectory_cost`, `generate_candidates_jax`), `path_planning.py` (`ReedsSheppPath.plan`, `plan_with_direction`), `main.py` (`--refine`, `_candidate_specs`, `_build_refined_guess`), `examples/fll_choreo.json` (`multiverse.bootstrap`)
 
-**Problem:** Phase 4 computes a refined `global_traj`, but `_global_solve` builds `new_guess` and never passes it into `TrajectoryOptimizer.solve`; the local variable is unused. `TrajectoryOptimizer.solve` now exposes `guess_style` seeds, but Multi-Verse does not use them or the refined samples. Phase 5 re-solves from its default baseline guess.
+**Problem:** Phase 4 computed a refined `global_traj` that `_global_solve` threw away. The probe mechanism was added (it takes an `initial_guess` array) but the refined guess always lost: on `examples/example_complex_mission.json` it converged to **8.1473 s** against the baseline guess's **6.0677 s**.
 
-**Evidence:** On `examples/example_complex_mission.json`, the default Multi-Verse run and the simple solver both produce 91 samples and the same 6.0677 s final cost; the default Multi-Verse run took 28.26 s wall time. `--workers`, `--no-parallel`, and `enable_parallel` cannot change the result because the refined guess and the thread pool are not used by the final solve.
+**Evidence, and what each defect cost.** The ledger asked for the reason ("find out *why* the refined window is worse"), and the measurement found four separate causes:
 
-**Fix:** `TrajectoryOptimizer.solve` now takes an `initial_guess` array, and the Multi-Verse polish probes the refined trajectory with a bounded cold pass (400 iterations) and keeps it when it converges to a lower cost. The outcome is reported in the run stats as `refine_probe` (`converged`, `cost`, `iterations`, `used`).
+1. **The refinement clobbered the waypoints.** The critic reports two-segment windows, and the refinement optimised the whole window, so the waypoint in its middle was moved. A refined trajectory that does not pass through the waypoints is not a starting point for a problem that pins them.
+2. **The cost measured a different motion than the solver produces.** `local_trajectory_cost` integrated from the left endpoint; IPOPT uses the trapezoidal rule over the interval. A proxy that grades a different trajectory cannot rank two candidates the way the solver would.
+3. **The initial `dt` and the velocities were hard-coded** at 0.1 s and 0.1 m/s, whatever the segment's length or the robot's speed. A segment of 0.2 m and a segment of 2 m were given the same interval.
+4. **The refined timing was thrown away, and the guess was read with the wrong model.** The refinement gave every segment its own interval, but the timestamps were not updated, so `guess_from_samples` rebuilt the intervals from the *old* ones; and the probe solved with the equal-duration model, which keeps only the **first** interval and re-reads every sample against it. The guess's states, computed with the refined intervals, were therefore read against a timing they did not belong to.
 
-**What is left:** The plumbing works, but the current refinement is a worse starting point than the trivial baseline guess: on the example mission the probe converges in 38 iterations to **8.1473 s**, while the default guess reaches **6.0677 s**. The probe therefore never wins, and the refinement still has no effect on the result. The residue is the quality of the JAX refinement, not the connection to the solver.
+**Fix (implemented):**
 
-**Workaround:** Use the simple solver if you want predictable behaviour.
+- **Segment-preserving refinement.** The unit of refinement is a single segment, whose two endpoints are waypoints and are preserved exactly. The critic still reports two-segment windows; each window is split into the segments it covers. Nothing between two waypoints can be clobbered any more, because there is nothing between them.
+- **The collocation matches.** `local_trajectory_cost` now uses the trapezoidal rule, the same one IPOPT enforces.
+- **The physics sets the scale.** For a segment of arc length `L`, the nominal speed is 80 % of the robot's top speed and the interval is `L / (0.8 * v_max)` spread over the window. The candidates start from the segment's own size.
+- **The refined timing is propagated.** The segment's timestamps are rebuilt with the refined interval and everything after it shifts by the same amount, so the later segments keep their own. `guess_from_samples` then builds the correct per-segment array.
+- **The probe reads the guess with the model that reads its intervals**: the per-segment timing model.
+- **The pipeline is reproducible.** The STOMP perturbations were seeded from the clock, so the same mission came out at 4.62 s on one run and 5.50 s on the next. The seed is fixed.
+- **The Reeds-Shepp bootstrap works.** `path_planning.py` read rsplan's `Path` object as a list; the `TypeError` was swallowed and every call returned `None`, so the "Reeds-Shepp bootstrap" fell back to the straight line every time. The shipped config compounded it with `turning_radius: 0.0`, which rsplan cannot plan with at all (0 of 12 example segments). With the API fixed and the radius at the robot's 0.05 m, 12 of 12 segments plan.
+- **The pipeline is re-envisioned as a seed provider.** `main.py --refine` adds the pipeline's refined trajectory to the candidate set, under the per-segment timing model, over the accuracy-weight grid. The pipeline's phases 1 to 4 cost about 2 s; the solver does the magnitudes.
+
+**Measured.** On `examples/example_complex_mission.json` the probe now **wins** against the primary solve: 4.617 s against 6.049 s. With `--refine` the mission goes from **6.068 s to 4.936 s** against the *default* candidate set (two candidates), the trajectory passes the gates (envelope 1.14 cm, tracking 0.45 cm), and the export is written.
+
+**What the seed provider is and is not worth.** Over 30 missions on one tree, the refined family (150 candidates) and the stock seeds (300 candidates) were compared side by side:
+
+| | stock seeds | refined family |
+|---|---:|---:|
+| candidates | 300 | 150 |
+| passing | 69 (23 %) | 29 (19 %) |
+| missions with a passing candidate | **11 of 30** | 9 of 30 |
+| missions only this family passes | - | **0** |
+| missions only the stock seeds pass | **2** | - |
+
+On the nine missions where both have a passing candidate, the refined family is faster on **two** and slower on six. So the refined seed is **not** a better guess than the stock seeds and it **rescues nothing**: it is a *cheaper* way to reach the stock set's speed on some missions (one candidate instead of ten: 4.936 s against the default set's 6.068 s, where the full ten-candidate stock set reaches 4.877 s), not a faster one.
+
+**The next lever is the objective, not the search.** The pipeline's cost is duration plus a jerk term, so it buys speed with tracking accuracy and the 5 mm gate rejects the trade: the refined candidate passes the complex mission only at a small accuracy weight (0.001), and the S-curve and the stops mission fail for it as they fail for everything else.
+
+**Workaround:** None needed. `--refine` is off by default, because it needs JAX, because it costs a refinement and a solve per candidate, and because the measurement says the stock seeds are the better buy. `--multiverse` still runs the whole pipeline as its own solver.
 
 ---
 

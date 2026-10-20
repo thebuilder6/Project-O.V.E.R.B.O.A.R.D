@@ -870,10 +870,48 @@ class TestCollectCommand(unittest.TestCase):
             with open(fit, "r", encoding="utf-8") as handle:
                 result = json.load(handle)
 
-        self.assertTrue(result["odometry"]["calibrated"])
-        # The pose says the robot went 998 mm and the odometry says 1000 mm.
-        self.assertAlmostEqual(result["odometry"]["distance_scale"], 0.998,
-                               places=3)
+        # The poses the hub reported are written out for the operator, but
+        # they are the robot's own odometry, so the fit does not use them.
+        self.assertFalse(result["odometry"]["calibrated"])
+        self.assertFalse(result["slip"]["calibrated"])
+
+    def test_the_hub_poses_are_not_handed_to_the_fit(self):
+        """The robot must not be calibrated against its own odometry."""
+        import sysid_collect
+
+        recorded = {}
+
+        def fake_fit(argv):
+            recorded["argv"] = list(argv)
+            return 0
+
+        with tempfile.TemporaryDirectory() as tmp:
+            session = os.path.join(tmp, "session.csv")
+            poses = os.path.join(tmp, "poses.csv")
+            profile = os.path.join(tmp, "profile.json")
+            fit = os.path.join(tmp, "sysid_fit.json")
+            with open(profile, "w", encoding="utf-8") as handle:
+                json.dump({"wheel_radius_m": 0.028}, handle)
+
+            def fake_deploy(script, connection="ble", name=None, wait=True,
+                           print_output=True, stream_path=None):
+                with open(stream_path, "w", encoding="utf-8") as handle:
+                    handle.write(_session())
+                return _session().splitlines()
+
+            args = ["--session", session, "--poses", poses,
+                    "--profile", profile, "--out", fit]
+            with patch.object(sysid_collect, "deploy", fake_deploy):
+                with patch.object(sysid_collect, "fit_main", fake_fit):
+                    status = sysid_collect.main(args)
+
+            self.assertEqual(status, 0)
+            # The poses are still written out for the operator.
+            self.assertTrue(os.path.exists(poses))
+
+        argv = recorded["argv"]
+        self.assertNotIn("--poses", argv)
+        self.assertNotIn(poses, argv)
 
     def test_a_missing_profile_is_reported(self):
         import sysid_collect
@@ -909,7 +947,9 @@ class TestCollectCommand(unittest.TestCase):
             self.assertTrue(os.path.exists(fit))
             with open(fit, "r", encoding="utf-8") as handle:
                 result = json.load(handle)
-        self.assertTrue(result["odometry"]["calibrated"])
+        # What arrived is fitted, but the robot's own odometry is not a
+        # measurement, so the odometry block stays uncalibrated.
+        self.assertFalse(result["odometry"]["calibrated"])
 
 
 if __name__ == "__main__":

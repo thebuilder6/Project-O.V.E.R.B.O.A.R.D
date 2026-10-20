@@ -10,6 +10,11 @@ profile, so a hub can be driven from a script instead of a browser tab:
     python hub_deploy.py pybricks_code/robot.py
     python hub_deploy.py pybricks_code/robot.py --conn usb --out session.csv
 
+To see what the Bluetooth adapter can see, and which of the devices is a
+Pybricks hub, use the IDE's device picker:
+
+    python hub_deploy.py --list-hubs
+
 The captured console output is written verbatim, so a session logged by
 ``pybricks_code/sysid_digital_twin.py`` can be read by ``sysid_fit.py``
 without hand-editing.
@@ -78,16 +83,13 @@ async def _connect(connection, name):
     if connection == "usb":
         return PybricksHubUSB(_usb_hub())
 
-    from pybricksdev.ble import find_device
+    from hub_ble import find_hub
 
-    try:
-        device = await find_device(name)
-    except asyncio.TimeoutError as exc:
-        raise RuntimeError(
-            "No Pybricks hub found over BLE. Turn it on, close Pybricks Code "
-            "(only one BLE central can connect), and pair it once if Windows "
-            "asks."
-        ) from exc
+    # The hub is found by probing what is nearby, the way the Pybricks IDE
+    # finds it. pybricksdev's own discovery only accepts an advertisement
+    # that already carries the Pybricks service UUID and a local name, which
+    # Windows does not usually report.
+    device = await find_hub(name)
     return PybricksHubBLE(device)
 
 
@@ -96,11 +98,20 @@ async def _deploy_async(script_path, connection, name, wait, print_output,
     from pybricksdev.connections.pybricks import HubDisconnectError
 
     hub = await _connect(connection, name)
+    try:
+        await hub.connect()
+    except Exception as exc:
+        raise RuntimeError(
+            f"The hub would not take the connection: {exc}\n"
+            "Close Pybricks Code (code.pybricks.com) if it is open: it holds "
+            "the hub's single Bluetooth connection, and only one central can "
+            "be connected at a time. If the hub was just found, try again."
+        ) from exc
+
     stream = None
     subscription = None
     if stream_path:
         stream = open(stream_path, "wb")
-    await hub.connect()
     try:
         if stream is not None:
             # Write the console output as it arrives, so a dropped link
@@ -183,6 +194,51 @@ def write_session(lines, path):
     return path
 
 
+def list_hubs(name=None):
+    """Show the Bluetooth devices around, like the IDE's device picker.
+
+    Returns the exit code: 0 when a hub answered, 1 when none did.
+    """
+    from hub_ble import describe_device, device_names, list_hubs as _list
+
+    wanted = (name or "").strip().lower()
+
+    async def run():
+        print("Scanning for Bluetooth devices...")
+        hubs = []
+        async for device, advertisement, is_hub in _list():
+            label = describe_device(device, advertisement)
+            marks = []
+            if is_hub:
+                marks.append("Pybricks hub")
+            names = [text.lower()
+                     for text in device_names(device, advertisement)]
+            if wanted and any(wanted in text for text in names):
+                marks.append("named")
+            suffix = "   <- " + ", ".join(marks) if marks else ""
+            print(f"  {label}{suffix}")
+            if is_hub:
+                hubs.append(label)
+        return hubs
+
+    try:
+        hubs = asyncio.run(run())
+    except ImportError:
+        print(f"error: {HUB_HINT}", file=sys.stderr)
+        return 1
+    except RuntimeError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    if not hubs:
+        print("\nNo Pybricks hub answered. Turn it on, and close Pybricks "
+              "Code: only one Bluetooth central can hold the hub's single "
+              "connection.")
+        return 1
+    print(f"\nFound {len(hubs)} Pybricks hub(s).")
+    return 0
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(
         description="Push a program to a Pybricks hub and capture its output."
@@ -197,6 +253,9 @@ def main(argv=None):
                         help="How to reach the hub (default: ble).")
     parser.add_argument("--name", default=None,
                         help="Bluetooth name or address of the hub.")
+    parser.add_argument("--list-hubs", action="store_true",
+                        help="List the Bluetooth devices around and say which "
+                             "one is a Pybricks hub.")
     parser.add_argument("--out", default=None,
                         help="Write the hub console output to this file as it "
                              "arrives.")
@@ -204,6 +263,9 @@ def main(argv=None):
                         help="Return as soon as the program starts, instead of "
                              "waiting for it to finish.")
     args = parser.parse_args(argv)
+
+    if args.list_hubs:
+        return list_hubs(args.name)
 
     if args.trajectory and args.script:
         parser.error("give a script or --trajectory, not both")

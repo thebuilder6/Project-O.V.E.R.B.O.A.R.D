@@ -341,9 +341,13 @@ def write_python_file(input_traj_file: str, output_file: str, compact: bool = Fa
                 else:
                     sample_items.append(f'    "{key}": {value}')
 
-        # Add event if present
+        # Add event if present.
+        # repr(), not an f-string: an event name is a free-text name the
+        # operator typed, and pasting it into the source unescaped broke
+        # the generated file (a name with a quote in it was a SyntaxError
+        # on the hub) and could inject keys into the sample dict (KI-037).
         if "event" in s:
-            sample_items.append(f'    "event": "{s["event"]}"')
+            sample_items.append('    "event": %s' % repr(str(s["event"])))
 
         sample_str = "    {" + ",\n".join(sample_items) + "\n  }"
 

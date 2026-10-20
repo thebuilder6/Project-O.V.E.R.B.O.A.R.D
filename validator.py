@@ -183,11 +183,10 @@ def audit_constraints(samples: List[Dict[str, Any]], robot_cfg: RobotConfig, app
             })
     
     # Use the smallest declared wheel radius so this matches the Immrax
-    # validator's no-load speed bound.
-    wheel_speed_limit = (
-        robot_cfg.v_max_rad_s
-        * min(robot_cfg.uncertainties["wheel_radius_range"])
-    )
+    # validator's no-load speed bound. The gearing is applied the same way
+    # the force model applies it: the motor turns `gearing` times per wheel
+    # revolution, so the wheel's no-load speed is the motor's divided by it.
+    wheel_speed_limit = robot_cfg.no_load_wheel_speed_worst_case()
     speed_violation = max(0.0, max_wheel_speed - wheel_speed_limit)
 
     audit = {

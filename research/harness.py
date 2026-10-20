@@ -152,6 +152,21 @@ def build_specs(name: str, base_weight: float, samples: int) -> List[Dict[str, A
             add(_spec(f"reeds-shepp/{timing}/a={base_weight:g}", "baseline", timing,
                       base_weight, samples, guess="reeds_shepp"))
 
+    if name in ("refined", "matrix"):
+        # Q12: the repaired Multi-Verse pipeline as a seed provider. The
+        # refined trajectory carries a per-segment interval, so it only
+        # makes sense under the per-segment timing model.
+        add(_spec(f"refined/per-segment/a={base_weight:g}", "baseline",
+                  "per-segment", base_weight, samples, guess="refined"))
+
+    if name == "refined-weights":
+        # The refined seed against the accuracy-weight grid: the weight is
+        # what buys the tracking error (Q6), so the seed has to be judged
+        # with it.
+        for weight in CLI_SWEEP_WEIGHTS:
+            add(_spec(f"refined/per-segment/a={weight:g}", "baseline",
+                      "per-segment", weight, samples, guess="refined"))
+
     if name in ("proportional", "matrix"):
         # Q2: a length-proportional time allocation.
         add(_spec(f"proportional-dt/per-segment/a={base_weight:g}", "rolling",
@@ -381,6 +396,9 @@ def _initial_guess(spec: Dict[str, Any], mission: Dict[str, Any], robot_cfg):
         return seed_lib.proportional_dt_guess(waypoints, samples, robot_cfg, stops)
     if guess_kind == "reeds_shepp":
         return seed_lib.reeds_shepp_guess(waypoints, samples, robot_cfg, stops)
+    if guess_kind == "refined":
+        return seed_lib.refined_guess(waypoints, samples, robot_cfg, stops,
+                                      spec.get("weight", 0.0))
     raise ValueError(f"Unknown guess kind {guess_kind!r}")
 
 

@@ -93,6 +93,20 @@ pip install pybricksdev
 python main.py -w mission.json --push-hub --hub-log session.csv
 ```
 
+Over Bluetooth, the host finds the hub the way the Pybricks IDE finds it: it
+looks at what the adapter can see and probes the devices until one answers as
+a Pybricks hub. Windows does not report the advertised service UUID and the
+local name in the shape a strict filter wants, so the advertisement alone
+does not identify a hub (KI-033). To see what is around before a push:
+
+```bash
+python hub_deploy.py --list-hubs
+```
+
+It prints every device the adapter can see and marks the hub. `--name` (or
+`--hub-name`) still works: the named device is asked first, so two hubs
+nearby are no longer a guess.
+
 `hub_runner.py` follows the trajectory with `ramsete_compact_events.py` and
 prints the result:
 

@@ -1,5 +1,5 @@
-# command: C:\Users\jumpi\AppData\Local\Microsoft\WindowsApps\PythonSoftwareFoundation.Python.3.12_qbz5n2kfra8p0\python.exe main.py -c examples/fll_choreo.json -w examples/example_straight.json -o C:\Users\jumpi\AppData\Local\Temp\tmpa1c7fuvm\example_straight.traj --validate
-# wall_seconds: 6.3
+# command: C:\Users\jumpi\AppData\Local\Microsoft\WindowsApps\PythonSoftwareFoundation.Python.3.12_qbz5n2kfra8p0\python.exe main.py -c examples/fll_choreo.json -w examples/example_straight.json -o C:\Users\jumpi\AppData\Local\Temp\tmplg2_1pmh\example_straight.traj --validate
+# wall_seconds: 6.1
 # exit_code: 0
 
 Using the example robot config (examples/fll_choreo.json). Pass -c/--config with your own robot to plan for your build.
@@ -15,9 +15,9 @@ Candidate 2/2 (guess_style=baseline, per-segment dt)...
   Candidate 1 (baseline, equal-dur):  2.377 s, envelope 0.30 cm (ok)
   Candidate 2 (baseline, per-seg):  2.377 s, envelope 0.30 cm (ok)
   Selected candidate 1.
-##OVERBOARD-VALIDATION## {"selected": 1, "candidates": [{"index": 1, "style": "baseline", "timing": "equal-duration", "accuracy_weight": 0.0, "duration_s": 2.376600380817622, "envelope_cm": 0.3047478396868473, "tracking_cm": 0.34096911549568176, "max_excess_cm": -1.708041890358009, "peak_jerk_m_s3": 8.365717995397096, "heading_error_deg": 0.0, "ok": true, "converged": true, "reasons": [], "segments": [{"from": 0, "to": 1, "limit_m": 0.02, "envelope_m": 0.0029195810964199103, "drift_m": 0.00022708421835531534, "violations": 0, "slip_points": 0, "ok": true}]}, {"index": 2, "style": "baseline", "timing": "per-segment", "accuracy_weight": 0.0, "duration_s": 2.376600380817622, "envelope_cm": 0.3047478396868473, "tracking_cm": 0.34096911549568176, "max_excess_cm": -1.708041890358009, "peak_jerk_m_s3": 8.365717995397096, "heading_error_deg": 0.0, "ok": true, "converged": true, "reasons": [], "segments": [{"from": 0, "to": 1, "limit_m": 0.02, "envelope_m": 0.0029195810964199103, "drift_m": 0.00022708421835531534, "violations": 0, "slip_points": 0, "ok": true}]}]}
+##OVERBOARD-VALIDATION## {"selected": 1, "candidates": [{"index": 1, "style": "baseline", "guess": "baseline", "timing": "equal-duration", "accuracy_weight": 0.0, "duration_s": 2.376600380817622, "envelope_cm": 0.3047478396868473, "tracking_cm": 0.34096911549568176, "max_excess_cm": -1.708041890358009, "peak_jerk_m_s3": 8.365717995397096, "heading_error_deg": 0.0, "ok": true, "converged": true, "reasons": [], "segments": [{"from": 0, "to": 1, "limit_m": 0.02, "envelope_m": 0.0029195810964199103, "drift_m": 0.00022708421835531534, "violations": 0, "slip_points": 0, "ok": true}]}, {"index": 2, "style": "baseline", "guess": "baseline", "timing": "per-segment", "accuracy_weight": 0.0, "duration_s": 2.376600380817622, "envelope_cm": 0.3047478396868473, "tracking_cm": 0.34096911549568176, "max_excess_cm": -1.708041890358009, "peak_jerk_m_s3": 8.365717995397096, "heading_error_deg": 0.0, "ok": true, "converged": true, "reasons": [], "segments": [{"from": 0, "to": 1, "limit_m": 0.02, "envelope_m": 0.0029195810964199103, "drift_m": 0.00022708421835531534, "violations": 0, "slip_points": 0, "ok": true}]}]}
 
-=== Validation Report: C:\Users\jumpi\AppData\Local\Temp\tmpa1c7fuvm\example_straight.traj ===
+=== Validation Report: C:\Users\jumpi\AppData\Local\Temp\tmplg2_1pmh\example_straight.traj ===
 Samples: 11 | Config: examples/fll_choreo.json
 Safety margins: torque_headroom=0.85, speed_headroom=0.90
 
@@ -60,6 +60,6 @@ Safety margins: torque_headroom=0.85, speed_headroom=0.90
 
 PASS — trajectory is safe to run.
 
-Trajectory written to C:\Users\jumpi\AppData\Local\Temp\tmpa1c7fuvm\example_straight.traj
+Trajectory written to C:\Users\jumpi\AppData\Local\Temp\tmplg2_1pmh\example_straight.traj
   duration 2.377 s | path 1.000 m | peak wheel speed 0.47 m/s | 11 samples
   validation: passed (envelope 0.30 cm)

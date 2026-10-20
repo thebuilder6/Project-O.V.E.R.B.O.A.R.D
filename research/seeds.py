@@ -397,3 +397,35 @@ def reeds_shepp_guess(waypoints: Sequence[Sequence[float]],
         np.full(num_segments, FLAT_DT, dtype=float),
         states_array.flatten(),
     ])
+
+
+def refined_guess(waypoints: Sequence[Sequence[float]],
+                  num_samples_per_segment: int, robot_cfg,
+                  stop_indices: Optional[Sequence[int]] = None,
+                  accuracy_weight: float = 0.0) -> np.ndarray:
+    """The Q12 guess: the repaired Multi-Verse pipeline's own output.
+
+    Phases 1 to 4 of the pipeline - the Reeds-Shepp bootstrap, the
+    kinematic profile, the critic and the segment-preserving refinement -
+    produce a trajectory that passes through every waypoint, carries a
+    per-segment interval for every segment, and is kinematically valid.
+    That trajectory is the guess; the real solver does the magnitudes.
+
+    This is the re-envisioning of the pipeline: it stops being a solver and
+    becomes a *seed provider* for the solver that has the right objective.
+    """
+    from multiverse_optimizer import MasterTrajectoryOptimizer
+
+    num_segments = len(waypoints) - 1
+    pipeline = MasterTrajectoryOptimizer(robot_cfg, enable_parallel=False,
+                                         verbose=False)
+    geometry = pipeline.bootstrapper.generate_baseline(list(waypoints),
+                                                       num_samples_per_segment)
+    trajectory = pipeline._profile_kinematics(
+        geometry, num_samples_per_segment, list(stop_indices or []), {}, True)
+    bad_windows = pipeline.critic.evaluate(trajectory, num_samples_per_segment)
+    pipeline._refine_segments(trajectory, num_samples_per_segment, bad_windows,
+                              accuracy_weight, True)
+    optimizer = TrajectoryOptimizer(robot_cfg)
+    return optimizer.guess_from_samples(trajectory, num_segments,
+                                        num_samples_per_segment)

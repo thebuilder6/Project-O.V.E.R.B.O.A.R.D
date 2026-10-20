@@ -115,7 +115,7 @@ class TestPushHubCli(unittest.TestCase):
         calls = {}
 
         def fake_deploy(script, connection="ble", name=None, wait=True,
-                       print_output=True):
+                       print_output=True, stream_path=None):
             calls["script"] = script
             calls["connection"] = connection
             return ["POSE,0.1000,0.0000,0.00"]
@@ -134,7 +134,7 @@ class TestPushHubCli(unittest.TestCase):
 
     def test_the_console_output_is_written_to_the_log(self):
         def fake_deploy(script, connection="ble", name=None, wait=True,
-                       print_output=True):
+                       print_output=True, stream_path=None):
             return ["POSE,0.1000,0.0000,0.00"]
 
         with tempfile.TemporaryDirectory() as tmp:
@@ -146,7 +146,7 @@ class TestPushHubCli(unittest.TestCase):
 
     def test_missing_tooling_is_reported_clearly(self):
         def fake_deploy(script, connection="ble", name=None, wait=True,
-                       print_output=True):
+                       print_output=True, stream_path=None):
             raise RuntimeError(
                 "Install the hub tooling with: pip install pybricksdev")
 

@@ -86,6 +86,8 @@ from tests.test_hub_ble import (
     TestFindHub,
     TestScan,
     TestHubDeployUsesTheProbe,
+    TestTheConnectionFailure,
+    TestTheStudioHeadline,
     TestListHubs,
 )
 from tests.test_sysid_collect import (
@@ -232,6 +234,8 @@ def test_classes():
         TestFindHub,
         TestScan,
         TestHubDeployUsesTheProbe,
+        TestTheConnectionFailure,
+        TestTheStudioHeadline,
         TestListHubs,
         TestCollectorMetadata,
         TestSessionPoses,

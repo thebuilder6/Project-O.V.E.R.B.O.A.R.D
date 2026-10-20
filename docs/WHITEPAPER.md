@@ -6,7 +6,7 @@
 
 This document describes the current implementation in the working tree. It replaces the earlier version, which mixed implemented code with aspirational designs and unreproducible performance numbers. The code, `KNOWN_ISSUES.md`, and the test suite are the authority if this document drifts again.
 
-> **Scope and safety status:** this is an offline desktop tool for one FLL differential-drive robot. The simple optimizer and safety gate work. The validation model is not yet a full digital twin, some representative curved paths still fail the Immrax gate (KI-020), and Multi-Verse refinement does not change the final trajectory (KI-004). Only output that has passed `--validate` should be treated as safety-checked.
+> **Scope and safety status:** this is an offline desktop tool for one FLL differential-drive robot. The simple optimizer and safety gate work. The validation model is not yet a full digital twin, some representative curved paths still fail the Immrax gate (KI-020), and the Multi-Verse refinement is a **seed provider** rather than a second solver (KI-004). Only output that has passed `--validate` should be treated as safety-checked.
 
 > **Companion document:** [`docs/HEURISTICS_AND_VERIFICATION.md`](HEURISTICS_AND_VERIFICATION.md) documents every path-planning heuristic in the tree, the full verification chain and what each layer does and does not prove, a ledger of the strategies that did not work, and a prioritised research agenda. Section 5 below summarises the validation chain; the companion document is the reference for the gate thresholds, the seed heuristics and the failed approaches.
 
@@ -26,7 +26,7 @@ The current tree contains uncommitted fixes for several safety and correctness i
 
 What is still incomplete:
 
-- Multi-Verse refinement is discarded by the final polish (KI-004).
+- The Multi-Verse pipeline is a **seed provider**, not a second solver: `main.py --refine` puts its refined trajectory into the candidate set, and on the complex mission that is 4.936 s against the stock set's 6.068 s (KI-004). Its own cost function is still duration plus a jerk term, so the gain is bought with tracking accuracy and the gate rejects the trade at the higher weights.
 - The validator is kinematic and has no motor, DriveBase, odometry, or slip dynamics (KI-020).
 - Under the narrowed test ranges in `examples/fll_choreo.json`, the straight and complex-mission examples pass; the S-curve, stops, and events examples still fail.
 - Convergence flags and some export edge cases remain open (KI-017). The random benchmarks work (KI-015).
@@ -520,7 +520,7 @@ These are model predictions. There is no hardware tracking log in the repository
 
 ### 10.4 Multi-Verse comparison
 
-The pipeline benchmark in §7.6 produced identical final costs for simple and Multi-Verse, with 0.00 % improvement. This is the current measured state, not a claim that the pipeline architecture is useless; the refinement is simply not connected to the final solve.
+The pipeline benchmark in §7.6 produced identical final costs for simple and Multi-Verse, with 0.00 % improvement — that was the state before the repair, and it is why KI-004 was opened. The pipeline has since been repaired and re-envisioned as a **seed provider**: `main.py --refine` adds its refined trajectory to the candidate set, and the probe now wins the polished solve (4.617 s against 6.049 s on the complex mission). As a seed it is a cheaper way to reach the stock set's speed rather than a better one: 4.936 s where the default two-candidate set gives 6.068 s, and the full ten-candidate stock set gives 4.877 s. Measured over 30 missions it rescues nothing, so it stays opt-in.
 
 ---
 

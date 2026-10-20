@@ -8,6 +8,8 @@ Four configurations per mission:
   seeds                 the default set plus the other initial-guess seeds
                         (--candidates 5), so the multi-start is measured at
                         all: the default set never leaves the baseline seed
+  refine                the default set plus the Multi-Verse pipeline's
+                        refined trajectory as a candidate (--refine)
   sweep                  the default set plus the timing x accuracy-weight grid
   sweep-self-consistent  the same, with the self-consistent collocation (KI-026)
 
@@ -40,6 +42,7 @@ MISSIONS = [
 MODES = {
     "default": [],
     "seeds": ["--candidates", "5"],
+    "refine": ["--refine"],
     "sweep": ["--sweep"],
     "sweep-self-consistent": ["--sweep", "--self-consistent"],
 }
@@ -81,15 +84,41 @@ def run(mission, mode, extra):
         }
 
 
+def tree_digests():
+    """The fingerprint of the files the numbers depend on.
+
+    It is recorded with the results, so the evidence says which tree it
+    describes without anybody having to copy a list by hand.
+    """
+    import hashlib
+    files = [
+        "optimizer.py", "immrax_validator.py", "validator.py",
+        "robot_model.py", "main.py",
+        "pybricks_code/ramsete_fast.py", "pybricks_code/ramsete.py",
+        "pybricks_code/ramsete_compact.py",
+        "pybricks_code/ramsete_compact_events.py",
+    ]
+    digests = {}
+    for name in files:
+        path = os.path.join(REPO, name)
+        try:
+            with open(path, "rb") as handle:
+                digests[name] = hashlib.md5(handle.read()).hexdigest().upper()
+        except OSError:
+            digests[name] = "missing"
+    return digests
+
+
 def main():
     results = []
+    digests = tree_digests()
     for mission in MISSIONS:
         for mode, extra in MODES.items():
             print(f"running {mission} / {mode} ...", flush=True)
             results.append(run(mission, mode, extra))
     path = os.path.join(OUT, "matrix_results.json")
     with open(path, "w", encoding="utf-8", newline="\n") as handle:
-        json.dump(results, handle, indent=1)
+        json.dump({"tree": digests, "results": results}, handle, indent=1)
         handle.write("\n")
     print("wrote", path)
     return 0

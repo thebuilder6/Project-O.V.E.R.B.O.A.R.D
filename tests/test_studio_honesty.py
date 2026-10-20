@@ -124,6 +124,161 @@ class TestAFailedSolveLeavesNoPath(unittest.TestCase):
         self.assertIn("clearTrajectory()", body)
 
 
+class TestANewSolveClearsTheLastVerdict(unittest.TestCase):
+    """A new run must not be read through the last run's verdict.
+
+    A solve without validation prints no `##OVERBOARD-VALIDATION##` line,
+    so nothing took the old report off the screen: the old candidate
+    chips, the old segment table, the old "the robot tracked the path to
+    within X cm" note and the old red segment on the field all stayed,
+    while the header said "not validated".
+    """
+
+    def setUp(self):
+        self.source = _read(VIZ / "studio.js")
+
+    def _function(self, name):
+        start = self.source.index(f"function {name}(")
+        end = self.source.find("\nfunction ", start + 1)
+        return self.source[start:end if end > 0 else len(self.source)]
+
+    def test_the_solve_clears_the_verdict_before_it_starts(self):
+        body = self._function("solve")
+        self.assertIn("renderValidationReport(null)", body)
+
+    def test_the_report_owns_the_verdict(self):
+        """One place owns it: a report draws it, no report takes it away."""
+        body = self._function("renderValidationReport")
+        self.assertIn("state.validationReport = report || null", body)
+        self.assertIn("validationReport: null", self.source)
+
+    def test_a_report_without_candidates_clears_the_table(self):
+        body = self._function("renderValidationReport")
+        empty = body.index("if (!report")
+        for element in ("el('validation-table')", "el('validation-candidates')",
+                        "el('validation-note')", "el('validation-explainer')"):
+            self.assertIn(element, body[empty:])
+
+    def test_the_report_without_candidates_hides_the_box(self):
+        body = self._function("renderValidationReport")
+        empty = body.index("if (!report")
+        self.assertIn("box.hidden = true", body[empty:])
+
+    def test_the_failing_segments_are_a_set_and_the_worst_is_a_number(self):
+        self.assertIn("failingSegments: new Set()", self.source)
+        self.assertIn("worstSegment: -1", self.source)
+
+    def test_the_field_reads_the_failing_segments_fresh(self):
+        body = self._function("drawNow")
+        self.assertIn("state.failingSegments.has(i)", body)
+        self.assertIn("state.worstSegment === i", body)
+
+    def test_a_cleared_verdict_takes_the_red_segments_with_it(self):
+        body = self._function("renderValidationReport")
+        empty = body.index("if (!report")
+        self.assertIn("state.failingSegments = new Set()", body[empty:])
+        self.assertIn("state.worstSegment = -1", body[empty:])
+        self.assertIn("draw()", body[empty:])
+
+
+class TestThePushNeedsAMissionThatMatches(unittest.TestCase):
+    """A trajectory that does not match the mission on screen is not pushed.
+
+    The robot would drive the old path, and the studio would be telling
+    the operator that the path on the field is the answer to the mission
+    in front of them.
+    """
+
+    def setUp(self):
+        self.source = _read(VIZ / "studio.js")
+
+    def _function(self, name):
+        start = self.source.index(f"function {name}(")
+        end = self.source.find("\nfunction ", start + 1)
+        return self.source[start:end if end > 0 else len(self.source)]
+
+    def test_the_readiness_looks_at_the_mission(self):
+        body = self._function("updatePushButton")
+        self.assertIn("state.dirty", body)
+        self.assertIn("!state.dirty", body)
+
+    def test_the_status_says_the_mission_changed(self):
+        body = self._function("updatePushButton")
+        said = " ".join(re.findall(r"status\.textContent = '([^']*)'", body))
+        self.assertIn("changed since this solve", said)
+
+    def test_the_other_wording_is_kept(self):
+        body = self._function("updatePushButton")
+        said = " ".join(re.findall(r"status\.textContent = '([^']*)'", body))
+        self.assertIn("not been validated", said)
+        self.assertIn("Solve a mission first.", said)
+
+    def test_the_push_itself_refuses_a_changed_mission(self):
+        body = self._function("pushToHub")
+        self.assertIn("state.dirty", body)
+
+    def test_a_completed_solve_clears_the_change(self):
+        """The trajectory is the answer to the mission on the screen, so the
+        mission has not moved on since the solve."""
+        body = self._function("pollJob")
+        self.assertIn("state.dirty = false", body)
+        self.assertIn("missionFingerprint()", body)
+
+    def test_the_solve_remembers_the_mission_it_solves(self):
+        body = self._function("solve")
+        self.assertIn("state.solvingFingerprint = missionFingerprint()", body)
+
+    def test_every_edit_marks_the_mission_as_changed(self):
+        """The button has to follow the edit, not the next solve."""
+        self.assertIn("function markMissionChanged()", self.source)
+        body = self._function("markMissionChanged")
+        self.assertIn("state.dirty = true", body)
+        self.assertIn("updatePushButton()", body)
+
+
+class TestAReloadAttachesToTheRunningSolve(unittest.TestCase):
+    """A reload in the middle of a solve must attach to that solve.
+
+    The server refuses a second solve, so a studio that did not ask came
+    back with "a solve is already running" on every Solve press, and the
+    Cancel button had no job to cancel.
+    """
+
+    def setUp(self):
+        self.source = _read(VIZ / "studio.js")
+
+    def _function(self, name):
+        start = self.source.index(f"function {name}(")
+        end = self.source.find("\nfunction ", start + 1)
+        return self.source[start:end if end > 0 else len(self.source)]
+
+    def test_the_running_job_is_asked_for_outside_the_auto_solve_branch(self):
+        body = self._function("init")
+        ask = body.index("api('/api/jobs/current')")
+        branch = body.rindex("initial.auto_solve")
+        self.assertLess(ask, branch,
+                        "The studio only asks for the running job under --live.")
+
+    def test_the_ask_comes_before_the_studio_starts_a_solve(self):
+        body = self._function("init")
+        self.assertLess(body.index("api('/api/jobs/current')"), body.rindex("solve()"))
+
+    def test_a_running_job_is_adopted(self):
+        body = self._function("init")
+        ask = body.index("api('/api/jobs/current')")
+        branch = body.rindex("initial.auto_solve")
+        adopted = body[ask:branch]
+        self.assertIn("state.jobId = running.id", adopted)
+        self.assertIn("setBusy(true)", adopted)
+        self.assertIn("pollJob()", adopted)
+
+    def test_the_trajectory_is_only_remembered_with_a_trajectory(self):
+        body = self._function("pollJob")
+        ok = body.index("job.status === 'ok'")
+        self.assertIn("state.solveJobId = state.jobId", body[ok:])
+        self.assertIn("state.solveHasTrajectory", body[ok:])
+
+
 class TestASolveThatNeverStartsClearsTheVerdict(unittest.TestCase):
     """The header must not keep the last solve's answer."""
 

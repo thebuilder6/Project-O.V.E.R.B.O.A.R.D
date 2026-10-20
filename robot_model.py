@@ -164,11 +164,33 @@ class RobotConfig:
         return force
 
     def max_linear_speed(self, apply_headroom: bool = True) -> float:
-        """No-load linear speed of the wheel (m/s)."""
-        speed = self.v_max_rad_s * self.wheel_radius
+        """No-load linear speed of the wheel (m/s).
+
+        The motor's no-load speed is at the motor, and the motor turns
+        ``gearing`` times per wheel revolution, so the wheel's no-load
+        speed is that speed divided by the gearing. The force model in
+        this file already reads it that way: the motor's speed for a wheel
+        speed is ``(v / r) * gearing``, compared with ``v_max_rad_s``.
+        Leaving the gearing out made the optimizer's wheel-speed bound and
+        the CPU audit's speed limit larger than the motor's real top
+        speed for a geared robot, so every plan for one was guaranteed to
+        fail the motor gate (KI-034).
+        """
+        speed = self.v_max_rad_s * self.wheel_radius / max(self.gearing, 1e-9)
         if apply_headroom:
             speed *= self.speed_headroom
         return speed
+
+    def no_load_wheel_speed_worst_case(self) -> float:
+        """The wheel speed at which the motor makes no torque (m/s).
+
+        The smallest declared wheel radius is the one that reaches the
+        no-load speed first, so it is the limit the validator checks. It
+        is the same number as :meth:`max_linear_speed` without the
+        headroom, and with the gearing applied the same way.
+        """
+        radius = min(self.uncertainties["wheel_radius_range"])
+        return self.v_max_rad_s * radius / max(self.gearing, 1e-9)
 
     def get_max_force_symbolic(self, v_wheel: ca.MX, apply_headroom: bool = True) -> ca.MX:
         """

@@ -358,7 +358,7 @@ independent axes**, which the agenda's candidate set treats them as.
 
 ---
 
-## 5. The Multi-Verse pipeline reproduces the simple solver and costs 3-15x the time (Q12)
+## 5. The Multi-Verse pipeline reproduced the simple solver and cost 3-15x the time (Q12) — before it was repaired
 
 The Multi-Verse path was run on 12 missions and compared with the simple
 solver's baseline on the same missions and the same tree:
@@ -370,16 +370,34 @@ solver's baseline on the same missions and the same tree:
 | passing | simple 3/12, Multi-Verse 4/12 (the extra one is m000) |
 | wall time per solve | 2.5-28 s against 0.07-30 s; typically **3-15x** the simple solve |
 
-The reason is KI-004: the pipeline's phase 5 re-solves from the default
-baseline guess, and the JAX-refined probe never wins. The one mission where
-it differs is the one where the probe did win.
+At the time, the reason was KI-004: the pipeline's phase 5 re-solved from the
+default baseline guess, and the JAX-refined probe never won. The one mission
+where it differed was the one where the probe did win.
 
-**Answer to Q12:** the pipeline is dead weight, confirmed at scale rather than
-on one example mission. It reproduces the trivial answer, spends 3-15x the
-wall time to do it, and won exactly once in twelve. The evidence-backed
-decision is to delete it or to repurpose it as a topology sampler for a path
-family that does not exist yet (Q1 says such a family is not a speed lever
-either, so that hope is weak).
+**That measurement is the record of why the pipeline was worth repairing, and
+the verdict it produced has since been overtaken.** The pipeline was not
+deleted; it was **repaired** (KI-004): the refinement no longer moves the
+waypoints, the JAX cost uses IPOPT's trapezoidal rule, the intervals follow
+the segment's own length, the refined timing is propagated into the
+timestamps, the probe reads the guess with the per-segment model, and the
+Reeds-Shepp bootstrap works (its rsplan API was broken, so the bootstrap had
+never run). With those fixed the probe **wins** on the complex mission —
+4.617 s against 6.049 s — and `main.py --refine` puts the refined trajectory
+into the candidate set: 6.068 s becomes **4.936 s** there, and the trajectory
+passes the gates (envelope 1.14 cm, tracking 0.45 cm).
+
+**Answer to Q12 (updated): the pipeline is a seed provider, not a second
+solver.** The measurement above stands — a seed provider that reproduces the
+trivial answer at 3-15x the wall time is exactly what must not happen — but
+"delete it or stop funding it" is superseded. What the pipeline is for now is
+the topology sampling (forward / reverse / point-turn) that nothing else in
+the tree covers. On the complex mission the refined seed gives **4.936 s**
+where the default two-candidate set gives 6.068 s — but the full ten-candidate
+stock set gives 4.877 s there, so the refined seed is a **cheaper way to reach
+the stock set's speed, not a better one**, and over 30 missions it rescues
+nothing. It stays opt-in (`--refine`). The open part is the objective: the
+pipeline's cost is duration plus a jerk term, so it buys speed with tracking
+accuracy, and the 5 mm gate rejects the trade at the higher weights.
 
 ---
 
@@ -470,7 +488,7 @@ KI-026 before touching the candidate set.
 | Q9 | what would make the validator a digital twin? | **Not answerable without hardware.** What *is* answerable: the tracking error is a discretisation artefact (RQ-A), the declared uncertainty does not move it at all (section 6), and the plant still assumes instant tracking, so 8 % of passing plans exceed the hub's acceleration limit | F3, F10, section 6 |
 | Q10 | is "smallest envelope" the right selection rule? | **It does not matter**: five rules pick the same trajectory on every mission | F6 |
 | Q11 | should the executor be part of the planner? | **Partly answerable now**: 7 % of candidates, and 8 % of the passing ones, demand more acceleration than the DriveBase delivers. The gate cannot see it | F10 |
-| Q12 | what should the Multi-Verse path become? | **Delete it or stop funding it.** It reproduces the simple solver on 11 of 12 missions and costs 3-15x the wall time | section 5 |
+| Q12 | what should the Multi-Verse path become? | **Repaired and kept, as a seed provider** (KI-004). `main.py --refine` puts the refined trajectory into the candidate set: 4.936 s against the default set's 6.068 s on the complex mission — but the full ten-candidate stock set gives 4.877 s there, and over 30 missions the refined seed rescues nothing. Cheaper, not better; it stays opt-in | section 5 |
 
 ---
 

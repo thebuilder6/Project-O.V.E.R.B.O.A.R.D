@@ -181,6 +181,58 @@ class TestDigitalTwinConfig(unittest.TestCase):
                 }},
             })
 
+    def test_a_negative_interval_falls_back_to_the_observed_range(self):
+        """The t-interval over two repeats is wider than the gain.
+
+        Its lower bound can be negative, and a gain band that is not
+        positive is refused, so the whole fit would be unusable. The
+        observed range is the band the validator can plan against.
+        """
+        fit = {
+            "actuator": {"straight": {
+                "calibrated": True,
+                "gain": 1.0,
+                "gain_min": 0.90,
+                "gain_max": 1.10,
+                "gain_ci95": [-0.2706, 2.2706],
+                "tau_s": 0.08,
+                "delay_s": 0.02,
+                "n_steps": 2,
+            }},
+        }
+        twin = DigitalTwinConfig.from_dict(fit)
+
+        self.assertTrue(twin.enabled)
+        self.assertEqual(twin.actuator_gain_range(), (0.90, 1.10))
+
+    def test_a_fit_file_with_a_negative_interval_loads(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "fit.json")
+            with open(path, "w", encoding="utf-8") as handle:
+                json.dump({
+                    "actuator": {"straight": {
+                        "calibrated": True, "gain": 1.0,
+                        "gain_min": 0.90, "gain_max": 1.10,
+                        "gain_ci95": [-0.2706, 2.2706],
+                    }},
+                }, handle)
+            twin = load_sysid_fit(path)
+
+        self.assertEqual(twin.actuator_gain_range(), (0.90, 1.10))
+
+    def test_a_negative_time_constant_is_not_measured(self):
+        """A negative time constant is not a measurement, so it is dropped."""
+        twin = DigitalTwinConfig.from_dict({
+            "actuator": {"straight": {
+                "calibrated": True, "gain": 0.95,
+                "gain_min": 0.93, "gain_max": 0.97,
+                "tau_s": -0.01, "delay_s": -0.02,
+            }},
+        })
+
+        self.assertIsNone(twin.actuator_straight.tau_s)
+        self.assertIsNone(twin.actuator_straight.delay_s)
+
 
 @unittest.skipUnless(HAS_IMMRAX, "immrax not installed")
 class TestDigitalTwinValidator(unittest.TestCase):

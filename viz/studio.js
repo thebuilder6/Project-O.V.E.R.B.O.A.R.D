@@ -22,13 +22,30 @@ const state = {
     collectPollTimer: null,
     health: null,
     presets: {},
+    /* The mission on screen has moved on since the last solve: the
+       trajectory that is on the field, if there is one, is not the answer
+       to the mission in front of the operator any more. Every edit sets
+       it, and a completed solve clears it when it solved the mission that
+       is on the screen. */
     dirty: false,
     savedName: '',
+    /* What is on disk, so the studio can say whether the mission on the
+       screen is still the one that was saved. */
+    savedFingerprint: null,
+    /* The fingerprint of the mission being solved and of the one that was
+       solved. Two moments with the same fingerprint are the same mission,
+       so a trajectory can be checked against the screen. */
+    solvingFingerprint: null,
     configEdited: false,
     jobWallS: null,
+    /* The segments the validator found failing, and the one it found
+       worst. A Set and a number, so the field can draw them. */
     failingSegments: new Set(),
     worstSegment: -1,
     reportCandidate: null,
+    /* The verdict of the last run. Null means there is none: a solve
+       without validation has nothing to show. */
+    validationReport: null,
     // One retry budget per poll loop: they used to share one, so a solve
     // that had used its three retries left the push with none.
     pollRetries: 0,
@@ -293,6 +310,14 @@ function blankWaypoint(x = 0, y = 0, heading = 0) {
     return { x, y, heading, stop: false, event: '', precision_mode: false, error_threshold: null };
 }
 
+/* The mission on screen changed. The trajectory that is on the field, if
+   there is one, is not the answer to it any more, so the push button has
+   to follow. */
+function markMissionChanged() {
+    state.dirty = true;
+    updatePushButton();
+}
+
 function setWaypoints(points) {
     state.waypoints = points.map((point) => {
         const heading = (point.heading === null || point.heading === undefined)
@@ -309,8 +334,11 @@ function setWaypoints(points) {
         };
     });
     state.selected = state.waypoints.length ? 0 : -1;
-    state.dirty = false;
+    /* Another mission is on the screen now, so the trajectory that is on
+       the field, if there is one, answers a different mission. */
+    markMissionChanged();
     state.savedName = '';
+    state.savedFingerprint = null;
     renderAll();
     pushHistory();
 }
@@ -333,6 +361,23 @@ function waypointToJson(point) {
 function currentWaypoint() {
     if (state.selected < 0 || state.selected >= state.waypoints.length) return null;
     return state.waypoints[state.selected];
+}
+
+/* What the studio is showing, as one string. Two moments with the same
+   fingerprint are the same thing, so a trajectory can be checked against
+   the screen. The robot is in it, because the trajectory depends on it;
+   the mission's name is not, because a name does not change the path.
+   Without the robot it is the mission file's own content, which is what
+   the saved state is compared against. */
+function missionFingerprint(withRobot = true) {
+    const parts = { waypoints: state.waypoints.map(waypointToJson) };
+    if (withRobot) {
+        const robot = robotFields();
+        const fields = {};
+        Object.keys(robot).sort().forEach((key) => { fields[key] = robot[key]; });
+        parts.robot = fields;
+    }
+    return JSON.stringify(parts);
 }
 
 /* --------------------------------------------------------- history */
@@ -373,7 +418,7 @@ function applySnapshot(snap) {
         renderRobotEditor();
         renderRobotChecks();
     }
-    state.dirty = true;
+    markMissionChanged();
     renderAll();
     draw();
     scheduleSessionSave();
@@ -606,13 +651,28 @@ function describeCandidates(report, winner) {
     return parts.join('. ');
 }
 
+/* The verdict of the last run. This is the one place that owns it: a report
+   draws it, and no report takes it away again. A solve without validation
+   has no verdict, so the screen must not keep the one before it. */
 function renderValidationReport(report) {
     state.validationReport = report || null;
     const box = el('validation-report');
     if (!report || !report.candidates || !report.candidates.length) {
+        /* No verdict: everything the last one left on the screen goes, so
+           a new run cannot be read through the old one. */
         box.hidden = true;
+        el('validation-candidates').innerHTML = '';
+        el('validation-table').innerHTML = '';
+        el('validation-explainer').textContent = '';
+        el('validation-note').textContent = '';
+        el('fix-row').innerHTML = '';
+        el('fix-row').hidden = true;
+        state.reportCandidate = null;
         state.failingSegments = new Set();
         state.worstSegment = -1;
+        /* The red segments on the field are the same verdict, so they go
+           with it. */
+        draw();
         return;
     }
     box.hidden = false;
@@ -1092,6 +1152,10 @@ async function pushToHub() {
             + 'to the robot.', true);
         return;
     }
+    if (state.dirty) {
+        toast('The mission changed since this solve - solve again before pushing it.', true);
+        return;
+    }
     setStatus(`Pushing to the hub over ${state.hubConn.toUpperCase()} - the robot is driving`);
     el('push-status').textContent = 'Pushing. The robot is driving.';
     el('btn-push').disabled = true;
@@ -1155,11 +1219,18 @@ function updatePushButton() {
     /* Only a checked trajectory goes to the robot. A solve that was never
        validated has no verdict, so it is not an approved one, and the
        button says so instead of calling it approved. */
-    const ready = Boolean(state.solveJobId && state.solveHasTrajectory);
+    const solved = Boolean(state.solveJobId && state.solveHasTrajectory);
     const checked = state.solveValidated;
+    /* The trajectory on the field has to be the answer to the mission on
+       the screen. When the mission has moved on since the solve, the
+       trajectory answers an older mission and must not go to the robot. */
+    const ready = solved && !state.dirty;
     el('btn-push').disabled = !ready || !checked;
     const status = el('push-status');
-    if (!ready) {
+    if (solved && state.dirty) {
+        status.textContent = 'The mission changed since this solve - solve again '
+            + 'before pushing it.';
+    } else if (!solved) {
         status.textContent = 'Solve a mission first.';
     } else if (!checked) {
         status.textContent = 'This trajectory has not been validated against your robot. '
@@ -1223,7 +1294,7 @@ function useRobotGeometry() {
         fields.track_width = geometry.AXLE_TRACK_MM / 1000;
     }
     setRobotFields(fields);
-    state.dirty = true;
+    markMissionChanged();
     renderRobotFacts();
     renderRobotEditor();
     renderRobotChecks();
@@ -1979,7 +2050,7 @@ function nudgeSelected(dx, dy) {
     const continuing = lastNudge.index === state.selected && (now - lastNudge.time) < 700;
     point.x = Math.round((point.x + dx) * 1000) / 1000;
     point.y = Math.round((point.y + dy) * 1000) / 1000;
-    state.dirty = true;
+    markMissionChanged();
     if (!continuing) {
         // One undo step per gesture: the state before the nudge is still in
         // the history, so the new state is what gets pushed.
@@ -2098,7 +2169,9 @@ function updateMissionState() {
     if (!state.savedName) {
         node.textContent = 'Not saved to missions/ yet';
         node.className = 'hint';
-    } else if (state.dirty) {
+    } else if (state.savedFingerprint !== missionFingerprint(false)) {
+        /* The file on disk holds the waypoints, so the waypoints are what
+           says whether the screen still shows what was saved. */
         node.textContent = `Changed since missions/${state.savedName}.json`;
         node.className = 'hint warn';
     } else {
@@ -2394,7 +2467,7 @@ function renderRobotEditor() {
                 updated[spec.key] = value / (spec.scale || 1);
             }
             setRobotFields(updated);
-            state.dirty = true;
+            markMissionChanged();
             renderRobotFacts();
             renderRobotChecks();
             updateMissionState();
@@ -2443,7 +2516,7 @@ function renderRobotEditor() {
                 input.classList.remove('invalid');
                 updated.uncertainties = { ...(updated.uncertainties || {}), [spec.key]: current };
                 setRobotFields(updated);
-                state.dirty = true;
+                markMissionChanged();
                 scheduleSessionSave();
             });
             input.addEventListener('change', () => pushHistory());
@@ -2607,6 +2680,10 @@ async function solve() {
     state.solveHasTrajectory = false;
     state.solveValidated = false;
     state.measuredPoses = [];
+    /* The last run's verdict goes with the last run. A solve without
+       validation prints no report, so nothing would take the old one off
+       the screen and the new run would be read through it. */
+    renderValidationReport(null);
     /* The previous path is dropped here, not when the new one arrives. A
        solve that fails must not leave the last solve's path on the field
        looking like the answer to this one; it is remembered as an earlier
@@ -2615,6 +2692,9 @@ async function solve() {
     updatePushButton();
     renderResult();
     renderDownloads([]);
+    /* The mission that is going to be solved, so the answer can be checked
+       against the mission on the screen when it comes back. */
+    state.solvingFingerprint = missionFingerprint();
     try {
         const job = await api('/api/solve', {
             method: 'POST',
@@ -2671,6 +2751,15 @@ function pollJob() {
                 const selected = report && report.candidates
                     ? (report.candidates[(report.selected || 1) - 1] || {}) : {};
                 state.solveValidated = Boolean(selected.ok);
+                /* The trajectory is the answer to the mission that is on the
+                   screen, so the mission has not moved on since the solve
+                   and the trajectory can be pushed. When the mission was
+                   changed while the solve ran, it is not, and the studio
+                   says so instead of offering the old path. */
+                if (state.solvingFingerprint
+                        && missionFingerprint() === state.solvingFingerprint) {
+                    state.dirty = false;
+                }
                 updatePushButton();
                 state.jobResult = job.result || {};
                 state.collisions = state.jobResult.collisions || [];
@@ -3388,7 +3477,7 @@ canvas.addEventListener('pointermove', (event) => {
             point.x = Math.round(world.x * 1000) / 1000;
             point.y = Math.round(world.y * 1000) / 1000;
             drag.moved = true;
-            state.dirty = true;
+            markMissionChanged();
             renderEditor();
         }
     }
@@ -3416,7 +3505,7 @@ canvas.addEventListener('pointerup', (event) => {
                 null));
         }
         state.selected = state.waypoints.length - 1;
-        state.dirty = true;
+        markMissionChanged();
         renderAll();
         pushHistory();
     } else if (drag && drag.kind === 'waypoint' && drag.moved) {
@@ -3495,7 +3584,7 @@ function deleteSelected() {
     if (state.selected < 0) return;
     state.waypoints.splice(state.selected, 1);
     state.selected = Math.min(state.selected, state.waypoints.length - 1);
-    state.dirty = true;
+    markMissionChanged();
     renderAll();
     pushHistory();
 }
@@ -3517,7 +3606,7 @@ function updateField(field, value) {
         return;
     }
     point[field] = value;
-    state.dirty = true;
+    markMissionChanged();
     renderWaypointList();
     updateMissionState();
 }
@@ -3529,7 +3618,7 @@ el('wp-heading').addEventListener('input', (e) => {
     if (!point) return;
     const degrees = Number(e.target.value);
     point.heading = Number.isFinite(degrees) ? degrees * Math.PI / 180 : null;
-    state.dirty = true;
+    markMissionChanged();
     renderWaypointList();
     updateMissionState();
     draw();
@@ -3538,7 +3627,7 @@ el('wp-free-heading').addEventListener('change', (e) => {
     const point = currentWaypoint();
     if (!point) return;
     point.heading = e.target.checked ? null : 0;
-    state.dirty = true;
+    markMissionChanged();
     renderEditor();
     renderWaypointList();
     updateMissionState();
@@ -3574,7 +3663,7 @@ function moveSelected(delta) {
     const [point] = state.waypoints.splice(index, 1);
     state.waypoints.splice(target, 0, point);
     state.selected = target;
-    state.dirty = true;
+    markMissionChanged();
     renderAll();
     pushHistory();
 }
@@ -3778,7 +3867,9 @@ async function saveMission() {
                 waypoints: state.waypoints.map(waypointToJson),
             }),
         });
-        state.dirty = false;
+        /* What is on disk now, so the studio can say whether the mission on
+           the screen is still the one that was saved. */
+        state.savedFingerprint = missionFingerprint(false);
         state.savedName = result.name;
         updateMissionState();
         renderHistory(result.history || []);
@@ -4112,19 +4203,44 @@ async function init() {
         if (restored) {
             toast(`Restored your last mission (${state.waypoints.length} waypoints).`);
         }
-        if (initial.auto_solve) {
-            // --live: the studio opens on this mission and solves it right away.
-            // If a solve is already running (another tab, or a reload), show
-            // that one instead of starting a second.
-            const running = await api('/api/jobs/current');
-            if (running && running.job && running.job.status === 'running') {
-                state.jobId = running.job.id;
-                state.reportCandidate = null;
-                setBusy(true);
-                pollJob();
-            } else {
-                solve();
+        /* A solve that is already running - another tab, or a reload in the
+           middle of one - is attached to, not started again. The server
+           refuses a second solve, so a studio that did not ask would look
+           stuck: every Solve press would come back with "a solve is
+           already running" and the Cancel button would have nothing to
+           cancel. */
+        let running = null;
+        try {
+            const current = await api('/api/jobs/current');
+            const job = current && current.job;
+            /* Only a solve is adopted: a push or a calibration run is not
+               this studio's solve, and polling it as one would look for a
+               trajectory it does not have. */
+            if (job && job.status === 'running' && (!job.kind || job.kind === 'solve')) {
+                running = job;
             }
+        } catch (err) {
+            // The server cannot say: the studio starts its own solve.
+        }
+        if (running) {
+            state.jobId = running.id;
+            state.reportCandidate = null;
+            /* The mission on the screen is the one the job is solving, as
+               far as the studio can tell: the job carries the name of the
+               mission it was given. A job for another mission keeps its
+               own fingerprint, so its trajectory is not offered as the
+               answer to this one. */
+            const jobName = (running.name || '').trim();
+            const missionName = (el('mission-name').value || '').trim();
+            const sameMission = !jobName || !missionName || jobName === missionName;
+            state.solvingFingerprint = sameMission ? missionFingerprint() : null;
+            setBusy(true);
+            el('result-status').textContent = 'Solving...';
+            setStatus('Attached to the solve that is already running');
+            pollJob();
+        } else if (initial.auto_solve) {
+            // --live: the studio opens on this mission and solves it right away.
+            solve();
         }
     } catch (err) {
         setStatus(err.message, 'error');

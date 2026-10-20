@@ -23,8 +23,10 @@ start origin. For ``multi_stop`` runs, include one pose per logged stop in order
 import argparse
 import csv
 import glob
+import io
 import json
 import os
+import sys
 
 import numpy as np
 
@@ -33,10 +35,11 @@ import numpy as np
 # Parsing
 # ---------------------------------------------------------------------------
 
-def _finish_run(run, header, rows):
+def _finish_run(run, header, rows, bad_rows=0):
     if run is None or header is None:
         return
     run["columns"] = {name.strip(): i for i, name in enumerate(header)}
+    run["bad_rows"] = int(bad_rows)
     if rows:
         run["data"] = np.asarray(rows, dtype=float)
     else:
@@ -44,11 +47,18 @@ def _finish_run(run, header, rows):
 
 
 def parse_session(text):
-    """Parse one or more TEST_START ... TEST_END blocks into run dictionaries."""
+    """Parse one or more TEST_START ... TEST_END blocks into run dictionaries.
+
+    A row that carries a non-finite number (a NaN or an infinity) is a bad
+    row, not data: it would poison every fit that reads the column. Such a
+    row is dropped and counted, so the fit can tell the operator that the
+    session file is corrupt. The count is on the run as ``bad_rows``.
+    """
     runs = []
     current = None
     header = None
     rows = []
+    bad_rows = 0
 
     for raw_line in text.splitlines():
         line = raw_line.strip()
@@ -56,12 +66,14 @@ def parse_session(text):
             continue
 
         if line.startswith("TEST_START"):
-            _finish_run(current, header, rows)
+            _finish_run(current, header, rows, bad_rows)
             name = line[len("TEST_START"):].strip()
-            current = {"name": name, "meta": {}, "columns": {}, "data": np.empty((0, 0))}
+            current = {"name": name, "meta": {}, "columns": {},
+                       "data": np.empty((0, 0)), "bad_rows": 0}
             runs.append(current)
             header = None
             rows = []
+            bad_rows = 0
             continue
 
         if line.startswith("META,"):
@@ -77,12 +89,14 @@ def parse_session(text):
         if line == "DATA":
             header = None
             rows = []
+            bad_rows = 0
             continue
 
         if line.startswith("TEST_END"):
-            _finish_run(current, header, rows)
+            _finish_run(current, header, rows, bad_rows)
             header = None
             rows = []
+            bad_rows = 0
             continue
 
         if current is None:
@@ -102,9 +116,14 @@ def parse_session(text):
             # STOP_AT / FINAL_STATE status lines are deliberately ignored.
             continue
         if len(values) == len(header):
+            if not np.all(np.isfinite(values)):
+                # A non-finite cell is a bad cell, not data. Keeping it
+                # would put a NaN into the fit and out into the model.
+                bad_rows += 1
+                continue
             rows.append(values)
 
-    _finish_run(current, header, rows)
+    _finish_run(current, header, rows, bad_rows)
     return [run for run in runs if run["columns"]]
 
 
@@ -550,8 +569,12 @@ def _fit_first_order(times, measured, command):
         return None
 
     gradient = np.abs(np.gradient(measured, times))
+    gain = best_yss / command
+    if not np.isfinite(gain):
+        # A step that cannot be fitted to a finite gain is not a step.
+        return None
     return {
-        "gain": best_yss / command,
+        "gain": gain,
         "gain_se": (best_se / abs(command)) if best_se is not None else None,
         "tau_s": best_tau,
         "delay_s": best_delay,
@@ -606,7 +629,21 @@ def _between_runs(pairs):
                               for group in groups.values()])
 
 
+# The smallest lower bound a reported interval may have. A t-interval over
+# two repeats is wider than the parameter itself, so its lower bound can be
+# negative, and a negative bound makes the fit file unloadable: the loader
+# refuses a gain band that is not positive.
+_MIN_GAIN_BOUND = 1e-6
+
+
 def _summary(fits):
+    if not fits:
+        return {"calibrated": False, "n_steps": 0}
+
+    # A fit that carries a non-finite number is not a fit: it would put a
+    # NaN into the summary and out into the model. Such a fit is skipped
+    # and is not counted as a fitted step.
+    fits = [fit for fit in fits if np.isfinite(fit.get("gain", np.nan))]
     if not fits:
         return {"calibrated": False, "n_steps": 0}
 
@@ -651,8 +688,17 @@ def _summary(fits):
                       ("delay_s", "delay_s")):
         stats = _between_runs(per_repeat(key))
         summary[f"{name}_between_runs"] = stats
-        if stats.get("ci95"):
-            summary[f"{name}_ci95"] = stats["ci95"]
+        ci = stats.get("ci95")
+        if not ci:
+            continue
+        low, high = float(ci[0]), float(ci[1])
+        # The raw interval is what the t-multiplier really said. The
+        # reported one is clamped so it can be loaded: a gain band that is
+        # not positive is refused by the loader, and a negative time
+        # constant is not a time constant.
+        floor = _MIN_GAIN_BOUND if name == "gain" else 0.0
+        summary[f"{name}_ci95"] = [max(low, floor), high]
+        summary[f"{name}_ci95_raw"] = [low, high]
     return summary
 
 
@@ -731,9 +777,16 @@ def _step_fits_measured(runs, prefixes, command_column, measured_key,
         command = command * command_scale
         for start, end in _find_steps(times, command, command_threshold):
             segment_command = float(np.median(command[start:end]))
+            if not np.isfinite(segment_command):
+                # A step whose command is not finite is a bad step, not a
+                # step: fitting it would put a NaN into the whole fit.
+                continue
             if abs(segment_command) < command_threshold:
                 continue
             if times[end - 1] - times[start] < 0.30:
+                continue
+            if not np.all(np.isfinite(measured[start:end])):
+                # Same for the measurement: a bad sample is not data.
                 continue
             fit = _fit_first_order(
                 times[start:end],
@@ -968,16 +1021,24 @@ def _fit_odometry(runs, poses, distance_scale_default=1.0, wall_distance_m=None)
                 measured_distance,
             ))
 
-    # The wall and the tape are two estimates of the same distance scale, so
-    # they are pooled for the value and reported separately, the same way the
-    # drift is. A disagreement means the mark or the tape is off.
-    all_distance = ([value for _repeat, value in distance_candidates]
-                    + [value for _repeat, value in homing_candidates])
-    distance_scale = (
-        float(np.median(all_distance))
-        if all_distance
-        else float(distance_scale_default)
-    )
+    # The wall and the tape are two estimates of the same distance scale.
+    # They are NOT pooled: a median over two different estimates is
+    # neither of them, and the number the validator plans against has to
+    # be one of the estimates. The tape is the measurement, so it is the
+    # one that is used; the wall is the cross-check and is reported next
+    # to it, so a disagreement between the two shows up.
+    tape_values = [value for _repeat, value in distance_candidates]
+    homing_values = [value for _repeat, value in homing_candidates]
+    all_distance = tape_values + homing_values
+    if tape_values:
+        distance_scale = float(np.median(tape_values))
+        distance_scale_source = "tape"
+    elif homing_values:
+        distance_scale = float(np.median(homing_values))
+        distance_scale_source = "wall"
+    else:
+        distance_scale = float(distance_scale_default)
+        distance_scale_source = "default"
     heading_scale = (
         float(np.median([value for _repeat, value in heading_candidates]))
         if heading_candidates
@@ -1012,6 +1073,7 @@ def _fit_odometry(runs, poses, distance_scale_default=1.0, wall_distance_m=None)
 
     summary = {
         "distance_scale": distance_scale,
+        "distance_scale_source": distance_scale_source,
         "heading_scale": heading_scale,
         "calibrated": bool(all_distance or heading_candidates),
         "n_distance_sources": len(distance_candidates),
@@ -1360,8 +1422,14 @@ def fit_session(runs, poses=None, wheel_radius_m=0.028, wall_distance_m=None):
     stall = _fit_stall_torque(runs)
     drivetrain = _fit_no_load_speed(runs, wheel_radius_m)
 
+    bad_rows = sum(int(run.get("bad_rows", 0) or 0) for run in runs)
+
     return {
         "wheel_radius_m": float(wheel_radius_m),
+        # The rows the session carried with a non-finite number. They are
+        # not data, so they are not in the fit; the count is here so the
+        # operator learns that the session file is corrupt.
+        "bad_rows": bad_rows,
         "actuator": {
             "straight": {
                 **straight_summary,
@@ -1389,6 +1457,7 @@ def fit_session(runs, poses=None, wheel_radius_m=0.028, wall_distance_m=None):
             run["name"]: {
                 "run_id": run["meta"].get("run_id"),
                 "rows": int(run["data"].shape[0]),
+                "bad_rows": int(run.get("bad_rows", 0) or 0),
             }
             for run in runs
         },
@@ -1612,8 +1681,22 @@ def main(argv=None):
         "source": profile_path,
     }
 
+    # The fit file is written with allow_nan=False, so a fit that still
+    # carries a non-finite number fails loudly here, at write time, with a
+    # message that says what is wrong. A file with a bare NaN in it is not
+    # JSON, and it fails later, far from the cause.
+    buffer = io.StringIO()
+    try:
+        json.dump(result, buffer, indent=2, allow_nan=False)
+    except ValueError as exc:
+        print(
+            "error: the fit carries a non-finite number ({}), so it was not "
+            "written. The session file is corrupt.".format(exc),
+            file=sys.stderr,
+        )
+        return 1
     with open(args.out, "w", encoding="utf-8") as handle:
-        json.dump(result, handle, indent=2)
+        handle.write(buffer.getvalue())
         handle.write("\n")
 
     if profile is not None:
@@ -1628,6 +1711,13 @@ def main(argv=None):
     straight = result["actuator"]["straight"]
     turn = result["actuator"]["turn"]
     print(f"Parsed {len(runs)} runs from {len(files)} file(s).")
+    bad_rows = int(result.get("bad_rows", 0) or 0)
+    if bad_rows:
+        print(
+            "Dropped {} row(s) with a non-finite value. They are not data, "
+            "so they are not in the fit: the session file is corrupt.".format(
+                bad_rows)
+        )
     if straight.get("calibrated"):
         print(
             "Straight: gain={gain:.3f}, tau={tau_s:.3f}s, delay={delay_s:.3f}s, "
@@ -1651,8 +1741,9 @@ def main(argv=None):
         )
     if result["odometry"]["calibrated"]:
         print(
-            "Odometry: distance_scale={distance_scale:.4f}, "
-            "heading_scale={heading_scale:.4f}".format(**result["odometry"])
+            "Odometry: distance_scale={distance_scale:.4f} (the "
+            "{distance_scale_source}), heading_scale={heading_scale:.4f}".format(
+                **result["odometry"])
         )
         _print_interval(result["odometry"], "distance_scale")
         if "distance_scale_homing" in result["odometry"]:

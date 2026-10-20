@@ -68,7 +68,9 @@ def newest_matrix_folder():
     return found[-1]
 
 
-# The matrix's mission names, and the three modes it runs.
+# The matrix's mission names, and the modes it runs. The table's column
+# headings are read from the table, so a new mode is picked up without a
+# change here.
 MATRIX_SHORT = {
     "example_straight": "straight",
     "example_s_curve": "s_curve",
@@ -77,17 +79,24 @@ MATRIX_SHORT = {
     "example_with_stops": "with_stops",
     "example_with_events": "with_events",
 }
-MATRIX_MODES = ("default", "sweep", "sweep-self-consistent")
+# The heading the README gives a mode, and the mode's key.
+MATRIX_HEADINGS = {
+    "default": "default",
+    "seeds": "seeds",
+    "sweep": "sweep",
+    "sweep + self-consistent": "sweep-self-consistent",
+}
 
 
-def matrix_cells(base):
+def matrix_cells(base, modes):
     """The matrix table's cells, computed from the measurements."""
     with open(os.path.join(base, "matrix_results.json"), encoding="utf-8") as fh:
-        rows = json.load(fh)
+        payload = json.load(fh)
+    rows = payload.get("results") if isinstance(payload, dict) else payload
     out = {}
     for mission, short in MATRIX_SHORT.items():
         cells = []
-        for mode in MATRIX_MODES:
+        for mode in modes:
             match = [r for r in rows
                      if r.get("mission") == mission and r.get("mode") == mode]
             if not match or not match[0].get("report"):
@@ -107,6 +116,8 @@ def check_matrix():
 
     The table is written by hand, so the emphasis on the numbers that matter
     survives; but the numbers themselves are checked, so they cannot drift.
+    The columns are read from the table's own heading, so a new mode is
+    checked without a change here.
     """
     base = newest_matrix_folder()
     if base is None:
@@ -118,17 +129,27 @@ def check_matrix():
         return []
     with open(readme, encoding="utf-8") as fh:
         lines = fh.read().split("\n")
-    expected = matrix_cells(base)
+    header = None
+    for line in lines:
+        cells = [c.strip() for c in line.strip().strip("|").split("|")]
+        if cells and cells[0] == "mission":
+            header = cells[1:]
+            break
+    if header is None:
+        print("the matrix table has no heading; unchecked")
+        return []
+    modes = [MATRIX_HEADINGS.get(name, name) for name in header]
+    expected = matrix_cells(base, modes)
     problems = []
     seen = set()
     for line in lines:
         if not line.startswith("|"):
             continue
         cells = [c.strip().replace("**", "") for c in line.strip("|").split("|")]
-        if len(cells) != 4 or cells[0] not in expected:
+        if len(cells) != len(modes) + 1 or cells[0] not in expected:
             continue
         seen.add(cells[0])
-        for index, mode in enumerate(MATRIX_MODES, start=1):
+        for index, mode in enumerate(modes, start=1):
             want = expected[cells[0]][index - 1]
             if want is None:
                 continue

@@ -20,6 +20,16 @@ carries all four fixes:
 | `sweep_results.json` | the parsed matrix runs |
 | `full_sweep_results.json` | the parsed grid runs |
 | `rq_a/*.txt` | the output of the `docs/research/rq_a/` experiments on this tree |
+| `rq_a_verify/*.txt` | the same experiments re-run at the end, on the tree as it stood then, to show the numbers did not move |
+
+## The tree these were measured on
+
+The measurements were taken against the working tree while it was being
+edited, so the tree state is recorded:
+[`../../research/rq_a/TREE_2026-10-20.md5`](../../research/rq_a/TREE_2026-10-20.md5)
+holds the MD5 of every module, and `rq_a_verify/` is the headline experiments
+re-run afterwards on the tree as it stood — every number came back
+identical.
 
 ## What the measurements say
 

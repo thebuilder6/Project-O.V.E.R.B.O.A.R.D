@@ -16,6 +16,7 @@ import math
 import os
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -46,7 +47,19 @@ MAX_MAT_DOCUMENT_BYTES = 32_000_000
 # says so: one percent is about 20 mm of a 2 m mat.
 MAT_ASPECT_TOLERANCE = 0.01
 LOG_LINES = 800
-SLUG_RE = re.compile(r"[^a-z0-9_-]+")
+# How many finished jobs the studio keeps. Every job owns a temporary
+# folder with its trajectory, its controller and its stats, and nothing
+# removed either, so a season of solves filled the temp folder and left
+# every old trajectory downloadable by guessing an id (KI-036).
+MAX_JOBS = 20
+# The machine-readable validation summary the CLI prints for a validated
+# run. The server reads it back, so the rule "only a validated trajectory
+# goes to the robot" is enforced here and not only in the browser.
+VALIDATION_MARKER = "##OVERBOARD-VALIDATION## "
+# Unicode letters and digits are kept in a file name. Stripping them
+# turned every non-ASCII mission name into the same file name, so one
+# mission overwrote another without a word (KI-038).
+SLUG_RE = re.compile(r"[^\w-]+", re.UNICODE)
 
 # The host-side push client. Patched in tests with a stand-in.
 HUB_DEPLOY = REPO_ROOT / "hub_deploy.py"
@@ -62,10 +75,80 @@ STATIC_FILES = {
 
 
 def slugify(name, fallback="mission"):
-    """A safe file name from a user-supplied mission name."""
+    """A safe file name from a user-supplied mission name.
+
+    Unicode letters and digits are kept. The old rule stripped everything
+    outside ``[a-z0-9_-]``, so "任务" and "テスト" both became "mission"
+    and the second save overwrote the first one (KI-038).
+    """
     slug = SLUG_RE.sub("-", str(name or "").strip().lower()).strip("-_")
     slug = slug[:60]
     return slug or fallback
+
+
+def _validation_verdict(job):
+    """The validator's verdict for a solve, read back from its own output.
+
+    ``main.py`` prints one machine-readable line per validated run. The
+    line carries every candidate and says which one was selected, so the
+    server can check the selected candidate's own verdict instead of
+    trusting the browser.
+
+    Returns True when the run was validated and the selected candidate
+    passed, False when it was validated and did not pass, and None when
+    the run carried no verdict at all - which is what an unvalidated run
+    looks like.
+    """
+    for line in reversed(list(job.lines)):
+        text = line.strip()
+        if not text.startswith(VALIDATION_MARKER):
+            continue
+        try:
+            report = json.loads(text[len(VALIDATION_MARKER):])
+        except ValueError:
+            return None
+        candidates = report.get("candidates") or []
+        if not candidates:
+            return None
+        try:
+            index = int(report.get("selected") or 1)
+        except (TypeError, ValueError):
+            return None
+        if not 1 <= index <= len(candidates):
+            return None
+        return bool(candidates[index - 1].get("ok"))
+    return None
+
+
+def _process_group_kwargs():
+    """Put the child in its own process group, so it can be killed whole.
+
+    The candidates are solved in worker processes, and killing only the
+    parent left those workers running: they kept solving at full speed
+    after the studio said "Cancelled" (KI-036).
+    """
+    if os.name == "nt":
+        return {"creationflags": getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)}
+    return {"start_new_session": True}
+
+
+def _terminate_tree(proc):
+    """Stop a solve and everything it started."""
+    if proc is None:
+        return
+    try:
+        if os.name == "nt":
+            subprocess.run(["taskkill", "/T", "/F", "/PID", str(proc.pid)],
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                           check=False)
+        else:
+            os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+    except (OSError, AttributeError, ValueError):
+        pass
+    try:
+        proc.terminate()
+    except OSError:
+        pass
 
 
 class BusyError(RuntimeError):
@@ -173,6 +256,7 @@ class Job:
         self.finished = None
         self.error = ""
         self.result = {}
+        self.cancel_requested = False
 
     def log(self, text):
         self.lines.append(text)
@@ -226,7 +310,23 @@ class StudioServer(ThreadingHTTPServer):
                 if other.status == "running":
                     raise BusyError("A solve is already running. Cancel it first.")
             self.jobs[job.id] = job
+            self._evict_old_jobs()
             return job
+
+    def _evict_old_jobs(self):
+        """Keep the newest finished jobs and throw the rest away.
+
+        Every job owns a temporary folder with its trajectory, its
+        controller and its stats. Nothing removed either, so a season of
+        solves filled the temp folder and left every old trajectory
+        downloadable by guessing an id (KI-036). The running job is never
+        evicted: it is the one the studio is working on.
+        """
+        finished = [job for job in self.jobs.values() if job.status != "running"]
+        finished.sort(key=lambda job: job.started)
+        for old in finished[:max(0, len(finished) - MAX_JOBS)]:
+            self.jobs.pop(old.id, None)
+            shutil.rmtree(str(old.output_dir), ignore_errors=True)
 
     def get_job(self, job_id):
         with self.lock:
@@ -347,8 +447,12 @@ def start_job(server, payload):
             proc = subprocess.Popen(
                 command, cwd=str(REPO_ROOT), stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
-                text=True, encoding="utf-8", errors="replace")
+                text=True, encoding="utf-8", errors="replace",
+                **_process_group_kwargs())
             job.proc = proc
+            if job.cancel_requested:
+                # The cancel arrived before the process was up.
+                _terminate_tree(proc)
             for line in proc.stdout:
                 job.log(line.rstrip("\n"))
             proc.stdout.close()
@@ -368,7 +472,10 @@ def start_job(server, payload):
             # would refuse every later job and the operator could not even
             # cancel it.
             if job.status == "running":
-                job.status = "ok" if job.exit_code == 0 else "failed"
+                if job.cancel_requested:
+                    job.status = "cancelled"
+                else:
+                    job.status = "ok" if job.exit_code == 0 else "failed"
             if job.status == "failed" and not job.error:
                 job.error = job.lines[-1] if job.lines else "The solve failed."
             samples = []
@@ -900,8 +1007,11 @@ def start_collect(server, payload):
             proc = subprocess.Popen(
                 command, cwd=str(REPO_ROOT), stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
-                text=True, encoding="utf-8", errors="replace")
+                text=True, encoding="utf-8", errors="replace",
+                **_process_group_kwargs())
             job.proc = proc
+            if job.cancel_requested:
+                _terminate_tree(proc)
             for line in proc.stdout:
                 job.log(line.rstrip("\n"))
             proc.stdout.close()
@@ -913,7 +1023,10 @@ def start_collect(server, payload):
         finally:
             job.finished = time.time()
             if job.status == "running":
-                job.status = "ok" if job.exit_code == 0 else "failed"
+                if job.cancel_requested:
+                    job.status = "cancelled"
+                else:
+                    job.status = "ok" if job.exit_code == 0 else "failed"
             if job.status == "failed" and not job.error:
                 job.error = job.lines[-1] if job.lines else "The collection failed."
             # The session is kept whenever it exists, not only when the
@@ -1038,9 +1151,12 @@ def restore_mission(name, sha):
     if not ok:
         raise ValueError("That version cannot be read.")
     path = MISSIONS_DIR / f"{name}.json"
+    # Parse before writing: a blob that is not a mission must not reach the
+    # disk, or the mission silently disappears from the list (KI-038).
+    data = json.loads(content)
     with open(path, "w", encoding="utf-8") as handle:
         handle.write(content)
-    return json.loads(content)
+    return data
 
 
 def read_robot_files():
@@ -1151,6 +1267,22 @@ def compare_with_plan(traj_path, session_path):
             return {"error": str(exc)}
 
 
+def _error_headline(lines):
+    """The one line that says what went wrong.
+
+    A tool that fails prints "error: ..." first and the detail after it, so
+    the first such line is the headline and the last line is the detail.
+    The operator reads the headline.
+    """
+    for line in lines:
+        if line.startswith("error:"):
+            return line[len("error:"):].strip()
+    for line in reversed(lines):
+        if line.strip():
+            return line
+    return "The push failed."
+
+
 def start_push(server, payload):
     """Push an already-solved trajectory to the hub."""
     source = server.get_job(str(payload.get("job_id") or ""))
@@ -1160,6 +1292,16 @@ def start_push(server, payload):
     if traj is None or not traj.is_file():
         # The export gate did not pass, so there is nothing safe to push.
         raise ValueError("That solve produced no trajectory to push.")
+
+    # Only a validated trajectory goes to the robot. The browser checked
+    # this too, but the browser is not the gate: a direct POST to this
+    # endpoint would otherwise run an unchecked plan on the mat (KI-035).
+    verdict = _validation_verdict(source)
+    if verdict is not True:
+        raise ValueError(
+            "That trajectory was never validated against your robot. "
+            "Validate it in the Solve tab and solve again before pushing it."
+        )
 
     connection = str(payload.get("connection") or "ble")
     if connection not in ("ble", "usb"):
@@ -1184,8 +1326,11 @@ def start_push(server, payload):
             proc = subprocess.Popen(
                 command, cwd=str(REPO_ROOT), stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
-                text=True, encoding="utf-8", errors="replace")
+                text=True, encoding="utf-8", errors="replace",
+                **_process_group_kwargs())
             job.proc = proc
+            if job.cancel_requested:
+                _terminate_tree(proc)
             for line in proc.stdout:
                 job.log(line.rstrip("\n"))
             proc.stdout.close()
@@ -1199,9 +1344,12 @@ def start_push(server, payload):
             # The status is set first, so a failure in the post-processing
             # below cannot leave the job "running" and block the studio.
             if job.status == "running":
-                job.status = "ok" if job.exit_code == 0 else "failed"
+                if job.cancel_requested:
+                    job.status = "cancelled"
+                else:
+                    job.status = "ok" if job.exit_code == 0 else "failed"
             if job.status == "failed" and not job.error:
-                job.error = job.lines[-1] if job.lines else "The push failed."
+                job.error = _error_headline(job.lines)
             # The measured pose and the comparison are filled in after the
             # status, so a poll that sees the job finished also sees the
             # result.
@@ -1258,8 +1406,20 @@ class StudioHandler(BaseHTTPRequestHandler):
         origin = self.headers.get("Origin")
         if not origin:
             return True
-        host = urlparse(origin).hostname
-        return host in ("127.0.0.1", "localhost", "::1")
+        parsed = urlparse(origin)
+        if parsed.hostname not in ("127.0.0.1", "localhost", "::1"):
+            return False
+        # The port has to be the studio's own. Any other web app on this
+        # machine sends a localhost Origin, so a hostname check alone let a
+        # page the operator happened to have open drive the studio - and
+        # through it the robot (KI-035).
+        try:
+            port = parsed.port
+        except ValueError:
+            return False
+        if port is None:
+            return False
+        return port == self.server.server_address[1]
 
     def _send(self, code, body, content_type="application/json; charset=utf-8",
               extra_headers=None):
@@ -1530,6 +1690,17 @@ class StudioHandler(BaseHTTPRequestHandler):
         if not source.is_absolute():
             source = REPO_ROOT / source
         try:
+            source = source.resolve()
+        except OSError:
+            return self._error(400, "That path cannot be read.")
+        # Only the project folder and the calibration folder hold models.
+        # Without this, any page on this machine could ask the studio to
+        # read an arbitrary file and copy it into the calibration folder
+        # (KI-035).
+        roots = (REPO_ROOT.resolve(), CALIBRATION_DIR.resolve())
+        if not any(source == root or root in source.parents for root in roots):
+            return self._error(400, "That path is outside the project folder.")
+        try:
             fit = _read_json(source)
         except OSError as exc:
             return self._error(400, f"Could not read '{source}': {exc}")
@@ -1621,12 +1792,16 @@ class StudioHandler(BaseHTTPRequestHandler):
         job = self.server.get_job(job_id)
         if job is None:
             return self._error(404, "Unknown job.")
-        if job.status == "running" and job.proc is not None:
-            try:
-                job.proc.terminate()
-            except OSError:
-                pass
-            job.status = "cancelled"
+        if job.status == "running":
+            # Ask for the cancel and kill the whole tree: the candidates
+            # are solved in worker processes, and killing only the parent
+            # left them running at full speed (KI-036).
+            #
+            # The job stays "running" until the process is really gone, so
+            # the studio does not accept a second solve while the first
+            # one is still finishing.
+            job.cancel_requested = True
+            _terminate_tree(job.proc)
         return self._json(200, job.snapshot())
 
     def _save_mission(self):

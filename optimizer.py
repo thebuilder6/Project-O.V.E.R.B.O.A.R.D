@@ -714,8 +714,13 @@ class TrajectoryOptimizer:
                 # Blend direction to p2 with direction to p3
                 dir_to_p2 = np.arctan2(p2[1] - p1[1], p2[0] - p1[0])
                 dir_to_p3 = np.arctan2(p3[1] - p1[1], p3[0] - p1[0])
-                # Weight by progress through segment
-                theta = (1 - frac) * dir_to_p2 + frac * dir_to_p3
+                # Weight by progress through segment. The blend goes the
+                # short way round: averaging the two angles plainly gives
+                # a guess heading near zero for a path that turns through
+                # +/-180 degrees, which is the worst possible guess for
+                # exactly the missions that need another seed (KI-038).
+                delta = (dir_to_p3 - dir_to_p2 + np.pi) % (2 * np.pi) - np.pi
+                theta = dir_to_p2 + delta * frac
             else:
                 theta = np.arctan2(p2[1] - p1[1], p2[0] - p1[0])
         return float(x), float(y), float(theta)

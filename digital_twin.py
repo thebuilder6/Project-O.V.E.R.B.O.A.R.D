@@ -223,7 +223,22 @@ def _actuator_from_dict(payload: Dict[str, Any]) -> ActuatorFit:
     else:
         ci_low = ci_high = None
 
-    if ci_low is not None and ci_high is not None:
+    def usable(low, high):
+        """A band the model can plan against."""
+        return (low is not None and high is not None
+                and low > 0.0 and high >= low)
+
+    if usable(ci_low, ci_high):
+        gain_range = (ci_low, ci_high)
+    elif usable(gain_min, gain_max):
+        # The interval over two repeats is wider than the gain itself, so
+        # its lower bound can be negative. The observed range is the band
+        # the validator can use, so the fit stays usable.
+        gain_range = (gain_min, gain_max)
+    elif gain is not None and gain > 0.0:
+        gain_range = (gain, gain)
+    elif ci_low is not None and ci_high is not None:
+        # Nothing usable: keep the interval so the error says what is wrong.
         gain_range = (ci_low, ci_high)
     elif gain_min is not None and gain_max is not None:
         gain_range = (gain_min, gain_max)
@@ -234,6 +249,13 @@ def _actuator_from_dict(payload: Dict[str, Any]) -> ActuatorFit:
 
     tau_s = _optional_float(payload.get("tau_s"), "actuator.tau_s")
     delay_s = _optional_float(payload.get("delay_s"), "actuator.delay_s")
+    # A negative time constant or delay is not a measurement, so it is
+    # treated as "not measured" rather than refused: the fit is still
+    # usable for everything else it measured.
+    if tau_s is not None and tau_s < 0.0:
+        tau_s = None
+    if delay_s is not None and delay_s < 0.0:
+        delay_s = None
     accel_limit = _optional_float(payload.get("accel_limit"), "actuator.accel_limit")
     rmse = _optional_float(payload.get("rmse"), "actuator.rmse")
     n_steps = int(payload.get("n_steps", 0) or 0)

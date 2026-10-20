@@ -573,7 +573,7 @@ class ImmraxValidator:
         # wheel no-load speed here.
         max_wheel_speed = max(float(jnp.max(jnp.abs(vl))),
                               float(jnp.max(jnp.abs(vr))))
-        wheel_speed_limit = self.cfg.v_max_rad_s * min(self.cfg.wheel_radius_range)
+        wheel_speed_limit = self.cfg.no_load_wheel_speed_worst_case()
         speed_violation = max(0.0, max_wheel_speed - wheel_speed_limit)
 
         # Tracking and envelope size are checked separately. The caller applies

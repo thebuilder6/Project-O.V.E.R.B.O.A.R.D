@@ -63,8 +63,17 @@ def excess_cm(candidate):
 
 
 def load(folder):
+    """The measurements, and the tree they were taken on.
+
+    The results file is a list of runs, or a dict with the runs under
+    "results" and the tree's fingerprint under "tree". The runner writes the
+    second form, so the evidence carries the tree it describes.
+    """
     with open(os.path.join(folder, "matrix_results.json"), encoding="utf-8") as fh:
-        return json.load(fh)
+        payload = json.load(fh)
+    if isinstance(payload, dict):
+        return payload.get("results") or [], payload.get("tree") or {}
+    return payload, {}
 
 
 def groups(rows):
@@ -109,7 +118,7 @@ def q3(groups_):
     print("measured at all.")
     print()
 
-    for mode in ("default", "seeds", "sweep", "sweep-self-consistent"):
+    for mode in ("default", "seeds", "refine", "sweep", "sweep-self-consistent"):
         rows = [g for g in groups_ if g["mode"] == mode]
         if not rows:
             continue
@@ -138,7 +147,7 @@ def q3(groups_):
     # The insurance question: would the baseline alone have passed, and if
     # not, what rescued it?
     print("--- the insurance, per mode ---")
-    for mode in ("default", "seeds", "sweep", "sweep-self-consistent"):
+    for mode in ("default", "seeds", "refine", "sweep", "sweep-self-consistent"):
         rows = [g for g in groups_ if g["mode"] == mode]
         if not rows:
             continue
@@ -158,7 +167,9 @@ def q3(groups_):
         print(f"{mode:<24} {len(rescued)} of {len(rows)} missions need more:")
         for g, best in rescued:
             what = []
-            if best["timing"] != "equal-duration":
+            if best.get("guess") == "refined":
+                what.append("the refined guess")
+            elif best["timing"] != "equal-duration":
                 what.append("the other timing model")
             if best["style"] != "baseline":
                 what.append(f"the {best['style']} seed")
@@ -308,9 +319,8 @@ def markdown_table(groups_):
 def tree_digests():
     """The fingerprint of the files the numbers depend on.
 
-    The README carries it so a reader can tell which tree the measurements
-    describe. It is generated, because a hand-kept list goes stale the
-    moment anything is edited.
+    The results file carries the digest the runner took at the time of the
+    run; this computes the current one, so the two can be compared.
     """
     import hashlib
     files = [
@@ -352,10 +362,18 @@ def main(argv=None):
             return 1
     if not os.path.isabs(folder):
         folder = os.path.join(REPO, folder)
+    rows, recorded = load(folder)
     if tree:
-        print(tree_digests())
+        if recorded:
+            print("the tree the run was taken on:")
+            for name, digest in recorded.items():
+                print(f"{name:<42} MD5 {digest}")
+            print()
+            print("the tree now:")
+            print(tree_digests())
+        else:
+            print(tree_digests())
         return 0
-    rows = load(folder)
     groups_ = groups(rows)
     if mode:
         groups_ = [g for g in groups_ if g["mode"] == mode]

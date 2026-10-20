@@ -317,7 +317,7 @@ class TestStudioPush(StudioTestCase):
         self.addCleanup(self._patch.stop)
         self.addCleanup(shutil.rmtree, self.tmp, True)
 
-    def _solve(self):
+    def _solve(self, validated=True):
         payload = {
             "name": "pushable",
             "config": self._config(),
@@ -330,9 +330,29 @@ class TestStudioPush(StudioTestCase):
         while time.time() < deadline:
             status, body = _request(f"{self.base}/api/jobs/{job['id']}")
             if body["status"] != "running":
+                if validated:
+                    # The studio only pushes a validated trajectory, and the
+                    # verdict is on the solve's own output.
+                    self.server.get_job(job["id"]).log(
+                        gui_server.VALIDATION_MARKER
+                        + json.dumps({"selected": 1,
+                                      "candidates": [{"ok": True}]}))
                 return job, body
             time.sleep(0.3)
         self.fail("the solve did not finish in time")
+
+    def test_an_unvalidated_trajectory_is_not_pushable(self):
+        """The rule is the server's, not only the browser's.
+
+        A page on this machine can post to the studio, so the endpoint
+        that drives the robot has to check the verdict itself (KI-035).
+        """
+        solve_job, solved = self._solve(validated=False)
+        self.assertEqual(solved["status"], "ok")
+        with self.assertRaises(urllib.error.HTTPError) as ctx:
+            _request(f"{self.base}/api/push", method="POST", payload={
+                "job_id": solve_job["id"], "connection": "ble", "hub_name": "HUB"})
+        self.assertEqual(ctx.exception.code, 400)
 
     def test_pushing_an_unknown_job_is_refused(self):
         with self.assertRaises(urllib.error.HTTPError) as ctx:
@@ -866,26 +886,27 @@ class TestStudioHelpers(unittest.TestCase):
         self.assertTrue(summary["has_envelope"])
 
     def test_saving_a_mission_writes_to_the_missions_folder(self):
-        missions = gui_server.MISSIONS_DIR
-        existed = missions.is_dir()
-        try:
-            server = gui_server.create_server(0, {}, {})
-            thread = threading.Thread(target=server.serve_forever, daemon=True)
-            thread.start()
-            base = f"http://127.0.0.1:{server.server_address[1]}"
-            status, payload = _request(f"{base}/api/missions", method="POST", payload={
-                "name": "unit test mission",
-                "waypoints": [{"x": 0.0, "y": 0.0}, {"x": 1.0, "y": 0.0}],
-            })
-            self.assertEqual(status, 200)
-            self.assertEqual(payload["name"], "unit-test-mission")
-            self.assertTrue((missions / "unit-test-mission.json").is_file())
-            server.shutdown()
-            server.server_close()
-        finally:
-            saved = missions / "unit-test-mission.json"
-            if saved.is_file():
-                saved.unlink()
+        # The missions folder is the operator's own git repository. The
+        # test must not commit into it: it did, and the operator's history
+        # carried "Mission unit-test-mission" commits (KI-036).
+        with tempfile.TemporaryDirectory() as tmp:
+            missions = Path(tmp)
+            with patch.object(gui_server, "MISSIONS_DIR", missions):
+                server = gui_server.create_server(0, {}, {})
+                thread = threading.Thread(target=server.serve_forever, daemon=True)
+                thread.start()
+                base = f"http://127.0.0.1:{server.server_address[1]}"
+                try:
+                    status, payload = _request(f"{base}/api/missions", method="POST", payload={
+                        "name": "unit test mission",
+                        "waypoints": [{"x": 0.0, "y": 0.0}, {"x": 1.0, "y": 0.0}],
+                    })
+                    self.assertEqual(status, 200)
+                    self.assertEqual(payload["name"], "unit-test-mission")
+                    self.assertTrue((missions / "unit-test-mission.json").is_file())
+                finally:
+                    server.shutdown()
+                    server.server_close()
 
     def test_the_mission_history_is_a_git_history(self):
         """Every save is a commit, and an earlier version can be restored."""

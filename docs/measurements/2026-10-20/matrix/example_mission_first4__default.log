@@ -1,5 +1,5 @@
-# command: C:\Users\jumpi\AppData\Local\Microsoft\WindowsApps\PythonSoftwareFoundation.Python.3.12_qbz5n2kfra8p0\python.exe main.py -c examples/fll_choreo.json -w examples/example_mission_first4.json -o C:\Users\jumpi\AppData\Local\Temp\tmpsvmhu89i\example_mission_first4.traj --validate
-# wall_seconds: 6.6
+# command: C:\Users\jumpi\AppData\Local\Microsoft\WindowsApps\PythonSoftwareFoundation.Python.3.12_qbz5n2kfra8p0\python.exe main.py -c examples/fll_choreo.json -w examples/example_mission_first4.json -o C:\Users\jumpi\AppData\Local\Temp\tmp6w7r0lbm\example_mission_first4.traj --validate
+# wall_seconds: 6.8
 # exit_code: 0
 
 Using the example robot config (examples/fll_choreo.json). Pass -c/--config with your own robot to plan for your build.
@@ -17,9 +17,9 @@ Candidate 2/2 (guess_style=baseline, per-segment dt)...
   Candidate 2 (baseline, per-seg):  1.833 s, envelope 0.31 cm (ok)
       segment times: 0.65 0.41 0.78 s
   Selected candidate 2.
-##OVERBOARD-VALIDATION## {"selected": 2, "candidates": [{"index": 1, "style": "baseline", "timing": "equal-duration", "accuracy_weight": 0.0, "duration_s": 2.1760454431579066, "envelope_cm": 0.3203687628688845, "tracking_cm": 0.24352839682251215, "max_excess_cm": -1.6823716320999087, "peak_jerk_m_s3": 124.1224594574105, "heading_error_deg": 0.002049056751003825, "ok": true, "converged": true, "reasons": [], "segments": [{"from": 0, "to": 1, "limit_m": 0.02, "envelope_m": 0.0019285754539230082, "drift_m": 0.00048207168917254394, "violations": 0, "slip_points": 0, "ok": true}, {"from": 1, "to": 2, "limit_m": 0.02, "envelope_m": 0.0024160345599804674, "drift_m": 0.00036717242627533266, "violations": 0, "slip_points": 0, "ok": true}, {"from": 2, "to": 3, "limit_m": 0.02, "envelope_m": 0.0031762836790009126, "drift_m": 0.0012064426531828074, "violations": 0, "slip_points": 0, "ok": true}]}, {"index": 2, "style": "baseline", "timing": "per-segment", "accuracy_weight": 0.0, "duration_s": 1.8333813555656195, "envelope_cm": 0.30987347116137565, "tracking_cm": 0.23540356196463108, "max_excess_cm": -1.6933871116063421, "peak_jerk_m_s3": 185.72822230990607, "heading_error_deg": 0.002663773776304973, "ok": true, "converged": true, "reasons": [], "segments": [{"from": 0, "to": 1, "limit_m": 0.02, "envelope_m": 0.0019038443678549102, "drift_m": 0.00046240664595243087, "violations": 0, "slip_points": 0, "ok": true}, {"from": 1, "to": 2, "limit_m": 0.02, "envelope_m": 0.0022981822413222722, "drift_m": 0.00028014059604472395, "violations": 0, "slip_points": 0, "ok": true}, {"from": 2, "to": 3, "limit_m": 0.02, "envelope_m": 0.0030661288839365776, "drift_m": 0.0013448998584062997, "violations": 0, "slip_points": 0, "ok": true}]}]}
+##OVERBOARD-VALIDATION## {"selected": 2, "candidates": [{"index": 1, "style": "baseline", "guess": "baseline", "timing": "equal-duration", "accuracy_weight": 0.0, "duration_s": 2.1760454431579066, "envelope_cm": 0.3203687628688845, "tracking_cm": 0.24352839682251215, "max_excess_cm": -1.6823716320999087, "peak_jerk_m_s3": 124.1224594574105, "heading_error_deg": 0.002049056751003825, "ok": true, "converged": true, "reasons": [], "segments": [{"from": 0, "to": 1, "limit_m": 0.02, "envelope_m": 0.0019285754539230082, "drift_m": 0.00048207168917254394, "violations": 0, "slip_points": 0, "ok": true}, {"from": 1, "to": 2, "limit_m": 0.02, "envelope_m": 0.0024160345599804674, "drift_m": 0.00036717242627533266, "violations": 0, "slip_points": 0, "ok": true}, {"from": 2, "to": 3, "limit_m": 0.02, "envelope_m": 0.0031762836790009126, "drift_m": 0.0012064426531828074, "violations": 0, "slip_points": 0, "ok": true}]}, {"index": 2, "style": "baseline", "guess": "baseline", "timing": "per-segment", "accuracy_weight": 0.0, "duration_s": 1.8333813555656195, "envelope_cm": 0.30987347116137565, "tracking_cm": 0.23540356196463108, "max_excess_cm": -1.6933871116063421, "peak_jerk_m_s3": 185.72822230990607, "heading_error_deg": 0.002663773776304973, "ok": true, "converged": true, "reasons": [], "segments": [{"from": 0, "to": 1, "limit_m": 0.02, "envelope_m": 0.0019038443678549102, "drift_m": 0.00046240664595243087, "violations": 0, "slip_points": 0, "ok": true}, {"from": 1, "to": 2, "limit_m": 0.02, "envelope_m": 0.0022981822413222722, "drift_m": 0.00028014059604472395, "violations": 0, "slip_points": 0, "ok": true}, {"from": 2, "to": 3, "limit_m": 0.02, "envelope_m": 0.0030661288839365776, "drift_m": 0.0013448998584062997, "violations": 0, "slip_points": 0, "ok": true}]}]}
 
-=== Validation Report: C:\Users\jumpi\AppData\Local\Temp\tmpsvmhu89i\example_mission_first4.traj ===
+=== Validation Report: C:\Users\jumpi\AppData\Local\Temp\tmp6w7r0lbm\example_mission_first4.traj ===
 Samples: 31 | Config: examples/fll_choreo.json
 Safety margins: torque_headroom=0.85, speed_headroom=0.90
 
@@ -62,6 +62,6 @@ Safety margins: torque_headroom=0.85, speed_headroom=0.90
 
 PASS — trajectory is safe to run.
 
-Trajectory written to C:\Users\jumpi\AppData\Local\Temp\tmpsvmhu89i\example_mission_first4.traj
+Trajectory written to C:\Users\jumpi\AppData\Local\Temp\tmp6w7r0lbm\example_mission_first4.traj
   duration 1.833 s | path 0.462 m | peak wheel speed 0.43 m/s | 31 samples
   validation: passed (envelope 0.31 cm)

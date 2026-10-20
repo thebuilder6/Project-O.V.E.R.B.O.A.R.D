@@ -11,12 +11,12 @@
 ## Findings at a glance
 
 1. **The heuristic layer is small.** Five deterministic seeds, two timing models, a candidate set, and a selection rule. There is **no geometric path family** anywhere in the tree — no splines, clothoids, béziers or quintics — and the objective has no term that prefers one path over another.
-2. **The seeds do not rescue the baseline, but they do win on speed.** Over the 60-candidate matrix the `baseline` seed is the fastest passing candidate in 3 of the 7 cells that produce a trajectory at all; a non-baseline seed wins the other 4 (first4 and complex under per-segment timing, both by 10 % or more, and the straight path, where all five seeds tie). In the 6 cells where the baseline fails, **no** seed passes either.
+2. **The seeds do not rescue the baseline, but they do win on speed.** Over the 60-candidate matrix the `baseline` seed is the fastest passing candidate in 3 of the 7 cells that produce a trajectory at all; a non-baseline seed wins the other 4 (first4 and complex under per-segment timing, both by 10 % or more, and the straight path, where all five seeds tie). The baseline fails in 6 of the 12 cells, and **exactly one of them is rescued by a seed**: the complex mission under per-segment timing, where the baseline overshoots the motor-force limit (0.074 N) and four other seeds pass. In the other 5 — the S-curve, the stops mission, and the events mission under equal-duration timing — no seed passes either.
 3. **The tracking gate is the binding constraint; the reachability envelope never binds.** Of 29 failing candidates, 25 failed on the 5 mm tracking gate, 6 on motor force and 13 on the forward-integration check. **Zero** failed on the 2 cm envelope threshold. The largest envelope measured anywhere was 1.75 cm.
-4. **Two of the six example missions produce no output at all.** The S-curve and the stops mission fail **all 13 candidates** each, across both timing models and all five accuracy weights, in the most thorough configuration the CLI offers. Their tracking error is 0.84–2.88 cm against a 0.50 cm gate. That is a controller-model or objective problem, not a search problem.
+4. **Two of the six example missions still produce no output at all.** The S-curve and the stops mission fail **every candidate** in the full sweep — 0 of 9 each, across both timing models and the whole accuracy-weight grid. Their tracking error is 1.30–1.75 cm and 0.90–3.70 cm against a 0.50 cm gate. RQ-A says what is left of it: the plan's own deviation at the default density, which the self-consistent collocation halves (the S-curve: 1.47 → 0.88 cm) but does not remove. The reference's velocity half ([RQ-A finding F8](research/RQ-A_tracking_error.md)) is what would.
 5. **The timing model is a bigger lever than any seed.** Per-segment timing is 4.8–23.4 % faster on four of the six missions (complex 23.4 %, stops 17.7 %, first4 15.7 %, events 4.8 %), and it is what makes the events mission solvable at all. The seeds changed the outcome on 2 missions; the timing model changed it on 4. The per-segment model also had to be made legitimate at the waypoints the robot drives through (KI-024, [5.5](#55-where-the-time-allocation-may-change-ki-024)); the matrix in [Section 9](#9-measured-heuristic-comparison) was re-measured after that change.
 6. **The accuracy weight is the cheapest lever of all.** On the events mission, the *same* `baseline` seed fails at weight 0 (0.52 cm tracking) and passes at weight 0.001 (0.37 cm). The sweep grid is the only candidate-set change that has ever produced a new best trajectory, and it works because it adds a genuinely different parameter.
-7. **The Multi-Verse pipeline is dead weight.** Its JAX-refined guess converges to 8.1473 s against the trivial baseline's 6.0677 s, so the probe that was added to rescue it never wins. The plumbing works; the guess does not.
+7. **The Multi-Verse pipeline was dead weight; it is repaired, and it is not worth much.** Its JAX-refined guess used to converge to 8.1473 s against the trivial baseline's 6.0677 s. Four defects were behind that - the refinement moved the waypoints, the JAX cost graded a different motion than IPOPT produces, the intervals were hard-coded, and the refined timing was discarded - and with them fixed the probe wins (4.617 s against 6.049 s) and the pipeline is reproducible. But measured over 30 missions as a *seed provider*, the refined seed is **not** better than the stock seeds (it is faster on 2 of the 9 missions where both pass, slower on 6) and it **rescues nothing**; it is a cheaper way to reach the stock set's speed on some missions (KI-004).
 8. **The measurement base is six hand-written paths.** The random benchmark that was supposed to supply a mission suite is fixed (KI-015), and a mission-suite harness exists under [`research/`](../../research/). The six paths are still what [Section 9](#9-measured-heuristic-comparison) quotes; the wider suite is measured in `docs/research/pq_b/`.
 9. **Twelve research questions are listed in Part IV**, ordered so that the cheapest decisive experiment comes first. The first two are measurements, not experiments.
 10. **RQ-A is done, and it reorders the agenda.** [`docs/research/RQ-A_tracking_error.md`](research/RQ-A_tracking_error.md) identifies why the tracking gate binds: the optimizer's trapezoidal collocation, the controller's linear reference and the plant's integration are three different discretisations of the same trajectory, and on a curved path they disagree by about a centimetre. The tracking error is **not** an uncertainty problem and **not** a physical tracking problem. Fix the discretisation before reaching for reachability in the objective. RQ-A also finds that with a *calibrated* model the binding gate flips to the **envelope**, because the measured actuator-gain band widens the reachable set.
@@ -340,7 +340,7 @@ The bump is parabolic: zero at both waypoints, maximum in the middle. `bow_left`
 
 **Weakness:** it commits to a topology with no evidence about which one is right, and the 0.4 rad threshold is a hard-coded constant. With `s <= 1` the seed keeps the baseline geometry instead, because one interval cannot hold both a spin and a drive (`optimizer.py:611-614`).
 
-**Known result:** the seeds are *not* uniformly worse than the baseline. On the complex mission under equal-duration timing all four non-baseline seeds converge to **slower and wider** paths (8.12–8.66 s, 1.55–1.76 cm envelope, 0.52–0.73 cm tracking) than the baseline (6.068 s / 1.22 cm / 0.49 cm), and all four fail. But under per-segment timing on `example_mission_first4`, `bow_right` is the **selected** candidate at 1.663 s, ahead of the baseline at 1.833 s. See [Section 9](#9-measured-heuristic-comparison).
+**Known result:** the seeds are *not* uniformly worse than the baseline. On the complex mission under equal-duration timing all four non-baseline seeds converge to **slower and wider** paths (8.12–8.66 s, 1.52–1.75 cm envelope, 0.31–0.45 cm tracking) than the baseline (6.068 s / 1.19 cm / 0.30 cm) — and three of the four pass, `bow_left` being the one that fails, on the motor force (0.007 N). Under per-segment timing on `example_mission_first4`, `bow_right` is the **selected** candidate at 1.663 s, ahead of the baseline at 1.833 s, while `bow_left` and `turn_first` fail there on the motor force (0.071 N and 0.008 N). See [Section 9](#9-measured-heuristic-comparison).
 
 ### 4.6 Seed summary
 
@@ -421,7 +421,7 @@ The residual is scaled by the reference interval squared so that it reads in m/s
 
 The large steps that remain are at the waypoints the robot *stops* at: the wheel force has to reverse sign there, so it cannot be continuous. On the complex mission the steps at the stops are 9.5 m/s² and 16.2 m/s², and they are the same in every timing mode.
 
-Two candidates that the merge conditions used to reject now pass: `example_mission_first4.json` per-segment at `accuracy_weight=0` went from 1.661 s (rejected) to 1.833 s (accepted), and `example_with_events.json` per-segment at `accuracy_weight=0` went from 4.896 s (rejected) to 4.416 s (accepted). The complex mission is unchanged: the equal-duration candidate still wins at 6.068 s with a 1.22 cm envelope.
+Two candidates that the merge conditions used to reject now pass: `example_mission_first4.json` per-segment at `accuracy_weight=0` went from 1.661 s (rejected) to 1.833 s (accepted), and `example_with_events.json` per-segment at `accuracy_weight=0` went from 4.896 s (rejected) to 4.416 s (accepted). The complex mission is unchanged: the equal-duration candidate still wins at 6.068 s with a 1.19 cm envelope.
 
 **The deeper cause is the sample layout, not the timing.** Every piece gets the same number of samples, so one shared `dt` gives every piece the same time regardless of its length. A 1.2 m straight line solved as one piece with 20 samples takes 2.702 s with no path excess; the same line with an interior waypoint and one shared `dt` takes 4.463 s and weaves 19.9 mm. Allocating the samples along the path by arc length would remove that penalty and leave the timing free to change only at real boundaries. It changes the sample count and the sample-to-waypoint mapping, so it is a separate change.
 
@@ -634,22 +634,31 @@ The local cost (`jax_optimizer.py:11`) is a time term, a dynamics-error term wei
 
 The outcome is recorded in `stats["refine_probe"]` as `{converged, cost, iterations, used}`.
 
-### 8.6 Why the pipeline never reaches the solver
+### 8.6 How the pipeline reaches the solver
 
-The probe converges, and then it loses. On `examples/example_complex_mission.json`:
+The probe used to converge, and then lose. On `examples/example_complex_mission.json`:
 
 | Starting point | Result |
 |---|---|
-| Default baseline guess | **6.0677 s** |
+| Default baseline guess | 6.0677 s |
 | JAX-refined guess (probe) | 8.1473 s (converged in 38 iterations) |
 
-The probe never wins, so the refined trajectory has no effect on the final result. **The residue is the quality of the JAX refinement, not the connection to the solver.** The plumbing works; the guess is worse than the trivial one.
+The probe never won, so the refined trajectory had no effect on the final result. **The residue was the quality of the guess, not the connection to the solver**: four separate defects had to be fixed first (the refinement moved the waypoint in the middle of the window it optimised, the JAX cost integrated from the left endpoint while IPOPT uses the trapezoidal rule, the intervals were hard-coded at 0.1 s whatever the segment's length, and the refined timing was thrown away when the guess was read back with the equal-duration model).
+
+With those fixed the probe **wins**:
+
+| Starting point | Result |
+|---|---|
+| Default baseline guess | 6.049 s |
+| JAX-refined guess (probe) | **4.617 s** |
+
+and `main.py --refine` puts the refined trajectory into the candidate set as a seed provider: the complex mission goes from 6.068 s to **4.936 s** and the trajectory passes the gates (envelope 1.14 cm, tracking 0.45 cm). It is a cheaper way to reach the stock set's speed rather than a better one — the full ten-candidate stock set gives 4.877 s on that mission, and measured over 30 missions the refined seed rescues nothing. See [20.1](#201-the-jax-refinement) and [20.2](#202-the-refine-probe), and KI-004.
 
 ## 9. Measured heuristic comparison
 
 **Measured 2026-10-20**, against the tree with KI-025 (the backlash), KI-026 (the self-consistent collocation), KI-027 (the turn rate as the derivative of the heading) and KI-028 (the validator modelling the controller that runs) in place. 60 candidate solves - 6 missions x 2 timing models x 5 seeds - plus the timing-mode x accuracy-weight grid. The raw logs are in `docs/measurements/2026-10-20-post-ki028/`, and the exact commands are in [Appendix A](#appendix-a--reproducing-every-table). The provenance (source hashes, environment, test state) is in [S0.4](#04-measurement-conventions).
 
-**The tables in this section are generated**, not typed in: `python docs/research/rq_a/sync_tables.py` rewrites them from the measurement JSON and `--check` verifies that every number still matches. The raw logs are in `docs/measurements/2026-10-19/`; the commands are in [Appendix A](#appendix-a--reproducing-every-table). The provenance (source hashes, environment, test state) is in [§0.4](#04-measurement-conventions).
+**The tables in this section are generated**, not typed in: `python docs/research/rq_a/sync_tables.py` rewrites them from the measurement JSON and `--check` verifies that every number still matches.
 
 ### 9.1 Method
 
@@ -801,7 +810,7 @@ Equal-duration gives **every segment the same time**, whatever its length, becau
 
 **Finding 1 — the seeds win on speed in 4 of the 7 cells that produce a trajectory.** straight under equal-duration (`rolling`, 2.377 s); straight under per-segment (`rolling`, 2.377 s); first4 under per-segment (`bow_right`, 1.663 s); complex under per-segment (`bow_right`, 4.877 s). Everywhere else the `baseline` seed is the fastest passing candidate.
 
-**Finding 2 — the seeds rescue nothing.** The baseline fails in 6 of the 12 cells, and in none of them does a non-baseline seed pass either. The seeds buy insurance against a *bad* baseline, and in this tree the baseline is never bad on its own: it is either the fastest passing candidate or it fails so hard that nothing passes.
+**Finding 2 — the seeds rescue almost nothing: one cell.** The baseline fails in 6 of the 12 cells. In one of them — the complex mission under per-segment timing, where the baseline overshoots the motor-force limit by 0.074 N — four non-baseline seeds pass. In the other 5 (the S-curve, the stops mission, and the events mission under equal-duration timing) no seed passes either. The seeds buy insurance against a *bad* baseline, and in this tree the baseline is rarely bad on its own: it is either the fastest passing candidate or it fails so hard that nothing passes.
 
 **Finding 3 — the tracking gate is the binding constraint, and the envelope gate never binds.** Of the 29 failing candidates: 25 cite the tracking error, 6 the motor force, 13 the forward-integration check and **0** the envelope radius. The largest envelope measured anywhere in the matrix is 1.75 cm against a 2 cm threshold. The reachability tube — the thing the whole interval-propagation machinery exists to compute — is never the reason a candidate is rejected.
 
@@ -1086,7 +1095,7 @@ Each entry has the same fields:
 | **Mechanism** | `optimizer.py:641` (`rolling`), `optimizer.py:586` (`bow_left` / `bow_right`), `optimizer.py:608` (`turn_first`) |
 | **Why it was tried** | A better starting point should find a better local optimum: fewer iterations, a shorter trajectory, a tighter envelope |
 | **Outcome** | **They never find a better optimum. They do often find one that passes.** As a *quality* lever they are dead: on the complex mission all four are 2–2.6 s slower and 0.3–0.5 cm wider than the baseline. As a *gate-escape* lever they are alive: the baseline failed 8 of the 12 (mission, timing model) cells and a non-baseline seed rescued 2 of them, and on the events mission they are the only candidates that pass at the default weight |
-| **Evidence** | Complex mission, equal-duration: the baseline passes at **6.068 s / 1.22 cm / 0.49 cm**; `rolling` 8.377 s / 1.69 cm / 0.52 cm, `bow_left` 8.634 s / 1.76 cm / 0.56 cm, `bow_right` 8.662 s / 1.71 cm / 0.56 cm, `turn_first` 8.118 s / 1.55 cm / 0.73 cm — **all four fail** the 5 mm tracking gate. First4, per-segment: the baseline is the **fastest** candidate at 1.661 s but fails the CPU force gate by 0.003 N, so `turn_first` (1.724 s) is selected. Events, per-segment: the baseline fails with 2.10 cm of tracking error; `rolling`, `bow_left` and `turn_first` all pass at 4.409 s. See [Section 9](#9-measured-heuristic-comparison) |
+| **Evidence** | Complex mission, equal-duration: the baseline passes at **6.068 s / 1.19 cm / 0.30 cm**; `rolling` 8.377 s / 1.68 cm / 0.45 cm, `bow_left` 8.634 s / 1.75 cm / 0.41 cm, `bow_right` 8.662 s / 1.71 cm / 0.41 cm, `turn_first` 8.118 s / 1.52 cm / 0.31 cm — three pass and `bow_left` fails on the motor force (0.007 N). First4, per-segment: the baseline is not the fastest — `bow_right` is, at **1.663 s** against the baseline's 1.833 s, and it is the selected candidate, while `bow_left` and `turn_first` fail there on the motor force (0.071 N and 0.008 N). Events: under per-segment timing all five seeds pass at 4.415–4.416 s, while under equal-duration timing all five fail (0.65–0.68 cm of tracking error). See [Section 9](#9-measured-heuristic-comparison) |
 | **Status** | **partial** — dead as a quality lever, alive as a gate-escape lever |
 | **What would revive it as a quality lever** | A seed that changes the *geometry* of the path, not just its sampling. The current seeds perturb a straight line; the optimizer then walks the line back to the straight line, because the objective has no term that prefers a curve ([Section 2](#2-what-is-not-in-the-tree)). Until then, expect them to keep buying gate escapes rather than speed |
 
@@ -1120,7 +1129,7 @@ Each entry has the same fields:
 | **Mechanism** | `main.py:160-173`, the `auto` mode |
 | **Why it was tried** | The two models answer different questions; the validator should pick |
 | **Outcome** | **It works, but the framing is wrong.** Equal-duration is not a peer — it is a legacy special case that imposes a large artificial penalty on paths with unequal segment lengths, because one shared `dt` forces every segment to take the same time |
-| **Evidence** | On a 1.0 m + 0.2 m path at `accuracy_weight = 0.005`: per-segment **2.784 s / 0.32 cm**, equal-duration **4.456 s / 0.37 cm**. On the complex mission at weight 0: per-segment 4.650 s but 0.84 cm tracking and a 0.074 N force overshoot, equal-duration 6.068 s / 1.22 cm / 0.49 cm passing |
+| **Evidence** | On a 1.0 m + 0.2 m path at `accuracy_weight = 0.005`: per-segment **2.784 s / 0.32 cm**, equal-duration **4.456 s / 0.37 cm**. On the complex mission at weight 0: per-segment 4.650 s but 0.43 cm tracking and a 0.074 N force overshoot, equal-duration 6.068 s / 1.19 cm / 0.30 cm passing |
 | **Status** | open (the framing is still wrong) |
 | **What would revive it** | Make per-segment the default and keep equal-duration only as a compatibility mode. The candidate machinery is already in place |
 
@@ -1168,7 +1177,7 @@ Each entry has the same fields:
 | **Mechanism** | `main.py:175-195`, `SWEEP_WEIGHTS` at `main.py:116` |
 | **Why it was tried** | The best weight depends on the path, and the default set only tries one |
 | **Outcome** | **It works, and it is the only candidate-set strategy that has ever produced a new best trajectory.** It can only add candidates, never remove them, so it cannot make things worse — it just costs more solves and more validation passes |
-| **Evidence (measured 2026-10-20)** | `example_mission_first4`: the default candidate-1 result is 2.176 s; the grid's `baseline` per-segment at weight 0 passes at 1.833 s, and `bow_right` per-segment at weight 0 is faster still at **1.663 s** — 23.5 % faster — and is the selected candidate. `example_with_events`: the default set now produces a passing candidate under per-segment timing (4.416 s), where the equal-duration `baseline` still misses the tracking gate at 0.52 cm. `example_complex_mission`: the grid adds passing `baseline` per-segment candidates at weights 0.002 (8.604 s) and 0.005 (7.250 s), but the equal-duration baseline at 6.068 s is still selected, so the complex mission is unchanged |
+| **Evidence (measured 2026-10-20)** | `example_mission_first4`: the default candidate-1 result is 2.176 s; the grid's `baseline` per-segment at weight 0 passes at 1.833 s, and `bow_right` per-segment at weight 0 is faster still at **1.663 s** — 23.5 % faster — and is the selected candidate. `example_with_events`: the default set now produces a passing candidate under per-segment timing (4.416 s), where the equal-duration `baseline` still misses the tracking gate at 0.68 cm. `example_complex_mission`: the grid adds passing `baseline` **equal-duration** candidates at weights 0.001 (7.049 s), 0.002 (7.080 s), 0.005 (7.208 s) and 0.01 (9.323 s), but the equal-duration baseline at weight 0 (6.068 s) is still selected, so the complex mission is unchanged; every per-segment candidate in the grid fails the tracking gate (0.67–0.91 cm) |
 | **Status** | **live** (opt-in, off by default) |
 | **What would revive it** | Nothing; it should probably become the default for the missions where it wins. The measurement to make next is Q6: whether the weight is a real accuracy proxy, because right now it is a lottery with five tickets |
 
@@ -1201,9 +1210,9 @@ Each entry has the same fields:
 | **Strategy** | Generate 62 candidate paths per flagged window (4 topologies × 3 velocities + 50 STOMP), score them in parallel with `vmap`, refine the best 10 with projected gradient, and write the winner back |
 | **Mechanism** | `jax_optimizer.py:52` `generate_candidates_jax`; `multiverse_optimizer.py:307-353` |
 | **Why it was tried** | Sample the topology space in parallel (forward / reverse / point-turn), then locally optimise the good ones. This is the "evaluate thousands of structural seed trajectories in parallel" idea from `Future_Plans.md` |
-| **Outcome** | **The refinement produces a worse guess than the trivial baseline.** The probe converges in 38 iterations to **8.1473 s** against the baseline's **6.0677 s**, so it never wins |
-| **Status** | dead as a quality lever (the plumbing works, the guess does not) |
-| **What would revive it** | Find out *why* the refined window is worse. The likely causes, in order: (a) the local cost function (`jax_optimizer.py:11`) is a hand-written proxy that does not match the real objective, so "best" by the proxy is not best by the truth; (b) the refinement is per-window, so it optimises each window in isolation and creates discontinuities at the window boundaries; (c) the 10-state resampling loses the timing information that the real problem depends on. **Fix the cost function before touching the search.** This is Q5 |
+| **Outcome** | **Repaired (KI-004).** The refinement now produces a *usable* starting point, and the pipeline is re-envisioned as a **seed provider** for the solver that has the right objective. Four separate defects had to be fixed, and each was necessary: the refinement optimised two-segment windows and so **moved the waypoint in the middle**; the JAX cost integrated from the left endpoint while **IPOPT uses the trapezoidal rule**, so the proxy graded a different motion; the initial `dt` and velocities were **hard-coded** at 0.1 s and 0.1 m/s whatever the segment's length; and the refined timing was **thrown away** - the timestamps were not updated, and the probe read the guess with the equal-duration model, which keeps only the first interval |
+| **Status** | live (the pipeline is a seed provider: `main.py --refine`) |
+| **What would revive it** | Nothing further for the refinement itself. The next lever is the **objective**: the pipeline's cost is duration plus a jerk term, so it buys speed with tracking accuracy and the 5 mm gate rejects the trade. On the complex mission the refined seed gives 4.936 s where the default set gives 6.068 s, but the full ten-candidate stock set gives 4.877 s there, so it is a cheaper way to reach the stock set's speed rather than a better one |
 
 ### 20.2 The refine probe
 
@@ -1212,9 +1221,9 @@ Each entry has the same fields:
 | **Strategy** | Probe the refined trajectory as a second starting point for the polish, and keep it if it wins |
 | **Mechanism** | `multiverse_optimizer.py:454` `_global_solve`, `multiverse_optimizer.py:487` `_probe_refined_guess` |
 | **Why it was tried** | KI-004: the refined guess was computed and then thrown away, so the whole Phase 4 cost was wasted |
-| **Outcome** | **The plumbing is correct and the outcome is still nothing.** The probe runs, converges, and loses. The margin rule (0.1 %) and the iteration budget (400) are both sensible |
-| **Status** | partial (KI-004) |
-| **What would revive it** | The same as 20.1. The probe is a good mechanism waiting for a good guess |
+| **Outcome** | **The probe now wins.** On `examples/example_complex_mission.json` the refined guess converges to **4.617 s** against the primary solve's **6.049 s**, and it is kept. The reason it never won before was not the mechanism but the guess: the probe read a guess whose per-segment intervals were discarded (the equal-duration model keeps only the first one), so the states were read against a timing they did not belong to |
+| **Status** | live (KI-004) |
+| **What would revive it** | Nothing; it works. The probe is a bounded cold pass with a 0.1 % margin, and it never costs more than a fraction of the primary solve |
 
 ### 20.3 The Reeds-Shepp bootstrap with `turning_radius = 0.0`
 
@@ -1222,9 +1231,9 @@ Each entry has the same fields:
 |---|---|
 | **Strategy** | Bootstrap the geometry with a Reeds-Shepp path so the guess is kinematically valid, including reverse manoeuvres |
 | **Mechanism** | `path_planning.py:28`; configured from `examples/fll_choreo.json:46-49` |
-| **Outcome** | **The shipped configuration sets `turning_radius: 0.0`, which degenerates the Reeds-Shepp path to a straight line.** The "Reeds-Shepp bootstrap" in the default example produces linear paths. The bootstrap only engages when both segment endpoints have a heading |
-| **Status** | **dormant in practice** |
-| **What would revive it** | Set a real turning radius (the robot's actual minimum turn radius) and measure whether the bootstrap beats the linear guess. The claim "Reeds-Shepp is smoother than linear" is tested in `tests/test_refinement_accuracy.py:60`, but that test builds its own configuration, so it does not cover the shipped one |
+| **Outcome** | **The bootstrap never ran.** `path_planning.py` read rsplan's `Path` object as a list; the `TypeError` was swallowed by the `except` and every call returned `None`, so the "Reeds-Shepp bootstrap" fell back to the straight line every time. The shipped configuration compounded it with `turning_radius: 0.0`, which rsplan cannot plan with at all: 0 of 12 example segments planned. With the API fixed and the radius at the robot's 0.05 m, 12 of 12 plan (KI-004) |
+| **Status** | live (the bootstrap is the geometry the refined seed is built on) |
+| **What would revive it** | It is revived. As a seed on its own it is **not** a speed lever: on the six example missions it matches the stock seeds (first4 1.680 s, events 4.418 s) and is worse on the complex mission (7.032 s against 4.877 s). The value is in the *refinement* that is built on top of it |
 
 ### 20.4 The critic's config block
 
@@ -1427,20 +1436,20 @@ Each question has the current evidence, a hypothesis, and an experiment with a m
 | | |
 |---|---|
 | **Question** | The candidate set solves N trajectories and picks one. Is N > 1 buying anything, and if so what? |
-| **Current evidence** | Measured over 60 candidates: the non-baseline seeds produce the fastest trajectory only once (complex/per-segment, where `bow_left` is 0.5 s faster but *fails*), and the fastest **passing** trajectory only on the events mission, by 2 ms. What they reliably produce is **passing** trajectories where the baseline fails: the baseline failed 8 of the 12 (mission, timing model) cells and a non-baseline seed rescued 2 of them |
+| **Current evidence** | Measured over 60 candidates: the non-baseline seeds produce the fastest **passing** trajectory in 4 of the 7 cells that produce one (first4 and complex under per-segment timing, both by 10 % or more, and the straight path, where all five seeds tie). What they reliably produce is **passing** trajectories where the baseline fails: the baseline failed 6 of the 12 (mission, timing model) cells and a non-baseline seed rescued exactly **one** of them (the complex mission under per-segment timing, where the baseline overshoots the motor-force limit by 0.074 N) |
 | **Hypothesis** | With the current seed set, `--candidates N` buys **gate insurance**: it multiplies the chance that at least one converged solution satisfies the force and tracking gates. It does not buy speed |
 | **Experiment** | 1. Instrument the selection: record the selected candidate's `guess_style`, the fastest candidate's `guess_style`, and the failing reasons per mission. 2. Compute, for each mission, whether the baseline alone would have produced a passing trajectory. 3. Repeat on a larger mission set (Q8) and report the insurance rate |
 | **Metric** | The fraction of missions where a non-baseline seed is the only source of a passing trajectory; the duration cost of that insurance |
 | **Success criterion** | A clear answer either way, and a cost figure: "one extra seed buys a passing trajectory on N % of missions, at M seconds per solve". If N is small, the candidate count should be cut and the budget spent on the sweep grid, which also wins (19.1) |
 | **Cost** | Low. The data is already in `attempt_record` (`main.py:1058-1059`). This is a measurement, not an experiment |
-| **Answer (2026-10-20)** | **The hypothesis is half right, and the other half is the opposite.** The insurance is real but small, and it comes from the **timing model**, not from a seed. The seeds buy **speed** where they reach a different optimum, which the hypothesis said they would not. The measurement is in [`docs/measurements/2026-10-20/matrix/`](measurements/2026-10-20/matrix/) and the analysis is `analyse_matrix.py` in that folder. See the summary below. |
+| **Answer (2026-10-20)** | **The hypothesis is half right, and the other half is the opposite.** The insurance is real but small - **one mission in six** - and it comes from the **timing model**, not from a seed: the default set is two timing models of the baseline seed, and the seeds only enter from `--candidates 3` on. The seeds and the refined trajectory add **no** passes; what they buy is **speed** where they reach a different optimum (the complex mission: 6.068 s from the baseline, 5.395 s from a seed, 4.936 s from the refined guess). The measurement is in [`docs/measurements/2026-10-20/matrix/`](measurements/2026-10-20/matrix/): the analysis is `analyse_matrix.py` in that folder and that folder's README carries the summary. |
 
 ### Q4 — Should reachability be an objective term?
 
 | | |
 |---|---|
 | **Question** | The planner produces trajectories that fail the envelope gate and hands them to a human (21.2). Can the envelope be approximated cheaply enough to put inside the objective? |
-| **Current evidence** | The reachability computation is an interval propagation over the closed loop — far too expensive for the inner NLP loop. But the *dominant* contributor to the envelope is usually the model uncertainty (backlash, wheel radius, track width) propagated over the path, not the tracking error. **RQ-A changes the priority:** the envelope is not what is failing. Across the 60-candidate matrix, zero candidates failed on the envelope threshold; 36 failed on the tracking gate, which RQ-A shows is a discretisation artefact rather than an uncertainty or tracking problem. An envelope term would not touch it |
+| **Current evidence** | The reachability computation is an interval propagation over the closed loop — far too expensive for the inner NLP loop. But the *dominant* contributor to the envelope is usually the model uncertainty (backlash, wheel radius, track width) propagated over the path, not the tracking error. **RQ-A changes the priority:** the envelope is not what is failing. Across the 60-candidate matrix, zero candidates failed on the envelope threshold; 25 of the 29 failures cite the tracking gate, which RQ-A shows is a discretisation artefact rather than an uncertainty or tracking problem. An envelope term would not touch it |
 | **Hypothesis** | A differentiable, conservative proxy for the envelope — for example the accumulated uncertainty of the pose along the path, weighted by the local speed — captures most of the envelope growth and can be added as an objective term at a small cost in duration. |
 | **Experiment** | 1. Instrument the current validator to report which uncertainty component dominates the envelope at each sample. 2. Fit a cheap analytic proxy to that growth. 3. Add `w_envelope * proxy` to the objective. 4. Compare the envelope of the resulting trajectory against the current best. |
 | **Metric** | Envelope radius, duration, tracking error. |
@@ -1521,7 +1530,7 @@ Each question has the current evidence, a hypothesis, and an experiment with a m
 | **Metric** | Pass rate and selected duration under each rule. |
 | **Success criterion** | A rule that passes at least as often and selects a faster trajectory. |
 | **Cost** | Low. The scores are already computed; only the comparison rule changes. |
-| **Answer (2026-10-20)** | **The hypothesis is wrong on the tracking error and right about the excess, but neither is the lever.** The envelope is almost a proxy for the **duration** (r = +0.97 over 162 candidates), so the current rule is "shortest run" in disguise — and it throws away 11 % of the run time on the complex mission to hold a 0.6 mm difference in a number that is 8 mm inside its limit. The tracking error is nearly independent of the duration (r = +0.33), so preferring it is *slower* in 7 of the 17 groups. The per-sample excess agrees with the envelope on every mission here, because every segment limit is the default 2 cm. The envelope never rejects a candidate either. The measurement is in [`docs/measurements/2026-10-20/matrix/`](measurements/2026-10-20/matrix/); the analysis is `analyse_matrix.py` in that folder, and every candidate now carries its score vector in the `##OVERBOARD-VALIDATION##` line. |
+| **Answer (2026-10-20)** | **The hypothesis is wrong on the tracking error, and the excess is not the lever either.** The envelope is almost a proxy for the **duration** (r = +0.97 over 204 candidates), so the current rule is "shortest run" in disguise. The tracking error is nearly independent of the duration (r = +0.35), so preferring it is **slower in 11 of the 21 groups** and faster in one. The per-sample excess agrees with the envelope on every mission here, because every segment limit is the default 2 cm. The only rule that is never worse is the **duration**: it differs from the current rule in 6 of the 21 groups and is faster in every one. The envelope never rejects a candidate either - 105 of 204 pass, and not one failed on the envelope threshold. The measurement is in [`docs/measurements/2026-10-20/matrix/`](measurements/2026-10-20/matrix/); the analysis is `analyse_matrix.py` in that folder, and every candidate now carries its score vector in the `##OVERBOARD-VALIDATION##` line, so a rule can be tried without solving again. |
 
 ### Q11 — Should the executor be part of the planner?
 
@@ -1540,39 +1549,45 @@ Each question has the current evidence, a hypothesis, and an experiment with a m
 | | |
 |---|---|
 | **Question** | The five-phase pipeline is 400 lines of code that produces a trajectory the solver then discards (20.1, 20.2). Keep it, fix it, or delete it? |
-| **Current evidence** | `docs/trajectory_tools_research.md:102` already says: "Connect or remove Multi-Verse (KI-004). Add a way to pass a full refined trajectory into the simple solver and use it in the final polish, or delete the experimental path and worker flags." The connection now exists; the guess is still not good enough |
+| **Current evidence** | **Answered (KI-004).** The pipeline was repaired rather than deleted: the refinement preserves the waypoints, the JAX cost uses IPOPT's trapezoidal rule, the intervals follow the segment's own length, the refined timing is propagated into the timestamps, the probe reads the guess with the per-segment model, and the Reeds-Shepp bootstrap works (its rsplan API was broken and it had never run). The probe now wins, and the pipeline is re-envisioned as a **seed provider**: `main.py --refine` adds its refined trajectory to the candidate set. Measured over 30 missions, the refined seed is **not** better than the stock seeds and rescues nothing - it is a cheaper way to reach the stock set's speed on some missions (the complex mission: 4.936 s against the default set's 6.068 s, where the full ten-candidate stock set gives 4.877 s) |
 | **Hypothesis** | If Q1 (real path families) or Q5 (critic feedback) produces a good starting point, the Multi-Verse machinery becomes a *multi-seed generator* and its value is the topology sampling (forward / reverse / point-turn), which nothing else in the tree covers |
-| **Experiment** | 1. Do Q1. 2. If the new path family beats the baseline, feed it into the Multi-Verse bootstrap and see whether the TEB topologies add anything on top. 3. If neither works, delete the Multi-Verse path and its flags, and note it in KNOWN_ISSUES |
-| **Metric** | Whether the topology sampling produces a winner the path family alone does not. |
-| **Success criterion** | A decision, made on evidence, with the deletion recorded if that is the answer. |
-| **Cost** | Low to decide, high to execute. |
+| **Experiment** | Done: the four defects were found by measurement and fixed; the refined trajectory was measured as a seed on the six example missions and over 30. The raw records are in [`../measurements/2026-10-20-ki004/`](../measurements/2026-10-20-ki004/) |
+| **Metric** | Whether the pipeline's output wins as a candidate: duration, envelope, tracking, pass rate against the stock seed set |
+| **Success criterion** | A decision, made on evidence. **Made**: the pipeline is repaired and kept, as a seed provider; the measurement says the stock seeds are the better buy, so it stays opt-in |
+| **Cost** | Low to decide, high to execute. **The next lever is the objective, not the search**: the pipeline's cost is duration plus a jerk term, so it buys speed with tracking accuracy and the 5 mm gate rejects the trade. Making the objective answer the gate is Q4's job |
 
 ### 24.1 Suggested order
 
 ```text
   ---  DONE: RQ-A  the tracking gate's cause is identified. See
                 docs/research/RQ-A_tracking_error.md. It reorders Q4 and Q9.
+  ---  DONE: RQ-A's OQ1 and OQ2  the floor at fine sampling is the 20 ms
+                command hold, and the optimizer now has a self-consistent
+                collocation (KI-026, --self-consistent).
   ---  DONE: Q3  the selection is instrumented and the insurance rate is
                 measured. See the matrix folder and its analyse_matrix.py.
   ---  DONE: Q10 the selection rules are compared offline on the same
                 matrix. The envelope is a proxy for the duration.
-  OQ1  explain the residual tracking floor at fine sampling   (RQ-A open item)
-  OQ2  reformulate the optimizer so the plan is self-consistent
-  Q8  repair the random benchmark and get a mission suite   (prerequisite)
-  Q3  instrument the selection, get the win-rate statistics  (cheap, decisive)
-  Q6  measure weight vs tracking error                       (cheap; re-run after the fix)
-  Q2  time-allocation warm start                             (cheap, tests lesson 23.1)
-  Q1  real path family as a seed                             (the main event)
-  Q7  density vs timing flexibility
-  Q10 better selection rule                                  (cheap, can be done any time)
-  Q5  critic feedback into the solver
-  Q4  reachability in the objective                          (large; after the discretisation fix)
+  ---  DONE: Q8  the random benchmark is repaired (KI-015) and the 32-mission
+                suite exists (research/suite.py).
+  ---  DONE: Q6  the weight ladder is measured: the weight is a real accuracy
+                proxy and a search, not a dial.
+  ---  DONE: Q2  the length-proportional warm start is measured: slower
+                convergence, faster trajectories on 18 of 32 missions.
+  ---  DONE: Q1  a Bezier path family is measured: a cheaper solve, not a
+                faster trajectory.
+  ---  DONE: Q7  the density sweep is measured: n = 10 is the sweet spot.
+  ---  DONE: Q12 the Multi-Verse path is repaired and kept as a seed provider
+                (KI-004); --refine is 4.936 s where the default set gives
+                6.068 s, and the full stock set 4.877 s.
+  ---  ANSWERED: Q5  the critic flags every candidate, so it cannot filter;
+                its thresholds have to discriminate before it can.
+  Q4  reachability in the objective                          (large)
   Q11 executor in the planner                                (large)
   Q9  hardware-calibrated twin                               (needs hardware)
-  Q12 decide the Multi-Verse future                          (after Q1/Q5)
 ```
 
-The two RQ-A items come first because they are the *cause* of the 36 of 37 gate failures that everything else is downstream of, and because until the discretisation is consistent, **the 5 mm threshold is not measuring what it claims to measure.** A trajectory can pass the gate and still be unfollowable, or fail it and still be fine.
+The RQ-A items came first because they were the *cause* of the gate failures that everything else is downstream of: 25 of the 29 failures in the 60-candidate matrix cite the tracking gate, and RQ-A shows it was measuring a discretisation artefact rather than the robot. KI-026 to KI-028 have landed, and the artefact is now small at the fine end (the S-curve at n=40: 0.98 → 0.27 cm) but not at the coarse end, where the plan's own deviation is the whole error and only the reference's velocity half ([RQ-A finding F8](research/RQ-A_tracking_error.md)) would remove it. **The 5 mm threshold still measures the discretisation more than it measures the robot**, so it must not be tuned to make missions pass.
 
 ## 25. How to report a result
 
@@ -1837,7 +1852,7 @@ Every symbol this document mentions, with its location in the tree that was meas
 | KI-001 | Solver / output | A failed solve was exported as a success | [22.4](#224-a-failed-solve-was-exported-as-a-success-ki-001-and---validate-could-not-block-output-ki-002) |
 | KI-002 | Validation | `--validate` could not block output or the exit code | [22.4](#224-a-failed-solve-was-exported-as-a-success-ki-001-and---validate-could-not-block-output-ki-002) |
 | KI-003 | Safety | Immrax ignored the upper uncertainty bounds | [22.3](#223-the-immrax-upper-uncertainty-bounds-were-ignored-ki-003) |
-| KI-004 | Multi-Verse | The refinement has no effect on the final trajectory | [20.1](#201-the-jax-refinement), [20.2](#202-the-refine-probe), Q12 |
+| KI-004 | Multi-Verse | The refinement had no effect on the final trajectory — now repaired and kept as a seed provider | [8.6](#86-how-the-pipeline-reaches-the-solver), [20.1](#201-the-jax-refinement), [20.2](#202-the-refine-probe), Q12 |
 | KI-009 | Safety / config | The declared uncertainty ranges were ignored | [Section 11](#11-the-uncertainty-model) |
 | KI-010 | Physics | The weight-transfer math was wrong and the tools disagreed | [22.5](#225-the-weight-transfer-math-was-wrong-and-the-tools-disagreed-ki-010) |
 | KI-014 | Safety model | The JAX Ramsete used a poor large-angle approximation | [Section 12](#12-controller-and-plant-parity) |

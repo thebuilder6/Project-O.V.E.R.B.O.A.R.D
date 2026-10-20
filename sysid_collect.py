@@ -3,7 +3,8 @@ Collect a SysId session from a Pybricks hub over Bluetooth and fit it.
 
 The collector is pushed to the hub, the operator presses the hub button
 between tests, and the session is captured as it arrives. The poses the hub
-reports are converted to a poses.csv and fitted into sysid_fit.json:
+reports are written to a CSV for the operator, and the session is fitted into
+sysid_fit.json:
 
     python sysid_collect.py --conn ble \
         --profile examples/drivebase_profile.example.json
@@ -13,10 +14,10 @@ the hub by hand, the poses no longer have to be typed into a CSV, and the fit
 runs without a second command.
 
 What it does not do is measure the robot. The poses the hub reports are its
-own odometry, so the distance scale, the heading scale and the brake slip of
-the fit carry no information and stay at their defaults. Replace the
-generated poses.csv with tape measurements and re-run the fit to calibrate
-them:
+own odometry, so they are NOT handed to the fit as a measurement: the
+distance scale, the heading scale and the brake slip of the fit carry no
+information and stay at their defaults. Replace the generated poses.csv with
+tape measurements and re-run the fit to calibrate them:
 
     python sysid_fit.py session.csv --poses poses.csv \
         --profile examples/drivebase_profile.example.json --out sysid_fit.json
@@ -134,8 +135,12 @@ def main(argv=None):
         fit_args += ["--profile", args.profile]
     if args.wheel_radius is not None:
         fit_args += ["--wheel-radius", str(args.wheel_radius)]
-    if rows:
-        fit_args += ["--poses", args.poses]
+    # The hub's own poses are NOT handed to the fit. They are the robot's
+    # odometry, so fitting them would calibrate the odometry against itself:
+    # the scale would come out at 1.0 because the robot agrees with itself,
+    # and the odometry block would claim to be calibrated when it carries no
+    # information. The poses are written out for the operator above; the
+    # measurement is a tape measurement, which the operator supplies.
 
     print()
     status = fit_main(fit_args)
@@ -145,7 +150,8 @@ def main(argv=None):
               "the heading scale and the brake slip carry no information: the "
               "robot is only agreeing with itself. To calibrate them, replace "
               "the poses with tape measurements and re-run:")
-        print("  python sysid_fit.py " + " ".join(fit_args))
+        print("  python sysid_fit.py " + " ".join(fit_args)
+              + " --poses poses.csv")
     return status
 
 

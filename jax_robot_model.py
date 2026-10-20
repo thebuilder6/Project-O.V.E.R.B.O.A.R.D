@@ -37,6 +37,18 @@ class JAXRobotConfig:
         self.torque_headroom_range = tuple(rc.uncertainties["torque_headroom"])
         self.backlash_range = tuple(rc.uncertainties["gear_backlash_m"])
 
+    def no_load_wheel_speed_worst_case(self) -> float:
+        """The wheel speed at which the motor makes no torque (m/s).
+
+        The smallest declared wheel radius is the one that reaches the
+        no-load speed first. The motor turns ``gearing`` times per wheel
+        revolution, so the wheel's no-load speed is the motor's divided by
+        it, exactly as :meth:`robot_model.RobotConfig.max_linear_speed`
+        and the force model read it (KI-034).
+        """
+        radius = min(self.wheel_radius_range)
+        return self.v_max_rad_s * radius / max(self.gearing, 1e-9)
+
     def get_max_force_at_velocity(self, v_wheel: jnp.ndarray, apply_headroom: bool = True, use_intervals: bool = False) -> jnp.ndarray:
         r = self.wheel_radius_range if use_intervals else self.wheel_radius
         t_max = self.t_max_range if use_intervals else self.t_max_nm

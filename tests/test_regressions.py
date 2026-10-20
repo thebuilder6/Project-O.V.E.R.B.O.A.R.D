@@ -226,6 +226,31 @@ class TestCandidateSpecs(unittest.TestCase):
         self.assertTrue(all(s["guess_style"] == "baseline" for s in specs))
         self.assertTrue(all(not s["per_segment_dt"] for s in specs))
 
+    def test_refine_adds_the_pipeline_trajectory_without_replacing_any(self):
+        """KI-004: the pipeline is a seed provider, not a second solver."""
+        plain = self.specs(0.0, 2, use_styles=True)
+        refined = self.specs(0.0, 2, use_styles=True, refined=True)
+        self.assertEqual(plain, refined[:len(plain)])
+        added = refined[len(plain):]
+        self.assertTrue(added, "the refined candidate was not added")
+        for spec in added:
+            self.assertEqual(spec.get("guess"), "refined")
+            # The refined trajectory carries a per-segment interval, so only
+            # the model that reads those intervals can use it.
+            self.assertTrue(spec["per_segment_dt"])
+
+    def test_refine_is_off_by_default(self):
+        specs = self.specs(0.0, 2, use_styles=True)
+        self.assertFalse(any(s.get("guess") == "refined" for s in specs))
+
+    def test_refine_covers_the_accuracy_weight_grid(self):
+        """The weight is what buys the tracking error, so the seed needs it."""
+        specs = self.specs(0.0, 1, use_styles=True, refined=True)
+        weights = [s["accuracy_weight"] for s in specs if s.get("guess") == "refined"]
+        self.assertIn(0.0, weights)
+        self.assertIn(0.001, weights)
+        self.assertIn(0.005, weights)
+
 
 class TestSweepSpecs(unittest.TestCase):
     """The sweep adds the timing-mode x accuracy-weight grid to the set."""

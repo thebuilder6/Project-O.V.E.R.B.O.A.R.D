@@ -130,7 +130,7 @@ _THREAD_ENV_VARS = ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS"
 
 
 def _candidate_specs(base_accuracy_weight, count, use_styles=True, dt_mode="auto",
-                     sweep=False):
+                     sweep=False, refined=False):
     """Definitions for the candidate set.
 
     With the simple solver, each candidate is a distinct initial-guess seed at
@@ -151,6 +151,15 @@ def _candidate_specs(base_accuracy_weight, count, use_styles=True, dt_mode="auto
     comparison and the usual rule (the passing candidate with the smallest
     envelope, the shortest one breaking the tie) still decides. A sweep costs
     more solves and more validation passes.
+
+    refined=True adds the Multi-Verse pipeline's own refined trajectory as a
+    candidate (KI-004). The pipeline stops being a second solver and becomes
+    a *seed provider*: its phases 1 to 4 hand the real solver a trajectory
+    that passes through every waypoint and carries a per-segment interval for
+    every segment. The refined trajectory is only meaningful under the
+    per-segment timing model - it is the model that reads its intervals - so
+    that is the mode it is used with. Like the sweep, it adds candidates and
+    never replaces them, and it needs JAX.
 
     The Multi-Verse path has no seed or timing plumbing yet, so it keeps the
     historical accuracy-weight ladder.
@@ -201,7 +210,54 @@ def _candidate_specs(base_accuracy_weight, count, use_styles=True, dt_mode="auto
                     "guess_style": "baseline",
                     "per_segment_dt": per_segment_dt,
                 })
+
+    if refined:
+        # The pipeline's refined trajectory, over the accuracy-weight grid:
+        # the weight is what buys the tracking error, so the seed has to be
+        # judged with it (Q6). The refined guess is a *different* starting
+        # point from the stock one, so it is added even where the stock set
+        # already covers that (seed, timing, weight).
+        weights = []
+        for weight in (base_accuracy_weight,) + SWEEP_WEIGHTS:
+            if weight not in weights:
+                weights.append(weight)
+        for weight in weights:
+            specs.append({
+                "accuracy_weight": weight,
+                "guess_style": "baseline",
+                "per_segment_dt": True,
+                "guess": "refined",
+            })
     return specs
+
+
+def _build_refined_guess(robot_cfg, waypoints, num_samples_per_segment, stops,
+                         events, accuracy_weight):
+    """The Multi-Verse pipeline's refined trajectory, as a starting point.
+
+    Phases 1 to 4 of the pipeline: the Reeds-Shepp bootstrap, the
+    kinematic profile, the critic and the segment-preserving refinement.
+    The result passes through every waypoint and carries a per-segment
+    interval for every segment, so it is a starting point the per-segment
+    timing model can read (KI-004).
+
+    The pipeline is imported here, not at the top of the module, so a plain
+    solve never pays for JAX.
+    """
+    from multiverse_optimizer import MasterTrajectoryOptimizer
+    from optimizer import TrajectoryOptimizer
+
+    pipeline = MasterTrajectoryOptimizer(robot_cfg, enable_parallel=False,
+                                         verbose=False)
+    geometry = pipeline.bootstrapper.generate_baseline(
+        list(waypoints), num_samples_per_segment)
+    trajectory = pipeline._profile_kinematics(
+        geometry, num_samples_per_segment, list(stops), dict(events), True)
+    bad_windows = pipeline.critic.evaluate(trajectory, num_samples_per_segment)
+    pipeline._refine_segments(trajectory, num_samples_per_segment, bad_windows,
+                              accuracy_weight, True)
+    return TrajectoryOptimizer(robot_cfg).guess_from_samples(
+        trajectory, len(waypoints) - 1, num_samples_per_segment)
 
 
 def _solve_candidate_worker(payload):
@@ -222,6 +278,20 @@ def _solve_candidate_worker(payload):
                                                   verbose=False)
         else:
             optimizer = TrajectoryOptimizer(robot_cfg)
+        if spec.get("guess") == "refined":
+            # The Multi-Verse pipeline's refined trajectory as the starting
+            # point (KI-004). The guess is built here, in the worker that
+            # needs it, so only that candidate pays for the refinement and
+            # a plain solve never imports JAX.
+            guess = _build_refined_guess(
+                robot_cfg, wps,
+                solve_kwargs.get("num_samples_per_segment", 10),
+                solve_kwargs.get("stop_waypoint_indices") or [],
+                solve_kwargs.get("waypoint_events") or {},
+                spec.get("accuracy_weight", 0.0))
+            solve_kwargs = dict(solve_kwargs)
+            solve_kwargs["initial_guess"] = guess
+            solve_kwargs["per_segment_dt"] = True
         samples, stats = optimizer.solve(wps, **solve_kwargs)
         return samples, stats, list(getattr(optimizer, "iteration_history", []))
     except Exception as exc:
@@ -260,6 +330,15 @@ def _solve_candidates(payloads, workers, quiet, parallel, local_optimizer=None):
             for robot_cfg, wps, spec, solve_kwargs, use_multiverse in payloads:
                 try:
                     before = len(getattr(local_optimizer, "iteration_history", []))
+                    if spec.get("guess") == "refined":
+                        solve_kwargs = dict(solve_kwargs)
+                        solve_kwargs["initial_guess"] = _build_refined_guess(
+                            robot_cfg, wps,
+                            solve_kwargs.get("num_samples_per_segment", 10),
+                            solve_kwargs.get("stop_waypoint_indices") or [],
+                            solve_kwargs.get("waypoint_events") or {},
+                            spec.get("accuracy_weight", 0.0))
+                        solve_kwargs["per_segment_dt"] = True
                     samples, stats = local_optimizer.solve(wps, **solve_kwargs)
                     history = list(
                         getattr(local_optimizer, "iteration_history", []))[before:]
@@ -342,6 +421,31 @@ def _finite(value):
     return value
 
 
+def _segment_limit(thresholds, index, default=0.02):
+    """The envelope limit for one waypoint segment.
+
+    A waypoint's limit is the limit for the way *into* it: the robot has to
+    be tight where it arrives, not where it leaves. So the segment that ends
+    at a waypoint is judged by that waypoint's limit, and the segment that
+    starts there falls back to it when the next waypoint declares none.
+
+    The rule matters in two places. The last waypoint's limit now governs
+    the last segment, so it is never dropped: with the old rule the final
+    waypoint had no segment after it and its limit was never read at all.
+    And a waypoint marked as a precision one is now held to its tight limit
+    on the approach, which is what the operator asked for.
+
+    The thresholds are keyed by waypoint index; index is the segment index,
+    and segment ``index`` runs from waypoint ``index`` to waypoint
+    ``index + 1``.
+    """
+    if index + 1 in thresholds:
+        return float(thresholds[index + 1])
+    if index in thresholds:
+        return float(thresholds[index])
+    return float(default)
+
+
 def _segment_report(samples_data, samples_per_segment, thresholds, immrax_report, cpu_summary):
     """Per-segment validation detail: envelope radius, local limit, violations.
 
@@ -381,7 +485,7 @@ def _segment_report(samples_data, samples_per_segment, thresholds, immrax_report
     for index in range(n_segments):
         start = index * samples_per_segment
         stop = min(start + samples_per_segment, count)
-        limit = float(thresholds.get(index, 0.02))
+        limit = _segment_limit(thresholds, index)
         radius = 0.0
         for i in range(start, stop):
             env = envelopes[i] if i < len(envelopes) else None
@@ -422,6 +526,7 @@ def _emit_validation_report(attempts, selected_index):
         candidates.append({
             "index": number,
             "style": attempt.get("guess_style"),
+            "guess": attempt.get("guess", attempt.get("guess_style")),
             "timing": "per-segment" if attempt.get("per_segment_dt") else "equal-duration",
             "accuracy_weight": _finite(attempt.get("accuracy_weight")),
             "duration_s": _finite(attempt.get("duration")),
@@ -672,11 +777,22 @@ def _push_to_hub(traj_file, connection, name, log_path, quiet):
         click.echo(f"Pushing {HUB_RUNNER.name} to the hub over {connection}...")
     try:
         lines = push_trajectory(traj_file, connection=connection, name=name,
+                                log_path=log_path,
                                 mission_module=HUB_MISSION_MODULE,
                                 runner=HUB_RUNNER)
     except RuntimeError as exc:
-        raise click.ClickException(str(exc))
+        # The log is streamed to disk as the run arrives, so what the hub
+        # printed before the link dropped is still there. The other two
+        # entry points (hub_deploy.py --out and sysid_collect.py) keep the
+        # session the same way; this one used to lose all of it.
+        message = str(exc)
+        if log_path and os.path.exists(log_path):
+            message += f" (the hub output that arrived is in {log_path})"
+        raise click.ClickException(message)
     if log_path:
+        # The streamed file holds the same lines in the hub's own line
+        # endings. Rewrite it in the text form the other entry points
+        # write, so one reader serves all of them.
         write_session(lines, log_path)
         if not quiet:
             click.echo(f"  wrote {len(lines)} lines of hub output to {log_path}")
@@ -779,6 +895,11 @@ def _print_summary(output, samples_data, robot_cfg, validate, attempt_passed, tu
               help='Plan a self-consistent trajectory: the samples are placed on the path the '
                    'trajectory\'s own (v, omega) profile traces, so the headings are its tangents '
                    '(simple solver only). Off by default; it changes every plan it is used on.')
+@click.option('--refine', is_flag=True,
+              help='Add the Multi-Verse pipeline\'s refined trajectory as a candidate (simple '
+                   'solver only, needs JAX). The pipeline is used as a seed provider: its '
+                   'refinement hands the solver a path through every waypoint with a per-segment '
+                   'interval, and the solver does the magnitudes.')
 
 # --- Export & Validation ---
 @click.option('--validate/--no-validate', default=False,
@@ -828,7 +949,7 @@ def _print_summary(output, samples_data, robot_cfg, validate, attempt_passed, tu
 @click.pass_context
 def main(ctx, config, waypoints, output, gui, gui_port, doctor, multiverse, simple, preset,
          samples, accuracy_weight, candidates, stop_waypoints, events, per_segment_dt, uniform_dt,
-         no_parallel, workers, fast_polish, sweep, self_consistent, validate,
+         no_parallel, workers, fast_polish, sweep, self_consistent, refine, validate,
          sysid_fit, export_format, controller_dt, control_dt, benchmark,
          push_hub, hub_conn, hub_name, hub_log,
          plot, animate, live, show_convergence, convergence_mode, iteration_history,
@@ -870,6 +991,10 @@ def main(ctx, config, waypoints, output, gui, gui_port, doctor, multiverse, simp
     if self_consistent and multiverse:
         raise click.ClickException(
             "--self-consistent is only supported by the simple solver."
+        )
+    if refine and multiverse:
+        raise click.ClickException(
+            "--refine is only supported by the simple solver."
         )
 
     if doctor:
@@ -1099,7 +1224,7 @@ def main(ctx, config, waypoints, output, gui, gui_port, doctor, multiverse, simp
     # that could get worse (longer trajectories accumulate more uncertainty).
     candidate_specs = _candidate_specs(accuracy_weight, candidates,
                                        use_styles=not multiverse, dt_mode=dt_mode,
-                                       sweep=sweep)
+                                       sweep=sweep, refined=refine)
     attempt_passed = False
     best_reasons = []
     all_attempts = []  # Each candidate: samples, stats, cost, ok, violation, tube, converged, reasons
@@ -1168,6 +1293,10 @@ def main(ctx, config, waypoints, output, gui, gui_port, doctor, multiverse, simp
             "diverged": False,
             "converged": bool(stats.get("converged", False)),
             "guess_style": guess_style,
+            # Which starting point produced it: the seed, or the Multi-Verse
+            # pipeline's refined trajectory. The style alone does not say:
+            # a refined candidate carries the baseline style.
+            "guess": spec.get("guess", guess_style),
             "per_segment_dt": per_segment_dt,
             "accuracy_weight": curr_accuracy_weight,
             "iteration_history": (histories[cand_idx]
@@ -1224,9 +1353,11 @@ def main(ctx, config, waypoints, output, gui, gui_port, doctor, multiverse, simp
         max_err_all = 0.0
 
         for i in range(len(samples_data)):
-            # Determine local threshold
+            # Determine local threshold. The segment's limit is the one of
+            # the waypoint the segment arrives at (see _segment_limit), so a
+            # precision waypoint is held to its tight limit on the approach.
             wp_idx = i // samples
-            local_threshold = waypoint_thresholds.get(wp_idx, 0.02) # Default 2cm for transit
+            local_threshold = _segment_limit(waypoint_thresholds, wp_idx)
 
             # Check envelope radius (max error)
             env = samples_data[i].get('reachability_envelope', {})
