@@ -4,7 +4,7 @@ Last reviewed: 2026-10-19
 
 Scope: whole repository, reviewed as a single-user, offline desktop tool for one FLL robot. This is not a multi-user or server-scale review.
 
-Status: KI-001, KI-002, KI-003, KI-005, KI-006, KI-007, KI-008, KI-009, KI-010, KI-011, KI-012, KI-013, KI-014, KI-016, KI-019, and KI-021 are **fixed in the working tree** (uncommitted). All other items are open; KI-015 and KI-017 are partially fixed. KI-020 records the remaining digital-twin and optimization work. The user-facing docs were reconciled with this tree on 2026-10-19; the code remains the authority if they diverge again.
+Status: KI-001, KI-002, KI-003, KI-005, KI-006, KI-007, KI-008, KI-009, KI-010, KI-011, KI-012, KI-013, KI-014, KI-016, KI-019, KI-021, KI-022, KI-023, KI-024, and KI-025 are **fixed in the working tree** (uncommitted). All other items are open; KI-015 and KI-017 are partially fixed. KI-020 records the remaining digital-twin and optimization work. The user-facing docs were reconciled with this tree on 2026-10-19; the code remains the authority if they diverge again.
 
 How to use this list: refer to an item by its ID, for example “fix KI-003”.
 
@@ -16,7 +16,7 @@ How to use this list: refer to an item by its ID, for example “fix KI-003”.
 | KI-002 | P0 | Validation | ~~`--validate` cannot block output or change the exit code~~ (fixed) |
 | KI-003 | P0 | Safety | ~~Immrax ignores upper uncertainty bounds~~ (fixed) |
 | KI-004 | P0 | Multi-Verse | Refinement has no effect on the final trajectory |
-| KI-005 | P0 | Live view | ~~The visualizer kills whatever owns port 8765~~ (fixed) |
+| KI-005 | P0 | Live view | ~~The visualizer kills whatever owns port 8765~~ (fixed; the live view is gone) |
 | KI-006 | P0 | Install | ~~A fresh install cannot run the default command~~ (fixed) |
 | KI-007 | P1 | Tests | ~~The JAX test suite is silently skipped~~ (fixed) |
 | KI-008 | P1 | Safety / config | ~~JAX validation reads a different config format~~ (fixed) |
@@ -27,12 +27,16 @@ How to use this list: refer to an item by its ID, for example “fix KI-003”.
 | KI-013 | P1 | Export | ~~Python export loses the robot config~~ (fixed) |
 | KI-014 | P1 | Safety model | ~~JAX Ramsete uses a poor large-angle approximation~~ (fixed) |
 | KI-015 | P1 | Benchmarks | Random benchmark tools are broken |
-| KI-016 | P1 | Live view | ~~The first client never receives config or waypoints~~ (fixed) |
+| KI-016 | P1 | Live view | ~~The first client never receives config or waypoints~~ (fixed; the live view is gone) |
 | KI-017 | P2 | CLI | Convergence flags do nothing (dead flags removed) |
 | KI-018 | P2 | Maintenance | Dead code, duplicates, and generated files |
 | KI-019 | P0 | Safety | ~~The reachability tube lags the reference by one sample~~ (fixed) |
 | KI-020 | P1 | Digital twin | Validator/optimizer do not yet model motor, odometry, slip, or reachability-driven optimization |
 | KI-021 | P1 | Robot runtime | ~~The DriveBase caps the acceleration the plan asks for~~ (fixed) |
+| KI-022 | P1 | Solver / timing | ~~Per-segment timing was not held to the same wheel-jerk discipline~~ (fixed) |
+| KI-023 | P1 | Robot runtime | ~~The SysId collector could not be pushed to a hub and its metadata did not parse~~ (fixed) |
+| KI-024 | P1 | Solver / timing | ~~The timing model had no rule for where the time allocation may change~~ (fixed) |
+| KI-025 | P1 | Safety model | ~~The backlash was subtracted from the commanded wheel speed, and the tracking metric ignored the heading~~ (fixed) |
 
 ## P0 — fix first
 
@@ -104,13 +108,13 @@ How to use this list: refer to an item by its ID, for example “fix KI-003”.
 
 ### KI-005 — The live visualizer kills whatever owns port 8765
 
-**Status:** Fixed in the working tree (uncommitted).
+**Status:** Fixed in the working tree (uncommitted), then closed by removal.
 
-**Files:** `live_visualizer.py`, `main.py`
+**Files:** `live_visualizer.py` (deleted), `main.py`
 
 **Problem:** `LiveVisualizer.start()` called `_kill_process_on_port`, which used `netstat` + `taskkill` on Windows and `fuser -k` on POSIX. It did not check which process owned the port.
 
-**Fix:** `_kill_process_on_port` is gone. The port is probed before the server starts; a busy port raises a clear "already in use" error, and `--port` picks a different one. The forced `reuse_address=True` was removed as well, so a busy port fails instead of being taken over. `tests/test_cli_ux.py` covers both paths.
+**Fix:** `_kill_process_on_port` is gone and the port is probed before binding, so a busy port raises a clear "already in use" error. The live view itself was then retired: the browser studio is the only browser UI, and it never takes a port that is already in use (it tries the next free one). `--live` opens the studio instead.
 
 ---
 
@@ -276,11 +280,11 @@ How to use this list: refer to an item by its ID, for example “fix KI-003”.
 
 **Status:** Fixed in the working tree (uncommitted).
 
-**Files:** `live_visualizer.py`, `main.py`, `viz/index.html`
+**Files:** `live_visualizer.py` (deleted), `main.py`, `viz/index.html` (deleted)
 
 **Problem:** `send_config` ran immediately after the server started, but `broadcast` returned when there were no clients. The README told users to open the browser afterward.
 
-**Fix:** The last config, waypoints and trajectory are stored and replayed to every client that connects, so a reload or a late browser still shows the field. The dead regenerate and candidate panels were removed from `viz/index.html`, and `--live` now opens the browser itself.
+**Fix:** The last config, waypoints and trajectory were stored and replayed to every client that connects, so a reload or a late browser still showed the field. The live view was then retired along with KI-005: the studio loads the mission itself, so there is no first-client race to have.
 
 ## P2 — cleanup
 
@@ -300,7 +304,7 @@ How to use this list: refer to an item by its ID, for example “fix KI-003”.
 
 **Files:** `pybricks_code/ramsete_fast.py` (intentionally kept), `examples/complex_mission.py`, `pybricks_code/complex_mission.py`, `pybricks_code/complete_mission.py`, `immrax_validator.py:295`
 
-**Problem:** Cleanup removed the duplicate `examples/complete_mission.py`, the root `test_jax_ramsete.py` (its boundary test moved to `tests/test_jax_ramsete.py`), `docs/API_optimizer.md`, generated example/controller/benchmark outputs, and unused imports plus `send_candidates`/`send_status`. `ramsete_fast.py` is intentionally kept: it is the production controller used on the real robot. Remaining: generated mission copies in `pybricks_code/` and `examples/complex_mission.py`; `get_safety_ribbon_data` is still unused and is no longer documented in `docs/WHITEPAPER.md`; the live-view regenerate controls are still dead.
+**Problem:** Cleanup removed the duplicate `examples/complete_mission.py`, the root `test_jax_ramsete.py` (its boundary test moved to `tests/test_jax_ramsete.py`), `docs/API_optimizer.md`, generated example/controller/benchmark outputs, and unused imports plus `send_candidates`/`send_status`. `ramsete_fast.py` is intentionally kept: it is the production controller used on the real robot. Remaining: generated mission copies in `pybricks_code/` and `examples/complex_mission.py`; `get_safety_ribbon_data` is still unused and is no longer documented in `docs/WHITEPAPER.md`. The live view, its dead regenerate controls and the `live_visualizer.py` module are gone.
 
 **Evidence:** The full suite now runs 194 tests with 0 skipped. `random_suite/run_000/plot.png` is kept because `README.md` embeds it as a historical example.
 
@@ -326,7 +330,7 @@ How to use this list: refer to an item by its ID, for example “fix KI-003”.
 
 ### KI-020 — Validator is not yet a full digital twin or an optimizer objective
 
-**Status:** Open, partially addressed in the working tree. The controller parity, linear reference, 20 ms sample-and-hold, and physical backlash model are implemented. The controller split is also done: `robot_config.py` is hardware-only, `mission_4_ramsete.py` imports `ramsete_fast` with its calibrated defaults, and `mission_5_lambdas.py` imports `ramsete` for events. `pybricks_code/sysid_digital_twin.py` and `sysid_fit.py` provide the robot log/capture and host fit path; no hardware logs have been collected yet. The host can now push a script to the hub and capture its console output without the Pybricks IDE (`hub_deploy.py`, `main.py --push-hub`), so the robot log no longer has to be copied out by hand, and a pushed trajectory reports its measured final pose as a `POSE` line. The host tools accept a minimal drivebase profile (`wheel_radius_m`, optional `track_width_m`) instead of a full robot config. `digital_twin.py` and `main.py --sysid-fit` now load and validate a fit. When enabled, the validator uses a five-state plant with actual wheel speeds, the fitted straight-line gain interval, first-order time constant, command delay, and odometry distance/heading scale in feedback. The nominal feedback path also mirrors the firmware's rounded `DriveBase.drive()` arguments (whole mm/s, whole deg/s). Braking slip is now applied by the plant. Reachability is a post-solve candidate score (`--candidates`), not yet an optimizer term. The firmware's DriveBase trajectory limits are now known (about 7800 mm/s² and 9300 deg/s² for this robot, derived from Pybricks' 20,000 deg/s² ceiling), so the plant's instant-tracking assumption matches the hub; Motor/current transients, DriveBase PID, and slip under load remain unimplemented; the whole-millimeter distance reading was measured rather than assumed and costs 0.75 mm of final drift on the 6.08 s complex mission, so it is not worth modelling. The machinery for the rest is built and inert until the fit provides the numbers: the controller is fed the robot's own integrated odometry belief instead of the truth, the plant applies the measured braking shortfall and the measured acceleration limit, and the belief drifts with the measured gyro bias. `docs/DIGITAL_TWIN_PLAN.md` records the data contract, what is built, and what is still open. The measurement loop around them is now complete on the host: `main.py --push-hub --hub-log session.log` captures the hub console output, `sysid_fit.py --from-hub-session session.log --out-poses poses.csv` turns its `POSE` lines into the measured-pose CSV that `sysid_compare.py` reads, and the sysid battery feeds `sysid_fit.py` the same way. The measured poses are matched to the sysid log by `run_id`, and only `odometry_straight`, `odometry_turn` and `brake_from_*` runs contribute a distance scale, a heading scale or a braking-slip estimate, so a poses file with the wrong run id is silently ignored ("no measured poses supplied").
+**Status:** Open, partially addressed in the working tree. The controller parity, linear reference, 20 ms sample-and-hold, and physical backlash model are implemented. The controller split is also done: `robot_config.py` is hardware-only, `mission_4_ramsete.py` imports `ramsete_fast` with its calibrated defaults, and `mission_5_lambdas.py` imports `ramsete` for events. `pybricks_code/sysid_digital_twin.py` and `sysid_fit.py` provide the robot log/capture and host fit path; no hardware logs have been collected yet. The host can now push a script to the hub and capture its console output without the Pybricks IDE (`hub_deploy.py`, `main.py --push-hub`), so the robot log no longer has to be copied out by hand, and a pushed trajectory reports its measured final pose as a `POSE` line. The fitted numbers now carry an uncertainty: the calibration-critical tests run three times each, the fit reports a 95% t-interval per parameter over those repeats, and the validator plans against that interval instead of the spread of the steps inside one run, which was not an uncertainty because the steps are sequential. The interval covers the run-to-run variation and any drift over the session, but not the error of the tape measure: the tape error is in the numerator of every measurement, it is the same every time, and no number of repeats averages it out. The host tools accept a minimal drivebase profile (`wheel_radius_m`, optional `track_width_m`) instead of a full robot config. `digital_twin.py` and `main.py --sysid-fit` now load and validate a fit. When enabled, the validator uses a five-state plant with actual wheel speeds, the fitted straight-line gain interval, first-order time constant, command delay, and odometry distance/heading scale in feedback. The nominal feedback path also mirrors the firmware's rounded `DriveBase.drive()` arguments (whole mm/s, whole deg/s). Braking slip is now applied by the plant. Reachability is a post-solve candidate score (`--candidates`), not yet an optimizer term. The firmware's DriveBase trajectory limits are now known (about 7800 mm/s² and 9300 deg/s² for this robot, derived from Pybricks' 20,000 deg/s² ceiling), so the plant's instant-tracking assumption matches the hub; Motor/current transients, DriveBase PID, and slip under load remain unimplemented; the whole-millimeter distance reading was measured rather than assumed and costs 0.75 mm of final drift on the 6.08 s complex mission, so it is not worth modelling. The machinery for the rest is built and inert until the fit provides the numbers: the controller is fed the robot's own integrated odometry belief instead of the truth, the plant applies the measured braking shortfall and the measured acceleration limit, and the belief drifts with the measured gyro bias. `docs/DIGITAL_TWIN_PLAN.md` records the data contract, what is built, and what is still open. The measurement loop around them is now complete on the host: `main.py --push-hub --hub-log session.log` captures the hub console output, `sysid_fit.py --from-hub-session session.log --out-poses poses.csv` turns its `POSE` lines into the measured-pose CSV that `sysid_compare.py` reads, and the sysid battery feeds `sysid_fit.py` the same way. The measured poses are matched to the sysid log by `run_id`, and only `odometry_straight`, `odometry_turn` and `brake_from_*` runs contribute a distance scale, a heading scale or a braking-slip estimate, so a poses file with the wrong run id is silently ignored ("no measured poses supplied").
 
 **Files:** `optimizer.py`, `immrax_validator.py`, `jax_ramsete.py`, `digital_twin.py`, `main.py`, `multiverse_optimizer.py`, `pybricks_code/ramsete_fast.py`, `pybricks_code/robot_config.py`, `pybricks_code/mission_4_ramsete.py`, `pybricks_code/mission_5_lambdas.py`, `pybricks_code/sysid_digital_twin.py`, `pybricks_code/hub_runner.py`, `pybricks_code/ramsete_compact_events.py`, `sysid_fit.py`, `sysid_compare.py`, `sysid_collect.py`, `hub_deploy.py`, `examples/drivebase_profile.example.json`, `tests/test_sysid_fit.py`, `tests/test_sysid_compare.py`, `tests/test_digital_twin.py`, `tests/test_hub_deploy.py`, `tests/test_sysid_collect.py`
 
@@ -334,7 +338,7 @@ How to use this list: refer to an item by its ID, for example “fix KI-003”.
 
 **Evidence:** The straight example passes with `max_tracking_error_m≈0.00346 m` and `max_envelope_radius_m≈0.0028 m` under the narrowed test ranges. Representative paths still expose the gap: the S-curve example reports `max_tracking_error_m≈0.0132 m` and `max_envelope_radius_m≈0.0077 m`; the stops example reports 0.0052-0.0060 m / 0.0093-0.0095 m; the events example reports 0.0053-0.0054 m / 0.0097 m; the complex mission now passes at 6.068 s with 0.0049 m / 0.0122 m. These are model predictions, not hardware measurements. There is no real tracking log in the repository yet; the logger and fitter have only been exercised with synthetic data. A synthetic fit with `gain=1.0, tau=0.08 s` already rejects the straight example with 3.44 cm tracking error, which shows why hardware calibration matters before enabling the fitted model. The old `accuracy_weight += 2.0` retry is removed: on the complex mission the slow 17.1 s candidate diverged, while the 6.07 s one stayed bounded. A uniform-timing five-seed sweep (`baseline`, `rolling`, `bow_left`, `bow_right`, `turn_first`) shows that on the complex mission all four non-baseline seeds converge to slower, wider paths (8.1-8.7 s, 1.55-1.76 cm, tracking 0.53-0.72 cm), so the 6.07 s / 1.22 cm baseline still wins. Guess diversity alone does not beat the equal-duration baseline; the default simple-path candidates now mix the two timing modes (KI-022). Per-segment timing is path-dependent: on an uneven 1.0 m + 0.2 m path, `accuracy_weight=0.005` passes all gates at 2.784 s / 0.32 cm envelope / 0.36 cm tracking versus 4.456 s / 0.37 cm / 0.36 cm equal-duration at the same weight, so the mixed loop selects per-segment; at `accuracy_weight=0` per-segment is 2.710 s / 0.32 cm but fails the Immrax and CPU gates, so the mixed loop falls back to the equal-duration candidate (4.463 s / 0.35 cm). On the complex mission at `accuracy_weight=0` per-segment is faster (4.650 s / 1.00 cm) but its tracking is 0.84 cm and its motor force is 0.074 N over the limit; at `accuracy_weight=0.02` it is 7.333 s / 1.58 cm with 0.53 cm tracking, still over the 5 mm gate, and worse than the uniform 6.068 s / 1.22 cm baseline. The candidate loop now mixes both timing modes by default (`--uniform-dt`/`--per-segment-dt` force one) and runs the CPU audit on every candidate, so a partial pass cannot block a later fully passing candidate.
 
-**Fix:** Collect and fit in one command with `python sysid_collect.py --conn ble --profile examples/drivebase_profile.example.json`: it pushes the logger, captures the session as it arrives, converts the hub's `POSE` lines to `poses.csv`, and writes `sysid_fit.json`. The poses are the hub's own odometry, so the distance and heading scale of the fit have no ground truth and stay at 1.0 until someone measures the robot with a tape and replaces those rows; the actuator part of the fit does not need a measurement. The same thing step by step: push the logger and capture its session with `python hub_deploy.py pybricks_code/sysid_digital_twin.py --out session.csv` (or run it from the Pybricks IDE), record the stop/final poses in `poses.csv`, fit the logs with `sysid_fit.py --profile examples/drivebase_profile.example.json`, and pass the result with `main.py --sysid-fit sysid_fit.json --validate`. Compare the planned trajectory with the measured poses using `sysid_compare.py`; it prints position/heading errors and whether each measured pose is inside the reachability envelope, and it accepts a plain predicted-pose CSV and a drivebase profile. The pushed run gives the same comparison without hand-editing: `main.py --push-hub --hub-log session.log`, then `sysid_fit.py --from-hub-session session.log --out-poses poses.csv --run-id <id>`, then `sysid_compare.py output.traj poses.csv --run-id <id>`. Extend the plant to integrated odometry and a braking-slip state only after that comparison. The post-solve choice is made: `--candidates` scores several solutions (seed/timing combinations with `--simple`, accuracy-weight variants on the Multi-Verse path) and picks the passing one with the lowest envelope (then the shortest). Extend it to a hard constraint or differentiable proxy only if the candidate set cannot find a passing path. Do not tune the 5 mm/2 cm thresholds or b/zeta to one path.
+**Fix:** Collect and fit in one command with `python sysid_collect.py --conn ble --profile examples/drivebase_profile.example.json`: it pushes the logger, captures the session as it arrives, converts the hub's `POSE` lines to `poses.csv`, and writes `sysid_fit.json`. The poses are the hub's own odometry, so the distance and heading scale of the fit have no ground truth and stay at 1.0 until someone measures the robot with a tape and replaces those rows; the actuator part of the fit does not need a measurement. The written procedure is `docs/CALIBRATION_PROCEDURE.md`: the operator drives the robot through the collector tests, measures the end pose of the five that need a tape, and fills in a measurement sheet keyed by test name. `python sysid_fit.py <session.csv> --from-sheet <sheet> --out-poses poses.csv` turns that sheet into the measured poses, so the order the tests ran in does not matter and a skipped test is reported instead of guessed. The same thing step by step: push the logger and capture its session with `python hub_deploy.py pybricks_code/sysid_digital_twin.py --out session.csv` (or run it from the Pybricks IDE), record the stop/final poses in `poses.csv`, fit the logs with `sysid_fit.py --profile examples/drivebase_profile.example.json`, and pass the result with `main.py --sysid-fit sysid_fit.json --validate`. Compare the planned trajectory with the measured poses using `sysid_compare.py`; it prints position/heading errors and whether each measured pose is inside the reachability envelope, and it accepts a plain predicted-pose CSV and a drivebase profile. The pushed run gives the same comparison without hand-editing: `main.py --push-hub --hub-log session.log`, then `sysid_fit.py --from-hub-session session.log --out-poses poses.csv --run-id <id>`, then `sysid_compare.py output.traj poses.csv --run-id <id>`. Extend the plant to integrated odometry and a braking-slip state only after that comparison. The post-solve choice is made: `--candidates` scores several solutions (seed/timing combinations with `--simple`, accuracy-weight variants on the Multi-Verse path) and picks the passing one with the lowest envelope (then the shortest). Extend it to a hard constraint or differentiable proxy only if the candidate set cannot find a passing path. Do not tune the 5 mm/2 cm thresholds or b/zeta to one path.
 
 **Workaround:** Use the straight example as a parity smoke test; treat predictions for curved/high-speed paths as uncalibrated until hardware logs are available. For planner testing, `examples/fll_choreo.json` temporarily narrows `track_width_range` to ≈±0.1% around 0.0965 m and `gear_backlash_m` to [0.4, 0.5] mm; these are test assumptions, not measured hardware values, and should be widened again once calibration data exists.
 
@@ -354,10 +358,105 @@ Two smaller losses sat on top of it: `drivebase.state()` returns the heading rou
 
 **Workaround:** None needed. These are upper limits, not commands, so raising them does not make the robot jerkier; traction and the motor controller still bound the acceleration. If the robot slips or rings on the first hardware runs, lower `straight_acceleration` / `turn_acceleration` or add `Motor(profile=...)` tuning rather than reverting the whole change. The Pybricks code has still not been run on hardware.
 
-## Suggested fix order
+### KI-022 — The per-segment timing model was not held to the same wheel-jerk discipline
 
-1. KI-001, KI-002, KI-003, KI-005, KI-006, KI-007, KI-008, KI-009, KI-010, KI-011, KI-012, KI-013, KI-014, KI-016, KI-019, and KI-021: done in the working tree; never save or ship a failed or unvalidated run, keep validation on the configured robot, use both uncertainty bounds, keep the reference tube aligned with the samples, keep the optimizer and Immrax on the same per-wheel force model, and never take a port from another program.
-2. KI-020: controller split, log/fit tooling, and the optional `--sysid-fit` actuator/odometry path are done; collect hardware data, compare fitted predictions with measured poses, add integrated odometry/slip, then use reachability in optimization.
+**Status:** Fixed in the working tree (uncommitted). Two defects, both in how the timing model treated wheel jerk. The smoothness cost is now the path-wide reference interval squared times the sum of the squared physical jerks, so every boundary pays the same per unit of physical jerk in either mode, and the reported `max_jerk_m_s3` metric uses the same term set and the same midpoint spacing as the solver. The uniform branch keeps its original expression, so the validated uniform results are unchanged.
+
+**Files:** `optimizer.py`, `validator.py`, `main.py`, `tests/test_optimizer.py`
+
+**Problem:** Two separate issues made the per-segment model a loophole.
+
+First, "uniform dt" is not a neutral time base. Every segment has the same sample count, so sharing one `dt` across segments also forces every segment to take the SAME time. On a path with unequal segment lengths the short segment inherits the long segment's duration and the robot crawls through it, then has to make the time back up with wheel motion that is not monotone. The uniform mode is therefore not the general model: per-segment `dt` is, since setting every `dt_i` equal recovers the uniform solution exactly.
+
+Second, and worse, the smoothness cost penalised the raw acceleration jump `(al_k1 - al_k)^2`, which is proportional to `jerk * dt`. Under one shared `dt` every boundary was weighted the same, so the penalty was effectively proportional to the physical jerk. Under per-segment `dt` the weight became `dt_k^2`, so a segment with a short interval was charged `dt^2` less per unit of physical jerk and could buy violent wheel motion almost for free. The same `accuracy_weight` therefore meant two different things in the two modes, which made the candidate comparison invalid.
+
+**Evidence:** On a 1.0 m + 0.2 m path with no intermediate stops at `accuracy_weight=0.005`, the per-segment model reached 19.28 m/s^3 of peak wheel jerk against the uniform model's 9.52 m/s^3, and at `accuracy_weight=0.02` it reached 9.53 against 6.71. The peak jerk was also reported wrongly: `compute_metrics` divided by `dt_i` instead of the spacing between the two interval midpoints, and differenced the last sample's `al`, which the formatter sets to 0 because it has no following interval, so a short final interval reported a large fake jerk (37.22 m/s^3 where the physical jerk was 9.52).
+
+After the fix the same path gives 9.52 m/s^3 in both modes at `accuracy_weight=0.005` (per-segment 2.787 s against the old 2.732 s, uniform unchanged at 4.456 s), and 7.95 against 6.71 at `accuracy_weight=0.02`. The per-segment objective is never worse than the uniform one at the same weight, because per-segment `dt` is a strictly larger feasible set.
+
+**Fix (implemented):** `optimizer.py` normalises the smoothness term by the path-wide mean interval and the spacing between the two interval midpoints, so the cost is `dt_ref^2 * sum(J_k^2)` in both modes and reduces to the uniform expression when every `dt` is equal. The uniform branch keeps its original expression so its results stay bit-identical. `validator.py` uses the same term set and the same midpoint spacing for the reported `max_jerk_m_s3`. `main.py` labels the two modes by what they constrain ("equal-duration" versus "per-seg") and prints each candidate's segment times, so a uniform win or loss is self-explanatory.
+
+**Workaround:** None needed. The jerk discipline is now the same in both modes, so `--accuracy-weight` means the same thing regardless of the timing model. Do not compare candidates across timing modes at different accuracy weights.
+
+### KI-023 — The SysId collector could not be pushed to a hub and its metadata did not parse
+
+**Status:** Fixed in the working tree (uncommitted). The collector now compiles for MicroPython, prints its metadata in the format the host parses, and reports its measured pose. The whole log-and-pose path can be run over Bluetooth from the host (`hub_deploy.py`, `sysid_collect.py`). The heading scale of the fit is now a positive number, so the fit it produces can be loaded.
+
+**Files:** `pybricks_code/sysid_digital_twin.py`, `pybricks_code/hub_runner.py`, `pybricks_code/ramsete_compact_events.py`, `hub_deploy.py`, `sysid_collect.py`, `sysid_fit.py`, `main.py`, `tests/test_hub_deploy.py`, `tests/test_sysid_collect.py`, `tests/firmware_stubs.py`
+
+**Problem:** Three separate defects, all invisible to the host tools because the file is valid Python.
+
+First, the collector could not be compiled for MicroPython at all: it built its CSV rows from several adjacent f-strings, and MicroPython cannot concatenate two f-strings. `mpy-cross` rejects that with a bare "SyntaxError: invalid syntax", so the file could be run from the Pybricks IDE but not pushed to a hub by any tool.
+
+Second, the collector printed its metadata as `META,run_id 12` (space separated) while the host parser splits `META,key,value` on commas. The run id therefore never reached the fit, so no measured pose could ever be attached to its test, and the odometry part of the fit always reported "no measured poses supplied".
+
+Third, the fit divided the measured heading by the odometry angle without noticing that the two use opposite signs. The measured heading is counter-clockwise positive, like the planned trajectory, but `drivebase.angle()` is clockwise positive. On any robot that runs the turn test the ratio came out as -1, and `digital_twin.py` refuses a heading scale of zero or less, so the fit could not be loaded at all. Even without that check the heading feedback would have been inverted.
+
+**Evidence:** `mpy-cross` fails on `pybricks_code/sysid_digital_twin.py` with "SyntaxError: invalid syntax"; the same failure is reproducible with `print(\n f"{x}"\n f"{x}"\n)`. With the META format fixed, `parse_session` reads `run["meta"]["run_id"]`, and `poses_from_hub_session` maps each `POSE` line to the run id of the test that was open when it was printed. A turn test that reads +90 in `db_a_deg` and -90 in the pose produced `heading_scale = -1.0`, and `load_sysid_fit` refused it with "odometry.heading_scale must be > 0, got -1.0"; the same fit loads at +1.0.
+
+**Fix (implemented):** The firmware builds its rows with one `%` format per statement, matching the other firmware modules. The metadata is printed as `META,key,value`. The collector reports its pose with `POSE,x_m,y_m,heading_deg`, integrated from the hub's own distance and angle, with the heading counter-clockwise positive so it lines up with the planned trajectory. The fit flips the sign of the odometry angle when it divides the two, so the scale between them is positive. `tests/test_hub_deploy.py::TestFirmwareCompiles` compiles every file in `pybricks_code/` with `mpy-cross`, so the compiler defect cannot come back silently, and `tests/test_sysid_collect.py::TestFittedScales` checks the fitted scales, so the sign defect cannot either.
+
+**Workaround:** None needed. Note that the reported pose is the robot's own odometry, not a measurement: the distance scale, the heading scale and the brake slip of the fit still need a tape measurement to be calibrated (KI-020). The actuator part of the fit does not. The operator's measurements go in a sheet keyed by test name, which `sysid_fit.py --from-sheet` turns into the measured poses, so the measurement convention and the run-id bookkeeping stay in one place.
+
+### KI-024 — The timing model had no rule for where the time allocation may change
+
+**Status:** Fixed in the working tree (uncommitted). A waypoint is now classified once, and the per-piece timing model only lets the *reading* of the motion profile change where the state at the point is fully determined. Where it is not, the wheel acceleration — and so the wheel force — is now required to be continuous through the point. The equal-duration model is unchanged and its validated results are bit-identical.
+
+**Files:** `optimizer.py`, `tests/test_optimizer.py`
+
+**Problem:** The per-piece timing model gave every waypoint its own sample interval, so the time scale could change anywhere. A change of interval across a waypoint has a physical consequence that the model did not account for: the acceleration on the interval before the waypoint is `(vl[k]-vl[k-1])/dt_prev` and the one after it is `(vl[k+1]-vl[k])/dt_next`. When `dt` changes there, the *same* velocity ramp is read as two different accelerations, so the wheel force profile gets a step exactly at the point the path is supposed to run through smoothly.
+
+The boundary semantics were never written down, so the model could not tell a legitimate timing boundary from an illegitimate one. The four cases are:
+
+| waypoint | what the pieces must agree on | timing |
+|---|---|---|
+| stop and pinned heading | nothing: position, heading and zero velocity are all determined | free |
+| pinned heading, no stop | the wheel velocities there | the force profile must be continuous |
+| stop, no pinned heading | the heading there; the velocity is zero on both sides | the force profile must be continuous |
+| neither | the heading and the wheel velocities | the force profile must be continuous |
+
+**Evidence:** On the complex mission the equal-duration solution steps the wheel acceleration by 3.65 m/s^2 at the waypoint at (0.320, 0.150) m — a pinned heading the robot drives through — and the per-piece solution stepped it by 2.99 m/s^2 while re-timing there. After the fix the per-piece solution's acceleration step at every waypoint the robot does not stop at is 1.2e-4 m/s^2 (equal-duration, 3.65 m/s^2) at `accuracy_weight=0` and 1.1e-3 m/s^2 at `accuracy_weight=0.005`. The step is not exactly zero because IPOPT's absolute constraint tolerance is 1e-2 and the constraints are scaled to acceleration units; the raw residual was in metres, where the same tolerance would have allowed a centimetre of velocity ramp.
+
+The fix also removes two spurious candidate rejections. On `example_mission_first4.json` the per-piece candidate at `accuracy_weight=0` was 1.661 s but failed the gates, and the equal-duration candidate at 2.176 s won; it is now 1.833 s and passes. On `example_with_events.json` the per-piece candidate at `accuracy_weight=0` was 4.896 s and failed; it is now 4.416 s and passes. The complex mission is unchanged: the equal-duration candidate still wins at 6.068 s with a 1.22 cm envelope.
+
+**Fix (implemented):** `TrajectoryOptimizer.merge_conditions` classifies every waypoint and is the single place the rule lives. In the joint NLP the pieces already agree on the state at a waypoint, because position, heading and the wheel velocities are single shared variables, so only the force continuity had to be added: for every waypoint the robot does not stop at, the acceleration on the interval before it must equal the acceleration on the interval after it. A waypoint where the robot stops is exempt, because the wheel force has to reverse sign when the robot comes to rest and goes again. The constraints are scaled by the reference interval squared so they read in m/s^2, which also fixed the solver convergence: the complex mission's per-piece candidate went from 6.836 s in 41 iterations to 4.650 s in 203.
+
+**Workaround:** None needed. Note the deeper cause of the equal-duration model's penalty is the *sample layout*, not the timing: every piece gets the same number of samples, so one shared `dt` gives every piece the same time regardless of its length. A 1.2 m straight line solved as one piece with 20 samples takes 2.702 s with no path excess, while the same line with an interior waypoint and one shared `dt` takes 4.463 s and weaves 19.9 mm. Allocating the samples along the path by arc length would remove that penalty and let the timing change only at real boundaries; it changes the sample count and the sample-to-waypoint mapping, so it is a separate change and is not done here.
+
+---
+
+### KI-025 - The backlash was subtracted from the commanded wheel speed
+
+**Status:** Fixed in the working tree (uncommitted). The backlash is now a position uncertainty in the reachable set, and the closed-loop heading error is reported next to the position error.
+
+**Files:** `immrax_validator.py` (`RobotOpenLoop.f`, `DigitalTwinOpenLoop.f`, `compute_reachability`), `main.py` (the validation report), `tests/test_validator_model.py`, `docs/research/RQ-A_tracking_error.md`
+
+**Problem:** The plant modelled the gear backlash as
+
+```python
+vl_act = vl_cmd - (backlash / 2.0) * jnp.tanh(vl_cmd / epsilon)
+```
+
+`gear_backlash_m` is a distance in metres; `vl_cmd` is a velocity in m/s. Subtracting one from the other is a dimensional error. Two things followed from it. The robot ran permanently `backlash/2` slower than commanded, in both directions, because the `tanh` saturates for any command above 1 mm/s. And that deficit grew into a pure position lag of `backlash/2 * t`, which was reported as a tracking error.
+
+A real gear backlash is a *position* dead-band: it is taken up once at a direction reversal, after which the wheel turns at exactly the commanded speed. The old model had the speed wrong and the position wrong, in a way that put a systematic bias into the metric that claims to measure tracking.
+
+**Evidence:** Collapsing the backlash interval to zero changed the tracking error by 0.1 % on the S-curve but by 100 % on a straight plan, where the lag was the entire error (226 um on a 1 m straight, and the backlash was the only uncertainty that reached the tracking error at all: `cof`, `torque_headroom`, `wheel_radius_range` and `inertia_kg_m2` are consumed only by the constraint check and never touch the propagated state). The measured lag was 0.226 mm/s, matching `backlash/2` to three digits. See `docs/research/RQ-A_tracking_error.md` finding F2.
+
+**Fix (implemented):** The plant turns the wheel at the commanded speed. The backlash is carried in the reachable set instead: the reachable set is widened by `backlash/2 * t`, symmetrically, at each sample. The worst-case total uncertainty at each sample is therefore unchanged - the same magnitude the plant used to bias the tracking error by, moved from the tracking metric into the envelope and made symmetric rather than one-sided. The gate is not made more permissive by the change; the tracking criterion stops reporting a systematic lag that was never a tracking error.
+
+**Also fixed:** the tracking metric is position-only, so a trajectory could follow the path while arriving at the wrong heading, and nothing measured it. `compute_reachability` now reports `max_heading_error_rad` and the machine-readable validation report carries `heading_error_deg` per candidate. It is reported, not gated: the heading behaviour is not yet calibrated, so it must not become a pass/fail criterion on its own.
+
+**Measured effect on the example missions.** Over the whole 60-candidate matrix, before and after the fix: the tracking error moved by a mean of −0.0008 cm (range −0.025 to +0.029 cm), the envelope radius grew by a mean of +0.0070 cm (range −0.058 to +0.061 cm), and the sum of the two moved by a mean of +0.0062 cm. **No candidate's pass flag changed** (0 of 60), and no selection changed. The worst-case total per run moved by at most 0.065 cm, against a 5 mm tracking threshold and a 2 cm envelope threshold. The tracking error barely moved because it is dominated by the discretisation mismatch, not by the backlash; what changed is *where* the backlash is accounted for.
+
+**Workaround:** None needed. The physically tighter model would cap the backlash at the dead-band width instead of letting it accumulate, which is a smaller envelope than the one implemented here; that needs hardware data to justify (KI-020), so the conservative form was kept.
+
+---
+
+
+
+1. KI-001, KI-002, KI-003, KI-005, KI-006, KI-007, KI-008, KI-009, KI-010, KI-011, KI-012, KI-013, KI-014, KI-016, KI-019, KI-021, KI-022, KI-023, KI-024, and KI-025: done in the working tree; never save or ship a failed or unvalidated run, keep validation on the configured robot, use both uncertainty bounds, keep the reference tube aligned with the samples, keep the optimizer and Immrax on the same per-wheel force model, hold both timing models to the same wheel-jerk discipline, keep the wheel force profile continuous through every waypoint the robot does not stop at, keep the backlash in the reachable set rather than in the wheel speed, never take a port from another program, and keep the firmware compilable for MicroPython.
+2. KI-020: controller split, log/fit tooling, and the optional `--sysid-fit` actuator/odometry path are done, and the log and pose capture now run over Bluetooth from the host; collect hardware data, compare fitted predictions with measured poses, add integrated odometry/slip, then use reachability in optimization.
 3. KI-004: either make Multi-Verse real or remove it.
 4. KI-015: restore trustworthy benchmarks.
 5. KI-017 and KI-018: remove or repair the remaining dead code.

@@ -64,6 +64,42 @@ Both controllers assume the robot starts at the first sample pose. An event on
 the final sample is fired after the loop, once the robot has arrived and the
 drivebase has stopped (KI-012).
 
+## Pushing a trajectory to the hub
+
+The hub can be driven from the host, without the Pybricks IDE. The host writes
+the packed trajectory to `hub_mission.py` and pushes `hub_runner.py`; the
+push bundles the local imports, so `robot_config.py`, `ramsete_compact_events.py`,
+`ramsete.py` and `hub_mission.py` all travel with it.
+
+```bash
+pip install pybricksdev
+python main.py -w mission.json --push-hub --hub-log session.csv
+```
+
+`hub_runner.py` follows the trajectory with `ramsete_compact_events.py` and
+prints the result:
+
+```
+Battery Voltage: 8100 mV
+Mission Start: compact event loop...
+EVENT,lower_arm
+Trajectory complete.
+POSE,0.4821,-0.0033,1.20
+```
+
+`POSE,x_m,y_m,heading_deg` is the measured final pose, so it becomes a row of
+the `poses.csv` that `sysid_compare.py` reads. An exported event with no
+action is reported as `EVENT,name` and fires nothing; add the actions for
+your robot in `MISSION_EVENTS` in `hub_runner.py`, the same way
+`mission_5_lambdas.py` does it.
+
+To run something else on the hub and capture its console output, push any
+script:
+
+```bash
+python hub_deploy.py pybricks_code/sysid_digital_twin.py --out session.csv
+```
+
 ## Digital-twin calibration data
 
 `sysid_digital_twin.py` collects the hardware logs used to fit the JAX/Immrax
@@ -73,6 +109,24 @@ list-format modules and `ramsete_compact.py` for packed modules.
 
 1. Run `sysid_digital_twin.py` on the Hub. Follow the setup prompts and save the
    complete console output as one `.csv` file.
+
+   The host can push the collector and capture the session for you, without
+   the Pybricks IDE:
+
+   ```bash
+   python sysid_collect.py --conn ble \
+       --profile examples/drivebase_profile.example.json
+   ```
+
+   That pushes the collector, writes the session as it arrives, turns the
+   `POSE` lines into `poses.csv`, and fits the model. The operator still
+   presses the hub button when each test asks for it.
+
+   **For the full human procedure, see
+   [docs/CALIBRATION_PROCEDURE.md](../docs/CALIBRATION_PROCEDURE.md).** It
+   has the setup for every test, the measurement convention, and the
+   troubleshooting.
+
 2. Measure the final pose for each run and record it in `poses.csv`:
 
    ```csv
@@ -84,6 +138,22 @@ list-format modules and `ramsete_compact.py` for packed modules.
    row per stop in order, with `stop` set to 0, 1, 2. If you combine multiple
    session files, prefix the printed ID with the file stem (for example
    `session1:1`).
+
+   The hub reports its own pose as a `POSE,x_m,y_m,heading_deg` line, and the
+   host turns those into this file. That pose is the robot's odometry, not a
+   measurement, so the distance scale, the heading scale and the brake slip of
+   the fit have no ground truth: replace those rows with tape measurements to
+   calibrate them. The actuator part of the fit needs no measurement.
+
+   To keep the measurements by test name and repeat instead of by run id, fill
+   in a sheet and let the host do the bookkeeping:
+
+   ```bash
+   python sysid_fit.py session.csv --write-sheet calibration_sheet.csv
+   # the operator fills in x_mm, y_mm and turn_right_deg
+   python sysid_fit.py session.csv --from-sheet calibration_sheet.csv \
+       --out-poses poses.csv
+   ```
 3. From the repository root, fit the model with a minimal drivebase profile:
 
    ```bash
@@ -158,6 +228,8 @@ Work through these in order. Each one builds on the last.
 ├── ramsete.py                      # Event-capable reference controller
 ├── ramsete_compact.py              # Packed-trajectory pathing controller (20 ms loop)
 ├── ramsete_compact_events.py       # Packed-trajectory event controller
+├── hub_runner.py                   # Entry point for a trajectory pushed from the host
+├── hub_mission.py                  # Generated: the pushed trajectory (not in git)
 ├── sysid_digital_twin.py           # Robot-side logs for digital-twin calibration
 │
 ├── mission_template.py             # Blank template — copy this to start a new mission

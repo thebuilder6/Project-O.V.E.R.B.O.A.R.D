@@ -28,11 +28,19 @@ your robot:
 
 ## 2. Collect one profile session
 
+**For the full procedure, see [CALIBRATION_PROCEDURE.md](./CALIBRATION_PROCEDURE.md).**
+It has the setup for each test, the measurement convention, and the
+troubleshooting. This is the short version.
+
 Run `pybricks_code/sysid_digital_twin.py` on the Hub, not with host Python. It
 wraps the drivebase from `robot_config.py`, runs the step/turn/odometry/brake
 tests, and prints one or more `TEST_START` / `TEST_END` blocks.
 
-Save the complete console capture as `logs/session.csv`.
+The host can push it and capture the session for you:
+
+```bash
+python sysid_collect.py --session session.csv
+```
 
 Measure the final pose of each run and write `poses.csv`:
 
@@ -44,6 +52,16 @@ run_id,stop,x_m,y_m,heading_deg
 `run_id` is the value printed by `META,run_id`. For a `multi_stop` run, add one
 row per stop in order (`stop` = 0, 1, 2, ...). If you combine session files,
 prefix the printed id with the file stem, for example `session1:1`.
+
+To keep the measurements by test name and repeat instead of by run id, fill in
+a sheet and let the tool do the bookkeeping:
+
+```bash
+python sysid_fit.py session.csv --write-sheet calibration_sheet.csv
+# the operator fills in x_mm, y_mm and turn_right_deg
+python sysid_fit.py session.csv --from-sheet calibration_sheet.csv \
+  --out-poses poses.csv
+```
 
 ## 3. Fit the model
 

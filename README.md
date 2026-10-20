@@ -3,6 +3,7 @@
 A trajectory optimizer for LEGO differential-drive robots in FIRST LEGO League (FLL). It generates time-optimal, physically constrained trajectories with CasADi + IPOPT, validates them before export, and ships a matching Pybricks Ramsete controller.
 
 **📖 Technical documentation:** [docs/WHITEPAPER.md](docs/WHITEPAPER.md)
+**🔬 Heuristics and verification:** [docs/HEURISTICS_AND_VERIFICATION.md](docs/HEURISTICS_AND_VERIFICATION.md) — every path-planning heuristic, the full verification chain, the failed-strategy ledger, and the research agenda.
 
 The current working tree contains uncommitted fixes for several audit items, including KI-001, KI-002, KI-003, KI-007 through KI-010, KI-013, KI-014, and KI-019 (see [KNOWN_ISSUES.md](KNOWN_ISSUES.md)). Multi-Verse refinement is still experimental: it runs, but the refined guess is discarded by the final polish (KI-004).
 
@@ -32,7 +33,7 @@ The current working tree contains uncommitted fixes for several audit items, inc
 pip install -r requirements.txt
 ```
 
-This installs numpy, CasADi, Plotly, Click, Matplotlib, rsplan, and websockets. It is enough for the default solver, the browser studio and the live view.
+This installs numpy, CasADi, Plotly, Click, Matplotlib and rsplan. It is enough for the default solver and the browser studio.
 
 ### Optional extras (validation, Multi-Verse, sysid fitting)
 
@@ -43,6 +44,9 @@ pip install -r requirements-optional.txt
 ```
 
 JAX 0.6.2 was used for the current tests.
+
+Pushing to a hub (`--push-hub`, `hub_deploy.py`, `sysid_collect.py`) needs
+`pybricksdev`, which is in the same file.
 
 Check what your machine has at any time:
 
@@ -220,15 +224,21 @@ The studio runs the same command line in the background, so the export gate, the
 
 When a validation fails, the studio shows **where**: a row per path segment with the reachability envelope, the local limit and the drift, the failing segment marked in red on the field, and the reason the gate gave. The robot itself is editable in the studio — mass, wheel and track size, motor limits, friction and the uncertainty ranges — so the last JSON file you need to open by hand is gone.
 
+Before you solve, the mission panel shows the path length and the fastest the robot could possibly do it, so a waypoint dragged five metres away is obvious. The Advanced section has the **fast polish** switch, which cuts the ten-waypoint complex mission from 26 s to 15 s for the same trajectory.
+
+When a solve passes, the **Run on the robot** section can push the approved trajectory to a Pybricks hub over Bluetooth or USB. The hub's console streams into the studio while the robot drives, and the pose it reports comes back as a marker on the field next to the plan, with the error in millimetres. The session is written next to the mission as `missions/<name>.session.csv`, so the plan and what the robot actually did travel together. The studio also checks the plan against the robot's own files: the event names the robot has actions for, and the wheel size it really has.
+
+While it solves, the header ticks the elapsed time and names the stage (*Solving… - 4.2 s - 3 candidates in parallel*). Stops and events are marked on the field, and when several candidates were compared the studio says which one won and what the others cost: *"equal-duration baseline won (7.21 s). per-segment baseline was 0.48 s faster but failed: tracking error 0.61 cm > 0.50 cm"*.
+
 Your work is never lost: every edit can be undone (Ctrl+Z / Ctrl+Shift+Z), the mission is kept in the browser and comes back after a reload, and **Download** saves a copy of the mission JSON to your machine. **Save** writes it to `missions/` so it shows up in the mission list and can be committed with the code.
 
-### 6. Live visualization (optional)
+### 6. Solve in the browser (optional)
 
 ```bash
-python main.py -c examples/fll_choreo.json -w examples/example_complex_mission.json --live
+python main.py --live -w examples/example_complex_mission.json
 ```
 
-The live view opens in your browser by itself and follows the solve. The server is blocking and exits when you press Enter. It never takes the port from another program: if 8765 is busy it says so, and `--port` picks a different one.
+`--live` opens the studio on that mission and solves it there, with the same options the command line would use. It is the old live view's job: the browser shows the solve, and the studio does it properly. The server blocks until you stop it, and it never takes a port from another program.
 
 ## CLI Options
 
@@ -271,27 +281,29 @@ Options:
                                   simple solver these combine initial-guess
                                   seeds (baseline, rolling, bow_left,
                                   bow_right, turn_first) with the timing mode:
-                                  by default candidate 1 is uniform baseline,
-                                  candidate 2 is per-segment baseline, then
-                                  the remaining seeds alternate. The Multi-
-                                  Verse path uses accuracy_weight steps of 2.0
-                                  instead. Validation picks the passing
-                                  candidate with the smallest envelope, then
-                                  the fastest. Without --validate only the
-                                  first candidate is solved. Use 1 for a
-                                  single solve.  [1<=x<=5]
+                                  by default candidate 1 is equal-duration
+                                  baseline, candidate 2 is per-segment
+                                  baseline, then the remaining seeds
+                                  alternate. The Multi-Verse path uses
+                                  accuracy_weight steps of 2.0 instead.
+                                  Validation picks the passing candidate with
+                                  the smallest envelope, then the fastest.
+                                  Without --validate only the first candidate
+                                  is solved. Use 1 for a single solve.
+                                  [1<=x<=5]
   --stop-waypoints TEXT           Comma-separated waypoint indices where robot
                                   must stop (e.g., "2,5,7").
   --events TEXT                   Comma-separated waypoint:event pairs (e.g.,
                                   "2:lower_arm,5:release").
   --per-segment-dt                Force each waypoint segment to have its own
-                                  sample interval (simple solver only). By
-                                  default candidates mix uniform and per-
-                                  segment timing.
+                                  sample interval (simple solver only). This
+                                  is the general timing model. By default
+                                  candidates mix both modes.
   --uniform-dt                    Force one shared sample interval across all
-                                  segments (simple solver only). By default
-                                  candidates mix uniform and per-segment
-                                  timing.
+                                  segments (simple solver only). This makes
+                                  every waypoint segment take the SAME time,
+                                  so a path with unequal segment lengths is
+                                  slow. By default candidates mix both modes.
   --no-parallel                   Solve the candidates in this process instead
                                   of in worker processes, and disable the
                                   parallel Multi-Verse refinement (no effect
@@ -304,10 +316,16 @@ Options:
                                   budget and finishes from that point with a
                                   cold pass. Missions that solve inside the
                                   budget return the same trajectory as before.
+  --sweep                         Search the timing model and the accuracy
+                                  weight for the fastest trajectory that
+                                  passes the gates (simple solver only). Adds
+                                  candidates to the set instead of replacing
+                                  them, so it costs more solves and more
+                                  validation passes.
   --validate / --no-validate      Run validation and block export on failure
                                   (requires JAX/Immrax).
   --sysid-fit FILE                Optional sysid_fit.json digital-twin fit
-                                  (requires --validate or --live).
+                                  (requires --validate).
   --export-format [none|controller|python|python-compact]
                                   Export format for controller consumption
                                   (python-compact is the packed Pybricks
@@ -316,11 +334,19 @@ Options:
                                   (seconds).  [0.001<=x<=1.0]
   --benchmark                     Collect comprehensive benchmarking data for
                                   whitepaper.
+  --push-hub                      Push the trajectory to a Pybricks hub and
+                                  run it there (needs pybricksdev and a hub
+                                  with Pybricks firmware).
+  --hub-conn [ble|usb]            How to reach the hub when pushing.
+  --hub-name TEXT                 Bluetooth name or address of the hub to push
+                                  to.
+  --hub-log FILE                  Write the hub console output to this file.
+                                  The runner reports the measured pose as a
+                                  POSE line in it.
   --plot                          Plot the resulting trajectory.
   --animate                       Animate the trajectory in real-time.
-  --live                          Open the live browser view while solving
-                                  (blocking).
-  --port INTEGER                  Port for the live browser view.
+  --live                          Open the browser studio on this mission and
+                                  solve it there (blocking).
   --show-convergence              Show convergence visualization.
   --convergence-mode [parallel|best|layered]
                                   Convergence visualization mode.
@@ -342,6 +368,8 @@ Project-O.V.E.R.B.O.A.R.D/
 ├── digital_twin.py            # Optional sysid_fit.json model loader
 ├── sysid_fit.py               # Host-side fitter for robot SysId logs
 ├── sysid_compare.py           # Planned-vs-measured stop/final pose report
+├── sysid_collect.py           # Collect a SysId session from a hub and fit it
+├── hub_deploy.py              # Push a program to a Pybricks hub, capture its output
 ├── jax_robot_model.py         # JAX robot model
 ├── jax_ramsete.py             # JAX Ramsete parity / interval controller
 ├── jax_optimizer.py           # JAX candidate generation and refinement
@@ -349,7 +377,6 @@ Project-O.V.E.R.B.O.A.R.D/
 ├── plotter.py                 # Trajectory and envelope plots
 ├── animated_plotter.py        # Trajectory animation
 ├── convergence_plotter.py     # Convergence plots
-├── live_visualizer.py         # WebSocket live view
 ├── gui_server.py              # Browser studio backend (stdlib HTTP server)
 ├── diagnostics.py             # Environment checks for --doctor
 ├── path_planning.py           # Reeds-Shepp path utilities
@@ -357,7 +384,8 @@ Project-O.V.E.R.B.O.A.R.D/
 ├── examples/                  # Example configs and waypoint files
 ├── missions/                  # Missions saved from the studio
 ├── pybricks_code/             # Pybricks robot controller code
-├── viz/                       # Browser UIs: studio.html and the live view
+├── viz/                       # Browser studio (studio.html, studio.js, studio.css)
+├── research/                  # Measurement harness for the research agenda (not imported by the planner)
 └── docs/                      # Configuration, examples, API, whitepaper
 ```
 
@@ -447,9 +475,39 @@ By default the optimizer is purely time-optimal (`--accuracy-weight 0.0`). This 
 
 The exact tradeoff depends on the path and robot. Measure it on your own trajectory rather than relying on a fixed percentage.
 
-With `--validate`, the tradeoff is measured, not assumed: `--candidates N` (default 2, max 5) solves N candidates, validates and scores every one, and keeps a passing candidate with the smallest Immrax envelope, with the shortest trajectory breaking ties. The candidates combine initial-guess seeds with the timing mode: by default candidate 1 is uniform `baseline` (linear, zero-speed guess), candidate 2 is per-segment `baseline`, then the remaining seeds (`rolling`, `bow_left`, `bow_right`, `turn_first`) alternate modes. `--uniform-dt` or `--per-segment-dt` forces one mode. The Multi-Verse path has no seed or timing plumbing yet, so it keeps the historical `accuracy_weight` ladder (`base`, `base + 2.0`, ...). `--candidates 1` disables the comparison. A slower or differently shaped candidate that scores worse is discarded; nothing is escalated silently.
+With `--validate`, the tradeoff is measured, not assumed: `--candidates N` (default 2, max 5) solves N candidates, validates and scores every one, and keeps a passing candidate with the smallest Immrax envelope, with the shortest trajectory breaking ties. The candidates combine initial-guess seeds with the timing mode: by default candidate 1 is equal-duration `baseline` (linear, zero-speed guess), candidate 2 is per-segment `baseline`, then the remaining seeds (`rolling`, `bow_left`, `bow_right`, `turn_first`) alternate modes. `--uniform-dt` or `--per-segment-dt` forces one mode. The Multi-Verse path has no seed or timing plumbing yet, so it keeps the historical `accuracy_weight` ladder (`base`, `base + 2.0`, ...). `--candidates 1` disables the comparison. A slower or differently shaped candidate that scores worse is discarded; nothing is escalated silently.
 
-The default candidate set includes both timing modes, so the uniform candidate preserves the complex-mission pass while an uneven path can select per-segment. The CPU audit runs on every candidate, not only the winner, so a candidate that passes Immrax but fails the force/slip/integration gate cannot block a later passing candidate. On an uneven 1.0 m + 0.2 m path, per-segment at `--accuracy-weight 0.005` passes all gates at 2.732 s with envelope 0.32 cm and tracking 0.36 cm, versus 4.456 s / 0.37 cm / 0.36 cm for uniform at the same weight; the mixed loop selects the per-segment candidate. At the default weight 0, per-segment is 2.710 s / 0.32 cm, but the CPU audit rejects it for a 0.00057 N force-limit overshoot, so the mixed loop falls back to uniform (4.463 s / 0.35 cm). On the complex mission at `--accuracy-weight 0`, per-segment is faster (5.447 s) but tracking is 0.86 cm, above the 5 mm gate, so it is rejected and the uniform 6.068 s / 1.22 cm candidate wins; at `0.02` per-segment passes Immrax at 7.312 s / 1.61 cm, still slower and wider than uniform. Forcing one mode is available for experiments and reproducibility, not as a silent default.
+The two timing modes are not peers. The equal-duration mode shares one `dt` across all segments, and because every segment has the same sample count, that also forces every segment to take the **same time**. On a path with unequal segment lengths the short segment inherits the long segment's duration, so the robot crawls through it and has to make the time back up with non-monotone wheel motion. The per-segment mode gives every segment its own duration and is the general model: setting every `dt_i` equal recovers the equal-duration solution exactly, and the per-segment optimum is never worse at the same weight. Both modes are held to the same wheel-jerk discipline, so `--accuracy-weight` means the same thing in either (KI-022).
+
+Where the time allocation may change is a separate question, and the per-segment mode now answers it explicitly (KI-024). A waypoint is a legitimate **timing boundary** only when the robot stops there *and* the heading is pinned: the state there is then fully determined, so the pieces on either side need agree on nothing. At every other waypoint the pieces stay linked:
+
+| waypoint | what the two pieces must agree on |
+|---|---|
+| stop and pinned heading | nothing — the state is fully determined |
+| pinned heading, no stop | the wheel velocities there |
+| stop, no pinned heading | the heading there; the velocity is zero on both sides |
+| neither | the heading and the wheel velocities |
+
+Because the path is one NLP over one shared variable set, the state agreement is automatic. What the per-segment timing could break is the *reading* of the motion profile: the acceleration before a waypoint is `(vl[k]-vl[k-1])/dt_prev` and the one after it is `(vl[k+1]-vl[k])/dt_next`, so a change of interval across the waypoint re-reads the same velocity ramp as two different accelerations and puts a step in the wheel force profile exactly there. The per-segment model therefore requires the wheel acceleration — and so the wheel force — to be continuous through every waypoint the robot does not stop at. A waypoint where the robot stops is exempt, because the wheel force has to reverse sign when the robot comes to rest and goes again. The equal-duration model needs no counterpart: it never changes `dt`, so it reads the ramp the same way on both sides.
+
+The default candidate set includes both timing modes, so the equal-duration candidate preserves the complex-mission pass while an uneven path can select per-segment. The CPU audit runs on every candidate, not only the winner, so a candidate that passes Immrax but fails the force/slip/integration gate cannot block a later passing candidate. On an uneven 1.0 m + 0.2 m path, per-segment at `--accuracy-weight 0.005` passes all gates at 2.784 s with envelope 0.32 cm, tracking 0.36 cm and peak wheel jerk 9.52 m/s³, versus 4.456 s / 0.37 cm / 0.36 cm / 9.52 m/s³ for the equal-duration mode at the same weight; the mixed loop selects the per-segment candidate. At the default weight 0, per-segment is 2.710 s / 0.32 cm but fails the Immrax and CPU gates, so the mixed loop falls back to the equal-duration candidate (4.463 s / 0.35 cm). On the complex mission at `--accuracy-weight 0`, per-segment is faster (4.650 s, envelope 1.00 cm) but its tracking is 0.84 cm, above the 5 mm gate, and its motor force is 0.074 N over the limit, so it is rejected and the equal-duration 6.068 s / 1.22 cm candidate wins. Forcing one mode is available for experiments and reproducibility, not as a silent default.
+
+### Sweeping for the fastest passing trajectory
+
+The two timing modes and the accuracy weight are a two-dimensional search, and the best combination depends on the path. `--sweep` searches it: it adds the timing-mode × accuracy-weight grid (weights `0`, `0.001`, `0.002`, `0.005`, `0.01`) to the candidate set, validates every combination on the same scale, and lets the usual rule pick the winner — the passing candidate with the smallest envelope, the shortest one breaking the tie. The default candidates stay in the set, so a sweep can only add options, never remove them.
+
+Measured on the example missions:
+
+| mission | default candidates | with `--sweep` | change |
+|---|---|---|---|
+| `example_mission_first4.json` | **1.833 s** (per-segment, weight 0) | 1.833 s | unchanged |
+| `example_with_events.json` | **4.416 s** (per-segment, weight 0) | 4.416 s | unchanged |
+| `example_complex_mission.json` | 6.068 s | 6.068 s (equal-duration, weight 0) | unchanged |
+| `example_straight.json` | 2.377 s | 2.377 s | unchanged |
+
+With the merge conditions in place (KI-024) the per-segment candidate now passes the gates on the first-4 and events missions, so the default two candidates already find those wins and the sweep no longer changes them. It still matters when the best combination is a weight other than the default, because it is the only way to try the grid.
+
+The sweep is opt-in because it costs more: ten candidates instead of two, so ten solves and ten validation passes. It is the tool to reach for when the robot's time matters more than the solve time, and it is the honest way to see the speed-versus-margin frontier: the rejected candidates are printed with their duration, envelope and tracking error, so the trade is visible instead of hidden behind one number.
 
 ## Output Format
 
@@ -494,19 +552,21 @@ The final pose is also checked against the last waypoint. If any check fails, th
 
 With `--validate`, `--candidates N` (default 2, max 5) solves N trajectories. With the simple solver, each candidate combines an initial-guess seed with a timing mode at the same `accuracy_weight`; the Multi-Verse path uses `accuracy_weight`, `accuracy_weight + 2.0`, and so on. Every candidate is validated and CPU-audited; the selected one is the passing candidate with the smallest envelope, with the shortest trajectory breaking ties. If none pass, the candidate closest to passing is selected for reporting but still blocked from export. Without `--validate`, only the first candidate is solved.
 
-**Measured current examples** (model predictions, not hardware). All rows use the default two candidates unless stated: candidate 1 is uniform baseline, candidate 2 is per-segment baseline.
+**Measured current examples** (model predictions, not hardware). All rows use the default two candidates unless stated: candidate 1 is equal-duration baseline, candidate 2 is per-segment baseline.
 
 | Case | Result |
 |---|---|
 | Straight, `--validate` | PASS; selected 2.377 s, envelope 0.28 cm, tracking 0.35 cm; both candidates converge to the same trajectory. |
-| First 4 mission waypoints, `--validate` | PASS; selected 2.176 s, envelope 0.27 cm, tracking 0.40 cm; the per-segment candidate is faster (1.661 s) but fails the local envelope/tracking gate. |
-| S-curve | FAIL; selected 3.696 s, envelope 0.77 cm, tracking 1.32 cm; per-segment 3.705 s, 0.76 cm / 1.33 cm, also fails. |
-| Stops | FAIL; selected 6.246 s, envelope 0.93 cm, tracking 0.60 cm; per-segment 5.099 s, 0.90 cm / 1.85 cm, also fails. |
-| Events | FAIL; selected 4.637 s, envelope 0.97 cm, tracking 0.54 cm; per-segment 4.896 s, 1.01 cm / 2.09 cm, also fails. |
-| Complex mission | PASS; selected 6.068 s, envelope 1.22 cm, tracking 0.49 cm; per-segment 5.447 s, 1.18 cm / 0.86 cm, rejected by the 5 mm tracking gate. |
-| Uneven test path (1.0 + 0.2 m), default mixed `-a 0.005` | PASS; selected per-segment 2.732 s, envelope 0.32 cm, tracking 0.36 cm; uniform at the same weight: 4.456 s, 0.37 cm / 0.36 cm. At `-a 0` per-segment is 2.710 s / 0.32 cm but the CPU force gate rejects a 0.00057 N overshoot, so uniform 4.463 s / 0.35 cm is selected. |
+| First 4 mission waypoints, `--validate` | PASS; selected 1.833 s, envelope 0.27 cm, tracking 0.38 cm (per-segment); the equal-duration candidate is 2.176 s, 0.27 cm / 0.39 cm. |
+| S-curve | FAIL; selected 3.667 s, envelope 0.72 cm, tracking 1.26 cm (per-segment); equal-duration 3.696 s, 0.77 cm / 1.32 cm, also fails. |
+| Stops | FAIL; selected 6.246 s, envelope 0.93 cm, tracking 0.61 cm (equal-duration); per-segment 5.138 s, 0.96 cm / 1.81 cm, also fails. |
+| Events | PASS; selected 4.416 s, envelope 0.88 cm, tracking 0.44 cm (per-segment); the equal-duration candidate is 4.637 s, 0.97 cm / 0.52 cm, rejected by the 5 mm tracking gate. |
+| Complex mission | PASS; selected 6.068 s, envelope 1.22 cm, tracking 0.49 cm; per-segment 4.650 s, 1.00 cm / 0.84 cm, rejected by the 5 mm tracking gate and a 0.074 N motor-force overshoot. |
+| Uneven test path (1.0 + 0.2 m), default mixed `-a 0.005` | PASS; selected per-segment 2.784 s, envelope 0.32 cm, tracking 0.36 cm, peak wheel jerk 9.52 m/s³; equal-duration at the same weight: 4.456 s, 0.37 cm / 0.36 cm / 9.52 m/s³. At `-a 0` per-segment is 2.710 s / 0.32 cm but fails the Immrax and CPU gates, so the equal-duration candidate 4.463 s / 0.35 cm is selected. |
 
 All of the failing commands exit 1 and write no output. This is the gate working, not a crash. These results use the narrowed `track_width_range` and `gear_backlash_m` in `examples/fll_choreo.json`; those are test assumptions, not measured hardware values. Without a hardware fit the validator is still kinematic; `--sysid-fit` adds the measured actuator/odometry model, but the thresholds are unchanged. See KI-020.
+
+The full gate chain, every threshold with its source line, the measured comparison of all five initial-guess seeds under both timing models (60 candidates, with the raw logs), the ledger of strategies that did not work, and the research agenda are in [docs/HEURISTICS_AND_VERIFICATION.md](docs/HEURISTICS_AND_VERIFICATION.md).
 
 ## Controller Export
 
@@ -571,6 +631,11 @@ See [docs/trajectory_tools_research.md](docs/trajectory_tools_research.md) for c
 - **[docs/API_robot_model.md](docs/API_robot_model.md)**: Robot model and force-model API
 - **[docs/API_validator_export.md](docs/API_validator_export.md)**: Validator and export API
 - **[docs/WHITEPAPER.md](docs/WHITEPAPER.md)**: Current-state technical description
+- **[docs/CALIBRATION_PROCEDURE.md](docs/CALIBRATION_PROCEDURE.md)**: The human procedure for calibrating a drivebase: the setup for each test, the measurement convention, the commands, and the troubleshooting
+- **[docs/SYSID_QUICKSTART.md](docs/SYSID_QUICKSTART.md)**: The short path from a session to a fitted model
+- **[docs/HEURISTICS_AND_VERIFICATION.md](docs/HEURISTICS_AND_VERIFICATION.md)**: Path-planning heuristics, the verification chain, the failed-strategy ledger, and the research agenda
+- **[docs/STUDIO_HUB_PLAN.md](docs/STUDIO_HUB_PLAN.md)**: The "push to hub" feature for the browser studio, and how it ties the missions, the robot code and the sysid loop together
+- **[docs/CALIBRATION_STUDIO_PLAN.md](docs/CALIBRATION_STUDIO_PLAN.md)**: How the sysid loop (collect, measure, fit) and the studio's compare step fit together in one browser
 - **[KNOWN_ISSUES.md](KNOWN_ISSUES.md)**: Open and fixed issues
 
 ## Pybricks Integration
@@ -579,12 +644,38 @@ The `pybricks_code/` directory contains the robot-side controller:
 
 - `ramsete_fast.py`: Pathing controller used by `mission_4_ramsete.py` (50 Hz loop)
 - `ramsete.py`: Event-capable reference controller used by `mission_5_lambdas.py`
-- `ramsete_compact.py`, `ramsete_compact_events.py`: Packed-trajectory controllers for `--export-format python-compact`; available but not wired into the existing missions
+- `ramsete_compact.py`, `ramsete_compact_events.py`: Packed-trajectory controllers for `--export-format python-compact`
+- `hub_runner.py`: Entry point for a trajectory pushed from the host; it imports the trajectory from `hub_mission.py` and reports the measured pose
 - `robot.py`, `robot_config.py`: Hub menu and hardware definitions
 - `mission_*.py`: Example mission scripts
+- `sysid_digital_twin.py`: Robot-side calibration collector
 - `plot_tracking.py`: Tracking visualization
 
 **Known limitation:** an event on the final waypoint is exported but not fired by the deployed loop (KI-012). Trigger the final action after `follow_trajectory` returns, or use `ramsete.py` if you need the reference event path.
+
+### Pushing to the hub without the IDE
+
+The Pybricks IDE is one client of a documented protocol. `hub_deploy.py` and
+`main.py --push-hub` are another: they push a program to the hub over
+Bluetooth and capture what it prints, so a trajectory can be sent to the
+robot and its measured pose read back without a browser.
+
+```bash
+python main.py -w mission.json --push-hub --hub-log session.csv
+```
+
+Calibration works the same way. `sysid_collect.py` pushes the collector,
+captures the session, and fits it; the operator measures the end pose of the
+tests that need a tape and fills in a sheet.
+
+```bash
+python sysid_collect.py --conn ble --profile my_drivebase.json
+```
+
+The full human procedure is in
+[docs/CALIBRATION_PROCEDURE.md](docs/CALIBRATION_PROCEDURE.md). The fit
+reports a 95% interval per parameter, taken over three repeats of each
+calibration test, and the validator plans against that interval.
 
 See [pybricks_code/README.md](pybricks_code/README.md) for setup instructions.
 
