@@ -4,7 +4,7 @@ Last reviewed: 2026-10-19
 
 Scope: whole repository, reviewed as a single-user, offline desktop tool for one FLL robot. This is not a multi-user or server-scale review.
 
-Status: KI-001, KI-002, KI-003, KI-007, KI-008, KI-009, KI-010, KI-013, KI-014, and KI-019 are **fixed in the working tree** (uncommitted). All other items are open; KI-015 is partially fixed. KI-020 records the remaining digital-twin and optimization work. The user-facing docs were reconciled with this tree on 2026-10-19; the code remains the authority if they diverge again.
+Status: KI-001, KI-002, KI-003, KI-005, KI-006, KI-007, KI-008, KI-009, KI-010, KI-011, KI-012, KI-013, KI-014, KI-016, KI-019, and KI-021 are **fixed in the working tree** (uncommitted). All other items are open; KI-015 and KI-017 are partially fixed. KI-020 records the remaining digital-twin and optimization work. The user-facing docs were reconciled with this tree on 2026-10-19; the code remains the authority if they diverge again.
 
 How to use this list: refer to an item by its ID, for example “fix KI-003”.
 
@@ -16,22 +16,23 @@ How to use this list: refer to an item by its ID, for example “fix KI-003”.
 | KI-002 | P0 | Validation | ~~`--validate` cannot block output or change the exit code~~ (fixed) |
 | KI-003 | P0 | Safety | ~~Immrax ignores upper uncertainty bounds~~ (fixed) |
 | KI-004 | P0 | Multi-Verse | Refinement has no effect on the final trajectory |
-| KI-005 | P0 | Live view | The visualizer kills whatever owns port 8765 |
-| KI-006 | P0 | Install | A fresh install cannot run the default command |
+| KI-005 | P0 | Live view | ~~The visualizer kills whatever owns port 8765~~ (fixed) |
+| KI-006 | P0 | Install | ~~A fresh install cannot run the default command~~ (fixed) |
 | KI-007 | P1 | Tests | ~~The JAX test suite is silently skipped~~ (fixed) |
 | KI-008 | P1 | Safety / config | ~~JAX validation reads a different config format~~ (fixed) |
 | KI-009 | P1 | Safety / config | ~~Declared uncertainty ranges are ignored~~ (fixed) |
 | KI-010 | P1 | Physics | ~~Weight-transfer math is wrong and tools disagree~~ (fixed) |
-| KI-011 | P1 | Export | Heading interpolation crosses ±π the long way |
-| KI-012 | P1 | Robot runtime | An event on the final waypoint never fires |
+| KI-011 | P1 | Export | ~~Heading interpolation crosses ±π the long way~~ (fixed) |
+| KI-012 | P1 | Robot runtime | ~~An event on the final waypoint never fires~~ (fixed) |
 | KI-013 | P1 | Export | ~~Python export loses the robot config~~ (fixed) |
 | KI-014 | P1 | Safety model | ~~JAX Ramsete uses a poor large-angle approximation~~ (fixed) |
 | KI-015 | P1 | Benchmarks | Random benchmark tools are broken |
-| KI-016 | P1 | Live view | The first client never receives config or waypoints |
-| KI-017 | P2 | CLI | Convergence flags do nothing |
+| KI-016 | P1 | Live view | ~~The first client never receives config or waypoints~~ (fixed) |
+| KI-017 | P2 | CLI | Convergence flags do nothing (dead flags removed) |
 | KI-018 | P2 | Maintenance | Dead code, duplicates, and generated files |
 | KI-019 | P0 | Safety | ~~The reachability tube lags the reference by one sample~~ (fixed) |
 | KI-020 | P1 | Digital twin | Validator/optimizer do not yet model motor, odometry, slip, or reachability-driven optimization |
+| KI-021 | P1 | Robot runtime | ~~The DriveBase caps the acceleration the plan asks for~~ (fixed) |
 
 ## P0 — fix first
 
@@ -85,43 +86,43 @@ How to use this list: refer to an item by its ID, for example “fix KI-003”.
 
 ### KI-004 — Multi-Verse refinement has no effect
 
-**Files:** `multiverse_optimizer.py:428-436`
+**Status:** Partially fixed in the working tree (uncommitted).
+
+**Files:** `multiverse_optimizer.py` (`_global_solve`, `_probe_refined_guess`), `optimizer.py` (`initial_guess`)
 
 **Problem:** Phase 4 computes a refined `global_traj`, but `_global_solve` builds `new_guess` and never passes it into `TrajectoryOptimizer.solve`; the local variable is unused. `TrajectoryOptimizer.solve` now exposes `guess_style` seeds, but Multi-Verse does not use them or the refined samples. Phase 5 re-solves from its default baseline guess.
 
-**Evidence:** On `examples/example_complex_mission.json`, the default Multi-Verse run and `--simple` both produce 91 samples and the same 6.0677 s final cost; the default Multi-Verse run took 28.26 s wall time. `--workers`, `--no-parallel`, and `enable_parallel` cannot change the result because the refined guess and the thread pool are not used by the final solve.
+**Evidence:** On `examples/example_complex_mission.json`, the default Multi-Verse run and the simple solver both produce 91 samples and the same 6.0677 s final cost; the default Multi-Verse run took 28.26 s wall time. `--workers`, `--no-parallel`, and `enable_parallel` cannot change the result because the refined guess and the thread pool are not used by the final solve.
 
-**Fix:** Add a way to pass the refined sample matrix into `TrajectoryOptimizer.solve` and set it with `opti.set_initial`; the existing `guess_style` parameter only selects deterministic seeds. Or remove the Multi-Verse path and its CLI flags.
+**Fix:** `TrajectoryOptimizer.solve` now takes an `initial_guess` array, and the Multi-Verse polish probes the refined trajectory with a bounded cold pass (400 iterations) and keeps it when it converges to a lower cost. The outcome is reported in the run stats as `refine_probe` (`converged`, `cost`, `iterations`, `used`).
 
-**Workaround:** Use `--simple` if you want predictable behaviour. Do not expect Multi-Verse or `--workers` to improve anything.
+**What is left:** The plumbing works, but the current refinement is a worse starting point than the trivial baseline guess: on the example mission the probe converges in 38 iterations to **8.1473 s**, while the default guess reaches **6.0677 s**. The probe therefore never wins, and the refinement still has no effect on the result. The residue is the quality of the JAX refinement, not the connection to the solver.
+
+**Workaround:** Use the simple solver if you want predictable behaviour.
 
 ---
 
 ### KI-005 — The live visualizer kills whatever owns port 8765
 
-**Files:** `live_visualizer.py:26`, `live_visualizer.py:30-53`
+**Status:** Fixed in the working tree (uncommitted).
 
-**Problem:** `LiveVisualizer.start()` calls `_kill_process_on_port`, which uses `netstat` + `taskkill` on Windows and `fuser -k` on POSIX. It does not check which process owns the port.
+**Files:** `live_visualizer.py`, `main.py`
 
-**Evidence:** Any process listening on 8765 is terminated when `--live` starts. This can close an unrelated application and lose unsaved work.
+**Problem:** `LiveVisualizer.start()` called `_kill_process_on_port`, which used `netstat` + `taskkill` on Windows and `fuser -k` on POSIX. It did not check which process owned the port.
 
-**Fix:** Delete `_kill_process_on_port`. Try to bind the port; if it is busy, print a clear message and exit. Add a `--port` option if users need to pick another port.
-
-**Workaround:** Make sure port 8765 is free before using `--live`.
+**Fix:** `_kill_process_on_port` is gone. The port is probed before the server starts; a busy port raises a clear "already in use" error, and `--port` picks a different one. The forced `reuse_address=True` was removed as well, so a busy port fails instead of being taken over. `tests/test_cli_ux.py` covers both paths.
 
 ---
 
 ### KI-006 — A fresh install cannot run the default command
 
-**Files:** `requirements.txt:1-7`, `README.md:21-31`, `main.py:7`, `multiverse_optimizer.py:242-243`
+**Status:** Fixed in the working tree (uncommitted).
 
-**Problem:** `requirements.txt` omits `jax`, `jaxopt`, `immrax`, and `pandas`. `main.py` defaults to `MasterTrajectoryOptimizer`, which raises `ImportError` when JAX is not installed. The README install command also omits JAX and Immrax.
+**Files:** `requirements-optional.txt`, `main.py`, `diagnostics.py`, `README.md`
 
-**Evidence:** A fresh `pip install -r requirements.txt` followed by the README quick start cannot run the default command or the validation path. `sysid_solver.py` imports pandas, which is also missing.
+**Problem:** `requirements.txt` omitted `jax`, `jaxopt`, `immrax`, and `pandas`, and `main.py` defaulted to `MasterTrajectoryOptimizer`, which raises `ImportError` without JAX.
 
-**Fix:** Add the missing packages to `requirements.txt`, or make `--simple` the default and document JAX/Immrax as optional extras. Update the README install command to match.
-
-**Workaround:** Install `jax`, `jaxopt`, `immrax`, and `pandas` manually, or use `--simple` for trajectory generation.
+**Fix:** The simple CasADi solver is now the default and needs only `requirements.txt`; Multi-Verse, `--validate` and `sysid_solver.py` use the new `requirements-optional.txt`. `python main.py --doctor` reports what is installed and prints the exact install command for anything missing.
 
 ## P1 — fix before relying on the result
 
@@ -133,7 +134,7 @@ How to use this list: refer to an item by its ID, for example “fix KI-003”.
 
 **Problem:** All JAX test imports are wrapped in one `try`. Two test modules import classes that no longer exist: `MultiVerseRefiner` and `LocalSegmentOptimizer`.
 
-**Evidence:** `python run_tests.py` previously reported 39 passing tests and printed "jax not installed", even though JAX 0.6.2 was installed. The JAX tests never ran under the normal test command. After deleting the stale modules, the suite runs 152 tests with 0 skipped.
+**Evidence:** `python run_tests.py` previously reported 39 passing tests and printed "jax not installed", even though JAX 0.6.2 was installed. The JAX tests never ran under the normal test command. After deleting the stale modules, the suite runs 194 tests with 0 skipped.
 
 **Fix (implemented):** The two stale modules (`tests/test_stomp_variants.py`, `tests/test_teb_topologies.py`) were deleted. The production classes were not changed just to satisfy dead tests.
 
@@ -193,29 +194,33 @@ How to use this list: refer to an item by its ID, for example “fix KI-003”.
 
 ### KI-011 — Heading interpolation crosses ±π the long way
 
-**Files:** `export.py:19`, `export.py:58`
+**Status:** Fixed in the working tree (uncommitted). `resample_to_fixed_dt` unwraps the source heading before interpolating and wraps the result back to `[-π, π]`.
+
+**Files:** `export.py` (`resample_to_fixed_dt`, `_wrap_pi`), `tests/test_export.py`
 
 **Problem:** `resample_to_fixed_dt` linearly interpolates heading as a raw number, with no unwrap.
 
-**Evidence:** Source headings `3.13` and `-3.13` represent a 0.02 rad turn across ±π. Interpolation goes through `0.0`, a π turn in the wrong direction.
+**Evidence:** Source headings `3.13` and `-3.13` represent a 0.0232 rad turn across ±π. Before the fix the interpolation went `3.13 → 1.878 → 0.626 → -0.626 → -1.878 → -3.13`, a π turn in the wrong direction. The optimizer itself emits a continuous heading, so no trajectory in the repository triggered the bug; it needed a hand-edited or external trajectory file.
 
-**Fix:** Run `np.unwrap` on the heading sequence before interpolation, then wrap the result back to `[-π, π]`.
+**Fix (implemented):** `np.unwrap` the heading sequence before interpolating, then wrap each output heading back to `[-π, π]`. The same profile now reads `3.13 → 3.1346 → 3.1393 → -3.1393 → -3.1346 → -3.13`. Consumers that compute heading differences must use the shortest angle, as the deployed controllers do.
 
-**Workaround:** Inspect exported headings manually when the path crosses ±π.
+**Workaround:** None needed. A regression test covers the ±π case and the continuous-heading case.
 
 ---
 
 ### KI-012 — An event on the final waypoint never fires
 
-**Files:** `pybricks_code/ramsete.py:248-263`, `pybricks_code/ramsete_compact_events.py:112-136`
+**Status:** Fixed in the working tree (uncommitted). The event-capable controllers fire the final event after the loop, once the robot has arrived and the drivebase has stopped.
+
+**Files:** `pybricks_code/ramsete.py` (`_fire_event`, `follow_trajectory`), `pybricks_code/ramsete_compact_events.py` (`follow_trajectory`), `tests/test_firmware_events.py`
 
 **Problem:** The loop breaks when `t >= total_time`, and the sample advance stops at `num_samples - 2`. Events are checked only on `s1`, so the last sample is never `s1`. The compact event controller keeps the same break condition.
 
-**Evidence:** A final “release” or “score” event is skipped. This is a normal mission pattern.
+**Evidence:** The last segment of the optimizer allocates one extra sample (`optimizer.py:521-525`), so the final waypoint lands on the *last* sample. Solving `examples/example_with_events.json` puts the “release” event on sample 30 of 30, at `t = 4.637`, which is exactly `total_time`. The deployed loop never reached it, so a final “release” or “score” action was silently skipped — a normal mission pattern.
 
-**Fix:** Allow the index to reach the last sample, or explicitly fire the final sample’s event before the loop exits.
+**Fix (implemented):** `ramsete.py` shares one `_fire_event` helper between the loop and the end of the run, and fires the last sample's event after `drivebase.stop()`. `ramsete_compact_events.py` fires the events that are left after the loop. Both run on the normal exit path only, so a crashed run does not fire the final action.
 
-**Workaround:** Trigger the final action outside `follow_trajectory` after it returns.
+**Workaround:** None needed. The firmware modules are now exercised on the host with stubbed Pybricks modules, so the final event is covered by a regression test.
 
 ---
 
@@ -245,7 +250,7 @@ How to use this list: refer to an item by its ID, for example “fix KI-003”.
 
 **Evidence:** At `etheta = π`, the true value is 0, but the old approximation is 0.167. At `2π`, the old approximation is negative. Immrax used this controller inside its closed-loop reachability check.
 
-**Fix (implemented):** The deployed `ramsete_fast.py` formula is the source of truth: exact sinc, shortest-angle error, and the precomputed/interpolated `sqrt(omega² + b·v²)` gain. `JAXRamseteController.calculate` accepts the precomputed gain and normalizes the error on the CPU path. The interval path uses unrolled headings and an interval-friendly polynomial because Immrax's natural inclusion does not implement `abs`, `where`, `mod`, `sinc`, or `atan2`. A randomized parity test compares the JAX command to a direct transcription of `ramsete_fast.py`, including ±π crossings.
+**Fix (implemented):** The deployed `ramsete_fast.py` formula is the source of truth: exact sinc, shortest-angle error, and the precomputed/interpolated `sqrt(omega² + b·v²)` gain. `JAXRamseteController.calculate` accepts the precomputed gain and normalizes the error on the CPU path. The interval path uses unrolled headings and an interval-friendly polynomial because Immrax's natural inclusion does not implement `abs`, `where`, `mod`, `sinc`, or `atan2`. A randomized parity test compares the JAX command to a direct transcription of `ramsete_fast.py`, including ±π crossings. The deployed controller also rounds the `DriveBase.drive()` arguments, since Pybricks truncates float arguments toward zero; `jax_ramsete.quantize_drive_command` mirrors that rounding (whole mm/s, whole deg/s) at the drive boundary on the nominal feedback path, while the interval path leaves it off because Immrax cannot include those operations.
 
 **Workaround:** None needed for the parity path. The interval validator still approximates cumulative command feedback with the tube midpoint (see KI-020).
 
@@ -269,29 +274,25 @@ How to use this list: refer to an item by its ID, for example “fix KI-003”.
 
 ### KI-016 — The first live-view client never receives config or waypoints
 
-**Files:** `main.py:148`, `live_visualizer.py:100-103`, `live_visualizer.py:90`, `live_visualizer.py:120-135`
+**Status:** Fixed in the working tree (uncommitted).
 
-**Problem:** `send_config` runs immediately after the server starts, but `broadcast` returns when there are no clients. The README tells users to open the browser afterward.
+**Files:** `live_visualizer.py`, `main.py`, `viz/index.html`
 
-**Evidence:** The first client never receives robot config or waypoints. `send_candidates` and `send_status` are never called, and `on_regenerate` is never assigned, so the regenerate controls are dead.
+**Problem:** `send_config` ran immediately after the server started, but `broadcast` returned when there were no clients. The README told users to open the browser afterward.
 
-**Fix:** Store the last config and waypoints and replay them when a client connects. Wire `on_regenerate` or remove the UI. Alternatively, wait for a client before sending.
-
-**Workaround:** None reliable; the final trajectory arrives, but the field and robot setup do not.
+**Fix:** The last config, waypoints and trajectory are stored and replayed to every client that connects, so a reload or a late browser still shows the field. The dead regenerate and candidate panels were removed from `viz/index.html`, and `--live` now opens the browser itself.
 
 ## P2 — cleanup
 
 ### KI-017 — Convergence flags do nothing
 
-**Files:** `main.py:67-69`, `main.py:294-296`, `multiverse_optimizer.py:250`
+**Status:** Partly fixed in the working tree (uncommitted).
 
-**Problem:** `--convergence-output` and `--convergence-animate` are parsed but never used. `MasterTrajectoryOptimizer` declares `iteration_history` but never fills it.
+**Files:** `main.py`, `multiverse_optimizer.py`
 
-**Evidence:** With the default optimizer, `--show-convergence` does nothing. The two output flags do nothing in any mode.
+**Problem:** `--convergence-output` and `--convergence-animate` were parsed but never used. `MasterTrajectoryOptimizer` declares `iteration_history` but never fills it.
 
-**Fix:** Forward the inner `TrajectoryOptimizer.iteration_history` and pass the output flags to the plot functions, or delete the flags and history code.
-
-**Workaround:** Use `--simple --show-convergence`, which does populate the inner optimizer’s history.
+**Fix:** The two dead flags were removed, so the help no longer advertises options that do nothing. `--show-convergence` and `--convergence-mode` still work with the default simple solver, which fills the iteration history. Forwarding the history through the Multi-Verse pipeline is still open.
 
 ---
 
@@ -301,7 +302,7 @@ How to use this list: refer to an item by its ID, for example “fix KI-003”.
 
 **Problem:** Cleanup removed the duplicate `examples/complete_mission.py`, the root `test_jax_ramsete.py` (its boundary test moved to `tests/test_jax_ramsete.py`), `docs/API_optimizer.md`, generated example/controller/benchmark outputs, and unused imports plus `send_candidates`/`send_status`. `ramsete_fast.py` is intentionally kept: it is the production controller used on the real robot. Remaining: generated mission copies in `pybricks_code/` and `examples/complex_mission.py`; `get_safety_ribbon_data` is still unused and is no longer documented in `docs/WHITEPAPER.md`; the live-view regenerate controls are still dead.
 
-**Evidence:** The full suite now runs 152 tests with 0 skipped. `random_suite/run_000/plot.png` is kept because `README.md` embeds it as a historical example.
+**Evidence:** The full suite now runs 194 tests with 0 skipped. `random_suite/run_000/plot.png` is kept because `README.md` embeds it as a historical example.
 
 **Fix:** Decide whether the generated mission copies should be tracked; remove `get_safety_ribbon_data` or document it as a supported API. Keep `ramsete_fast.py`.
 
@@ -325,28 +326,41 @@ How to use this list: refer to an item by its ID, for example “fix KI-003”.
 
 ### KI-020 — Validator is not yet a full digital twin or an optimizer objective
 
-**Status:** Open, partially addressed in the working tree. The controller parity, linear reference, 20 ms sample-and-hold, and physical backlash model are implemented. The controller split is also done: `robot_config.py` is hardware-only, `mission_4_ramsete.py` imports `ramsete_fast` with its calibrated defaults, and `mission_5_lambdas.py` imports `ramsete` for events. `pybricks_code/sysid_digital_twin.py` and `sysid_fit.py` provide the robot log/capture and host fit path; no hardware logs have been collected yet. The host tools accept a minimal drivebase profile (`wheel_radius_m`, optional `track_width_m`) instead of a full robot config. `digital_twin.py` and `main.py --sysid-fit` now load and validate a fit. When enabled, the validator uses a five-state plant with actual wheel speeds, the fitted straight-line gain interval, first-order time constant, command delay, and odometry distance/heading scale in feedback. Braking slip is loaded and reported but not applied. Reachability is a post-solve candidate score (`--candidates`), not yet an optimizer term. Motor/current transients, DriveBase PID, full encoder odometry, slip dynamics, and DriveBase command limits remain unimplemented.
+**Status:** Open, partially addressed in the working tree. The controller parity, linear reference, 20 ms sample-and-hold, and physical backlash model are implemented. The controller split is also done: `robot_config.py` is hardware-only, `mission_4_ramsete.py` imports `ramsete_fast` with its calibrated defaults, and `mission_5_lambdas.py` imports `ramsete` for events. `pybricks_code/sysid_digital_twin.py` and `sysid_fit.py` provide the robot log/capture and host fit path; no hardware logs have been collected yet. The host tools accept a minimal drivebase profile (`wheel_radius_m`, optional `track_width_m`) instead of a full robot config. `digital_twin.py` and `main.py --sysid-fit` now load and validate a fit. When enabled, the validator uses a five-state plant with actual wheel speeds, the fitted straight-line gain interval, first-order time constant, command delay, and odometry distance/heading scale in feedback. The nominal feedback path also mirrors the firmware's rounded `DriveBase.drive()` arguments (whole mm/s, whole deg/s). Braking slip is loaded and reported but not applied. Reachability is a post-solve candidate score (`--candidates`), not yet an optimizer term. The firmware's DriveBase trajectory limits are now known (about 7800 mm/s² and 9300 deg/s² for this robot, derived from Pybricks' 20,000 deg/s² ceiling), so the plant's instant-tracking assumption matches the hub; Motor/current transients, DriveBase PID, full encoder odometry, slip dynamics, and the remaining whole-millimeter distance reading remain unimplemented.
 
 **Files:** `optimizer.py`, `immrax_validator.py`, `jax_ramsete.py`, `digital_twin.py`, `main.py`, `multiverse_optimizer.py`, `pybricks_code/ramsete_fast.py`, `pybricks_code/robot_config.py`, `pybricks_code/mission_4_ramsete.py`, `pybricks_code/mission_5_lambdas.py`, `pybricks_code/sysid_digital_twin.py`, `sysid_fit.py`, `sysid_compare.py`, `examples/drivebase_profile.example.json`, `tests/test_sysid_fit.py`, `tests/test_sysid_compare.py`, `tests/test_digital_twin.py`
 
 **Problem:** The default validator mirrors the deployed controller's math and timing, but its plant is still kinematic: commanded wheel speeds become motion immediately (apart from wheel backlash). The optional fitted plant adds actuator lag, delay, gain uncertainty, and a static odometry correction, but it still has no motor current/torque transient, DriveBase PID, integrated encoder/gyro odometry, or wheel-slip dynamics. Feedback uses a scaled version of the true pose, not the robot's actual `DriveBase.state()` estimate. Reachability is a post-solve candidate score (`--candidates`, `main.py`), not yet a term or constraint in the optimizer.
 
-**Evidence:** The straight example passes with `max_tracking_error_m≈0.00346 m` and `max_envelope_radius_m≈0.0028 m` under the narrowed test ranges. Representative paths still expose the gap: the S-curve example reports `max_tracking_error_m≈0.0132 m` and `max_envelope_radius_m≈0.0077 m`; the stops example reports 0.0052-0.0060 m / 0.0093-0.0095 m; the events example reports 0.0053-0.0054 m / 0.0097 m; the complex mission now passes at 6.068 s with 0.0049 m / 0.0122 m. These are model predictions, not hardware measurements. There is no real tracking log in the repository yet; the logger and fitter have only been exercised with synthetic data. A synthetic fit with `gain=1.0, tau=0.08 s` already rejects the straight example with 3.44 cm tracking error, which shows why hardware calibration matters before enabling the fitted model. The old `accuracy_weight += 2.0` retry is removed: on the complex mission the slow 17.1 s candidate diverged, while the 6.07 s one stayed bounded. Candidate generation in the simple path now uses five initial-guess seeds (`baseline`, `rolling`, `bow_left`, `bow_right`, `turn_first`); on the complex mission all four non-baseline seeds converge to slower, wider paths (8.1-8.7 s, 1.55-1.76 cm, tracking 0.53-0.72 cm), so the 6.07 s / 1.22 cm baseline still wins. Guess diversity alone does not beat the current uniform-dt formulation. Per-segment timing (`--per-segment-dt`, opt-in) is path-dependent: on an uneven 1.0 m + 0.2 m path it passes at 2.710 s / 0.32 cm envelope versus 4.463 s / 0.35 cm uniform, but on the complex mission at `accuracy_weight=0` it is faster (5.447 s / 1.18 cm) and fails the 5 mm tracking gate at 0.86 cm; at `accuracy_weight=0.02` it passes at 7.312 s / 1.61 cm, worse than the uniform 6.068 s / 1.22 cm baseline. The default stays uniform; mixed timing modes in the candidate set are the next step.
+**Evidence:** The straight example passes with `max_tracking_error_m≈0.00346 m` and `max_envelope_radius_m≈0.0028 m` under the narrowed test ranges. Representative paths still expose the gap: the S-curve example reports `max_tracking_error_m≈0.0132 m` and `max_envelope_radius_m≈0.0077 m`; the stops example reports 0.0052-0.0060 m / 0.0093-0.0095 m; the events example reports 0.0053-0.0054 m / 0.0097 m; the complex mission now passes at 6.068 s with 0.0049 m / 0.0122 m. These are model predictions, not hardware measurements. There is no real tracking log in the repository yet; the logger and fitter have only been exercised with synthetic data. A synthetic fit with `gain=1.0, tau=0.08 s` already rejects the straight example with 3.44 cm tracking error, which shows why hardware calibration matters before enabling the fitted model. The old `accuracy_weight += 2.0` retry is removed: on the complex mission the slow 17.1 s candidate diverged, while the 6.07 s one stayed bounded. A uniform-timing five-seed sweep (`baseline`, `rolling`, `bow_left`, `bow_right`, `turn_first`) shows that on the complex mission all four non-baseline seeds converge to slower, wider paths (8.1-8.7 s, 1.55-1.76 cm, tracking 0.53-0.72 cm), so the 6.07 s / 1.22 cm baseline still wins. Guess diversity alone does not beat the uniform baseline; the default simple-path candidates now mix uniform and per-segment timing. Per-segment timing is path-dependent: on an uneven 1.0 m + 0.2 m path, `accuracy_weight=0.005` passes all gates at 2.732 s / 0.32 cm envelope and 0.36 cm tracking versus 4.456 s / 0.37 cm / 0.36 cm uniform at the same weight, so the mixed loop selects per-segment; at `accuracy_weight=0` per-segment is 2.710 s / 0.32 cm but the CPU force audit rejects a 0.00057 N overshoot, so the mixed loop falls back to uniform (4.463 s / 0.35 cm). On the complex mission at `accuracy_weight=0` per-segment is faster (5.447 s / 1.18 cm) but fails the 5 mm tracking gate at 0.86 cm; at `accuracy_weight=0.02` it passes Immrax at 7.312 s / 1.61 cm, worse than the uniform 6.068 s / 1.22 cm baseline. The candidate loop now mixes both timing modes by default (`--uniform-dt`/`--per-segment-dt` force one) and runs the CPU audit on every candidate, so a partial pass cannot block a later fully passing candidate.
 
-**Fix:** Run `pybricks_code/sysid_digital_twin.py` on the robot, record the stop/final poses in `poses.csv`, fit the logs with `sysid_fit.py --profile examples/drivebase_profile.example.json`, and pass the result with `main.py --sysid-fit sysid_fit.json --validate`. Compare the planned trajectory with the measured poses using `sysid_compare.py`; it prints position/heading errors and whether each measured pose is inside the reachability envelope, and it accepts a plain predicted-pose CSV and a drivebase profile. Extend the plant to integrated odometry and a braking-slip state only after that comparison. The post-solve choice is made: `--candidates` scores several solutions (distinct initial-guess seeds with `--simple`, accuracy-weight variants on the Multi-Verse path) and picks the passing one with the lowest envelope (then the shortest). Extend it to a hard constraint or differentiable proxy only if the candidate set cannot find a passing path. Do not tune the 5 mm/2 cm thresholds or b/zeta to one path.
+**Fix:** Run `pybricks_code/sysid_digital_twin.py` on the robot, record the stop/final poses in `poses.csv`, fit the logs with `sysid_fit.py --profile examples/drivebase_profile.example.json`, and pass the result with `main.py --sysid-fit sysid_fit.json --validate`. Compare the planned trajectory with the measured poses using `sysid_compare.py`; it prints position/heading errors and whether each measured pose is inside the reachability envelope, and it accepts a plain predicted-pose CSV and a drivebase profile. Extend the plant to integrated odometry and a braking-slip state only after that comparison. The post-solve choice is made: `--candidates` scores several solutions (seed/timing combinations with `--simple`, accuracy-weight variants on the Multi-Verse path) and picks the passing one with the lowest envelope (then the shortest). Extend it to a hard constraint or differentiable proxy only if the candidate set cannot find a passing path. Do not tune the 5 mm/2 cm thresholds or b/zeta to one path.
 
 **Workaround:** Use the straight example as a parity smoke test; treat predictions for curved/high-speed paths as uncalibrated until hardware logs are available. For planner testing, `examples/fll_choreo.json` temporarily narrows `track_width_range` to ≈±0.1% around 0.0965 m and `gear_backlash_m` to [0.4, 0.5] mm; these are test assumptions, not measured hardware values, and should be widened again once calibration data exists.
 
+### KI-021 — The DriveBase silently caps the acceleration the plan asks for
+
+**Status:** Fixed in the working tree (uncommitted). `robot_config.py` raises the DriveBase trajectory limits to 80% of the firmware ceiling for this robot's geometry, which is about 7800 mm/s² and 9300 deg/s² with 56 mm wheels and a 96.5 mm track. The pathing controllers read `drivebase.angle()` instead of `drivebase.state()`, round the `DriveBase.drive()` arguments, and collect garbage once per second instead of once per tick. The JAX twin mirrors the rounding.
+
+**Files:** `pybricks_code/robot_config.py`, `pybricks_code/ramsete_fast.py`, `pybricks_code/ramsete_compact.py`, `jax_ramsete.py`, `immrax_validator.py`, `tests/test_jax_ramsete.py`
+
+**Problem:** `DriveBase.drive()` does not command the motors directly. It starts a timed trajectory for the distance controller and another for the heading controller, and those trajectories ramp at `settings.acceleration`. Pybricks defaults that to three quarters of the motor's 2000 deg/s², which is 1500 deg/s²: about 733 mm/s² for 56 mm wheels and 1500 deg/s² of chassis rotation. Every call re-plans the trajectory and ramps at that limit, so the inner reference could move at most about 0.015 m/s per 20 ms tick.
+
+Two smaller losses sat on top of it: `drivebase.state()` returns the heading rounded to whole degrees even with the gyro enabled, and Pybricks truncates float arguments toward zero, so `drive()` turned small steering corrections into zero commands.
+
+**Evidence:** The optimized missions reach 5.38 m/s² and 8.32 k deg/s² (`tmp_mixed_mission.traj`), roughly ten times the DriveBase defaults. Pybricks' own ceiling is 20,000 deg/s² in motor units, which is 9775 mm/s² and 11,607 deg/s² for this geometry, so the default was the only thing in the way. The validator never saw it: `validator.forward_integrate` integrates the planned wheel speeds, so the 1.22 cm figure for the complex mission is reference consistency, not hardware tracking (KI-020).
+
+**Fix (implemented):** `robot_config.py` calls `drivebase.settings(straight_acceleration=..., turn_acceleration=...)`. The values are derived from the wheel diameter and track width at 80% of the firmware ceiling, so a different robot geometry cannot make the call fail at import time. `ramsete_fast.py` and `ramsete_compact.py` use `drivebase.angle()`, which keeps the gyro's fractional degrees, and round the `drive()` arguments so the truncation bias is gone. `jax_ramsete.quantize_drive_command` mirrors that rounding in the validator.
+
+**Workaround:** None needed. These are upper limits, not commands, so raising them does not make the robot jerkier; traction and the motor controller still bound the acceleration. If the robot slips or rings on the first hardware runs, lower `straight_acceleration` / `turn_acceleration` or add `Motor(profile=...)` tuning rather than reverting the whole change. The Pybricks code has still not been run on hardware.
+
 ## Suggested fix order
 
-1. KI-001, KI-002, KI-003, KI-007, KI-008, KI-009, KI-010, KI-013, KI-014, and KI-019: done in the working tree; never save or ship a failed or unvalidated run, keep validation on the configured robot, use both uncertainty bounds, keep the reference tube aligned with the samples, and keep the optimizer and Immrax on the same per-wheel force model.
+1. KI-001, KI-002, KI-003, KI-005, KI-006, KI-007, KI-008, KI-009, KI-010, KI-011, KI-012, KI-013, KI-014, KI-016, KI-019, and KI-021: done in the working tree; never save or ship a failed or unvalidated run, keep validation on the configured robot, use both uncertainty bounds, keep the reference tube aligned with the samples, keep the optimizer and Immrax on the same per-wheel force model, and never take a port from another program.
 2. KI-020: controller split, log/fit tooling, and the optional `--sysid-fit` actuator/odometry path are done; collect hardware data, compare fitted predictions with measured poses, add integrated odometry/slip, then use reachability in optimization.
-3. KI-006: make a fresh install work.
-4. KI-004: either make Multi-Verse real or remove it.
-5. KI-005: stop the live server from killing other processes.
-6. KI-011 and KI-012: fix the remaining exporter and runtime edge cases.
-7. KI-015: restore trustworthy benchmarks.
-8. KI-016 through KI-018: repair or remove the remaining UI and dead code.
+3. KI-004: either make Multi-Verse real or remove it.
+4. KI-015: restore trustworthy benchmarks.
+5. KI-017 and KI-018: remove or repair the remaining dead code.
 
 ## Not checked
 

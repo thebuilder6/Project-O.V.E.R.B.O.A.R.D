@@ -51,16 +51,18 @@ What is still incomplete:
 | `sysid_compare.py` | Planned-vs-measured stop/final pose report |
 | `export.py` | Fixed-timestep controller JSON, legacy Python, and packed-compact Python export |
 | `live_visualizer.py`, `viz/` | WebSocket live view |
+| `gui_server.py`, `viz/studio.*` | Browser studio: mission editing, solve jobs, artifact download |
+| `diagnostics.py` | Environment report behind `--doctor` and the studio health check |
 | `convergence_plotter.py`, `plotter.py`, `animated_plotter.py` | Visualization |
 | `pybricks_code/` | Robot-side firmware, fast/reference/compact controllers, missions, digital-twin log collector |
 
 ### 2.2 CLI flow
 
 1. Parse the robot config and waypoints.
-2. Select `TrajectoryOptimizer` (`--simple`) or `MasterTrajectoryOptimizer` (default).
+2. Select `TrajectoryOptimizer` (default) or `MasterTrajectoryOptimizer` (`--multiverse`).
 3. Solve the first candidate.
 4. With `--validate` or `--live`, run Immrax reachability on that candidate and score its envelope.
-5. With `--validate`, repeat for the remaining `--candidates` trajectories (default 2, max 5). With `--simple` these are distinct initial-guess seeds at the same accuracy weight (`baseline`, `rolling`, `bow_left`, `bow_right`, `turn_first`); the Multi-Verse path uses accuracy-weight steps of 2.0. Select a passing converged candidate with the smallest envelope (shortest breaks ties); otherwise keep the converged one closest to passing for reporting.
+5. With `--validate`, repeat for the remaining `--candidates` trajectories (default 2, max 5). With the simple solver each candidate combines an initial-guess seed (`baseline`, `rolling`, `bow_left`, `bow_right`, `turn_first`) with a timing mode: by default candidate 1 is uniform baseline, candidate 2 is per-segment baseline, then the remaining seeds alternate. The Multi-Verse path uses accuracy-weight steps of 2.0. Select a passing converged candidate with the smallest envelope (shortest breaks ties); otherwise keep the converged one closest to passing for reporting.
 6. Check the final waypoint, and with `--validate`, run the CPU `validate_samples` gate.
 7. Write the trajectory, then optional stats/controller/legacy-Python/compact-Python exports, then plots or live view.
 
@@ -68,7 +70,7 @@ A failed solve and a failed validation both exit non-zero without writing the tr
 
 ### 2.3 Installation modes
 
-`requirements.txt` covers the simple path: numpy, CasADi, Plotly, Click, Matplotlib, rsplan, and websockets. The default optimizer and `--validate` also need JAX, JAXOpt, and Immrax; `--simple --live` can run without JAX, though live reachability envelopes need it. `sysid_solver.py` needs pandas. Those packages are not in `requirements.txt` yet (KI-006). JAX 0.6.2 was used for the current test run.
+`requirements.txt` covers the default path: numpy, CasADi, Plotly, Click, Matplotlib, rsplan, and websockets. `--validate`, `--multiverse`, and `sysid_solver.py` need the optional stack (JAX, JAXOpt, Immrax, pandas), now listed in `requirements-optional.txt`. JAX 0.6.2 was used for the current test run.
 
 ---
 
@@ -159,7 +161,7 @@ For `N = segments * samples_per_segment + 1` samples, the optimizer chooses:
 - one timestep `dt` (the default), or one interval length `dt_i` per waypoint segment with `--per-segment-dt`
 - for each sample `k`: `x_k, y_k, theta_k, vl_k, vr_k`
 
-Every segment has exactly `samples_per_segment` intervals. The default keeps all segments on the same `dt`, which preserves the validated timing behavior. The opt-in per-segment variant uses `dt_i` inside segment `i`; total time is `samples_per_segment * sum_i(dt_i)`, and the interval starting at sample `k` uses `dt[k // samples_per_segment]`.
+Every segment has exactly `samples_per_segment` intervals. The per-segment variant uses `dt_i` inside segment `i`; total time is `samples_per_segment * sum_i(dt_i)`, and the interval starting at sample `k` uses `dt[k // samples_per_segment]`. The uniform variant keeps all segments on one `dt`. The candidate loop solves both variants by default; `--uniform-dt` and `--per-segment-dt` force one.
 
 ### 4.2 Objective
 
@@ -240,9 +242,9 @@ Validation has three layers.
 
 The envelope is the axis-aligned bounding box of the reachable set. The planner checks its radius against a local threshold: 2 cm for transit samples by default, 0.5 cm for `precision_mode` waypoints, or an explicit `error_threshold`. Tracking error is checked separately at 0.5 cm.
 
-The gate is a post-solve check. With `--validate`, `main.py` solves `--candidates` trajectories (default 2, max 5), validates each one, and selects the passing candidate with the smallest envelope; the shortest trajectory breaks ties. With `--simple`, the candidates are initial-guess seeds (`baseline`, `rolling`, `bow_left`, `bow_right`, `turn_first`); the Multi-Verse path uses increasing accuracy weights. If none pass, it selects the closest candidate for reporting but still blocks export. Reachability is not a term or constraint in the optimizer (KI-020).
+The gate is a post-solve check. With `--validate`, `main.py` solves `--candidates` trajectories (default 2, max 5), validates each one, and selects the passing candidate with the smallest envelope; the shortest trajectory breaks ties. With the simple solver, the candidates combine initial-guess seeds (`baseline`, `rolling`, `bow_left`, `bow_right`, `turn_first`) with the uniform or per-segment timing mode; the default alternates modes and the Multi-Verse path uses increasing accuracy weights. The CPU audit runs on every candidate, not only the selected one. If none pass, it selects the closest candidate for reporting but still blocks export. Reachability is not a term or constraint in the optimizer (KI-020).
 
-`--per-segment-dt` (with `--simple`) is opt-in, not the default. Measured on 2026-10-19: an uneven 1.0 m + 0.2 m path passes at 2.710 s with envelope 0.32 cm, versus 4.463 s / 0.35 cm for the uniform formulation. On the complex mission at `accuracy_weight=0`, per-segment timing is faster (5.447 s, envelope 1.18 cm) but tracking is 0.86 cm, so the 0.5 cm tracking gate rejects it; at `accuracy_weight=0.02` it passes at 7.312 s / 1.61 cm / 0.49 cm, which is slower and wider than the 6.068 s / 1.22 cm / 0.49 cm uniform baseline. The default therefore stays uniform.
+The default candidate set mixes both timing modes, and the CPU audit runs on every candidate so a partial pass cannot block a later fully passing one. Measured on 2026-10-19: an uneven 1.0 m + 0.2 m path passes all gates with per-segment at `accuracy_weight=0.005` in 2.732 s with envelope 0.32 cm and tracking 0.36 cm, versus 4.456 s / 0.37 cm / 0.36 cm uniform at the same weight, so selection keeps the per-segment winner. At `accuracy_weight=0`, per-segment is 2.710 s / 0.32 cm but the CPU audit rejects a 0.00057 N force-limit overshoot, so selection falls back to uniform (4.463 s / 0.35 cm). On the complex mission at `accuracy_weight=0`, per-segment is faster (5.447 s, envelope 1.18 cm) but tracking is 0.86 cm, so the 0.5 cm tracking gate rejects it; the uniform 6.068 s / 1.22 cm / 0.49 cm candidate passes and wins. At `accuracy_weight=0.02`, per-segment passes Immrax at 7.312 s / 1.61 cm / 0.49 cm, still slower and wider than uniform. `--uniform-dt` forces the old uniform-only behavior and `--per-segment-dt` forces per-segment timing.
 
 ### 5.3 Measured current behavior
 
@@ -251,11 +253,11 @@ These are model predictions from the current tree, not hardware measurements.
 | Example | Trajectory time | Gate result |
 |---|---:|---|
 | Straight | 2.3770 s | **PASS**; max integration error 0.000407 m; envelope 0.28 cm; zero motor/slip violations |
-| S-curve | 3.6965 s | FAIL; envelope 0.77 cm, tracking 1.32 cm (candidate 2 rolling: 3.7879 s, 0.75 cm / 1.47 cm) |
-| Stops | 6.246 s | FAIL; envelope 0.95 cm, tracking 0.52 cm (candidate 1 baseline: 6.246 s, 0.93 cm / 0.60 cm) |
-| Events | 4.6362 s | FAIL; envelope 0.97 cm, tracking 0.53 cm (candidate 1 baseline: 4.6366 s, 0.97 cm / 0.54 cm) |
-| Complex mission | 6.0677 s | **PASS**; envelope 1.22 cm, tracking 0.49 cm (candidate 2 rolling: 8.3775 s, 1.69 cm / 0.53 cm) |
-| Uneven test path (1.0 + 0.2 m), `--per-segment-dt` | 2.710 s | **PASS**; envelope 0.32 cm, tracking 0.36 cm (uniform: 4.463 s, 0.35 cm / 0.36 cm) |
+| S-curve | 3.6965 s | FAIL; envelope 0.77 cm, tracking 1.32 cm (per-segment: 3.7047 s, 0.76 cm / 1.33 cm, also fails) |
+| Stops | 6.2463 s | FAIL; envelope 0.93 cm, tracking 0.60 cm (per-segment: 5.0986 s, 0.90 cm / 1.85 cm, also fails) |
+| Events | 4.6366 s | FAIL; envelope 0.97 cm, tracking 0.54 cm (per-segment: 4.8957 s, 1.01 cm / 2.09 cm, also fails) |
+| Complex mission | 6.0677 s | **PASS**; envelope 1.22 cm, tracking 0.49 cm (per-segment: 5.4473 s, 1.18 cm / 0.86 cm, rejected by the 5 mm tracking gate) |
+| Uneven test path (1.0 + 0.2 m), default mixed `-a 0.005` | 2.732 s | **PASS**; selected per-segment, envelope 0.32 cm, tracking 0.36 cm (uniform at the same weight: 4.456 s, 0.37 cm / 0.36 cm). At `-a 0` per-segment is 2.710 s / 0.32 cm but the CPU force gate rejects a 0.00057 N overshoot, so uniform 4.463 s / 0.35 cm is selected. |
 
 Under the narrowed test assumptions in `examples/fll_choreo.json`, the straight and complex-mission examples pass; the S-curve, stops, and events examples fail and write no output. This is the gate working on an uncalibrated model, not a solver crash. The narrowed ranges are test assumptions, not measured hardware guarantees.
 
@@ -299,10 +301,12 @@ v    = vr*cos(et) + kg*ex
 w    = wr + b*vr*sinc*ey + kg*et
 ```
 
-5. Sends `v` in mm/s and `-w` in deg/s to `DriveBase.drive`.
-6. Waits for the next 20 ms slot and runs a micro-GC pass.
+5. Sends `v` in mm/s and `-w` in deg/s to `DriveBase.drive`, rounded to the nearest integer because Pybricks truncates float arguments toward zero.
+6. Waits for the next 20 ms slot and runs a periodic GC pass.
 
 Pathing missions call `ramsete_fast` with its defaults, `b = 2.0`, `zeta = 0.7`; `robot_config.py` is hardware-only. The event mission imports `ramsete.py` and keeps its explicit `b = 3.0`, `zeta = 0.8` gains. The validator mirrors the pathing defaults (KI-020).
+
+`robot_config.py` raises the DriveBase trajectory limits to about 7800 mm/s² and 9300 deg/s² for 56 mm wheels and a 96.5 mm track. Pybricks otherwise defaults to three quarters of the motor's 2000 deg/s², which is only about 733 mm/s², so the inner reference lagged the planned trajectory. The limits are derived from the wheel diameter and track width at 80% of Pybricks' 20,000 deg/s² ceiling, so a different robot geometry cannot make the call fail. The controllers also read `drivebase.angle()` instead of `drivebase.state()`, because the state tuple rounds the heading to whole degrees while `angle()` keeps the gyro's fractional degrees.
 
 `ramsete_compact.py` and `ramsete_compact_events.py` are packed-trajectory counterparts for `--export-format python-compact`. They decode the bytes blob directly and do not expand it into a list of dicts; the plain version has no event handling, while the event version imports `Odometry`, `RamseteController`, and `KinematicLimiter` from `ramsete.py`. They are available for generated missions but are not wired into the existing `robot.py` menu or `mission_4_ramsete.py`/`mission_5_lambdas.py`.
 
@@ -310,13 +314,15 @@ Pathing missions call `ramsete_fast` with its defaults, `b = 2.0`, `zeta = 0.7`;
 
 `jax_ramsete.py` mirrors the deployed math, including the precomputed gain and shortest-angle heading error. The interval path cannot use `abs`, `where`, `mod`, `sinc`, or `atan2`, so it uses unrolled headings and a degree-6 Chebyshev polynomial for `sinc` with maximum error below `2.5e-9` on `[-π, π]`. A randomized parity test compares the JAX command with a direct transcription of `ramsete_fast.py`, including ±π crossings (KI-014).
 
+The nominal feedback path also mirrors the deployed `DriveBase.drive()` boundary: `quantize_drive_command` rounds the commanded linear speed to whole mm/s and the turn rate to whole deg/s, exactly like the firmware, before the command is split into wheel speeds. The interval inclusion path leaves that rounding off, because Immrax cannot include those operations and dropping the rounding is the conservative direction.
+
 The hardware calibration path is implemented but has not been validated on hardware. `pybricks_code/sysid_digital_twin.py` collects raw encoder/IMU, step, chirp, odometry, stopping, and held-out replay logs without changing `ramsete_fast.py`; `sysid_fit.py` fits first-order actuator response, odometry scale, static gyro bias, and a bounded braking-slip estimate; `--sysid-fit` feeds the measured actuator/odometry fit to Immrax. The 5 mm tracking and 2 cm envelope thresholds stay unchanged until measured logs are available (KI-020).
 
 ### 6.3 Export and runtime edge cases
 
-- `export.resample_to_fixed_dt` interpolates heading as a raw number. A path crossing ±π can interpolate the long way around (KI-011).
-- Events are attached to the nearest 20 ms controller sample. The deployed loop breaks before the last sample, so an event on the final waypoint does not fire (KI-012). Trigger that action after `follow_trajectory` returns.
-- `ramsete.py` is the event-capable reference controller; `ramsete_fast.py` is the production path and has no event handling. The compact controllers consume the packed module from `--export-format python-compact`; `ramsete_compact_events.py` still stops at `total_time`, so a final-sample event does not fire (KI-012).
+- `export.resample_to_fixed_dt` unwraps the heading before interpolating and wraps the result back to [-π, π], so a path crossing ±π is interpolated the short way (KI-011, fixed).
+- Events are attached to the nearest 20 ms controller sample. The deployed loop stops before the last sample, so the event on the final waypoint is fired after the loop, once the robot has arrived and the drivebase has stopped (KI-012, fixed).
+- `ramsete.py` is the event-capable reference controller; `ramsete_fast.py` is the production path and has no event handling. The compact controllers consume the packed module from `--export-format python-compact`; `ramsete_compact_events.py` fires the events that are left after the loop the same way (KI-012).
 
 ---
 
@@ -373,7 +379,7 @@ Cost improvement: 0.00 %
 JAX refine phase: 0.0115 s
 ```
 
-This is the expected consequence of KI-004. Use `--simple` for predictable behavior until the initial-guess path is wired.
+This is the expected consequence of KI-004. The simple solver is the default until the initial-guess path is wired.
 
 ---
 
@@ -412,11 +418,11 @@ Do not tune the 5 mm tracking or 2 cm envelope thresholds to one path. The strai
 
 The full option list is in `README.md` and `docs/CONFIGURATION.md`. Current truth:
 
-- `--simple` selects the CasADi optimizer.
-- `--validate` requires JAX/Immrax and gates output. `--candidates N` (default 2, max 5) selects among initial-guess seeds with `--simple`, or accuracy-weight variants on the Multi-Verse path.
+- The simple CasADi optimizer is the default; `--multiverse` selects the Multi-Verse pipeline and `--simple` is a deprecated alias.
+- `--validate` requires JAX/Immrax and gates output. `--candidates N` (default 2, max 5) selects among seed/timing combinations with the simple solver, or accuracy-weight variants on the Multi-Verse path.
 - `--sysid-fit sysid_fit.json` opts into the fitted five-state plant; it requires `--validate` or `--live`.
 - `--export-format controller|python|python-compact` writes optional outputs after the gate.
-- `--per-segment-dt` gives each waypoint segment its own interval and is only valid with `--simple`.
+- `--per-segment-dt` forces per-segment intervals and `--uniform-dt` forces one shared interval; both are only valid with the simple solver. By default candidates mix both.
 - `--benchmark` writes `<output>_stats.json` after the gate.
 - `--plot`, `--animate`, and `--live` are blocking.
 - `--workers` and `--no-parallel` do not affect the final result (KI-004).
@@ -458,8 +464,8 @@ The simple optimizer records `iteration_history` when `--show-convergence` is se
 `python run_tests.py` with JAX installed:
 
 ```text
-Ran 152 tests
-Successes: 152
+Ran 161 tests
+Successes: 161
 Failures: 0
 Errors: 0
 Skipped: 0
@@ -470,11 +476,11 @@ The JAX-dependent modules are imported in a `try`; if JAX is missing, they are s
 ### 10.2 Straight example
 
 ```bash
-python main.py --simple -c examples/fll_choreo.json \
+python main.py -c examples/fll_choreo.json \
   -w examples/example_straight.json -o straight.traj --validate
 ```
 
-- The default command solves two initial-guess seeds (`baseline`, `rolling`) at accuracy weight 0.0. Both passed with a 0.28 cm envelope; candidate 2 was selected. A separate five-seed run showed all five converge to the same optimum.
+- The default command solves two candidates at accuracy weight 0.0: uniform `baseline` and per-segment `baseline`. Both pass and converge to the same 2.3767 s trajectory with a 0.28 cm envelope; the uniform candidate wins the tie by order.
 - Selected trajectory time: 2.3767 s
 - Selected-candidate solve wall time: about 0.060 s
 - Max forward-integration error: 0.000407 m
@@ -485,14 +491,14 @@ python main.py --simple -c examples/fll_choreo.json \
 
 ### 10.3 Curved and mission examples
 
-The S-curve, stops, and events examples converge but fail the Immrax gate and produce no output with `--validate`. The complex mission passes under the current narrowed test ranges. All values below use the default two-seed run:
+The S-curve, stops, and events examples converge but fail the Immrax gate and produce no output with `--validate`. The complex mission passes under the current narrowed test ranges. All values below use the default two candidates (uniform baseline, then per-segment baseline):
 
 | Example | Selected time | Result |
 |---|---:|---|
-| S-curve | 3.696 s | FAIL; envelope 0.77 cm, tracking 1.32 cm (rolling: 3.788 s, 0.75 cm / 1.47 cm) |
-| Stops | 6.246 s | FAIL; envelope 0.95 cm, tracking 0.52 cm (baseline: 0.93 cm / 0.60 cm) |
-| Events | 4.636 s | FAIL; envelope 0.97 cm, tracking 0.53 cm (baseline: 0.97 cm / 0.54 cm) |
-| Complex mission | 6.068 s | **PASS**; envelope 1.22 cm, tracking 0.49 cm (rolling: 8.377 s, 1.69 cm / 0.53 cm) |
+| S-curve | 3.696 s | FAIL; envelope 0.77 cm, tracking 1.32 cm; per-segment 3.705 s, 0.76 cm / 1.33 cm, also fails |
+| Stops | 6.246 s | FAIL; envelope 0.93 cm, tracking 0.60 cm; per-segment 5.099 s, 0.90 cm / 1.85 cm, also fails |
+| Events | 4.637 s | FAIL; envelope 0.97 cm, tracking 0.54 cm; per-segment 4.896 s, 1.01 cm / 2.09 cm, also fails |
+| Complex mission | 6.068 s | **PASS**; envelope 1.22 cm, tracking 0.49 cm; per-segment 5.447 s, 1.18 cm / 0.86 cm, rejected by the 5 mm tracking gate |
 
 These are model predictions. There is no hardware tracking log in the repository; the collector and fitter have only been exercised with synthetic data.
 
@@ -527,7 +533,7 @@ Priority order:
 
 1. **KI-020:** collect and fit hardware logs, compare the fitted model with measured poses, add integrated odometry and the remaining motor/DriveBase/slip dynamics, then use reachability in optimization. Keep the current gate strict until then.
 2. **KI-004:** add a way to pass the Multi-Verse refined sample matrix into `TrajectoryOptimizer.solve` (the existing `guess_style` parameter only selects deterministic seeds), or remove the Multi-Verse path and its flags.
-3. **KI-006:** add JAX/JAXOpt/Immrax/pandas to the install path, or make `--simple` the default and document the optional stack.
+3. **KI-006:** done. The simple solver is the default and the optional stack lives in `requirements-optional.txt`.
 4. **KI-005/KI-016:** stop killing the port and replay config/waypoints to new clients.
 5. **KI-011/KI-012:** unwrap headings on export and fire the final event.
 6. **KI-015:** make random benchmarks use an explicit config and check convergence.
@@ -586,21 +592,28 @@ Priority order:
 ## Appendix B: CLI summary
 
 ```text
--c, --config PATH              robot configuration
--w, --waypoints PATH           waypoint JSON
--o, --output TEXT              output .traj
+-c, --config FILE               robot configuration (default examples/fll_choreo.json)
+-w, --waypoints FILE            waypoint JSON (required unless --gui or --doctor)
+-o, --output TEXT               output .traj
+--gui                           browser studio: draw, solve, export
+--gui-port INTEGER              studio port (default 8000)
+--doctor                        report the environment, then exit
+--preset [fast|balanced|safe]  named starting point; explicit options win
 -n, --samples INTEGER          samples per segment
 -a, --accuracy-weight FLOAT    smoothness/jerk weight
 --candidates INTEGER RANGE     candidates to solve and compare with --validate
-                              (default 2, max 5; seeds with --simple,
-                              accuracy-weight variants otherwise)
+                              (default 2, max 5; seed/timing combinations with
+                              the simple solver, accuracy-weight variants
+                              otherwise)
 --stop-waypoints TEXT          comma-separated stop indices
 --events TEXT                  comma-separated index:event pairs
---simple                       CasADi-only optimizer
---per-segment-dt               per-segment interval; --simple only
+--multiverse                   Multi-Verse pipeline (experimental)
+--simple                       deprecated: the simple solver is the default
+--per-segment-dt               force per-segment intervals; simple solver only
+--uniform-dt                   force one shared interval; simple solver only
 --no-parallel                  Multi-Verse flag; no current result effect
 --workers INTEGER              Multi-Verse flag; no current result effect
---validate                     CPU + Immrax gate; requires JAX
+--validate / --no-validate     CPU + Immrax gate; requires JAX
 --sysid-fit PATH               optional fitted actuator/odometry model
                               (requires --validate or --live)
 --export-format                none | controller | python | python-compact
@@ -608,10 +621,10 @@ Priority order:
 --benchmark                    write <output>_stats.json
 --plot / --animate             blocking visualization
 --live                         blocking WebSocket view
+--port INTEGER                 live view port (default 8765)
 --show-convergence             simple-optimizer convergence plot
 --convergence-mode             parallel | best | layered
---convergence-animate          parsed, unused
---convergence-output TEXT      parsed, unused
+-v, --verbose                  show solver internals
 -q, --quiet                    suppress progress output
 ```
 
