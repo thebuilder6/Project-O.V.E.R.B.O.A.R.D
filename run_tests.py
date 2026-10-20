@@ -44,6 +44,10 @@ from tests.test_sysid_fit import (
     TestNoLoadSpeed,
     TestDrivebaseProfile,
     TestHubSessionPoses,
+    TestBadRows,
+    TestDistanceScale,
+    TestFitWithoutPoses,
+    TestIntervalLowerBound,
 )
 from tests.test_digital_twin import (
     TestDigitalTwinConfig,
@@ -73,6 +77,10 @@ from tests.test_drivetrain import (
     TestDeclaredMotorCheck,
 )
 from tests.test_validator_model import TestBacklashModel, TestHeadingMetric
+from tests.test_envelope_soundness import (
+    TestNoPhantomTurnRate,
+    TestTheBoxContainsTheReachableSet,
+)
 from tests.test_sysid_compare import TestSysIdCompare
 from tests.test_export_compact import TestCompactExport
 from tests.test_export import TestResampleHeading
@@ -95,6 +103,7 @@ from tests.test_sysid_collect import (
     TestSessionPoses,
     TestFittedScales,
     TestMeasurementSheet,
+    TestSheetFormAndOneStepFit,
     TestRepeatStatistics,
     TestRefinedStepFit,
     TestDriftRegression,
@@ -110,6 +119,7 @@ from tests.test_firmware_events import (
 )
 from tests.test_cli_ux import (
     TestCliBasics,
+    TestFirstRun,
     TestStudioEntryPoints,
     TestParallelCandidates,
     TestValidationReport,
@@ -123,6 +133,7 @@ from tests.test_gui_server import (
     TestStudioCalibration,
     TestStudioHelpers,
     TestStudioReport,
+    TestValidationVerdict,
 )
 from tests.test_studio_inventory import (
     TestStudioInventory,
@@ -134,6 +145,10 @@ from tests.test_studio_report import (
     TestStudioInventoryNewControls,
 )
 from tests.test_studio_honesty import (
+    TestANewSolveClearsTheLastVerdict,
+    TestAReloadAttachesToTheRunningSolve,
+    TestTheDownloadsBelongToTheirJob,
+    TestThePushNeedsAMissionThatMatches,
     TestTheHiddenAttributeWins,
     TestThePushNeedsAValidatedTrajectory,
     TestAFailedSolveLeavesNoPath,
@@ -147,9 +162,18 @@ from tests.test_testcache import (
     TestCacheFingerprints,
     TestCacheRecords,
 )
+from tests.test_suite_registry import (
+    TestEveryTestClassRuns,
+)
+from tests.test_research_robots import (
+    TestRandomRobots,
+)
 
 # Regression tests (no JAX required)
 from tests.test_regressions import (
+    TestEventNameEscaping,
+    TestGearedSpeedLimit,
+    TestSegmentLimits,
     TestExportConfig,
     TestAttemptSelection,
     TestCandidateSpecs,
@@ -179,6 +203,9 @@ def test_classes():
     """The test classes, the JAX ones first when they are available."""
     classes = [
         TestExportConfig,
+        TestSegmentLimits,
+        TestGearedSpeedLimit,
+        TestEventNameEscaping,
         TestAttemptSelection,
         TestCandidateSpecs,
         TestReachabilityEnvelope,
@@ -197,6 +224,10 @@ def test_classes():
         TestComputeMetrics,
         TestValidateTrajectory,
         TestSysIdFit,
+        TestBadRows,
+        TestDistanceScale,
+        TestFitWithoutPoses,
+        TestIntervalLowerBound,
         TestRandomSuiteGenerator,
         TestNoLoadSpeed,
         TestDrivebaseProfile,
@@ -241,19 +272,25 @@ def test_classes():
         TestSessionPoses,
         TestFittedScales,
         TestMeasurementSheet,
+        TestSheetFormAndOneStepFit,
         TestRepeatStatistics,
+        TestEveryTestClassRuns,
         TestRefinedStepFit,
         TestDriftRegression,
         TestDriftAndStallTorque,
         TestWallHoming,
         TestCollectCommand,
         TestCliBasics,
+        TestFirstRun,
         TestStudioEntryPoints,
         TestStudioPush,
         TestStudioModel,
         TestStudioCalibration,
+        TestValidationVerdict,
         TestBacklashModel,
         TestHeadingMetric,
+        TestNoPhantomTurnRate,
+        TestTheBoxContainsTheReachableSet,
         TestParallelCandidates,
         TestValidationReport,
         TestIterationHistory,
@@ -272,6 +309,10 @@ def test_classes():
         TestStudioReportRoute,
         TestStudioInventoryNewControls,
         TestTheHiddenAttributeWins,
+        TestANewSolveClearsTheLastVerdict,
+        TestAReloadAttachesToTheRunningSolve,
+        TestTheDownloadsBelongToTheirJob,
+        TestThePushNeedsAMissionThatMatches,
         TestThePushNeedsAValidatedTrajectory,
         TestAFailedSolveLeavesNoPath,
         TestASolveThatNeverStartsClearsTheVerdict,
@@ -281,6 +322,7 @@ def test_classes():
         TestCacheSkipsUnchangedCode,
         TestCacheFingerprints,
         TestCacheRecords,
+        TestRandomRobots,
     ]
     if JAX_AVAILABLE:
         classes = [
