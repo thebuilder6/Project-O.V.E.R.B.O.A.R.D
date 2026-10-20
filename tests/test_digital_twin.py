@@ -71,6 +71,18 @@ _FIT = {
         "gyro_z_bias_deg_s": 0.1,
         "gyro_z_std_deg_s": 0.01,
     },
+    "drift": {
+        "calibrated": True,
+        "drift_deg_per_m": 2.0,
+        "drift_deg_per_m_ci95": [1.5, 2.5],
+        "n_sources": 3,
+    },
+    "stall_torque": {
+        "calibrated": True,
+        "t_max_nm": 0.13,
+        "t_max_nm_ci95": [0.12, 0.14],
+        "n_sources": 3,
+    },
     "drivebase": {
         "name": "test drivebase",
         "wheel_radius_m": 0.028,
@@ -289,6 +301,39 @@ class TestDigitalTwinMechanisms(unittest.TestCase):
         self.assertEqual(validator.digital_twin_distance_scale, 1.0)
         self.assertEqual(validator.digital_twin_heading_scale, 1.0)
         self.assertEqual(validator.digital_twin_gyro_bias_rad_s, 0.0)
+
+    def test_the_measured_drift_curves_the_path(self):
+        """A robot whose wheels are not parallel leaves a straight plan."""
+        validator = self._validator(self._twin())
+        w = jnp.array([1.37, 0.85, 0.0004, 0.0965, 0.028, 0.001, 1.0])
+        state = jnp.array([0.0, 0.0, 0.0, 0.4, 0.4])
+        command = jnp.array([0.4, 0.4])
+
+        curving = validator.plant.f(0.0, state, command, w)
+        straight = self._validator(
+            self._twin(drift={"calibrated": False})).plant.f(
+                0.0, state, command, w)
+
+        # The wheels are commanded equal, so without the drift the heading
+        # does not change. With it, the heading creeps at 2 deg per metre.
+        self.assertAlmostEqual(float(straight[2]), 0.0, places=9)
+        self.assertAlmostEqual(
+            float(curving[2]), math.radians(2.0) * 0.4, places=6)
+
+    def test_no_drift_means_no_plant_term(self):
+        validator = self._validator(self._twin(drift={"calibrated": False}))
+
+        self.assertEqual(validator.plant.drift_rad_per_m, 0.0)
+
+    def test_the_measured_stall_torque_is_the_force_limit(self):
+        """The wall test measures what the config can only declare."""
+        validator = self._validator(self._twin())
+        self.assertEqual(validator.stall_torque_range_nm, (0.12, 0.14))
+
+    def test_without_a_measurement_the_config_value_is_used(self):
+        validator = self._validator(self._twin(stall_torque={"calibrated": False}))
+
+        self.assertIsNone(validator.stall_torque_range_nm)
 
     def test_braking_slip_shortens_the_ground_covered(self):
         w = jnp.array([1.37, 0.85, 0.0004, 0.0965, 0.028, 0.001, 1.0])

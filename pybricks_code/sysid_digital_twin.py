@@ -734,16 +734,18 @@ async def main():
     test_chirp_turn()
 
     # The tests the operator has to measure, one repeat after another so the
-    # measurements are taken in one go.
+    # measurements are taken in one go. The wall test is in here too: it
+    # measures the motor's stall torque, and the operator has to move the
+    # robot to the wall anyway, so three pushes cost little.
     for _REPEAT in range(REPEATS):
         test_odometry_straight()
         test_odometry_turn()
         test_multi_stop()
         test_brake_from_speed(300)
         test_brake_from_speed(600)
+        test_wall_stall()
 
     _REPEAT = 0
-    test_wall_stall()
     await test_replay("complex_mission")
 
     hub.light.on(Color.GREEN)

@@ -482,6 +482,107 @@ class TestRepeatStatistics(unittest.TestCase):
             self.assertEqual(loaded.actuator_gain_range(), (0.97, 0.99))
 
 
+class TestDriftAndStallTorque(unittest.TestCase):
+    """Two things the suite already measured but the fit ignored."""
+
+    @staticmethod
+    def _session():
+        lines = []
+        lines += [
+            "TEST_START static",
+            "META,run_id,1",
+            "META,test,static",
+            "META,repeat,0",
+            "META,poses,0",
+            "DATA",
+            "t_ms,loop_ms,l_deg,r_deg,gyro_x_deg_s,gyro_y_deg_s,"
+            "gyro_z_deg_s,ax_mm_s2,ay_mm_s2,az_mm_s2,batt_mv,batt_ma",
+        ]
+        for i in range(50):
+            lines.append(f"{i * 10},10,0,0,0,0,0.05,0,0,9800,8000,0")
+        lines.append("TEST_END,50")
+
+        for repeat in range(3):
+            lines += [
+                "TEST_START odometry_straight",
+                f"META,run_id,{2 + repeat}",
+                "META,test,odometry_straight",
+                f"META,repeat,{repeat}",
+                "META,poses,1",
+                "DATA",
+                "t_ms,v_cmd_mm_s,w_cmd_deg_s,db_d_mm,db_v_mm_s,db_a_deg,"
+                "db_w_deg_s,batt_mv",
+            ]
+            for i in range(11):
+                # 1 m in 10 s. The heading changed by -2.5 deg: 2 deg of real
+                # left curve plus 0.5 deg of gyro bias over the run.
+                last = i == 10
+                lines.append(f"{i * 1000},100,0,{1000 if last else 0},0,"
+                             f"{-2.5 if last else 0},0,8000")
+            lines.append("TEST_END,11")
+
+        for repeat in range(3):
+            lines += [
+                "TEST_START wall_stall",
+                f"META,run_id,{5 + repeat}",
+                "META,test,wall_stall",
+                f"META,repeat,{repeat}",
+                "META,poses,0",
+                "DATA",
+                "t_ms,loop_ms,v_cmd_mm_s,w_cmd_deg_s,l_deg,r_deg,"
+                "gyro_z_rad_s,ax_m_s2,ay_m_s2,batt_mv,batt_ma,l_load_mNm,"
+                "r_load_mNm",
+            ]
+            for i in range(50):
+                # The impact overshoots, then the load settles at 130 mNm.
+                load = 300.0 if i <= 2 else 130.0
+                lines.append(f"{i * 10},10,30,0,0,0,0,0,0,8000,50,{load},{load}")
+            lines.append("TEST_END,50")
+        return "\n".join(lines) + "\n"
+
+    def _fit(self, poses=None):
+        from sysid_fit import fit_session, load_poses, parse_session
+        if poses is None:
+            poses = {}
+        return fit_session(parse_session(self._session()), poses=poses,
+                           wheel_radius_m=0.028)
+
+    def test_the_drift_comes_from_the_gyro_with_the_bias_removed(self):
+        result = self._fit()
+        drift = result["drift"]
+        self.assertTrue(drift["calibrated"])
+        # 2 deg/m of real curve. Without the bias correction the gyro would
+        # report 2.5 deg/m.
+        self.assertAlmostEqual(drift["drift_deg_per_m"], 2.0, places=6)
+        self.assertEqual(drift["n_sources"], 3)
+
+    def test_the_tape_gives_an_independent_estimate_of_the_drift(self):
+        poses = {"2": [{"stop": 0, "x_m": 0.998, "y_m": 0.01745,
+                        "heading_deg": 2.0}]}
+        result = self._fit(poses)
+        drift = result["drift"]
+        # A drift of k over a distance L leaves k * L^2 / 2 behind.
+        self.assertAlmostEqual(drift["drift_deg_per_m_tape"], 2.007, places=2)
+        self.assertLess(drift["drift_disagreement_deg_per_m"], 0.1)
+
+    def test_the_stall_torque_ignores_the_impact(self):
+        result = self._fit()
+        stall = result["stall_torque"]
+        self.assertTrue(stall["calibrated"])
+        # The steady load is 130 mNm, which is 0.13 Nm. The impact spike
+        # must not raise it.
+        self.assertAlmostEqual(stall["t_max_nm"], 0.13, places=6)
+        self.assertEqual(stall["n_sources"], 3)
+
+    def test_without_the_tests_neither_is_calibrated(self):
+        from sysid_fit import fit_session, parse_session
+        session = ("TEST_START static\nMETA,run_id,1\nMETA,test,static\n"
+                   "META,poses,0\nDATA\nt_ms,speed\n0,0\nTEST_END,1\n")
+        result = fit_session(parse_session(session), wheel_radius_m=0.028)
+        self.assertFalse(result["drift"]["calibrated"])
+        self.assertFalse(result["stall_torque"]["calibrated"])
+
+
 class TestCollectCommand(unittest.TestCase):
 
     def _run(self, tmp, extra=None):

@@ -114,16 +114,22 @@ measure it each time:
 | 13 | `multi_stop` ×3 | 2 m runway. Mark the start pose and a measuring spot at each stop. | **the pose at each of 3 stops** |
 | 14 | `brake_from_300` ×3 | Mark the start and final pose. 2 m runway required. | **the end pose** |
 | 15 | `brake_from_600` ×3 | Same, at 600 mm/s. | **the end pose** |
-| 16 | `wall_stall` | Front bumper flat against a rigid wall. | — |
+| 16 | `wall_stall` ×3 | Front bumper flat against a rigid wall. | — |
 | 17 | `replay_complex_mission` | Place the robot at the trajectory start pose. Clear the full path. | — |
 
 Only tests 11 to 15 need a tape measure. The rest are for the actuator model
-and the gyro bias, and you only have to watch them.
+and the gyro bias, and you only have to watch them. Test 16 is the one that
+measures the motor's stall torque: the robot pushes into the wall and the
+load on the motors is read, so it has to be a real wall and not a hand.
 
 **Measure these seven, in each of the three repeats:**
 
 - **Test 11, `odometry_straight`** — how far it went, and whether it drifted
-  sideways. It should read about 1000 mm.
+  sideways. It should read about 1000 mm. **The sideways offset matters as
+  much as the distance**: it is how the fit sees the robot curving when it is
+  told to drive straight, and the fit checks its own gyro estimate against
+  it. If the two disagree by more than a degree per metre, the report says
+  so, and the drift term should not be trusted.
 - **Test 12, `odometry_turn_cw`** — where it ended and how far it turned. It
   should have turned about 90° to the right.
 - **Test 13, `multi_stop`** — the pose at each of the three stops, at roughly
@@ -221,6 +227,10 @@ Gyro z bias: 0.0041 deg/s (std 0.0039)
 Odometry: distance_scale=0.9980, heading_scale=1.0000
   distance_scale: 95% interval [0.9961, 0.9999] over 3 repeats (std 0.0011).
 Brake slip: median=0.011, range=[0.008, 0.013]
+Straight drift: 1.472 deg/m (the robot curves when told to drive straight)
+  tape says 1.455 deg/m, disagreement 0.017 deg/m. A big disagreement means
+  the gyro bias or the start mark is off, so do not trust the drift term.
+Stall torque: 0.1314 Nm
 The intervals cover the run-to-run variation of the robot. They do not cover
 the error of the tape measure, which is the same every time and never averages
 out.
@@ -241,6 +251,16 @@ out.
 - **Brake slip** — how much of the commanded distance the robot loses when it
   brakes. A median of `0.011` means it slides about 11 mm for every metre it
   brakes from speed.
+- **Straight drift** — how much the robot curves per metre when it is told
+  to drive straight. The plan's straight segments are straight, so this is a
+  tracking error that grows with the distance: **1 deg/m is 8.7 mm of lateral
+  error per metre, and 78 mm over a 3 m path.** The fit takes the gyro's
+  estimate, with the measured bias removed, and checks it against the tape's
+  lateral offset.
+- **Stall torque** — what the motors can actually push with, measured by
+  pushing into a wall. The robot config can only declare it, so this
+  replaces a guess. The planner uses it as the limit on the force a wheel may
+  need.
 
 ### What the interval covers, and what it does not
 
@@ -257,6 +277,19 @@ the numerator of every measurement, it is the same every time, and no number
 of repeats averages it out. If your tape is off by 5 mm per metre, the
 distance scale is off by 0.5% and the interval will not say so. Measure the
 same distance twice at some point to get a feel for it.
+
+The drift is the one number that is measured twice, by two different
+instruments, because it is the one that matters most and the one that is
+hardest to get right. The **gyro** sees the heading change directly and
+precisely, but a gyro bias looks exactly like a drift over a long run, so
+the measured bias is subtracted first; if the hub warms up during the
+session, that subtraction is wrong. The **tape** sees the lateral offset
+the drift leaves behind, which is a pure length measurement with no sensor
+bias in it, but it carries the operator's placement error, and the
+placement error is the same every time. The fit reports both and the
+difference between them. If they disagree by more than a degree per metre,
+one of the two systematic errors is wrong, the report says so, and the drift
+term should not be used until you have found out which.
 
 ---
 

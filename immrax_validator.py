@@ -112,14 +112,28 @@ class RobotOpenLoop(immrax.system.OpenLoopSystem):
         """
         gain = _wheel_gain(w)
         vl_cmd, vr_cmd = u[0] * gain, u[1] * gain
-        track_width, backlash = w[3], w[2]
+        track_width = w[3]
 
-        # 1. Smooth Backlash
-        epsilon = 1e-3  
-        vl_act = vl_cmd - (backlash / 2.0) * jnp.tanh(vl_cmd / epsilon)
-        vr_act = vr_cmd - (backlash / 2.0) * jnp.tanh(vr_cmd / epsilon)
+        # Gear backlash is a POSITION dead-band, not a velocity offset.
+        #
+        # The old model subtracted backlash/2 from the commanded wheel SPEED.
+        # `gear_backlash_m` is a distance in metres and the command is a
+        # velocity in m/s, so that was a dimensional error: it made the robot
+        # run permanently 0.225 mm/s slower than commanded, in both
+        # directions, and grew a fake systematic lag of 0.225 mm/s * t into
+        # the tracking error. A real dead-band is taken up once at a
+        # direction reversal, after which the wheel turns at exactly the
+        # commanded speed.
+        #
+        # The backlash is now carried as the position uncertainty it is, in
+        # the reachable set (see compute_reachability), so the worst-case
+        # total uncertainty at each sample is unchanged: the same magnitude,
+        # moved from the tracking metric into the envelope, and symmetric
+        # instead of a one-sided bias.
+        vl_act = vl_cmd
+        vr_act = vr_cmd
 
-        # 2. Kinematics
+        # Kinematics
         #
         # Do not apply `limit * tanh(v / limit)` here. That is not a hard
         # speed limit: at 89% of no-load speed it removes about 20% of the
@@ -170,15 +184,21 @@ class DigitalTwinOpenLoop(immrax.system.OpenLoopSystem):
         self.tau_s = max(digital_twin.actuator_tau_s(), self.MIN_TAU_S)
         self.brake_shortfall = digital_twin.brake_shortfall()
         self.accel_limit = digital_twin.actuator_accel_limit()
+        # A robot whose wheels are not parallel curves even when it is told
+        # to drive straight. The plan's straight segments are straight, so
+        # the curvature is a tracking error that grows with the distance.
+        self.drift_rad_per_m = digital_twin.drift_rad_per_m()
 
     def f(self, t, x, u, w):
         gain = _wheel_gain(w)
         vl_cmd, vr_cmd = u[0] * gain, u[1] * gain
-        track_width, backlash = w[3], w[2]
+        track_width = w[3]
 
-        epsilon = 1e-3
-        vl_target = vl_cmd - (backlash / 2.0) * jnp.tanh(vl_cmd / epsilon)
-        vr_target = vr_cmd - (backlash / 2.0) * jnp.tanh(vr_cmd / epsilon)
+        # The wheel turns at the commanded speed; the gear backlash is a
+        # position dead-band and is carried in the reachable set, not as a
+        # velocity offset. See RobotOpenLoop.f for the reasoning.
+        vl_target = vl_cmd
+        vr_target = vr_cmd
 
         vl_actual, vr_actual = x[3], x[4]
         v_actual = (vl_actual + vr_actual) / 2.0
@@ -198,6 +218,11 @@ class DigitalTwinOpenLoop(immrax.system.OpenLoopSystem):
         dx = grip * v_actual * jnp.cos(x[2])
         dy = grip * v_actual * jnp.sin(x[2])
         dtheta = grip * omega_actual
+        if self.drift_rad_per_m:
+            # The wheels are not quite parallel, so the heading creeps at a
+            # rate proportional to the speed. A positive drift turns the
+            # robot to the left, the same way as a positive heading.
+            dtheta = dtheta + self.drift_rad_per_m * grip * v_actual
         dvl = (vl_target - vl_actual) / self.tau_s
         dvr = (vr_target - vr_actual) / self.tau_s
 
@@ -324,6 +349,13 @@ class ImmraxValidator:
             digital_twin.gyro_z_bias_rad_s()
             if self._digital_twin_active else 0.0
         )
+        # The motor's stall torque, measured by pushing into a wall. The
+        # config can only declare it, so without the measurement the force
+        # limit is a guess.
+        self.stall_torque_range_nm = (
+            digital_twin.stall_torque_range_nm()
+            if self._digital_twin_active else None
+        )
 
         self.sys = ClosedLoopRobotSystem(
             config, self.ramsete_b, self.ramsete_zeta)
@@ -432,6 +464,16 @@ class ImmraxValidator:
 
         cof_interval = Interval(*cof_range)
         torque_margin_interval = Interval(*torque_margin_range)
+
+        # The motor's stall torque, measured by pushing into a wall. The
+        # robot config can only declare it, so the declared number is a
+        # guess about what the motor can actually deliver. When the fit
+        # measured it, that measurement is the limit.
+        stall_range = self.stall_torque_range_nm
+        if stall_range is not None:
+            t_max_interval = Interval(*stall_range)
+        else:
+            t_max_interval = interval(self.cfg.t_max_nm)
         
         tw_range = track_width_range if track_width_range else (self.cfg.track_width * 0.99, self.cfg.track_width * 1.01)
         wr_range = wheel_radius_range if wheel_radius_range else (self.cfg.wheel_radius * 0.99, self.cfg.wheel_radius * 1.01)
@@ -453,12 +495,12 @@ class ImmraxValidator:
 
             # 2. Interval-Aware Motor Torque Curves
             omega_l = (interval(jnp.abs(vl_val)) / wheel_radius_iv) * interval(self.cfg.gearing)
-            torque_l = (interval(1.0) - omega_l / interval(self.cfg.v_max_rad_s)) * interval(self.cfg.t_max_nm)
+            torque_l = (interval(1.0) - omega_l / interval(self.cfg.v_max_rad_s)) * t_max_interval
             torque_l = Interval(jnp.maximum(0.0, torque_l.lower), jnp.maximum(0.0, torque_l.upper))
             force_limit_l = (torque_l / wheel_radius_iv) * interval(self.cfg.gearing) * torque_margin_interval
 
             omega_r = (interval(jnp.abs(vr_val)) / wheel_radius_iv) * interval(self.cfg.gearing)
-            torque_r = (interval(1.0) - omega_r / interval(self.cfg.v_max_rad_s)) * interval(self.cfg.t_max_nm)
+            torque_r = (interval(1.0) - omega_r / interval(self.cfg.v_max_rad_s)) * t_max_interval
             torque_r = Interval(jnp.maximum(0.0, torque_r.lower), jnp.maximum(0.0, torque_r.upper))
             force_limit_r = (torque_r / wheel_radius_iv) * interval(self.cfg.gearing) * torque_margin_interval
 
@@ -522,6 +564,7 @@ class ImmraxValidator:
             "max_slip_l_N": float(jnp.max(slip_ls)),
             "max_slip_r_N": float(jnp.max(slip_rs)),
             "max_tracking_error_m": reach_report['max_tracking_error_m'],
+            "max_heading_error_rad": reach_report['max_heading_error_rad'],
             "max_envelope_radius_m": reach_report['max_envelope_radius_m'],
             "max_wheel_speed_m_s": max_wheel_speed,
             "wheel_speed_limit_m_s": wheel_speed_limit,
@@ -546,6 +589,7 @@ class ImmraxValidator:
             return {
                 "max_error_m": 0.0,
                 "max_tracking_error_m": 0.0,
+                "max_heading_error_rad": 0.0,
                 "max_envelope_radius_m": 0.0,
                 "envelope": [],
                 "diverged": False,
@@ -588,10 +632,14 @@ class ImmraxValidator:
         ramsete_b = getattr(self, "ramsete_b", 2.0)
         envelope = [_box(x_flat)]  # box at sample 0, so envelope[i] is the box at sample i
         max_tracking_error = 0.0
+        max_heading_error = 0.0
         max_envelope_radius = 0.0
         max_total_error = 0.0
         diverged = False
         command_history = []
+        # Half the backlash, used as the position uncertainty the reachable
+        # set carries in place of the old velocity offset.
+        backlash_half = 0.5 * float(w_upper[2])
 
         # The robot's own pose estimate. It starts where the plan starts and
         # then drifts away from the truth by the measured odometry error and
@@ -698,15 +746,43 @@ class ImmraxValidator:
 
             if not diverged:
                 env = _box(x_flat)
+                # The gear backlash is a position dead-band. It used to be
+                # subtracted from the commanded wheel speed, which put a fake
+                # systematic lag of backlash/2 * t into the tracking error.
+                # It is a position uncertainty, so it belongs in the reachable
+                # set: the same magnitude the plant used to bias the
+                # tracking error by, carried symmetrically. The worst-case
+                # total uncertainty at each sample is therefore unchanged.
+                if backlash_half > 0.0:
+                    elapsed = s_next['t'] - samples[0]['t']
+                    # Never let the spread go negative: that would shrink the
+                    # safety envelope instead of widening it.
+                    spread = backlash_half * max(0.0, elapsed)
+                    env = {
+                        "x_min": env["x_min"] - spread,
+                        "x_max": env["x_max"] + spread,
+                        "y_min": env["y_min"] - spread,
+                        "y_max": env["y_max"] + spread,
+                    }
                 mid_x = (x_flat[0] + x_flat[state_len]) / 2.0
                 mid_y = (x_flat[1] + x_flat[state_len + 1]) / 2.0
                 tracking_error = float(jnp.sqrt(
                     (mid_x - s_next['x'])**2 + (mid_y - s_next['y'])**2))
+                # The heading error is reported next to the position error.
+                # The tracking metric is position-only, so a trajectory can
+                # follow the path while arriving at the wrong heading - and
+                # the plan's own heading samples can be inconsistent with its
+                # positions by up to half the heading change per sample.
+                mid_heading = (x_flat[2] + x_flat[state_len + 2]) / 2.0
+                heading_error = float(abs(
+                    (mid_heading - s_next['heading'] + math.pi)
+                    % (2 * math.pi) - math.pi))
                 radius = float(jnp.sqrt(
                     ((env["x_max"] - env["x_min"]) / 2.0)**2
                     + ((env["y_max"] - env["y_min"]) / 2.0)**2))
 
                 max_tracking_error = max(max_tracking_error, tracking_error)
+                max_heading_error = max(max_heading_error, heading_error)
                 max_envelope_radius = max(max_envelope_radius, radius)
                 max_total_error = max(max_total_error, tracking_error + radius)
 
@@ -725,6 +801,7 @@ class ImmraxValidator:
             # should use the tracking and envelope fields separately.
             "max_error_m": max_total_error,
             "max_tracking_error_m": max_tracking_error,
+            "max_heading_error_rad": max_heading_error,
             "max_envelope_radius_m": max_envelope_radius,
             "envelope": envelope,
             "diverged": diverged,

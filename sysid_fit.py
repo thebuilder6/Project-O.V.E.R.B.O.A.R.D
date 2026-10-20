@@ -890,6 +890,114 @@ def _fit_odometry(runs, poses, distance_scale_default=1.0):
 # Public fitting entry point
 # ---------------------------------------------------------------------------
 
+def _fit_drift(runs, poses, gyro_bias_deg_s):
+    """The straight-line heading drift of the robot, in degrees per metre.
+
+    A robot whose wheels are not parallel curves even when it is told to
+    drive straight. The plan's straight segments are straight, so the
+    curvature is a tracking error that grows with the distance travelled.
+
+    Two independent estimates are made. The gyro sees the heading change
+    directly, but a gyro bias looks exactly like a drift over a long run, so
+    the measured bias is subtracted first. The tape sees the lateral offset
+    the drift leaves behind, which is a pure length measurement with no
+    sensor bias in it, but it also carries the operator's placement error.
+    The two are reported together: if they disagree, one of the two
+    systematic errors is wrong and the drift term should not be trusted.
+    """
+    estimates = []
+    tape_estimates = []
+    for run in runs:
+        if "odometry_straight" not in run["name"]:
+            continue
+        distance_m = _last(run, "db_d_mm")
+        heading_deg = _last(run, "db_a_deg")
+        if distance_m is None or heading_deg is None or distance_m <= 0:
+            continue
+        distance_m = distance_m / 1000.0
+        duration_s = _last(run, "t_ms")
+        duration_s = (duration_s / 1000.0) if duration_s is not None else 0.0
+
+        # The DriveBase angle is clockwise positive and the IMU is
+        # counter-clockwise positive, so the sign flips once. A bias of b
+        # deg/s over t seconds is b * t of fake heading change.
+        bias = (gyro_bias_deg_s or 0.0) * duration_s
+        drift = (-heading_deg - bias) / distance_m
+        estimates.append((_run_repeat(run), float(drift)))
+
+        # The tape: a constant drift of k over a distance L leaves a lateral
+        # offset of about k * L^2 / 2 behind.
+        entries = poses.get(str(run["meta"].get("run_id")))
+        if entries:
+            lateral_m = float(entries[-1]["y_m"])
+            measured_m = _pose_distance(entries[-1])
+            if measured_m > 1e-6:
+                rad = 2.0 * lateral_m / (measured_m ** 2)
+                tape_estimates.append(
+                    (_run_repeat(run), float(np.degrees(rad))))
+
+    if not estimates:
+        return {"calibrated": False, "n_sources": 0}
+
+    stats = _between_runs(estimates)
+    result = {
+        "calibrated": True,
+        "n_sources": len(estimates),
+        "drift_deg_per_m": stats["mean"],
+        "drift_deg_per_m_between_runs": stats,
+    }
+    if stats.get("ci95"):
+        result["drift_deg_per_m_ci95"] = stats["ci95"]
+    if tape_estimates:
+        tape = _between_runs(tape_estimates)
+        result["drift_deg_per_m_tape"] = tape["mean"]
+        result["drift_disagreement_deg_per_m"] = abs(
+            tape["mean"] - stats["mean"])
+    return result
+
+
+def _fit_stall_torque(runs):
+    """The motor's stall torque, in newton-metres.
+
+    The wall test drives the robot into a wall and logs the load on each
+    motor. The load is the torque the motor is producing, so the steady
+    value is the motor's stall torque: the same number the force model
+    calls t_max_nm, which the robot config otherwise has to declare.
+
+    The median is used, not the peak: the first sample or two of the run
+    are the impact and they overshoot the steady stall value.
+    """
+    estimates = []
+    for run in runs:
+        if run["name"] != "wall_stall":
+            continue
+        loads = [_column(run, "l_load_mNm"), _column(run, "r_load_mNm")]
+        peaks = []
+        for load in loads:
+            if load is None or load.size == 0:
+                continue
+            # The load is in milli-newton-metres and the torque is in
+            # newton-metres, so it is a factor of a thousand.
+            peaks.append(float(np.median(np.abs(load))) / 1000.0)
+        if not peaks:
+            continue
+        estimates.append((_run_repeat(run), max(peaks)))
+
+    if not estimates:
+        return {"calibrated": False, "n_sources": 0}
+
+    stats = _between_runs(estimates)
+    result = {
+        "calibrated": True,
+        "n_sources": len(estimates),
+        "t_max_nm": stats["mean"],
+        "t_max_nm_between_runs": stats,
+    }
+    if stats.get("ci95"):
+        result["t_max_nm_ci95"] = stats["ci95"]
+    return result
+
+
 def fit_session(runs, poses=None, wheel_radius_m=0.028):
     poses = poses or {}
     _add_measured_outputs(runs, wheel_radius_m)
@@ -960,6 +1068,9 @@ def fit_session(runs, poses=None, wheel_radius_m=0.028):
             }
 
     odometry, slip = _fit_odometry(runs, poses)
+    sensors = _static_summary(runs)
+    drift = _fit_drift(runs, poses, sensors.get("gyro_z_bias_deg_s"))
+    stall = _fit_stall_torque(runs)
 
     return {
         "wheel_radius_m": float(wheel_radius_m),
@@ -975,10 +1086,12 @@ def fit_session(runs, poses=None, wheel_radius_m=0.028):
                 "accel_limit_units": "rad/s^2",
             },
         },
-        "sensors": _static_summary(runs),
+        "sensors": sensors,
         "odometry": odometry,
         "slip": slip,
         "backlash": backlash,
+        "drift": drift,
+        "stall_torque": stall,
         "validation": {
             "chirp_straight_nrmse": chirp_straight,
             "chirp_turn_nrmse": chirp_turn,
@@ -1257,6 +1370,22 @@ def main(argv=None):
                 **result["slip"]
             )
         )
+    drift = result.get("drift", {})
+    if drift.get("calibrated"):
+        print(
+            "Straight drift: {drift_deg_per_m:.3f} deg/m "
+            "(the robot curves when told to drive straight)".format(**drift)
+        )
+        if "drift_deg_per_m_tape" in drift:
+            print(
+                "  tape says {drift_deg_per_m_tape:.3f} deg/m, "
+                "disagreement {drift_disagreement_deg_per_m:.3f} deg/m. A big "
+                "disagreement means the gyro bias or the start mark is off, "
+                "so do not trust the drift term.".format(**drift)
+            )
+    stall = result.get("stall_torque", {})
+    if stall.get("calibrated"):
+        print("Stall torque: {t_max_nm:.4f} Nm".format(**stall))
     print("The intervals cover the run-to-run variation of the robot. They do "
           "not cover the error of the tape measure, which is the same every "
           "time and never averages out.")

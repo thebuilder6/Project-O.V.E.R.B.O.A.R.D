@@ -158,6 +158,48 @@ class SensorFit:
     ay_bias_m_s2: Optional[float] = None
 
 
+@dataclass(frozen=True)
+class DriftFit:
+    """How much the robot curves when it is told to drive straight.
+
+    The plan's straight segments are straight, so a robot whose wheels are
+    not parallel leaves the plan. The rate is in degrees per metre,
+    counter-clockwise positive, like the trajectory's heading.
+    """
+
+    calibrated: bool = False
+    drift_deg_per_m: float = 0.0
+    drift_range: Tuple[float, float] = (0.0, 0.0)
+    n_sources: int = 0
+
+    def __post_init__(self):
+        if self.drift_range[0] > self.drift_range[1]:
+            raise ValueError(
+                f"drift range {self.drift_range} has lower > upper")
+
+    def drift_rad_per_m(self) -> float:
+        """The drift in radians per metre, for the plant."""
+        return float(math.radians(self.drift_deg_per_m))
+
+
+@dataclass(frozen=True)
+class StallTorqueFit:
+    """The motor's stall torque, measured by pushing into a wall."""
+
+    calibrated: bool = False
+    t_max_nm: Optional[float] = None
+    t_max_range: Tuple[float, float] = (0.0, 0.0)
+    n_sources: int = 0
+
+    def __post_init__(self):
+        if self.t_max_nm is not None and self.t_max_nm <= 0.0:
+            raise ValueError(
+                f"stall torque must be positive, got {self.t_max_nm}")
+        if self.t_max_range[0] > self.t_max_range[1]:
+            raise ValueError(
+                f"stall torque range {self.t_max_range} has lower > upper")
+
+
 def _actuator_from_dict(payload: Dict[str, Any]) -> ActuatorFit:
     payload = payload if isinstance(payload, dict) else {}
     calibrated = bool(payload.get("calibrated", False))
@@ -199,6 +241,54 @@ def _actuator_from_dict(payload: Dict[str, Any]) -> ActuatorFit:
         accel_limit=accel_limit,
         rmse=rmse,
         n_steps=n_steps,
+    )
+
+
+def _drift_from_dict(payload: Dict[str, Any]) -> DriftFit:
+    payload = payload if isinstance(payload, dict) else {}
+    drift = _optional_float(
+        payload.get("drift_deg_per_m"), "drift.drift_deg_per_m")
+    if drift is None:
+        drift = 0.0
+    ci = payload.get("drift_deg_per_m_ci95")
+    if isinstance(ci, (list, tuple)) and len(ci) == 2:
+        low = _optional_float(ci[0], "drift.drift_deg_per_m_ci95")
+        high = _optional_float(ci[1], "drift.drift_deg_per_m_ci95")
+    else:
+        low = high = None
+    if low is not None and high is not None:
+        drift_range = (low, high)
+    else:
+        drift_range = (drift, drift)
+    return DriftFit(
+        calibrated=bool(payload.get("calibrated", False)),
+        drift_deg_per_m=drift,
+        drift_range=drift_range,
+        n_sources=int(payload.get("n_sources", 0) or 0),
+    )
+
+
+def _stall_torque_from_dict(payload: Dict[str, Any]) -> StallTorqueFit:
+    payload = payload if isinstance(payload, dict) else {}
+    torque = _optional_float(
+        payload.get("t_max_nm"), "stall_torque.t_max_nm")
+    ci = payload.get("t_max_nm_ci95")
+    if isinstance(ci, (list, tuple)) and len(ci) == 2:
+        low = _optional_float(ci[0], "stall_torque.t_max_nm_ci95")
+        high = _optional_float(ci[1], "stall_torque.t_max_nm_ci95")
+    else:
+        low = high = None
+    if low is not None and high is not None:
+        torque_range = (low, high)
+    elif torque is not None:
+        torque_range = (torque, torque)
+    else:
+        torque_range = (0.0, 0.0)
+    return StallTorqueFit(
+        calibrated=bool(payload.get("calibrated", False)),
+        t_max_nm=torque,
+        t_max_range=torque_range,
+        n_sources=int(payload.get("n_sources", 0) or 0),
     )
 
 
@@ -275,6 +365,8 @@ class DigitalTwinConfig:
     sensors: SensorFit = field(default_factory=SensorFit)
     odometry: OdometryFit = field(default_factory=OdometryFit)
     slip: SlipFit = field(default_factory=SlipFit)
+    drift: DriftFit = field(default_factory=DriftFit)
+    stall_torque: StallTorqueFit = field(default_factory=StallTorqueFit)
     backlash: Dict[str, Any] = field(default_factory=dict)
     validation: Dict[str, Any] = field(default_factory=dict)
     drivebase: Dict[str, Any] = field(default_factory=dict)
@@ -298,6 +390,8 @@ class DigitalTwinConfig:
         odometry = _odometry_from_dict(data.get("odometry", {}))
         slip = _slip_from_dict(data.get("slip", {}))
         sensors = _sensors_from_dict(data.get("sensors", {}))
+        drift = _drift_from_dict(data.get("drift", {}))
+        stall_torque = _stall_torque_from_dict(data.get("stall_torque", {}))
         drivebase = _drivebase_from_dict(data.get("drivebase"), data)
 
         calibrated = any((
@@ -321,6 +415,8 @@ class DigitalTwinConfig:
             sensors=sensors,
             odometry=odometry,
             slip=slip,
+            drift=drift,
+            stall_torque=stall_torque,
             backlash=dict(backlash) if isinstance(backlash, dict) else {},
             validation=dict(validation) if isinstance(validation, dict) else {},
             drivebase=drivebase,
@@ -375,6 +471,31 @@ class DigitalTwinConfig:
         if not self.odometry.calibrated:
             return 1.0
         return float(self.odometry.heading_scale)
+
+    def drift_rad_per_m(self) -> float:
+        """How much the robot curves per metre when told to drive straight.
+
+        Zero when it was not measured, so a plan without the measurement
+        behaves exactly as before.
+        """
+        if not self.drift.calibrated:
+            return 0.0
+        return self.drift.drift_rad_per_m()
+
+    def stall_torque_nm(self) -> Optional[float]:
+        """The measured motor stall torque, or None if it was not measured."""
+        if not self.stall_torque.calibrated:
+            return None
+        value = self.stall_torque.t_max_nm
+        return None if value is None else float(value)
+
+    def stall_torque_range_nm(self) -> Optional[Tuple[float, float]]:
+        """The measured stall torque and its interval, or None."""
+        if not self.stall_torque.calibrated:
+            return None
+        if self.stall_torque.t_max_nm is None:
+            return None
+        return tuple(self.stall_torque.t_max_range)
 
     def gyro_z_bias_rad_s(self) -> float:
         """Stationary gyro z bias as a yaw-rate offset, in rad/s.
