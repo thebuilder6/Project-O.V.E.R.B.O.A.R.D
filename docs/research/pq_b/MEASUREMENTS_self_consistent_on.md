@@ -8,47 +8,47 @@ Source: `research/results/sc_on.jsonl`
 - tree hashes:
 
 Every number below is a model prediction. The declared uncertainty ranges are test assumptions, not measurements, and no hardware logs exist in the repository.
-records: 110  missions: 11
+records: 160  missions: 16
 config: examples/fll_choreo.json  samples: 10  specs: seeds  started: 2026-10-20 02:56:12
-converged: 108/110 (98.2%)
-passing:   50/110 (45.5%)
-duration:  median 4.987 s  mean 6.670 s
-envelope:  median 0.86 cm
-tracking:  median 0.44 cm
-solve wall: median 0.80 s  total 4.7 min
+converged: 158/160 (98.8%)
+passing:   50/160 (31.2%)
+duration:  median 6.235 s  mean 7.621 s
+envelope:  median 1.14 cm
+tracking:  median 0.68 cm
+solve wall: median 0.82 s  total 5.5 min
 
 ## Per seed and timing model
 
 (stock seeds only; the extra guess families are compared separately)
 | seed | timing | n | pass | pass rate (95% CI) | median dur | median env cm | median trk cm |
 |---|---|---:|---:|---|---:|---:|---:|
-| baseline | equal-duration | 11 | 4 | 36% (15-65%) | 5.559 | 0.89 | 0.48 |
-| baseline | per-segment | 11 | 5 | 45% (21-72%) | 5.189 | 0.94 | 0.75 |
-| bow_left | equal-duration | 11 | 6 | 55% (28-79%) | 5.345 | 0.88 | 0.41 |
-| bow_left | per-segment | 11 | 5 | 45% (21-72%) | 4.801 | 0.81 | 0.32 |
-| bow_right | equal-duration | 11 | 5 | 45% (21-72%) | 5.345 | 0.88 | 0.41 |
-| bow_right | per-segment | 11 | 5 | 45% (21-72%) | 4.785 | 0.81 | 0.33 |
-| rolling | equal-duration | 11 | 6 | 55% (28-79%) | 5.345 | 0.89 | 0.43 |
-| rolling | per-segment | 11 | 5 | 45% (21-72%) | 4.793 | 0.81 | 0.33 |
-| turn_first | equal-duration | 11 | 5 | 45% (21-72%) | 5.400 | 0.95 | 0.51 |
-| turn_first | per-segment | 11 | 4 | 36% (15-65%) | 5.340 | 0.99 | 0.64 |
+| baseline | equal-duration | 16 | 4 | 25% (10-49%) | 8.265 | 1.55 | 0.80 |
+| baseline | per-segment | 16 | 5 | 31% (14-56%) | 5.229 | 1.01 | 0.94 |
+| bow_left | equal-duration | 16 | 6 | 38% (18-61%) | 7.496 | 1.35 | 0.59 |
+| bow_left | per-segment | 16 | 5 | 31% (14-56%) | 5.079 | 0.98 | 0.70 |
+| bow_right | equal-duration | 16 | 5 | 31% (14-56%) | 7.519 | 1.35 | 0.58 |
+| bow_right | per-segment | 16 | 5 | 31% (14-56%) | 4.995 | 0.97 | 0.71 |
+| rolling | equal-duration | 16 | 6 | 38% (18-61%) | 7.359 | 1.33 | 0.61 |
+| rolling | per-segment | 16 | 5 | 31% (14-56%) | 5.029 | 0.98 | 0.69 |
+| turn_first | equal-duration | 16 | 5 | 31% (14-56%) | 7.518 | 1.38 | 0.83 |
+| turn_first | per-segment | 16 | 4 | 25% (10-49%) | 5.493 | 1.33 | 0.87 |
 
-Fastest candidate per mission (n=11): baseline/per-segment: 2, bow_right/equal-duration: 1, bow_right/per-segment: 3, rolling/per-segment: 4, turn_first/per-segment: 1
+Fastest candidate per mission (n=16): baseline/per-segment: 3, bow_left/per-segment: 2, bow_right/equal-duration: 1, bow_right/per-segment: 5, rolling/per-segment: 4, turn_first/per-segment: 1
 
-Baseline alone would have produced a passing trajectory on 6/11 missions (55%).
-No candidate passed on 5/11 missions.
-A non-baseline candidate rescued 0/11 missions: none
+Baseline alone would have produced a passing trajectory on 6/16 missions (38%).
+No candidate passed on 10/16 missions.
+A non-baseline candidate rescued 0/16 missions: none
 
 ## Failure reasons
 
-| tracking error | 53 | 48.2% |
-| envelope radius | 30 | 27.3% |
-| motor force | 19 | 17.3% |
-| constraint violations | 16 | 14.5% |
+| tracking error | 95 | 59.4% |
+| envelope radius | 70 | 43.8% |
+| constraint violations | 24 | 15.0% |
+| motor force | 23 | 14.4% |
 
-Envelope radius: median 0.86 cm, max 5.07 cm (gate 2.00 cm)
-Tracking error:  median 0.44 cm, max 2.84 cm (gate 0.50 cm)
-Candidates with no envelope breach: 80/110
+Envelope radius: median 1.14 cm, max 5.07 cm (gate 2.00 cm)
+Tracking error:  median 0.68 cm, max 2.84 cm (gate 0.50 cm)
+Candidates with no envelope breach: 94/160
 
 ## Accuracy weight vs tracking error (Q6)
 
@@ -61,25 +61,25 @@ Non-monotone steps (higher weight, slower AND less accurate): 0/0
 
 | weight | n | median tracking cm | median duration s | pass rate |
 |---:|---:|---:|---:|---:|
-| 0 | 22 | 0.61 | 5.194 | 41% |
+| 0 | 32 | 0.83 | 6.946 | 28% |
 
 ## Selection rules (Q10)
 
 | rule | missions with a passing pick | mean duration s | mean envelope cm | mean tracking cm |
 |---|---:|---:|---:|---:|
-| current | 6/11 | 3.512 | 0.59 | 0.16 |
-| fastest | 6/11 | 3.449 | 0.60 | 0.17 |
-| tracking_margin | 6/11 | 3.449 | 0.60 | 0.17 |
-| envelope_margin | 6/11 | 3.449 | 0.60 | 0.17 |
-| fewest_gates | 6/11 | 3.449 | 0.60 | 0.17 |
+| current | 6/16 | 3.512 | 0.59 | 0.16 |
+| fastest | 6/16 | 3.449 | 0.60 | 0.17 |
+| tracking_margin | 6/16 | 3.449 | 0.60 | 0.17 |
+| envelope_margin | 6/16 | 3.449 | 0.60 | 0.17 |
+| fewest_gates | 6/16 | 3.449 | 0.60 | 0.17 |
 
 The current rule (smallest envelope) gives up -62.9 ms on average against the fastest passing candidate (median -1.0 ms, max 0.0 ms).
 
 ## Multi-Verse critic vs the gates (Q5)
 
 passing candidates flagged by the critic: 50/50
-failing candidates flagged by the critic: 60/60
-precision (of the flagged, how many fail): 55%
+failing candidates flagged by the critic: 110/110
+precision (of the flagged, how many fail): 69%
 recall    (of the failures, how many are flagged): 100%
 
 A critic that flags passing trajectories would make a feedback loop harmful: it would send good windows back into the solver.
@@ -94,7 +94,7 @@ envelope vs sample count: Pearson -, Spearman - (n=50)
 
 | spread | n | pass rate | median envelope cm | median tracking cm |
 |---:|---:|---:|---:|---:|
-| 1 | 110 | 45% | 0.86 | 0.44 |
+| 1 | 160 | 31% | 1.14 | 0.68 |
 
 spread 1.0 is the range as declared in the robot config; 0 collapses every range to its nominal value; 2 doubles its width.
 
@@ -111,15 +111,20 @@ spread 1.0 is the range as declared in the robot config; 0 collapses every range
 | m000 | 5.559 s FAIL | 5.259 s ok | +5.4 % |
 | m001 | 17.814 s FAIL | 13.252 s FAIL | +25.6 % |
 | m002 | 11.764 s FAIL | 10.473 s FAIL | +11.0 % |
+| m003 | 14.009 s FAIL | 9.768 s FAIL | +30.3 % |
+| m004 | 9.507 s FAIL | 8.598 s FAIL | +9.6 % |
+| m005 | 8.718 s FAIL | 4.244 s FAIL | +51.3 % |
+| m006 | 11.005 s FAIL | 9.845 s FAIL | +10.5 % |
+| m007 | 15.381 s FAIL | 7.928 s FAIL | +48.5 % |
 
-per-segment is faster on 9, slower on 1, tied on 1 of 11 missions
-passing: equal-duration 4/11, per-segment 5/11
+per-segment is faster on 14, slower on 1, tied on 1 of 16 missions
+passing: equal-duration 4/16, per-segment 5/16
 
 ## Tracking error vs the heading change per sample (RQ-A)
 
-candidates: 110
-Spearman(mean dtheta, tracking) = 0.632
-Pearson (mean dtheta, tracking) = 0.469
+candidates: 160
+Spearman(mean dtheta, tracking) = 0.573
+Pearson (mean dtheta, tracking) = 0.471
 
 | mission | mean dtheta (rad) | tracking (cm) | gate |
 |---|---:|---:|---|
@@ -134,40 +139,45 @@ Pearson (mean dtheta, tracking) = 0.469
 | m000 | 0.0841 | 0.24 | PASS |
 | m001 | 0.1074 | 1.28 | FAIL |
 | m002 | 0.2953 | 0.75 | FAIL |
+| m003 | 0.2212 | 1.13 | FAIL |
+| m004 | 0.0949 | 0.31 | FAIL |
+| m005 | 0.2128 | 0.55 | FAIL |
+| m006 | 0.2762 | 0.67 | FAIL |
+| m007 | 0.1565 | 0.59 | FAIL |
 
 | mean dtheta bucket | n | median tracking cm | pass rate |
 |---|---:|---:|---:|
 | 0.00-0.02 | 10 | 0.01 | 100% |
-| 0.05-0.10 | 10 | 0.28 | 70% |
-| 0.10-0.20 | 43 | 0.32 | 58% |
-| 0.20-10.00 | 47 | 0.96 | 17% |
+| 0.05-0.10 | 17 | 0.32 | 41% |
+| 0.10-0.20 | 58 | 0.44 | 43% |
+| 0.20-10.00 | 75 | 1.02 | 11% |
 
 ## The marginal value of a candidate (Q3)
 
 | candidates | missions with a passing candidate | mean best duration s | solves |
 |---|---:|---:|---:|
-| 1 (last: baseline / equal-duration) | 4/11 | 3.267 | 1 |
-| 2 (last: baseline / per-segment) | 6/11 | 3.568 | 2 |
-| 3 (last: rolling / equal-duration) | 6/11 | 3.568 | 3 |
-| 4 (last: rolling / per-segment) | 6/11 | 3.461 | 4 |
-| 5 (last: bow_left / equal-duration) | 6/11 | 3.461 | 5 |
-| 6 (last: bow_left / per-segment) | 6/11 | 3.460 | 6 |
-| 7 (last: bow_right / equal-duration) | 6/11 | 3.460 | 7 |
-| 8 (last: bow_right / per-segment) | 6/11 | 3.449 | 8 |
-| 9 (last: turn_first / equal-duration) | 6/11 | 3.449 | 9 |
-| 10 (last: turn_first / per-segment) | 6/11 | 3.449 | 10 |
-| 11 (last: baseline / equal-duration / a=0.001) | 6/11 | 3.449 | 11 |
-| 12 (last: baseline / per-segment / a=0.001) | 6/11 | 3.449 | 12 |
-| 13 (last: baseline / equal-duration / a=0.002) | 6/11 | 3.449 | 13 |
-| 14 (last: baseline / per-segment / a=0.002) | 6/11 | 3.449 | 14 |
-| 15 (last: baseline / equal-duration / a=0.005) | 6/11 | 3.449 | 15 |
-| 16 (last: baseline / per-segment / a=0.005) | 6/11 | 3.449 | 16 |
-| 17 (last: baseline / equal-duration / a=0.01) | 6/11 | 3.449 | 17 |
-| 18 (last: baseline / per-segment / a=0.01) | 6/11 | 3.449 | 18 |
+| 1 (last: baseline / equal-duration) | 4/16 | 3.267 | 1 |
+| 2 (last: baseline / per-segment) | 6/16 | 3.568 | 2 |
+| 3 (last: rolling / equal-duration) | 6/16 | 3.568 | 3 |
+| 4 (last: rolling / per-segment) | 6/16 | 3.461 | 4 |
+| 5 (last: bow_left / equal-duration) | 6/16 | 3.461 | 5 |
+| 6 (last: bow_left / per-segment) | 6/16 | 3.460 | 6 |
+| 7 (last: bow_right / equal-duration) | 6/16 | 3.460 | 7 |
+| 8 (last: bow_right / per-segment) | 6/16 | 3.449 | 8 |
+| 9 (last: turn_first / equal-duration) | 6/16 | 3.449 | 9 |
+| 10 (last: turn_first / per-segment) | 6/16 | 3.449 | 10 |
+| 11 (last: baseline / equal-duration / a=0.001) | 6/16 | 3.449 | 11 |
+| 12 (last: baseline / per-segment / a=0.001) | 6/16 | 3.449 | 12 |
+| 13 (last: baseline / equal-duration / a=0.002) | 6/16 | 3.449 | 13 |
+| 14 (last: baseline / per-segment / a=0.002) | 6/16 | 3.449 | 14 |
+| 15 (last: baseline / equal-duration / a=0.005) | 6/16 | 3.449 | 15 |
+| 16 (last: baseline / per-segment / a=0.005) | 6/16 | 3.449 | 16 |
+| 17 (last: baseline / equal-duration / a=0.01) | 6/16 | 3.449 | 17 |
+| 18 (last: baseline / per-segment / a=0.01) | 6/16 | 3.449 | 18 |
 
 ## Peak wheel acceleration vs the DriveBase limit (7.8 m/s^2, KI-021)
 
-candidates: 110
-peak acceleration: median 4.65 m/s^2, max 10.60 m/s^2
-above the DriveBase limit: 17/110 (15%)
+candidates: 160
+peak acceleration: median 4.39 m/s^2, max 10.60 m/s^2
+above the DriveBase limit: 17/160 (11%)
 among the passing candidates: 10/50 (20%) ask for more, median 4.94 m/s^2, max 10.60 m/s^2

@@ -94,35 +94,40 @@ is not a position dead-band: for any command above 1 mm/s, `tanh → 1`, so the 
 
 On a 1 m straight that was the whole tracking error (226 µm, and 0.83 µm with the backlash collapsed). On the S-curve it was 1 % of the error. **The backlash model was worth fixing for its own sake — it should be a dead-band, not a constant offset — but it was not what was failing.**
 
-### F3 — A self-consistent trajectory tracks to 0.16 cm
+### F3 — A self-consistent trajectory tracks to 0.13 cm
 
 The control: an arc of radius 0.30 m and length 0.60 m, built analytically so that the positions are on the circle and the heading is the exact tangent.
 
+> **Re-measured 2026-10-20 after KI-027 and KI-028.** The numbers below were taken with the validator's old 20 ms control tick; the model now runs at 5 ms, which is what the deployed controller actually runs at, and the reference takes the turn rate as the derivative of the interpolated heading. The conclusions are unchanged; the numbers moved.
+
 | n | exact arc | trapezoid positions, tangent headings | heading = chord direction |
 |---:|---:|---:|---:|
-| 10 | 0.156 cm | 0.209 cm | **4.134 cm** |
-| 20 | 0.167 cm | 0.178 cm | **1.920 cm** |
-| 40 | 0.168 cm | 0.173 cm | **0.877 cm** |
-| 80 | 0.169 cm | 0.170 cm | 0.357 cm |
+| 10 | 0.127 cm | 0.181 cm | **4.008 cm** |
+| 20 | 0.135 cm | 0.146 cm | **1.989 cm** |
+| 40 | 0.136 cm | 0.139 cm | **0.939 cm** |
+| 80 | 0.136 cm | 0.137 cm | 0.405 cm |
 
 Two conclusions:
 
-- **The validator, the plant and the controller are not the problem.** A trajectory that is internally consistent is tracked to 0.16 cm at any sampling density, far inside the 5 mm gate.
-- **The optimizer's trapezoidal rule is nearly harmless** (0.17–0.21 cm). The rule itself is not the defect.
-- **A half-sample heading error is catastrophic** (4.13 cm at n=10, falling as ~1/n).
+- **The validator, the plant and the controller are not the problem.** A trajectory that is internally consistent is tracked to 0.13 cm at any sampling density, far inside the 5 mm gate.
+- **The optimizer's trapezoidal rule is nearly harmless** (0.14–0.18 cm). The rule itself is not the defect.
+- **A half-sample heading error is catastrophic** (4.01 cm at n=10, falling as ~1/n).
 
 ### F4 — The plan is not on the path its own profile traces
 
 Rebuilding each optimizer plan by *exact* integration of its own `(v, ω)` profile — the same speed profile, the same sample times, the samples placed where the profile actually goes:
 
+> **Re-measured 2026-10-20 after KI-027 and KI-028.** The left column is the tree as it stands; the right column is the same plan with the positions rebuilt.
+
 | mission | tracking, plan as built | tracking, same profile, exact positions |
 |---|---:|---:|
-| `example_s_curve` | 1.260 cm | **0.495 cm** (PASS) |
-| `example_with_stops` | 1.814 cm | 0.980 cm |
-| `example_complex_mission` | 0.489 cm | 0.564 cm |
-| `example_straight` | 0.346 cm | 0.433 cm |
+| `example_s_curve` | 1.468 cm | **0.495 cm** (PASS) |
+| `example_with_stops` | 2.191 cm | 0.980 cm |
+| `example_complex_mission` | 0.303 cm | 0.564 cm |
+| `example_straight` | 0.341 cm | 0.433 cm |
+| `example_with_events` | 0.459 cm | — |
 
-On the S-curve, putting the samples where the profile takes them removes **61 %** of the tracking error and flips the gate to PASS.
+On the S-curve, putting the samples where the profile takes them removes **66 %** of the tracking error and flips the gate to PASS.
 
 The deviation itself falls as ~1/n², exactly as a second-order discretisation error should:
 
@@ -418,54 +423,50 @@ model was wrong about which firmware it models.
 
 The validator was written against `pybricks_code/ramsete_fast.py`. The
 controllers that are actually in use are the two compact ones and the
-list-of-dict reference, and they do not agree with it:
+list-of-dict reference, and they did not agree with each other:
 
 | | ramsete_compact_events.py *(deployed: hub_runner.py)* | ramsete_compact.py *(the SysId replay)* | ramsete.py *(the IDE missions)* | the validator used to model |
 |---|---|---|---|---|
-| control period | `await wait(5)` -> 5 ms | `_LOOP_MS = 20` -> 20 ms | `await wait(5)` -> 5 ms | **20 ms** |
+| control period | 5 ms, free-running | 20 ms, synced | 5 ms, free-running | **20 ms** |
 | drive command | floats | rounded to mm/s and deg/s | floats | **rounded** |
 | Ramsete gain | recomputed from the interpolated v, w | interpolated per sample | recomputed | **interpolated** |
 | rate limit | `KinematicLimiter` | none | `KinematicLimiter` | none |
 
-The control period is the expensive line: the hold error is proportional to
-it, so a validator that holds the command four times too long reports about
-four times the error the robot will have. The two compact controllers could
-not be mirrored by one validator because they did not even agree with each
-other.
+There was no single behaviour for one validator to mirror: the two compact
+controllers ran at different periods, and the validator matched neither the
+deployed one nor the plain one.
 
 **What changed.**
 
+- One control period for every controller in use, and for the model: a
+  **synced 20 ms heartbeat** in `ramsete_compact.py`,
+  `ramsete_compact_events.py` and `ramsete.py`, and `CONTROL_DT = 0.02` in
+  `immrax_validator.py`. A synced heartbeat is what makes the period exact -
+  the loop waits for the slack to the next tick, so the hold is 20 ms and not
+  20 ms plus the loop's own compute time. It is also the hub's budget: the
+  loop does the odometry update, the controller and the limiter every
+  iteration. 20 ms is also the period `ramsete_fast.py` always used.
 - `pybricks_code/ramsete_compact.py` now uses the same three parts as its
   event-capable twin - the shared `Odometry`, `RamseteController` and
-  `KinematicLimiter` from `ramsete.py` - the same 5 ms loop, and the same
-  unrounded drive command. The two compact controllers are now the same
-  controller with and without events, so they cannot drift apart, and the
-  duplicated odometry and Ramsete math is gone.
-- `immrax_validator.py` holds the command for 5 ms (`CONTROL_DT`), does not
-  round it, and recomputes the Ramsete gain from the interpolated speed and
-  turn rate, like the controller the firmware uses.
+  `KinematicLimiter` from `ramsete.py` - and the same unrounded drive
+  command, so the two are the same controller with and without events and
+  the duplicated odometry and Ramsete math is gone.
+- `immrax_validator.py` does not round the command, and recomputes the
+  Ramsete gain from the interpolated speed and turn rate, like the
+  controller the firmware uses.
 - `tests/test_firmware_events.py::TestFirmwareParity` pins the parity: the
   controllers in use must declare the same control period, the validator's
   period must equal it, the two compact controllers must use the shared
   parts, and the validator must not round the command.
 
 **Measured** (`exp16_firmware_parity.py`, per-segment timing, the legacy
-mirror against the deployed one, plan held fixed):
-
-| mission | n | legacy mirror | gate | deployed mirror | gate | factor |
-|---|---:|---:|---|---:|---|---:|
-| s_curve | 40 | 0.960 cm | fail | **0.177 cm** | **pass** | 5.4x |
-| stops | 40 | 1.296 cm | fail | **0.208 cm** | **pass** | 6.2x |
-| complex | 20 | 1.151 cm | fail | **0.266 cm** | **pass** | 4.3x |
-| complex | 40 | 1.176 cm | fail | **0.302 cm** | **pass** | 3.9x |
-| events | 40 | 0.519 cm | fail | **0.128 cm** | **pass** | 4.1x |
-| first4 | 20 | 0.563 cm | fail | **0.110 cm** | **pass** | 5.1x |
-| straight | 10 | 0.341 cm | pass | 0.013 cm | pass | 26.7x |
-
-Seven of the twenty-four (mission, density) cells change from fail to pass,
-and the reported tracking error is 3-5x smaller everywhere except at the
-coarsest density, where the plan's own deviation dominates and the hold was
-partly cancelling it.
+mirror against the deployed one, plan held fixed): the two now differ by
+0.94-1.02x on every (mission, density) cell - the rounding and the gain are
+worth about 1 % (F7), and the period is now the same on both sides. So this
+fix is a *correctness* fix, not a numerical one: the model now says what the
+robot does, and the two compact controllers can no longer drift apart. The
+gate is unchanged in its strictness relative to the 20 ms model the tree
+already used, and stricter than a 5 ms one would be.
 
 **Two gaps are still open**, and both are recorded rather than closed:
 
@@ -476,9 +477,8 @@ partly cancelling it.
    dimensional error KI-025 removed from the model but not from the firmware.
    So the robot is stricter than the model in one way (the force limit) and
    has a bias the model no longer has in another (the backlash).
-2. `ramsete_fast.py` is still a 20 ms synced loop that rounds the command
-   and interpolates the gain. It is the legacy path; the two compact
-   controllers and `ramsete.py` are the ones in use.
+2. `ramsete_fast.py` is still the legacy path. It is the one the validator
+   used to model, and it is not what runs.
 
 ### Not fixed - the structural mismatch
 

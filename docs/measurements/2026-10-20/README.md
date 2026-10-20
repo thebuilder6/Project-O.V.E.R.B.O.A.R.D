@@ -30,7 +30,8 @@ hatched bars are waypoints the robot *stops* at, where the wheel force has to
 reverse sign and a step is expected.
 
 **The tracking and force panels** are measured with the validator mirroring
-the controller that runs (KI-028): a 5 ms command hold, an unrounded command
-and the gain recomputed from the interpolated speed and turn rate. The
-numbers in the older 2026-10-19 evidence were measured against a 20 ms mirror
-of a controller that is not in use, so they are not comparable.
+the controller that runs (KI-028): a synced 20 ms command hold, an unrounded
+command and the gain recomputed from the interpolated speed and turn rate. The
+numbers in the older 2026-10-19 evidence were measured against a mirror that
+rounded the command and interpolated the gain, so they are not comparable
+cell for cell.

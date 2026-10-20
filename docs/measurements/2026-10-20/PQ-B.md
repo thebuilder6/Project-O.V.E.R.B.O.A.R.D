@@ -18,6 +18,7 @@ before/after KI-025 comparison documented in [`README.md`](README.md).
 | `density.jsonl` | samples per segment in {5, 10, 20, 40} on 6 missions, both timing models | 48 |
 | `multiverse.jsonl` | the Multi-Verse pipeline against the simple solver on 12 missions | 24 |
 | `spread.jsonl` | the same candidates validated at five uncertainty widths | 450 |
+| `sc_off.jsonl`, `sc_on.jsonl` | the seed matrix with and without `--self-consistent` (KI-026), on one pinned tree | 160 + 160 |
 | `missions/` | the 24 generated missions and their index | 24 |
 
 ## How to read a record

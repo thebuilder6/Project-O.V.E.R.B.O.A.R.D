@@ -45,11 +45,29 @@ temporary directory; nothing in the repository is modified.
 | `exp10_gain_band.py` | what does the digital twin's actuator-gain band do? | it blows up the **envelope** (54 mm at ±1 % over 1 m), not the tracking error (0.9 mm) - the controller corrects the speed error |
 | `exp10_floor.py` | what sets the tracking-error floor at fine sampling? | the 20 ms command hold: at n=40 a 2 ms tick takes the error from 0.979 cm to 0.048 cm; giving the controller the **interval-average velocity** removes it without touching the tick (0.110 cm), which pins the mechanism on the distance covered per interval |
 | `exp11_density.py` | how does the error vary with the sampling density? | it is **U-shaped**, with a minimum near 4-6 control ticks per sample interval; the default `-n 10` is on the coarse side |
-| `exp16_firmware_parity.py` | does the validator mirror the controller that runs? | **no, it did not**: it modelled a 20 ms hold and a rounded command, while the controllers in use hold for 5 ms and pass floats; seven (mission, density) cells change from fail to pass |
+| `exp16_firmware_parity.py` | does the validator mirror the controller that runs? | **no, it did not**: it modelled a 20 ms hold with a rounded command and an interpolated gain, while the controllers in use pass floats and recompute the gain; and the two compact controllers ran at different periods from each other |
 | `exp12_reference_consistency.py` | is the reference internally inconsistent? | yes: the heading and the turn rate are interpolated independently and disagree by up to 9 degrees mid-interval |
 | `exp13_package.py` | the two halves of the fix, together | the reference fix and the self-consistent plan are mirror images; the reference fix wins at fine sampling, the plan fix at coarse |
 | `exp14_which_inconsistency.py` | which of the reference's three inconsistencies matters? | the turn rate (2-3.6x); the Ramsete gain is worth nothing |
 | `exp15_interval_average.py` | the complete reference fix | reporting the interval averages of v, omega and kr is the best variant in 7 of the 9 cells, up to 10x better than shipped |
+| `exp16_combined.py` | the two fixes together, in both timing modes | the reference fix and the self-consistent plan are mirror images across the density |
+| `sync_tables.py` | regenerate section 9's tables from the measurements | the tables are generated, so they cannot drift from the data they quote (`--check` to verify only) |
+| `verify_docs.py` | check the research documentation | encoding, markdown structure, table drift and the line-number citations |
+
+## The tables are generated
+
+Section 9 of [`../../HEURISTICS_AND_VERIFICATION.md`](../../HEURISTICS_AND_VERIFICATION.md) quotes the
+measurements, and the numbers in it are rewritten from the JSON rather than
+typed in:
+
+```bash
+python docs/research/rq_a/sync_tables.py           # rewrite the tables
+python docs/research/rq_a/sync_tables.py --check   # verify only, exit 1 on drift
+python docs/research/rq_a/verify_docs.py           # the rest of the checks
+```
+
+`sync_tables.py` uses the newest folder under `docs/measurements/` unless
+`--folder` says otherwise.
 
 ## Reproducing against the pinned tree
 

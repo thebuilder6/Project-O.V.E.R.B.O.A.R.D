@@ -404,7 +404,44 @@ statement about the assumptions, not only about the trajectory.
 
 ---
 
-## 7. The answers, question by question
+## 7. RQ-A's OQ6: the seed conclusions under the discretisation fix
+
+KI-026 added `--self-consistent`: the samples are placed on the path the
+plan's own `(v, omega)` profile traces. The whole seed matrix was re-run on
+**the same pinned tree**, with and without the flag, on 16 missions x 10
+candidates (320 solves).
+
+| | trapezoidal | self-consistent |
+|---|---:|---:|
+| passing candidates | 33/160 | **50/160** |
+| pass flags that flip | 5 lose, 22 gain, 28 unchanged | |
+| duration, median change | — | **+0.2 %** (range -27.5 % to +40.9 %) |
+
+The discretisation fix buys **52 % more gate coverage for no time at all**.
+And it changes the seed conclusions:
+
+| candidates added | trapezoidal | self-consistent |
+|---|---:|---:|
+| 1 — baseline / equal-duration | 3/16 | 4/16 |
+| 2 — + baseline / per-segment | 4/16 | **6/16** |
+| 3 — + rolling / equal-duration | **6/16** | 6/16 |
+| 4-10 — the other four seeds | 6/16 | **6/16** |
+| missions a non-baseline seed rescued | 2/16 | **0/16** |
+
+**Answer to RQ-A's OQ6: yes, it changes them, and the change is decisive.**
+Under the self-consistent collocation the two default candidates cover
+everything the seeds used to cover, and the seed set buys **nothing**: no
+extra mission, and the median duration improves by only 0.2 % across eight
+extra solves.
+
+**The seeds' whole value was escaping a gate that was measuring a
+discretisation artefact.** Fix the discretisation and the insurance
+disappears. That is the strongest argument in this document for finishing
+KI-026 before touching the candidate set.
+
+---
+
+## 8. The answers, question by question
 
 | # | question | answer | evidence |
 |---|---|---|---|
@@ -415,7 +452,7 @@ statement about the assumptions, not only about the trajectory.
 | Q5 | feed the critic back into the solver? | **No**: the critic flags 100 % of passing and 100 % of failing candidates, so it cannot select anything | F7 |
 | Q6 | does the accuracy weight buy accuracy? | **Yes, within a mission** (median per-mission Spearman -0.68: more weight, less tracking error) **but it is a trade, not a dial** (21 of 192 steps are non-monotone, and the best weight differs per mission). The best trade found: per-segment at `a = 0.005` gives 42 % pass against 17 % at weight 0, for 5 % more time | section 4 |
 | Q7 | sample density against timing flexibility? | **Per-segment timing at low density wins.** n = 10 is the sweet spot: more samples cost 5x the solve time and do not improve the tracking error (0.60 cm at n = 10, 0.72 cm at n = 40) and can lose gate coverage (n = 20 passes on 0 of 6 missions) | `MEASUREMENTS_density.md` |
-| Q8 | is the baseline's dominance an artefact? | **Yes.** The baseline has the lowest pass rate of the five seeds and produces the fastest candidate on 2 of 32 missions | F1 |
+| Q8 | is the baseline's dominance an artefact? | **Yes.** The baseline has the lowest pass rate of the five seeds and produces the fastest candidate on 2 of 32 missions. And under the self-consistent collocation the seed set buys nothing at all | F1, section 7 |
 | Q9 | what would make the validator a digital twin? | **Not answerable without hardware.** What *is* answerable: the tracking error is a discretisation artefact (RQ-A), the declared uncertainty does not move it at all (section 6), and the plant still assumes instant tracking, so 8 % of passing plans exceed the hub's acceleration limit | F3, F10, section 6 |
 | Q10 | is "smallest envelope" the right selection rule? | **It does not matter**: five rules pick the same trajectory on every mission | F6 |
 | Q11 | should the executor be part of the planner? | **Partly answerable now**: 7 % of candidates, and 8 % of the passing ones, demand more acceleration than the DriveBase delivers. The gate cannot see it | F10 |
@@ -423,7 +460,7 @@ statement about the assumptions, not only about the trajectory.
 
 ---
 
-## 8. What this changes in the agenda
+## 9. What this changes in the agenda
 
 1. **The six-mission base has to go.** Three of the agenda's headline claims
    (the baseline dominates, the envelope never binds, the seeds never win) do
@@ -432,24 +469,32 @@ statement about the assumptions, not only about the trajectory.
 2. **The seed ordering should be revisited.** `rolling` has the highest pass
    rate of the five seeds on the wide suite (28 % against the baseline's 16 %).
    The seeds are not interchangeable lottery tickets: they differ.
-3. **The selection rule is not worth changing** (F6). Effort belongs elsewhere.
-4. **The critic needs thresholds that discriminate** before it can be used as
+3. **But do not spend effort there yet.** Under the self-consistent
+   collocation the seed set buys nothing at all (section 7). The
+   discretisation fix is worth more than the whole seed axis.
+4. **The selection rule is not worth changing** (F6). Effort belongs elsewhere.
+5. **The critic needs thresholds that discriminate** before it can be used as
    a filter (F7).
-5. **The discretisation must be fixed before the tracking gate means
-   anything** (RQ-A). Until then, "the tracking gate binds" is a statement
-   about the plan's discretisation, and every measurement above inherits it.
-6. **The plant's instant-tracking assumption hides a real gap** (F10): 8 % of
+6. **The discretisation must be fixed before the tracking gate means
+   anything** (RQ-A, KI-026). Until then, "the tracking gate binds" is a
+   statement about the plan's discretisation, and every measurement above
+   inherits it.
+7. **The plant's instant-tracking assumption hides a real gap** (F10): 8 % of
    the trajectories the system calls safe cannot be executed by the hub.
+8. **The declared uncertainty ranges are load-bearing** (section 6). A 50 %
+   wider range than declared takes the pass rate from 31 % to 2 %. Until the
+   robot is calibrated, the pass rate is a statement about the assumptions.
 
-## 9. What is still not answerable here
+## 10. What is still not answerable here
 
 | | |
 |---|---|
 | Q9 (a real digital twin) | needs hardware. No logs exist in the repository. |
-| The hardware truth of any number here | every number is a model prediction; the declared uncertainty ranges are test assumptions |
-| Whether the discretisation fix changes the seed conclusions | RQ-A's OQ6. It has to be re-run after the fix. |
+| The hardware truth of any number here | every number is a model prediction; the declared uncertainty ranges are test assumptions, and the pass rate is very sensitive to them (section 6) |
+| Whether the discretisation fix changes the seed conclusions | **answered** (section 7): it does, decisively |
+| Whether the seeds are worth keeping at all | answered for the self-consistent collocation (they are not, on this sample); not answered for the trapezoidal one after the other KI-02x fixes land |
 
-## 10. The repairs made along the way
+## 11. The repairs made along the way
 
 | defect | repair |
 |---|---|
@@ -458,7 +503,7 @@ statement about the assumptions, not only about the trajectory.
 | KI-015: the pipeline benchmark reported failed solves as normal results | it now reads `stats["converged"]` and prints FAILED |
 | KI-015: the default `--config` was a file that does not exist | it now defaults to `examples/fll_choreo.json` |
 
-## 11. The honesty clause
+## 12. The honesty clause
 
 Every number in this document is a **model prediction**. The declared
 uncertainty ranges in `examples/fll_choreo.json` are test assumptions, not

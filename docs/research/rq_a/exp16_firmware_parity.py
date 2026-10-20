@@ -123,11 +123,12 @@ def main():
             IV.quantize_drive_command = orig_q
             base = validate(samples, control_dt=0.02)
 
-            # (b) the deployed mirror: 5 ms, no rounding, the gain recomputed
-            #     from the interpolated v and omega (ramsete.py:104)
+            # (b) mirroring the controller that runs: 20 ms synced hold, no
+            #     rounding, the gain recomputed from the interpolated v and
+            #     omega (ramsete.py:104)
             IV._interpolated_reference = firmware_ref
             IV.quantize_drive_command = lambda v, w: (v, w)
-            fw = validate(samples, control_dt=0.005)
+            fw = validate(samples, control_dt=0.02)
             IV._interpolated_reference = orig_ref
             IV.quantize_drive_command = orig_q
 

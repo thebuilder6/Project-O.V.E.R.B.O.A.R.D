@@ -1,13 +1,18 @@
 # PQ-B — the research agenda, measured
 
-**Status:** data collection. This directory holds the tooling and the results
-of a measurement campaign designed to answer the twelve questions in
-[`../HEURISTICS_AND_VERIFICATION.md`](../HEURISTICS_AND_VERIFICATION.md)
-Part IV.
+**Status:** the measurement campaign is complete. **Read
+[`FINDINGS.md`](FINDINGS.md)** for the answers; the generated tables are in
+`MEASUREMENTS_*.md` and the raw records are in
+[`../../measurements/2026-10-20/`](../../measurements/2026-10-20/) (see
+[`PQ-B.md`](../../measurements/2026-10-20/PQ-B.md) for the file guide).
 
-**Why a second research directory:** [`../rq_a/`](../rq_a/) answers *why* the
-tracking gate fails (RQ-A). This one answers *what the heuristics do* when
-they are measured on more than six hand-written paths.
+**Tree under test:** pinned, see [`pq_b_PINNED_TREE.md5`](pq_b_PINNED_TREE.md5)
+and [`pq_c_PINNED_TREE.md5`](pq_c_PINNED_TREE.md5) (the second pin is the
+self-consistent comparison).
+
+**Companions:** [`../HEURISTICS_AND_VERIFICATION.md`](../HEURISTICS_AND_VERIFICATION.md)
+(the agenda this answers) and [`../RQ-A_tracking_error.md`](../RQ-A_tracking_error.md)
+(why the tracking gate fails).
 
 ---
 
@@ -53,6 +58,7 @@ is detectable rather than silently wrong.
 | `research/results/density.jsonl` | samples per segment in {5, 10, 20, 40} | Q7 |
 | `research/results/multiverse.jsonl` | the Multi-Verse pipeline against the simple solver | Q12 |
 | `research/results/spread.jsonl` | the same candidates validated at 5 uncertainty widths | KI-020 |
+| `research/results/sc_off.jsonl`, `sc_on.jsonl` | the same seed matrix with and without `--self-consistent` (KI-026), on one tree | RQ-A's OQ6 |
 
 ## Reproducing
 

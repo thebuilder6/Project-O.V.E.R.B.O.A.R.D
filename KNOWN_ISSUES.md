@@ -494,21 +494,28 @@ A real gear backlash is a *position* dead-band: it is taken up once at a directi
 
 **Files:** `immrax_validator.py`, `pybricks_code/ramsete_compact.py`, `tests/test_firmware_events.py` (`TestFirmwareParity`), `tests/test_jax_ramsete.py`, `docs/research/rq_a/exp16_firmware_parity.py`, `docs/research/RQ-A_tracking_error.md` (Fix 4)
 
-**Problem:** The validator was written against `pybricks_code/ramsete_fast.py`, the legacy list-of-dict controller. The controllers that are actually in use are the two compact ones and the list-of-dict reference, and they disagree with it in three ways:
+**Problem:** The validator was written against `pybricks_code/ramsete_fast.py`, the legacy list-of-dict controller, and the controllers that are actually in use did not agree with each other:
 
 | | `ramsete_compact_events.py` (the pushed run) | `ramsete_compact.py` (the SysId replay) | `ramsete.py` (the IDE missions) | the validator modelled |
 |---|---|---|---|---|
-| control period | 5 ms | 20 ms | 5 ms | **20 ms** |
-| drive command | floats | rounded to mm/s and deg/s | floats | **rounded** |
-| Ramsete gain | recomputed from the interpolated v, w | interpolated per sample | recomputed | **interpolated** |
+| control period | 5 ms, free-running | 20 ms, synced | 5 ms, free-running | 20 ms |
+| drive command | floats | rounded to mm/s and deg/s | floats | rounded |
+| Ramsete gain | recomputed from the interpolated v, w | interpolated per sample | recomputed | interpolated |
 
-The control period is the expensive line. The wheel-force hold error is proportional to how long the drive command is held, so a validator that holds it four times too long reports about four times the error the robot will have — and the 5 mm tracking gate is decided on that number.
+So there was no single behaviour for one validator to mirror: the two compact controllers ran at different periods, and the validator matched neither the deployed one nor the plain one.
 
-**Evidence:** The two compact controllers could not be mirrored by one validator because they did not agree with each other. With the validator configured to mirror the deployed one, seven of the twenty-four (mission, density) cells change from fail to pass and the reported tracking error is 3–5× smaller everywhere except at the coarsest density, where the plan's own deviation dominates and the hold was partly cancelling it. `docs/research/rq_a/exp16_firmware_parity.py` has the table; the mechanism is finding F6 in `docs/research/RQ-A_tracking_error.md`.
+**Evidence:** The period is the expensive line, because the wheel-force hold error is proportional to how long the drive command is held. A 5 ms loop and a 20 ms loop differ by a factor of four in that error, and the 5 mm tracking gate is decided on it. `docs/research/rq_a/exp16_firmware_parity.py` has the table; the mechanism is finding F6 in `docs/research/RQ-A_tracking_error.md`.
 
-**Fix (implemented):** `pybricks_code/ramsete_compact.py` now uses the shared `Odometry`, `RamseteController` and `KinematicLimiter` from `pybricks_code/ramsete.py`, the same 5 ms loop as its event-capable twin, and the same unrounded drive command, so the two are the same controller with and without events. `immrax_validator.py` holds the command for 5 ms (`CONTROL_DT`), does not round it, and recomputes the Ramsete gain from the interpolated speed and turn rate. `tests/test_firmware_events.py::TestFirmwareParity` pins the parity: the controllers in use must declare the same control period, the validator's period must equal it, the two compact controllers must use the shared parts, and the validator must not round the command.
+**Fix (implemented):** One control period for every controller that is in use, and for the model.
 
-**Workaround:** None needed, but two gaps remain and are recorded in the RQ-A note: the `KinematicLimiter` is in the firmware and in no model, and the firmware's limiter still carries the old backlash model (a deficit subtracted from the wheel speed), which is the dimensional error KI-025 removed from the model but not from the firmware. `ramsete_fast.py` is still the legacy 20 ms path and is not what the validator models.
+- `pybricks_code/ramsete_compact.py`, `pybricks_code/ramsete_compact_events.py` and `pybricks_code/ramsete.py` all run a **synced 20 ms heartbeat**. A synced heartbeat is what makes the period exact: the loop waits for the slack to the next tick, so the hold is 20 ms and not 20 ms plus the loop's own compute time. It is also the hub's budget - the loop does the odometry update, the controller and the limiter every iteration - and 20 ms is the period `ramsete_fast.py` always used.
+- `pybricks_code/ramsete_compact.py` now uses the shared `Odometry`, `RamseteController` and `KinematicLimiter` from `pybricks_code/ramsete.py`, the same 20 ms loop as its event-capable twin, and the same unrounded drive command, so the two are the same controller with and without events.
+- `immrax_validator.py` holds the command for 20 ms (`CONTROL_DT`), does not round it, and recomputes the Ramsete gain from the interpolated speed and turn rate.
+- `tests/test_firmware_events.py::TestFirmwareParity` pins the parity: the controllers in use must declare the same control period, the validator's period must equal it, the two compact controllers must use the shared parts, and the validator must not round the command.
+
+**What it does and does not change.** With the period the same on both sides, the remaining parity fixes are worth about 1 % (the rounding and the gain, which finding F7 measured as worth nothing), so the tracking numbers barely move: the legacy mirror and the deployed mirror now differ by 0.94-1.02x on every (mission, density) cell. What changes is that the model now says what the robot does, and that the two compact controllers can no longer drift apart. The gate is unchanged in its strictness relative to the 20 ms model the tree already used, and stricter than a 5 ms one would be.
+
+**Workaround:** None needed, but two gaps remain and are recorded in the RQ-A note: the `KinematicLimiter` is in the firmware and in no model, and the firmware's limiter still carries the old backlash model (a deficit subtracted from the wheel speed), which is the dimensional error KI-025 removed from the model but not from the firmware. `ramsete_fast.py` is still the legacy path and is not what the validator models.
 
 ---
 

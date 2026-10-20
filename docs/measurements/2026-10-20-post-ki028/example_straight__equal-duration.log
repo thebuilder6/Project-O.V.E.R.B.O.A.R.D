@@ -1,0 +1,77 @@
+# command: C:\Users\jumpi\AppData\Local\Microsoft\WindowsApps\PythonSoftwareFoundation.Python.3.12_qbz5n2kfra8p0\python.exe main.py -c examples/fll_choreo.json -w examples/example_straight.json -o C:\Users\jumpi\AppData\Local\Temp\opencode\sweep\example_straight__equal-duration.traj --validate --candidates 5 --uniform-dt
+# wall_seconds: 14.1
+# exit_code: 0
+
+Using the example robot config (examples/fll_choreo.json). Pass -c/--config with your own robot to plan for your build.
+Using the simple CasADi optimizer
+Solving 2 waypoints (samples=10, accuracy_weight=0.0, candidates=5, equal-duration segments (legacy))...
+Solving 5 candidates (in parallel)...
+Candidate 1/5 (guess_style=baseline, equal-duration dt)...
+  Running the Immrax robustness check...
+  Passed! envelope 0.30 cm, all segments within thresholds.
+Candidate 2/5 (guess_style=rolling, equal-duration dt)...
+  Running the Immrax robustness check...
+  Passed! envelope 0.30 cm, all segments within thresholds.
+Candidate 3/5 (guess_style=bow_left, equal-duration dt)...
+  Running the Immrax robustness check...
+  Passed! envelope 0.30 cm, all segments within thresholds.
+Candidate 4/5 (guess_style=bow_right, equal-duration dt)...
+  Running the Immrax robustness check...
+  Passed! envelope 0.30 cm, all segments within thresholds.
+Candidate 5/5 (guess_style=turn_first, equal-duration dt)...
+  Running the Immrax robustness check...
+  Passed! envelope 0.30 cm, all segments within thresholds.
+  Candidate 1 (baseline, equal-dur):  2.377 s, envelope 0.30 cm (ok)
+  Candidate 2 (rolling, equal-dur):  2.377 s, envelope 0.30 cm (ok)
+  Candidate 3 (bow_left, equal-dur):  2.377 s, envelope 0.30 cm (ok)
+  Candidate 4 (bow_right, equal-dur):  2.377 s, envelope 0.30 cm (ok)
+  Candidate 5 (turn_first, equal-dur):  2.377 s, envelope 0.30 cm (ok)
+  Selected candidate 2.
+##OVERBOARD-VALIDATION## {"selected": 2, "candidates": [{"index": 1, "style": "baseline", "timing": "equal-duration", "accuracy_weight": 0.0, "duration_s": 2.376600380817622, "envelope_cm": 0.3047478396868473, "tracking_cm": 0.34096911549568176, "heading_error_deg": 0.0, "ok": true, "converged": true, "reasons": [], "segments": [{"from": 0, "to": 1, "limit_m": 0.02, "envelope_m": 0.0029195810964199103, "drift_m": 0.00022708421835531534, "violations": 0, "slip_points": 0, "ok": true}]}, {"index": 2, "style": "rolling", "timing": "equal-duration", "accuracy_weight": 0.0, "duration_s": 2.376694402669152, "envelope_cm": 0.3047354420014457, "tracking_cm": 0.3409877419471741, "heading_error_deg": 0.0, "ok": true, "converged": true, "reasons": [], "segments": [{"from": 0, "to": 1, "limit_m": 0.02, "envelope_m": 0.002919586752279174, "drift_m": 0.00023127257631457536, "violations": 0, "slip_points": 0, "ok": true}]}, {"index": 3, "style": "bow_left", "timing": "equal-duration", "accuracy_weight": 0.0, "duration_s": 2.3766017764274965, "envelope_cm": 0.3047541047783639, "tracking_cm": 0.3409702330827713, "heading_error_deg": 0.0, "ok": true, "converged": true, "reasons": [], "segments": [{"from": 0, "to": 1, "limit_m": 0.02, "envelope_m": 0.002919706873758394, "drift_m": 0.0002272819942530182, "violations": 0, "slip_points": 0, "ok": true}]}, {"index": 4, "style": "bow_right", "timing": "equal-duration", "accuracy_weight": 0.0, "duration_s": 2.3766017764274965, "envelope_cm": 0.3047541047783639, "tracking_cm": 0.3409702330827713, "heading_error_deg": 0.0, "ok": true, "converged": true, "reasons": [], "segments": [{"from": 0, "to": 1, "limit_m": 0.02, "envelope_m": 0.002919706873758394, "drift_m": 0.0002272819942529627, "violations": 0, "slip_points": 0, "ok": true}]}, {"index": 5, "style": "turn_first", "timing": "equal-duration", "accuracy_weight": 0.0, "duration_s": 2.376694402669152, "envelope_cm": 0.3047354420014457, "tracking_cm": 0.3409877419471741, "heading_error_deg": 0.0, "ok": true, "converged": true, "reasons": [], "segments": [{"from": 0, "to": 1, "limit_m": 0.02, "envelope_m": 0.002919586752279174, "drift_m": 0.00023127257631457536, "violations": 0, "slip_points": 0, "ok": true}]}]}
+
+=== Validation Report: C:\Users\jumpi\AppData\Local\Temp\opencode\sweep\example_straight__equal-duration.traj ===
+Samples: 11 | Config: examples/fll_choreo.json
+Safety margins: torque_headroom=0.85, speed_headroom=0.90
+
+-- Metrics --
+  total_time_s: 2.3767
+  path_length_m: 1.0000
+  max_linear_speed_m_s: 0.4725
+  avg_linear_speed_m_s: 0.3825
+  max_wheel_speed_m_s: 0.4725
+  max_accel_m_s2: 1.9881
+  max_jerk_m_s3: 8.3648
+  avg_jerk_m_s3: 1.7704
+  tortuosity: 1.0000
+  velocity_chattering: 2
+  avg_force_utilization: 0.1020
+  max_force_utilization: 0.8004
+
+-- Constraint Audit --
+  Violating samples: 0
+  Max left_motor_force violation: 0.000000 N
+  Max right_motor_force violation: 0.000000 N
+  Max traction_total violation: 0.000000 N
+  Max wheel speed: 0.4725 m/s (limit 0.5209 m/s)
+
+-- Wheel Slip Detection --
+  Slip points: 0
+  Max left wheel slip: 0.000000 N
+  Max right wheel slip: 0.000000 N
+
+-- Forward Integration (1 ms RK4) --
+  max_pos_error_m: 0.000407
+  rms_pos_error_m: 0.000248
+  max_heading_error_rad: 0.000000
+  final_pos_error_m: 0.000003
+  final_heading_error_rad: 0.000000
+
+-- Waypoint Check --
+  Final position error: 0.000000 m
+  Final heading error: 0.000000 rad
+
+PASS — trajectory is safe to run.
+
+Trajectory written to C:\Users\jumpi\AppData\Local\Temp\opencode\sweep\example_straight__equal-duration.traj
+  duration 2.377 s | path 1.000 m | peak wheel speed 0.47 m/s | 11 samples
+  validation: passed (envelope 0.30 cm)
