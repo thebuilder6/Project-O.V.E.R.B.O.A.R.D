@@ -19,7 +19,7 @@ from fields import (
 )
 
 
-def _pdf_bytes():
+def _pdf_bytes(mat_shaped=True):
     """A one-page PDF with a drawing on it, made with Pillow."""
     import io as _io
 
@@ -28,9 +28,12 @@ def _pdf_bytes():
     page = Image.new("RGB", (600, 400), "white")
     draw = ImageDraw.Draw(page)
     draw.rectangle((80, 90, 520, 320), outline="black", width=4)
-    # The field's document is read from its second page.
+    # The field's document is read from its second page. Its drawing has
+    # the mat's shape (2004 x 1143), because a crop that does not would be
+    # stretched when it is fitted to the mat.
     second = Image.new("RGB", (600, 400), "white")
-    ImageDraw.Draw(second).rectangle((100, 120, 500, 300), outline="black",
+    bottom = 348 if mat_shaped else 300
+    ImageDraw.Draw(second).rectangle((100, 120, 500, bottom), outline="black",
                                      width=4)
     buffer = _io.BytesIO()
     page.save(buffer, "PDF", save_all=True, append_images=[second])
@@ -141,6 +144,38 @@ class TestFieldCollisions(unittest.TestCase):
         self.assertEqual(field.collisions([{"t": 0.0}], 0.05), [])
         self.assertEqual(field.collisions([{"x": "a", "y": 1.0}], 0.05), [])
 
+    def test_a_model_between_two_samples_is_still_found(self):
+        """The path between the samples is part of the path.
+
+        The optimizer puts ten samples on a waypoint segment, so their
+        spacing is set by the length of the segment: a two-metre straight
+        is sampled every 200 mm. A model narrower than that can be driven
+        straight through without any sample landing on it.
+        """
+        field = FieldModel(
+            season="test",
+            label="Test",
+            mat_width_m=2.0,
+            mat_height_m=1.14,
+            placement_uncertainty_m=0.05,
+            obstacles=(_rect(x=1.0, y=1.0, w=0.036, h=0.036),),
+        )
+        # The samples are 400 mm apart and neither is on the 36 mm model; the
+        # path runs straight through it.
+        samples = [{"x": 0.8, "y": 1.0, "t": 0.0}, {"x": 1.2, "y": 1.0, "t": 1.0}]
+        hits = field.collisions(samples, 0.04825)
+        self.assertEqual(len(hits), 1,
+                         "the path between the samples was not checked")
+        # The hit is between the two samples: neither of them is on the model.
+        self.assertNotIn(hits[0].x_m, (0.8, 1.2))
+        self.assertGreater(hits[0].depth_m, 0.0)
+
+    def test_a_path_that_misses_by_more_than_the_robot_is_clean(self):
+        """Walking between the samples must not invent a collision."""
+        field = self._field()
+        samples = [{"x": 0.8, "y": 0.0, "t": 0.0}, {"x": 1.2, "y": 0.0, "t": 1.0}]
+        self.assertEqual(field.collisions(samples, 0.05), [])
+
 
 class TestFieldFiles(unittest.TestCase):
     def test_the_shipped_field_loads(self):
@@ -163,6 +198,27 @@ class TestFieldFiles(unittest.TestCase):
         field = load_field("2026-27")
         ids = [item.id for item in field.obstacles]
         self.assertEqual(len(ids), len(set(ids)))
+
+    def test_no_two_models_share_a_footprint(self):
+        """One entry per thing on the mat.
+
+        Two missions can share one physical model - the "m06-07" build
+        serves both - but the model is one thing on the mat, and a path
+        that runs into it must be reported once, not twice.
+        """
+        for season in ("2026-27", "fll2026founders-robovibe"):
+            field = load_field(season)
+            if field is None:
+                continue
+            seen = {}
+            for obstacle in field.obstacles:
+                key = (round(obstacle.x_m, 3), round(obstacle.y_m, 3),
+                       round(obstacle.w_m, 3), round(obstacle.h_m, 3),
+                       round(obstacle.rot_deg, 1))
+                self.assertNotIn(key, seen,
+                                 f"{season}: {obstacle.id} and {seen.get(key)} "
+                                 "are the same footprint")
+                seen[key] = obstacle.id
 
     def test_the_seasons_are_listed(self):
         rows = list_fields()
@@ -382,8 +438,12 @@ class TestMatDownload(unittest.TestCase):
             def __init__(self, data):
                 self._data = data
 
-            def read(self):
-                return self._data
+            def read(self, size=-1):
+                # The real response reads a chunk at a time.
+                if size is None or size < 0:
+                    size = len(self._data)
+                chunk, self._data = self._data[:size], self._data[size:]
+                return chunk
 
             def __enter__(self):
                 return self
@@ -423,12 +483,58 @@ class TestMatDownload(unittest.TestCase):
         with self.assertRaises(ValueError):
             gui_server.download_field_mat("no-such-season")
 
+    def test_a_picture_that_is_not_the_mat_s_shape_is_refused(self):
+        """A stretched picture puts the models away from where they are.
+
+        The picture is fitted to the mat's size, so a crop that is not the
+        mat's shape moves its features by a tenth of the mat. The studio
+        says so instead of serving it.
+        """
+        import gui_server
+
+        class _Response:
+            def __init__(self, data):
+                self._data = data
+
+            def read(self, size=-1):
+                if size is None or size < 0:
+                    size = len(self._data)
+                chunk, self._data = self._data[:size], self._data[size:]
+                return chunk
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+        def fake_urlopen(request, timeout=None):
+            return _Response(_pdf_bytes(mat_shaped=False))
+
+        with tempfile.TemporaryDirectory() as tmp:
+            mats = Path(tmp) / "mats"
+            original = gui_server.MATS_DIR
+            gui_server.MATS_DIR = mats
+            try:
+                with patch("urllib.request.urlopen", fake_urlopen):
+                    with self.assertRaises(ValueError) as ctx:
+                        gui_server.download_field_mat("2026-27")
+            finally:
+                gui_server.MATS_DIR = original
+        self.assertIn("shape", str(ctx.exception))
+
     def test_something_that_is_not_a_pdf_is_refused(self):
         import gui_server
 
         class _Response:
-            def read(self):
-                return b"<html>not a pdf</html>"
+            def __init__(self):
+                self._data = b"<html>not a pdf</html>"
+
+            def read(self, size=-1):
+                if size is None or size < 0:
+                    size = len(self._data)
+                chunk, self._data = self._data[:size], self._data[size:]
+                return chunk
 
             def __enter__(self):
                 return self

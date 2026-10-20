@@ -3,6 +3,7 @@ Tests for the user-facing CLI behaviour: defaults, error messages, presets,
 the environment report and the live visualizer's port handling.
 """
 
+import io
 import json
 import os
 import socket
@@ -10,6 +11,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from contextlib import redirect_stdout
 from unittest.mock import patch
 
 from click.testing import CliRunner
@@ -192,6 +194,55 @@ class TestCliBasics(unittest.TestCase):
         self.assertEqual(result.stdout.strip(), "False")
 
 
+class TestFirstRun(unittest.TestCase):
+    """A first-time user must get the install command, not a traceback."""
+
+    def test_missing_core_packages_names_what_is_missing(self):
+        import diagnostics
+        with patch.object(diagnostics, "module_available",
+                          side_effect=lambda name: name != "casadi"):
+            self.assertEqual(diagnostics.missing_core_packages(), ["casadi"])
+
+    def test_the_doctor_names_the_install_command(self):
+        import diagnostics
+        with patch.object(diagnostics, "module_available",
+                          side_effect=lambda name: name != "casadi"):
+            buffer = io.StringIO()
+            with redirect_stdout(buffer):
+                code = diagnostics.run_doctor()
+        output = buffer.getvalue()
+        self.assertEqual(code, 1)
+        self.assertIn("pip install -r requirements.txt", output)
+        self.assertIn(diagnostics.install_script(), output)
+
+    def test_main_without_the_packages_reports_the_install(self):
+        """The first run on a clean machine must not die with a traceback."""
+        code = (
+            "import sys, runpy\n"
+            "for name in ('click', 'numpy', 'casadi', 'plotly', 'matplotlib'):\n"
+            "    sys.modules[name] = None\n"
+            "sys.argv = ['main.py', '--doctor']\n"
+            "runpy.run_path('main.py', run_name='__main__')\n"
+        )
+        result = subprocess.run([sys.executable, "-c", code], cwd=REPO_ROOT,
+                                capture_output=True, text=True)
+        self.assertEqual(result.returncode, 1, result.stdout)
+        self.assertNotIn("Traceback", result.stdout)
+        self.assertIn("pip install -r requirements.txt", result.stdout)
+
+    def test_the_batch_files_keep_crlf(self):
+        """cmd.exe cannot find a batch label in a file with LF endings.
+
+        install.bat calls a subroutine, so an LF file makes it fall over with
+        "The system cannot find the batch label specified".
+        """
+        for name in ("install.bat", "start_studio.bat"):
+            with open(os.path.join(REPO_ROOT, name), "rb") as handle:
+                data = handle.read()
+            self.assertIn(b"\r\n", data, name)
+            self.assertNotIn(b"\n", data.replace(b"\r\n", b""), name)
+
+
 class TestParallelCandidates(unittest.TestCase):
     """The candidates may be solved in worker processes; that must not
     change the trajectory the CLI exports."""
@@ -328,6 +379,29 @@ class TestValidationReport(unittest.TestCase):
         self.assertNotIn("Infinity", marker[0])
         self.assertIsNotNone(payload["candidates"][0]["duration_s"])
 
+    def test_every_candidate_carries_its_score_vector(self):
+        """The selection rule can be re-run offline on these numbers.
+
+        Q10's step 1 and Q3's step 1 are the same instrumentation: the
+        duration, the envelope, the tracking error, the biggest excess over
+        the local threshold, and the peak wheel jerk.
+        """
+        result = self._run()
+        marker = [line for line in result.output.splitlines()
+                  if line.startswith(self.main.VALIDATION_MARKER)]
+        payload = json.loads(marker[0][len(self.main.VALIDATION_MARKER):])
+        for candidate in payload["candidates"]:
+            for field in ("duration_s", "envelope_cm", "tracking_cm",
+                          "max_excess_cm", "peak_jerk_m_s3"):
+                self.assertIn(field, candidate)
+                self.assertIsNotNone(candidate[field], field)
+            # The excess agrees with the segments it came from.
+            segments = candidate["segments"]
+            excess = max(segment["envelope_m"] - segment["limit_m"]
+                         for segment in segments)
+            self.assertAlmostEqual(candidate["max_excess_cm"],
+                                   excess * 100.0, places=6)
+
 
 class TestIterationHistory(unittest.TestCase):
     """--iteration-history writes how the trajectory converged."""
@@ -349,6 +423,31 @@ class TestIterationHistory(unittest.TestCase):
         self.assertEqual(entries[0]["phase"], "initial_guess")
         self.assertEqual(entries[1]["phase"], "final_solution")
         self.assertIn("cost", entries[0])
+        self.assertTrue(entries[0]["trajectory"])
+
+    def test_the_history_survives_parallel_candidates(self):
+        """The candidates may be solved in worker processes.
+
+        The solver's log belongs to the process that ran the solver, so it
+        has to travel with the result. Without that the studio's
+        convergence plot and its first-guess path are empty whenever the
+        candidates run in parallel, which is the studio's default.
+        """
+        import main
+        runner = CliRunner()
+        with tempfile.TemporaryDirectory() as tmp:
+            out = os.path.join(tmp, "out.traj")
+            history = os.path.join(tmp, "iterations.json")
+            result = runner.invoke(main.main, [
+                "-w", "examples/example_mission_first4.json", "-o", out,
+                "--validate", "--candidates", "2",
+                "--iteration-history", history, "-q"])
+            self.assertEqual(result.exit_code, 0, result.output)
+            with open(history, "r", encoding="utf-8") as handle:
+                entries = json.load(handle)
+        self.assertEqual(len(entries), 2)
+        self.assertEqual(entries[0]["phase"], "initial_guess")
+        self.assertEqual(entries[1]["phase"], "final_solution")
         self.assertTrue(entries[0]["trajectory"])
 
 

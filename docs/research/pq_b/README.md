@@ -19,10 +19,10 @@ self-consistent comparison).
 ## The problem this solves
 
 Every claim in the agenda rests on six example missions. The random benchmark
-that was supposed to supply a mission suite is broken (KI-015), so the
-"baseline seed always wins" statement, the "the tracking gate binds" statement
-and the "the weight grid is the cheapest lever" statement are all statements
-about six paths.
+that was supposed to supply a mission suite was broken (KI-015, repaired in the
+meantime), so the "baseline seed always wins" statement, the "the tracking gate
+binds" statement and the "the weight grid is the cheapest lever" statement are
+all statements about six paths.
 
 The tooling in [`../../research/`](../../research/) produces:
 

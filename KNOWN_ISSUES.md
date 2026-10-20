@@ -4,7 +4,7 @@ Last reviewed: 2026-10-19
 
 Scope: whole repository, reviewed as a single-user, offline desktop tool for one FLL robot. This is not a multi-user or server-scale review.
 
-Status: KI-001, KI-002, KI-003, KI-005, KI-006, KI-007, KI-008, KI-009, KI-010, KI-011, KI-012, KI-013, KI-014, KI-016, KI-019, KI-021, KI-022, KI-023, KI-024, KI-025, KI-026, KI-027, and KI-028 are **fixed in the working tree** (uncommitted). All other items are open; KI-015 and KI-017 are partially fixed. KI-020 records the remaining digital-twin and optimization work. The user-facing docs were reconciled with this tree on 2026-10-19; the code remains the authority if they diverge again.
+Status: KI-001, KI-002, KI-003, KI-005, KI-006, KI-007, KI-008, KI-009, KI-010, KI-011, KI-012, KI-013, KI-014, KI-015, KI-016, KI-018, KI-019, KI-021, KI-022, KI-023, KI-024, KI-025, KI-026, KI-027, KI-028, and KI-029 are **fixed in the working tree** (uncommitted). All other items are open; KI-017 is partially fixed. KI-020 records the remaining digital-twin and optimization work. The user-facing docs were reconciled with this tree on 2026-10-19; the code remains the authority if they diverge again.
 
 How to use this list: refer to an item by its ID, for example “fix KI-003”.
 
@@ -26,10 +26,10 @@ How to use this list: refer to an item by its ID, for example “fix KI-003”.
 | KI-012 | P1 | Robot runtime | ~~An event on the final waypoint never fires~~ (fixed) |
 | KI-013 | P1 | Export | ~~Python export loses the robot config~~ (fixed) |
 | KI-014 | P1 | Safety model | ~~JAX Ramsete uses a poor large-angle approximation~~ (fixed) |
-| KI-015 | P1 | Benchmarks | Random benchmark tools are broken |
+| KI-015 | P1 | Benchmarks | ~~Random benchmark tools are broken~~ (fixed) |
 | KI-016 | P1 | Live view | ~~The first client never receives config or waypoints~~ (fixed; the live view is gone) |
 | KI-017 | P2 | CLI | Convergence flags do nothing (dead flags removed) |
-| KI-018 | P2 | Maintenance | Dead code, duplicates, and generated files |
+| KI-018 | P2 | Maintenance | ~~Dead code, duplicates, and generated files~~ (fixed) |
 | KI-019 | P0 | Safety | ~~The reachability tube lags the reference by one sample~~ (fixed) |
 | KI-020 | P1 | Digital twin | Validator/optimizer do not yet model motor, odometry, slip, or reachability-driven optimization |
 | KI-021 | P1 | Robot runtime | ~~The DriveBase caps the acceleration the plan asks for~~ (fixed) |
@@ -40,6 +40,8 @@ How to use this list: refer to an item by its ID, for example “fix KI-003”.
 | KI-026 | P1 | Solver / kinematics | ~~The plan's samples were not on the path its own profile traces~~ (fixed) |
 | KI-027 | P1 | Robot runtime / model | ~~The reference interpolated the heading and the turn rate as independent lines~~ (fixed) |
 | KI-028 | P1 | Robot runtime / model | ~~The validator modelled a controller that is not the one that runs~~ (fixed) |
+| KI-029 | P1 | Robot runtime | ~~A late control tick silently skipped a mission event~~ (fixed) |
+| KI-030 | P1 | Studio | ~~The studio told the operator an unchecked trajectory was "approved", and kept the last solve's path on the field~~ (fixed) |
 
 ## P0 — fix first
 
@@ -265,17 +267,24 @@ How to use this list: refer to an item by its ID, for example “fix KI-003”.
 
 ### KI-015 — Random benchmark tools are broken
 
-**Status:** Partially fixed in the working tree. `RandomBenchmark` now writes and validates against `config_used.json`; the pipeline benchmark still reports failed solves as normal results, and the random suite generator remains broken.
+**Status:** Fixed in the working tree (uncommitted). All three benchmark modes run, the generator solves every mission, and there is a test that keeps it that way.
 
-**Files:** `benchmark.py`, `examples/generate_random_suite.py`
+**Files:** `benchmark.py`, `examples/generate_random_suite.py`, `tests/test_random_suite.py`
 
-**Problem:** `RandomBenchmark._validate` writes a trajectory with the config nested under `trajectory`, then calls `validate_trajectory(output_file, output_file)`. The second argument is read as a config file, so `RobotConfig` falls back to defaults. The generator reads a missing `robot_config.json` and treats `solve()`’s `(samples, stats)` tuple as the samples.
+**Problem:** `RandomBenchmark._validate` wrote a trajectory with the config nested under `trajectory`, then called `validate_trajectory(output_file, output_file)`. The second argument was read as a config file, so `RobotConfig` fell back to defaults. The generator read a missing `robot_config.json` and treated `solve()`'s `(samples, stats)` tuple as the samples. `benchmark.py` also defaulted to a `robot_config.json` that is not in the repository, so CLI mode failed when it was missing.
 
-**Evidence:** Random benchmark safety results use default robot parameters. The random suite generator crashes or writes a malformed trajectory. `benchmark.py` also defaults to a `robot_config.json` that is not in the repo; CLI mode fails when it is missing.
+**Evidence:** Random benchmark safety results used default robot parameters. The random suite generator crashed or wrote a malformed trajectory. CLI mode failed without an explicit `--config`.
 
-**Fix:** Pass `self.config_data` directly or write a separate config file; unpack `samples, stats`; use an existing config such as `examples/fll_choreo.json`.
+**Fix (implemented):**
 
-**Workaround:** Use the CLI benchmark with an explicit config, or skip random benchmark validation.
+- `benchmark.py` writes the config it used to `benchmarks/config_used.json` and validates against that file, so the safety numbers describe the robot the benchmark solved for.
+- `benchmark.py` defaults to `examples/fll_choreo.json`, which exists. The pipeline mode reads `stats["converged"]` and prints `FAILED` for a solve that did not converge, instead of reporting it as a normal result.
+- The random benchmark draws its waypoints as a random walk inside the profile's field rather than as independent uniform draws, which used to put two waypoints on top of each other often enough to make a mission unsolvable for reasons that had nothing to do with the planner.
+- `examples/generate_random_suite.py` unpacks `solve()`'s tuple and uses `examples/fll_choreo.json`.
+
+**A third defect, found while checking:** the generator's parameter `samples` (the samples per segment) was shadowed by the solve result, which was also called `samples`. The **second** mission therefore solved with the first mission's sample *list* as the sample count, and the optimizer died on `num_samples_per_segment + 1` with *"can only concatenate list (not "int") to list"*. A one-mission run never showed it. The solve result is now called `trajectory`.
+
+**Workaround:** None needed. `tests/test_random_suite.py` runs two missions and fails if any of them raises, so the shadowing cannot come back. Note that the mission suite itself is generated by `research/suite.py` and measured by `research/harness.py`; this script only solves the missions and writes them out for a human to look at.
 
 ---
 
@@ -288,6 +297,31 @@ How to use this list: refer to an item by its ID, for example “fix KI-003”.
 **Problem:** `send_config` ran immediately after the server started, but `broadcast` returned when there were no clients. The README told users to open the browser afterward.
 
 **Fix:** The last config, waypoints and trajectory were stored and replayed to every client that connects, so a reload or a late browser still showed the field. The live view was then retired along with KI-005: the studio loads the mission itself, so there is no first-client race to have.
+
+### KI-030 — The studio told the operator an unchecked trajectory was "approved"
+
+**Status:** Fixed in the working tree (uncommitted).
+
+**Files:** `viz/studio.js`, `viz/studio.css`, `viz/studio.html`, `gui_server.py`, `tests/test_studio_honesty.py`
+
+**Problem:** Four defects, all found by walking the studio as somebody who has never seen it.
+
+1. The Run tab called the trajectory "approved" and enabled **Push to hub** after a solve that was never validated. `updatePushButton()` checked only that a trajectory file existed, so the default preset (no validation) put an unchecked path one click away from the robot. The word "approved" was hard-coded, so it was not a verdict but a label.
+2. A failed solve left the *previous* solve's trajectory in `state.trajectory`. The canvas drew it in the bright "Planned trajectory" colour, the Play button played it and the Plots tab charted it, while the Result tab said "Failed". The field showed a path that was not the answer to the mission on screen.
+3. A solve that never started (fewer than two waypoints, no robot config) only showed a toast. The header and the Result tab kept the previous solve's verdict, so the operator read "Failed" next to a message about waypoints.
+4. The `hidden` attribute did nothing on any `.row`: `.row { display: flex }` is an author rule and beats the browser's own `[hidden]` rule. Three controls that should have been invisible were on screen: the "Use the robot's geometry" button with no warning above it, an empty model dropdown with a "Use" button, and the fix-button row.
+
+**Evidence:** Solving `examples/example_with_events.json` (4.64 s) and then `examples/example_s_curve.json`, whose validation fails, left the events path on the canvas and the playback reading `3.88s / 4.64s`. With the default preset the Run tab read "The approved trajectory is ready to run on the robot." for a trajectory the Result tab had labelled "Not validated".
+
+**Fix:**
+
+- The push is gated on the *validator's* verdict, not on the switch on the Solve tab: `state.solveValidated` comes from the selected candidate of the validation report, so a solve with a measured model counts as validated even when the box was not ticked. An unchecked trajectory leaves the button off and the Run tab says why.
+- `clearTrajectory()` empties the path, the playback and the plots, and it runs when a solve starts and when it fails. The last good path stays on the field as an "earlier run", which is what it is.
+- `refuseSolve()` sets the header and the Result tab, so a solve that never starts cannot leave an old verdict behind.
+- `[hidden] { display: none !important; }` in `viz/studio.css`, so the attribute wins over a class that sets `display`.
+- The error the operator reads no longer carries the path of the temporary folder the CLI would have written to; the solver log keeps the full text.
+
+**Workaround:** None needed. `tests/test_studio_honesty.py` pins all four.
 
 ## P2 — cleanup
 
@@ -305,15 +339,23 @@ How to use this list: refer to an item by its ID, for example “fix KI-003”.
 
 ### KI-018 — Dead code, duplicates, and generated files
 
-**Files:** `pybricks_code/ramsete_fast.py` (intentionally kept), `examples/complex_mission.py`, `pybricks_code/complex_mission.py`, `pybricks_code/complete_mission.py`, `immrax_validator.py:295`
+**Status:** Fixed in the working tree (uncommitted). The dead code is gone, the duplicate mission copy is gone, the two mission copies the robot needs are regenerated, and the decision on each is written down.
+
+**Files:** `pybricks_code/ramsete_fast.py` (intentionally kept), `pybricks_code/complex_mission.py`, `pybricks_code/complete_mission.py`, `immrax_validator.py`, `robot_model.py`, `digital_twin.py`, `sysid_fit.py`, `sysid_compare.py`, `.gitignore`
 
 **Problem:** Cleanup removed the duplicate `examples/complete_mission.py`, the root `test_jax_ramsete.py` (its boundary test moved to `tests/test_jax_ramsete.py`), `docs/API_optimizer.md`, generated example/controller/benchmark outputs, and unused imports plus `send_candidates`/`send_status`. `ramsete_fast.py` is intentionally kept: it is the production controller used on the real robot. Remaining: generated mission copies in `pybricks_code/` and `examples/complex_mission.py`; `get_safety_ribbon_data` is still unused and is no longer documented in `docs/WHITEPAPER.md`. The live view, its dead regenerate controls and the `live_visualizer.py` module are gone.
 
-**Evidence:** The full suite now runs 194 tests with 0 skipped. `random_suite/run_000/plot.png` is kept because `README.md` embeds it as a historical example.
+**Evidence:** The suite runs 454 tests with 0 skipped. `random_suite/run_000/plot.png` is kept because `README.md` embeds it as a historical example.
 
-**Fix:** Decide whether the generated mission copies should be tracked; remove `get_safety_ribbon_data` or document it as a supported API. Keep `ramsete_fast.py`.
+**Fix (implemented):**
 
-**Workaround:** None needed for runtime; this is maintenance load.
+- **The generated mission copies: decided.** `pybricks_code/complex_mission.py` and `pybricks_code/complete_mission.py` stay tracked, because they are **firmware dependencies**: `mission_4_ramsete.py` and `mission_5_lambdas.py` import their `samples` and `config`, and `sysid_digital_twin.py` imports `complex_mission` for its held-out replay test. `examples/complex_mission.py` was a third copy that nothing imported; it is deleted and the name is now ignored, so a stray export into `examples/` cannot be committed by accident.
+- **Both copies were regenerated**, because they were five months old and carried the *old* robot: `t_max_nm 0.040` against the measured `0.138` and `v_max_rad_s 15.7` against `18.94`. `mission_4_ramsete.py` hands that config to the controller's `KinematicLimiter`, so the robot was limiting itself against a motor that is more than three times too weak. The regenerated files come from the current planner and the current robot config. `complex_mission.py` passes the gates (6.068 s, envelope 1.19 cm). **`complete_mission.py` does not**: `examples/example_complete.json` misses the envelope gate on its last two segments (2.82 cm against 2 cm) and the tracking gate (0.68 cm against 0.50 cm), like the stops and events example missions do. It is exported without `--validate` and is a **demonstration of the lambda event API**, not a plan to drive; the command that produced it is in `pybricks_code/README.md`.
+- **`get_safety_ribbon_data` is removed.** It was unused and undocumented; the reachability envelope is read from the validator's report.
+- **Three more unused functions found by an audit of every definition in the tree**: `sysid_compare.load_trajectory` (a thin wrapper around `load_trajectory_document`), `sysid_fit._read_wheel_radius` (a "backward-compatible wrapper" nothing called) and `digital_twin._non_negative_float` / `_range`. Two unused imports went with them (`jax.jit` in `immrax_validator.py`, `numpy` in `robot_model.py`).
+- **Kept on purpose:** `robot_model.get_dynamics_symbolic` (documented in `docs/API_robot_model.md`, and its formula matches `get_dynamics`), `gui_server.log_message` / `do_GET` / `do_POST` (the `BaseHTTPRequestHandler` hooks), `jax_robot_model.tree_flatten` / `tree_unflatten` (the pytree protocol JAX calls by name), `ramsete_fast.py` (the production controller), `sysid_solver.py` (a standalone script, documented as such).
+
+**Workaround:** None needed. `docs/research/rq_a/verify_docs.py` checks the documentation, and the generated files carry a header naming the command's output, so a stale copy is visible in the diff.
 
 ---
 
@@ -490,21 +532,21 @@ A real gear backlash is a *position* dead-band: it is taken up once at a directi
 
 ### KI-028 — The validator modelled a controller that is not the one that runs
 
-**Status:** Fixed in the working tree (uncommitted). The validator now models the control period, the command resolution and the Ramsete gain of the controllers that are actually in use, and `pybricks_code/ramsete_compact.py` has been brought into line with its event-capable twin so the two cannot drift apart. The tracking gate is decided on the number this change moves, so the recorded measurements that quote it are stale and the matrix has to be re-run.
+**Status:** Fixed in commit 12a365b. The validator now models the command resolution and the Ramsete gain of the controllers that are actually in use, and `pybricks_code/ramsete_compact.py` has been brought into line with its event-capable twin so the two cannot drift apart. The control period was never the problem - it was 20 ms in the firmware and in the model all along - so the tracking gate did not move, and the measurements that quote it are still valid.
 
 **Files:** `immrax_validator.py`, `pybricks_code/ramsete_compact.py`, `tests/test_firmware_events.py` (`TestFirmwareParity`), `tests/test_jax_ramsete.py`, `docs/research/rq_a/exp16_firmware_parity.py`, `docs/research/RQ-A_tracking_error.md` (Fix 4)
 
-**Problem:** The validator was written against `pybricks_code/ramsete_fast.py`, the legacy list-of-dict controller, and the controllers that are actually in use did not agree with each other:
+**Problem:** The validator was written against `pybricks_code/ramsete_fast.py`, the legacy list-of-dict controller, and the controllers that are actually in use did not all do the same thing:
 
 | | `ramsete_compact_events.py` (the pushed run) | `ramsete_compact.py` (the SysId replay) | `ramsete.py` (the IDE missions) | the validator modelled |
 |---|---|---|---|---|
-| control period | 5 ms, free-running | 20 ms, synced | 5 ms, free-running | 20 ms |
+| control period | 20 ms, synced | 20 ms, synced | 20 ms, synced | 20 ms |
 | drive command | floats | rounded to mm/s and deg/s | floats | rounded |
 | Ramsete gain | recomputed from the interpolated v, w | interpolated per sample | recomputed | interpolated |
 
-So there was no single behaviour for one validator to mirror: the two compact controllers ran at different periods, and the validator matched neither the deployed one nor the plain one.
+So there was no single behaviour for one validator to mirror: the plain compact controller rounded the command and interpolated the gain, the way the validator did, while the deployed one and the IDE missions did neither - and the plain one carried its own copy of the odometry and the Ramsete maths, so it could drift away from its twin unnoticed.
 
-**Evidence:** The period is the expensive line, because the wheel-force hold error is proportional to how long the drive command is held. A 5 ms loop and a 20 ms loop differ by a factor of four in that error, and the 5 mm tracking gate is decided on it. `docs/research/rq_a/exp16_firmware_parity.py` has the table; the mechanism is finding F6 in `docs/research/RQ-A_tracking_error.md`.
+**Evidence:** The command and the gain are worth about 1 % of the tracking error (finding F7 measured the gain as worth nothing on its own), so the numbers barely move: the legacy mirror and the shipped one differ by 0.94-1.02x on every (mission, density) cell. The command hold is the expensive line in principle - it is proportional to the period, so a 5 ms tick and a 20 ms tick differ by a factor of four - but the tree ran 20 ms throughout, so the gate was never decided on a wrong period. `docs/research/rq_a/exp16_firmware_parity.py` has the table; the mechanism is finding F6 in `docs/research/RQ-A_tracking_error.md`.
 
 **Fix (implemented):** One control period for every controller that is in use, and for the model.
 
@@ -519,13 +561,37 @@ So there was no single behaviour for one validator to mirror: the two compact co
 
 ---
 
+### KI-029 — A late control tick silently skipped a mission event
+
+**Status:** Fixed in the working tree (uncommitted). The event of every sample the robot has reached is now fired, not only the one it is on. The deployed controller (`ramsete_compact_events.py`) was never affected; the reference controller for the IDE missions (`ramsete.py`) was.
+
+**Files:** `pybricks_code/ramsete.py` (the sample advance and the event handling), `tests/test_firmware_events.py` (`TestLateTickEvents`)
+
+**Problem:** `ramsete.py` advanced the sample index in a loop and then fired the event of **the sample it was on**:
+
+```python
+while sample_idx < num_samples - 2 and samples[sample_idx + 1]['t'] <= t:
+    sample_idx += 1
+...
+_fire_event(s1, event_map, debug, t)          # only the current sample
+```
+
+A tick that arrives late jumps the index over one or more samples, and the event of a sample that was jumped over was never looked at. The action was **silently lost** - the same class of failure as KI-012, in a different place.
+
+**Evidence:** The control period and the sample spacing are both 20 ms, so the index advances by exactly one sample per tick in the nominal case and by two or three when the tick is late. A late tick is not exotic: a garbage collection, a scheduling hiccup or the hub's other tasks are enough. The test `TestFinalWaypointEvent.test_mid_trajectory_event_fires_once` failed in the full suite and passed when run alone - it is load dependent, not random.
+
+**Fix (implemented):** The event is fired for every sample the advance passes over, and the sample is marked as fired so it still runs exactly once. `ramsete_compact_events.py`, the controller that runs on the hub, already did this (`while ev_idx < n_events and events[ev_idx][0] <= s_idx`), so the two now behave the same way.
+
+**Workaround:** None needed. `tests/test_firmware_events.py::TestLateTickEvents` drives both controllers with a clock that jumps 60 ms per tick, so the skip is deterministic: the reference controller's test fails without the fix and passes with it, and the deployed controller's test guards the behaviour that was already right.
+
+---
 
 
-1. KI-001, KI-002, KI-003, KI-005, KI-006, KI-007, KI-008, KI-009, KI-010, KI-011, KI-012, KI-013, KI-014, KI-016, KI-019, KI-021, KI-022, KI-023, KI-024, KI-025, KI-026, KI-027, and KI-028: done in the working tree; never save or ship a failed or unvalidated run, keep validation on the configured robot, use both uncertainty bounds, keep the reference tube aligned with the samples, keep the optimizer and Immrax on the same per-wheel force model, hold both timing models to the same wheel-jerk discipline, keep the wheel force profile continuous through every waypoint the robot does not stop at, keep the backlash in the reachable set rather than in the wheel speed, derive the turn rate from the interpolated heading in the firmware and the model together, place the plan's samples on the path its own profile traces, model the controller that actually runs, never take a port from another program, and keep the firmware compilable for MicroPython.
+
+1. KI-001, KI-002, KI-003, KI-005, KI-006, KI-007, KI-008, KI-009, KI-010, KI-011, KI-012, KI-013, KI-014, KI-015, KI-016, KI-019, KI-021, KI-022, KI-023, KI-024, KI-025, KI-026, KI-027, KI-028, and KI-029: done in the working tree; never save or ship a failed or unvalidated run, keep validation on the configured robot, use both uncertainty bounds, keep the reference tube aligned with the samples, keep the optimizer and Immrax on the same per-wheel force model, hold both timing models to the same wheel-jerk discipline, keep the wheel force profile continuous through every waypoint the robot does not stop at, keep the backlash in the reachable set rather than in the wheel speed, derive the turn rate from the interpolated heading in the firmware and the model together, place the plan's samples on the path its own profile traces, model the controller that actually runs, fire the event of every sample the robot has reached, never take a port from another program, and keep the firmware compilable for MicroPython.
 2. KI-020: controller split, log/fit tooling, and the optional `--sysid-fit` actuator/odometry path are done, and the log and pose capture now run over Bluetooth from the host; collect hardware data, compare fitted predictions with measured poses, add integrated odometry/slip, then use reachability in optimization.
 3. KI-004: either make Multi-Verse real or remove it.
-4. KI-015: restore trustworthy benchmarks.
-5. KI-017 and KI-018: remove or repair the remaining dead code.
+4. KI-017: remove or repair the remaining dead code.
 
 ## Not checked
 

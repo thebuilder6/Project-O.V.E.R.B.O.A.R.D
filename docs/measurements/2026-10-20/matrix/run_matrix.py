@@ -1,9 +1,13 @@
 """
 Run the candidate matrix on the current tree and record the evidence.
 
-Three configurations per mission:
+Four configurations per mission:
 
-  default               the default candidate set
+  default               the default candidate set (two timing models of the
+                        baseline seed)
+  seeds                 the default set plus the other initial-guess seeds
+                        (--candidates 5), so the multi-start is measured at
+                        all: the default set never leaves the baseline seed
   sweep                  the default set plus the timing x accuracy-weight grid
   sweep-self-consistent  the same, with the self-consistent collocation (KI-026)
 
@@ -35,6 +39,7 @@ MISSIONS = [
 
 MODES = {
     "default": [],
+    "seeds": ["--candidates", "5"],
     "sweep": ["--sweep"],
     "sweep-self-consistent": ["--sweep", "--self-consistent"],
 }

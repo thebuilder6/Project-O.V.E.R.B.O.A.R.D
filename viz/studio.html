@@ -54,15 +54,20 @@
         </div>
         <div class="row">
           <button type="button" id="btn-save" class="btn small" title="Save to missions/ (Ctrl+S)">Save</button>
-          <button type="button" id="btn-download" class="btn small">Download</button>
-          <button type="button" id="btn-upload-mission" class="btn small">Open file...</button>
-          <input type="file" id="file-mission" accept=".json,application/json" hidden>
         </div>
-        <div class="row">
-          <button type="button" id="btn-download-project" class="btn small" title="The mission, the robot and the options in one file">Download project</button>
-          <button type="button" id="btn-upload-project" class="btn small">Open project...</button>
-          <input type="file" id="file-project" accept=".json,application/json" hidden>
-        </div>
+        <details id="mission-files">
+          <summary>Files</summary>
+          <div class="row">
+            <button type="button" id="btn-download" class="btn small">Download the mission</button>
+            <button type="button" id="btn-upload-mission" class="btn small">Open a mission file...</button>
+            <input type="file" id="file-mission" accept=".json,application/json" hidden>
+          </div>
+          <div class="row">
+            <button type="button" id="btn-download-project" class="btn small" title="The mission, the robot and the options in one file">Download the project</button>
+            <button type="button" id="btn-upload-project" class="btn small">Open a project file...</button>
+            <input type="file" id="file-project" accept=".json,application/json" hidden>
+          </div>
+        </details>
         <p class="hint" id="waypoint-count">0 waypoints</p>
         <p class="hint" id="path-summary">Add waypoints to see the path length.</p>
         <p class="hint" id="mission-state">Not saved to missions/ yet</p>
@@ -70,7 +75,7 @@
           <summary>History</summary>
           <div id="history-list"></div>
         </details>
-        <p class="hint">Ctrl+Z undo &middot; Ctrl+S save &middot; Space play</p>
+        <p class="hint">Ctrl+Z undo &middot; Ctrl+S save &middot; Space play &middot; the arrow keys move the selected waypoint</p>
       </section>
     </section>
 
@@ -322,6 +327,10 @@
     <section class="tabpanel" id="panel-result" role="tabpanel" aria-labelledby="tab-result">
       <section class="block">
         <p class="hint" id="result-status">No solve yet.</p>
+        <div class="row" id="validate-row" hidden>
+          <button type="button" id="btn-validate" class="btn small">Check it, then solve again</button>
+          <span class="hint">Checks the path against your robot before it is used.</span>
+        </div>
         <dl class="facts" id="result-facts"></dl>
         <p class="hint explainer" id="solve-diff"></p>
         <div id="collisions"></div>

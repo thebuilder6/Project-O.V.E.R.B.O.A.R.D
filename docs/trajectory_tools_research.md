@@ -102,7 +102,7 @@ The validation thresholds (5 mm tracking, 2 cm envelope) are model checks, not h
 2. **Connect or remove Multi-Verse (KI-004).** Add a way to pass a full refined trajectory into the simple solver (it already has `guess_style` seeds) and use it in the final polish, or delete the experimental path and worker flags.
 3. **Fix the install path (KI-006).** Add JAX/JAXOpt/Immrax/pandas as an optional extra, and make the simple mode the obvious quick start.
 4. **Finish export/runtime edge cases (KI-011, KI-012).** Unwrap headings across ±π and fire the final event.
-5. **Make benchmarks trustworthy (KI-015).** Check convergence, pass an explicit config, and repair the random suite generator.
+5. **Make benchmarks trustworthy (KI-015).** Done: the pipeline mode checks convergence, the config is explicit, and the random suite generator solves every mission.
 
 ---
 

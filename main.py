@@ -11,6 +11,14 @@ import os
 import webbrowser
 from pathlib import Path
 
+# A first-time user who runs this before installing anything should get the
+# environment report with the install command, not an ImportError traceback.
+# diagnostics is stdlib only, so it works before anything is installed.
+from diagnostics import missing_core_packages, run_doctor
+
+if __name__ == "__main__" and missing_core_packages():
+    raise SystemExit(run_doctor())
+
 import click
 import numpy as np
 
@@ -199,8 +207,12 @@ def _candidate_specs(base_accuracy_weight, count, use_styles=True, dt_mode="auto
 def _solve_candidate_worker(payload):
     """Solve one candidate. Runs in a worker process when candidates are parallel.
 
-    Returns (samples, stats). A candidate that raises is reported as a
+    Returns (samples, stats, history). A candidate that raises is reported as a
     non-converged attempt, so the export gate stays closed for it (KI-001).
+
+    The history is the solver's iteration log. It travels with the result
+    because the solver runs in *this* worker, and the caller has no other
+    handle on it.
     """
     robot_cfg, wps, spec, solve_kwargs, use_multiverse = payload
     try:
@@ -211,12 +223,12 @@ def _solve_candidate_worker(payload):
         else:
             optimizer = TrajectoryOptimizer(robot_cfg)
         samples, stats = optimizer.solve(wps, **solve_kwargs)
-        return samples, stats
+        return samples, stats, list(getattr(optimizer, "iteration_history", []))
     except Exception as exc:
         import traceback
         traceback.print_exc()
         return [], {"converged": False, "final_cost": float("inf"),
-                    "total_time": 0.0, "error": str(exc)}
+                    "total_time": 0.0, "error": str(exc)}, []
 
 
 def _solve_candidates(payloads, workers, quiet, parallel, local_optimizer=None):
@@ -226,25 +238,43 @@ def _solve_candidates(payloads, workers, quiet, parallel, local_optimizer=None):
     worker processes. Validation deliberately stays in the calling process:
     the JAX validator is warm there, and every worker would pay the import
     and the compile cost again.
+
+    Returns ``(results, histories)``. ``results`` is a list of
+    ``(samples, stats)`` and ``histories`` a list of the solver's iteration
+    log, one per candidate. The log is empty when the candidate was not
+    asked to capture it.
+
+    The log travels with the result because the solver may run in a worker
+    process: the caller holds no optimizer of its own in that case, so
+    without this the convergence plot would be empty whenever the
+    candidates are solved in parallel.
     """
     if not payloads:
-        return []
+        return [], []
     if len(payloads) == 1 or not parallel:
         if local_optimizer is not None:
             # Solve here, with the optimizer this process already holds. The
             # convergence capture stays available.
             results = []
+            histories = []
             for robot_cfg, wps, spec, solve_kwargs, use_multiverse in payloads:
                 try:
-                    results.append(local_optimizer.solve(wps, **solve_kwargs))
+                    before = len(getattr(local_optimizer, "iteration_history", []))
+                    samples, stats = local_optimizer.solve(wps, **solve_kwargs)
+                    history = list(
+                        getattr(local_optimizer, "iteration_history", []))[before:]
+                    results.append((samples, stats))
+                    histories.append(history)
                 except Exception as exc:
                     import traceback
                     traceback.print_exc()
                     results.append(([], {"converged": False,
                                          "final_cost": float("inf"),
                                          "total_time": 0.0, "error": str(exc)}))
-            return results
-        return [_solve_candidate_worker(p) for p in payloads]
+                    histories.append([])
+            return results, histories
+        solved = [_solve_candidate_worker(p) for p in payloads]
+        return [pair[:2] for pair in solved], [pair[2] for pair in solved]
 
     max_workers = max(1, min(len(payloads), int(workers)))
     # Every worker is its own process. One BLAS thread per worker stops the
@@ -255,18 +285,19 @@ def _solve_candidates(payloads, workers, quiet, parallel, local_optimizer=None):
     try:
         from concurrent.futures import ProcessPoolExecutor
         with ProcessPoolExecutor(max_workers=max_workers) as pool:
-            return list(pool.map(_solve_candidate_worker, payloads))
+            solved = list(pool.map(_solve_candidate_worker, payloads))
     except Exception as exc:
         # A pool that cannot start must not lose the run: solve here instead.
         if not quiet:
             click.echo(f"  Parallel solving unavailable ({exc}); solving sequentially.")
-        return [_solve_candidate_worker(p) for p in payloads]
+        solved = [_solve_candidate_worker(p) for p in payloads]
     finally:
         for name, value in saved_env.items():
             if value is None:
                 os.environ.pop(name, None)
             else:
                 os.environ[name] = value
+    return [pair[:2] for pair in solved], [pair[2] for pair in solved]
 
 
 def _export_block_reason(stats, validate, attempt_passed):
@@ -374,9 +405,20 @@ def _segment_report(samples_data, samples_per_segment, thresholds, immrax_report
 
 
 def _emit_validation_report(attempts, selected_index):
-    """Print the machine-readable validation summary."""
+    """Print the machine-readable validation summary.
+
+    Every candidate carries its score vector: the duration, the reachability
+    envelope, the tracking error, the peak wheel jerk, and the biggest
+    excess of the envelope over the local threshold. The selection rule can
+    therefore be re-run offline on the numbers, without solving anything
+    again (Q3's step 1, Q10's step 1).
+    """
     candidates = []
     for number, attempt in enumerate(attempts, 1):
+        segments = attempt.get("segments", []) or []
+        excess = max((float(segment.get("envelope_m", 0.0))
+                      - float(segment.get("limit_m", 0.0))
+                      for segment in segments), default=0.0)
         candidates.append({
             "index": number,
             "style": attempt.get("guess_style"),
@@ -385,12 +427,14 @@ def _emit_validation_report(attempts, selected_index):
             "duration_s": _finite(attempt.get("duration")),
             "envelope_cm": _finite(attempt.get("tube", 0.0) * 100.0),
             "tracking_cm": _finite(attempt.get("tracking_m", 0.0) * 100.0),
+            "max_excess_cm": _finite(excess * 100.0),
+            "peak_jerk_m_s3": _finite(attempt.get("peak_jerk_m_s3")),
             "heading_error_deg": _finite(
                 (attempt.get("heading_rad", 0.0) or 0.0) * 180.0 / math.pi),
             "ok": bool(attempt.get("ok")),
             "converged": bool(attempt.get("converged")),
             "reasons": list(attempt.get("reasons", [])),
-            "segments": attempt.get("segments", []),
+            "segments": segments,
         })
     payload = {"selected": selected_index, "candidates": candidates}
     click.echo(VALIDATION_MARKER + json.dumps(payload))
@@ -895,17 +939,6 @@ def main(ctx, config, waypoints, output, gui, gui_port, doctor, multiverse, simp
             fg="yellow",
         )
 
-    # A motor written from memory is a guess. The published SPIKE Prime
-    # motors say whether the declared numbers are in the neighbourhood of a
-    # real LEGO motor; a measured robot does not need this.
-    if not quiet:
-        from drivetrain import compare_declared_motor
-        motor_check = compare_declared_motor(
-            robot_cfg.t_max_nm, robot_cfg.v_max_rad_s,
-            robot_cfg.wheel_radius, robot_cfg.gearing)
-        if motor_check.get("suspicious"):
-            click.secho(f"  Motor: {motor_check['note']}.", fg="yellow")
-
     digital_twin = None
     if sysid_fit:
         if not (validate or live):
@@ -999,6 +1032,22 @@ def main(ctx, config, waypoints, output, gui, gui_port, doctor, multiverse, simp
                 "declared motor is used."
             )
 
+    # A motor written from memory is a guess. The published SPIKE Prime
+    # motors say whether the numbers the plan will use are in the
+    # neighbourhood of a real LEGO motor.
+    #
+    # The check is made here, after the fit has replaced the declared
+    # numbers, so it looks at the motor the plan is really made against.
+    # A robot that was measured does not need this, and a warning about its
+    # old guess would only train the operator to ignore the warning.
+    if not quiet:
+        from drivetrain import compare_declared_motor
+        motor_check = compare_declared_motor(
+            robot_cfg.t_max_nm, robot_cfg.v_max_rad_s,
+            robot_cfg.wheel_radius, robot_cfg.gearing)
+        if motor_check.get("suspicious"):
+            click.secho(f"  Motor: {motor_check['note']}.", fg="yellow")
+
     # Choose optimizer
     if multiverse:
         if not quiet:
@@ -1090,8 +1139,8 @@ def main(ctx, config, waypoints, output, gui, gui_port, doctor, multiverse, simp
     if not quiet and len(solve_payloads) > 1:
         click.echo(f"Solving {len(solve_payloads)} candidates "
                    f"({'in parallel' if parallel else 'sequentially'})...")
-    solved = _solve_candidates(solve_payloads, workers, quiet, parallel,
-                                local_optimizer=optimizer)
+    solved, histories = _solve_candidates(solve_payloads, workers, quiet, parallel,
+                                         local_optimizer=optimizer)
 
     for cand_idx, (spec, solve_result) in enumerate(zip(candidate_specs, solved)):
         curr_accuracy_weight = spec["accuracy_weight"]
@@ -1121,6 +1170,8 @@ def main(ctx, config, waypoints, output, gui, gui_port, doctor, multiverse, simp
             "guess_style": guess_style,
             "per_segment_dt": per_segment_dt,
             "accuracy_weight": curr_accuracy_weight,
+            "iteration_history": (histories[cand_idx]
+                                  if cand_idx < len(histories) else []),
             "reasons": [],
         }
         all_attempts.append(attempt_record)
@@ -1215,6 +1266,11 @@ def main(ctx, config, waypoints, output, gui, gui_port, doctor, multiverse, simp
                 attempt_record["ok"] = False
                 attempt_record["reasons"] = list(attempt_record["reasons"]) + \
                     _cpu_failure_reasons(cpu_summary)
+            # The peak wheel jerk, for the score vector. It is the quantity
+            # the accuracy weight trades against, so it belongs beside the
+            # other scores (Q10's step 1).
+            attempt_record["peak_jerk_m_s3"] = float(
+                cpu_summary.get("metrics", {}).get("max_jerk_m_s3", 0.0) or 0.0)
 
         # Per-segment detail, so a failure can be pinned to a part of the path.
         attempt_record["segments"] = _segment_report(
@@ -1378,7 +1434,15 @@ def main(ctx, config, waypoints, output, gui, gui_port, doctor, multiverse, simp
 
     if iteration_history:
         # The way the trajectory converged, for a tool that plots it.
-        history = getattr(optimizer, "iteration_history", []) or []
+        #
+        # The log belongs to the candidate that was selected: the candidates
+        # are independent, so the log of a candidate that lost describes a
+        # trajectory that was never written. The candidates may have been
+        # solved in worker processes, so the log comes with the result.
+        history = []
+        if all_attempts:
+            chosen = all_attempts[max(0, (selected_index or 1) - 1)]
+            history = chosen.get("iteration_history") or []
         entries = []
         for entry in history:
             item = dict(entry)

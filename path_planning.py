@@ -38,20 +38,55 @@ class ReedsSheppPath:
             List of (x, y, heading) waypoints along the path, or None if planning fails
         """
         try:
-            # rsplan path function: path(start_pose, end_pose, turn_radius, runway_length, step_size, length_tolerance)
+            # rsplan returns a Path object; its waypoints() method holds the
+            # list of states. Reading the Path as a list raised a TypeError,
+            # the `except` below swallowed it, and every call returned None:
+            # the "Reeds-Shepp bootstrap" never ran (KI-004).
             result = path(start_pose, goal_pose, self.turning_radius, 0.0, step_size)
 
-            if result is None or len(result) == 0:
+            if result is None:
+                return None
+
+            states = result.waypoints()
+            if not states:
                 return None
 
             # Convert path to list of waypoints
             waypoints = []
-            for state in result:
-                waypoints.append((state[0], state[1], state[2]))
+            for state in states:
+                waypoints.append((state.x, state.y, state.yaw))
 
             return waypoints
         except Exception:
             # If Reeds-Shepp fails, return None to fall back to linear interpolation
+            return None
+
+    def plan_with_direction(self, start_pose: Tuple[float, float, float],
+                            goal_pose: Tuple[float, float, float],
+                            step_size: float = 0.05
+                            ) -> Optional[List[Tuple[float, float, float, int]]]:
+        """
+        The path with the direction of travel on every state.
+
+        A Reeds-Shepp path may include reverse manoeuvres, and the direction
+        is what tells a caller whether a state is driven forwards or
+        backwards. It is the topology the path was planned with.
+
+        Returns:
+            List of (x, y, heading, driving_direction) tuples, or None if
+            planning fails. ``driving_direction`` is +1 forwards, -1
+            backwards.
+        """
+        try:
+            result = path(start_pose, goal_pose, self.turning_radius, 0.0, step_size)
+            if result is None:
+                return None
+            states = result.waypoints()
+            if not states:
+                return None
+            return [(state.x, state.y, state.yaw, int(state.driving_direction))
+                    for state in states]
+        except Exception:
             return None
 
 

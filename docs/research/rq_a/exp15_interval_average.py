@@ -20,11 +20,22 @@ If the robot is told to move at the interval-average velocity along the
 chord, it traces exactly the path the plan assumed - because the plan's
 trapezoidal rule IS "move at the interval average along the chord".
 
-Variants:
-  A    as shipped
-  V    interval-average velocity only
-  W    interval-average turn rate only (omega from the heading's slope)
-  VW   both, with the gain recomputed from them
+The turn rate half of this is already in the tree (KI-027): the shipped
+reference takes the turn rate as the derivative of the interpolated
+heading, which is constant over the interval, and recomputes the gain
+from it. So the variants below are measured ON TOP of what ships:
+
+  A    as shipped: the turn rate from the heading's slope, the gain
+       recomputed, the velocity interpolated
+  V    interval-average velocity (and the gain recomputed from it)
+  W    the turn rate taken as the plan's own average omega instead of the
+       heading's slope (and the gain recomputed from it)
+  VW   both
+
+Before KI-027 the baseline was the legacy reference (the turn rate as a
+line of its own, the gain interpolated), and the turn rate half of the
+fix was worth 2-3.6x. It is in the tree now, so what is left to measure
+is the velocity half.
 """
 import json
 import math
@@ -55,6 +66,13 @@ def solve(mission, n, out):
 
 
 def make(mode):
+    """The reference of the variant, built on the shipped one.
+
+    The shipped reference (KI-027) takes the turn rate as the derivative of
+    the interpolated heading and recomputes the gain from the reported v and
+    omega. The variants change the velocity, the turn rate or both, and the
+    gain always follows whatever they report.
+    """
     def ref(s0, s1, dt, track_width, s, ramsete_b=2.0):
         x0, y0, th0 = s0["x"], s0["y"], s0["heading"]
         th1 = s1["heading"]
@@ -73,16 +91,12 @@ def make(mode):
         else:
             ref_v = v0 + (v1 - v0) * s
         if mode in ("W", "VW"):
-            ref_om = (th1 - th0) / dt             # the interval average
+            ref_om = 0.5 * (om0 + om1)           # the plan's average omega
         else:
-            ref_om = om0 + (om1 - om0) * s
+            ref_om = (th1 - th0) / dt if dt > 0 else om0   # the heading's slope
 
-        if mode == "VW":
-            kr = math.sqrt(ref_om ** 2 + ramsete_b * ref_v ** 2)
-        else:
-            kr0 = math.sqrt(om0 ** 2 + ramsete_b * v0 ** 2)
-            kr1 = math.sqrt(om1 ** 2 + ramsete_b * v1 ** 2)
-            kr = kr0 + (kr1 - kr0) * s
+        # The gain follows whatever the variant reports.
+        kr = math.sqrt(ref_om ** 2 + ramsete_b * ref_v ** 2)
         return ref_x, ref_y, ref_heading, ref_v, ref_om, kr
     return ref
 

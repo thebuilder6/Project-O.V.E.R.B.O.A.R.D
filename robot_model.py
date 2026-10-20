@@ -1,5 +1,4 @@
 from typing import Dict, Tuple, Any, Optional
-import numpy as np
 import casadi as ca
 
 # Center-of-mass height used by every weight-transfer calculation. Kept in

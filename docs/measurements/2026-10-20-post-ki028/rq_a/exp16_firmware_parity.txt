@@ -1,0 +1,26 @@
+mission                       n    legacy   gate   shipped   gate      5 ms   gate  hold cost
+----------------------------------------------------------------------------------------------------
+example_s_curve              10    1.5126   fail    1.4678   fail    1.6040   fail      0.92x
+example_s_curve              20    0.2415   fail    0.2454   fail    0.2464   fail      1.00x
+example_s_curve              40    0.2703   PASS    0.2714   PASS    0.0764   PASS      3.55x
+example_s_curve              80    0.2909   fail    0.2923   fail    0.0707   fail      4.13x
+example_with_stops           10    2.2445   fail    2.1913   fail    2.3670   fail      0.93x
+example_with_stops           20    0.4550   fail    0.4610   fail    0.3187   fail      1.45x
+example_with_stops           40    0.4108   PASS    0.4183   PASS    0.1616   PASS      2.59x
+example_with_stops           80    0.3441   fail    0.3414   fail    0.1052   fail      3.25x
+example_complex_mission      10    0.2787   PASS    0.3033   PASS    0.1465   PASS      2.07x
+example_complex_mission      20    0.3306   PASS    0.3297   PASS    0.0927   PASS      3.56x
+example_complex_mission      40    0.3093   PASS    0.3108   PASS    0.0834   PASS      3.72x
+example_complex_mission      80    0.2269   PASS    0.2288   PASS    0.0724   PASS      3.16x
+example_straight             10    0.3410   PASS    0.3410   PASS    0.0128   PASS     26.66x
+example_straight             20    0.4190   PASS    0.4190   PASS    0.0903   PASS      4.64x
+example_straight             40    0.4316   PASS    0.4316   PASS    0.1106   PASS      3.90x
+example_straight             80    0.3733   fail    0.3733   fail    0.1059   fail      3.53x
+example_with_events          10    0.4607   PASS    0.4586   PASS    0.3748   PASS      1.22x
+example_with_events          20    0.3185   PASS    0.3220   PASS    0.1236   PASS      2.60x
+example_with_events          40    0.2990   PASS    0.3064   PASS    0.0768   PASS      3.99x
+example_with_events          80    0.2983   fail    0.3080   fail    0.0746   fail      4.13x
+example_mission_first4       10    0.2334   PASS    0.2354   PASS    0.2209   PASS      1.07x
+example_mission_first4       20    0.2339   PASS    0.2399   PASS    0.0574   PASS      4.18x
+example_mission_first4       40    0.1878   PASS    0.1880   PASS    0.0529   PASS      3.56x
+example_mission_first4       80    0.1710   PASS    0.1715   PASS    0.0537   PASS      3.20x

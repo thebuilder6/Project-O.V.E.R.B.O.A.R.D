@@ -3,6 +3,10 @@ Environment checks for `python main.py --doctor` and the browser studio.
 
 Everything here is read-only: it reports what is installed, what is missing and
 what to do about it, without importing the heavy optional packages.
+
+This module is stdlib only on purpose: it has to work on a machine where
+nothing is installed yet, so `main.py` can report the install command instead
+of dying with an ImportError.
 """
 
 import importlib.metadata
@@ -35,6 +39,23 @@ EXAMPLE_FILES = [
     "examples/example_straight.json",
     "examples/example_complex_mission.json",
 ]
+
+
+def missing_core_packages():
+    """The pip names of the required packages that are not installed."""
+    return [pip_name for module, pip_name, required in CORE_PACKAGES
+            if required and not module_available(module)]
+
+
+def missing_optional_packages():
+    """The pip names of the optional packages that are not installed."""
+    return [pip_name for module, pip_name, _ in OPTIONAL_PACKAGES
+            if not module_available(module)]
+
+
+def install_script():
+    """The one-click install script for this platform."""
+    return "install.bat" if sys.platform.startswith("win") else "install.sh"
 
 
 def module_available(name):
@@ -185,12 +206,20 @@ def run_doctor(config_path=None):
     print("=" * 70)
     print(f"{ok} ok, {warn} warning(s), {error} problem(s)")
 
+    missing = missing_core_packages()
     if error:
         print("\nThe core solver is not ready. Fix the [fail] lines above and try again.")
+        if missing:
+            print(f"  Missing: {', '.join(missing)}")
+        print(f"  Easiest: run {install_script()} (it sets up a virtual environment"
+              " and installs everything).")
+        print("  Or:      pip install -r requirements.txt")
         return 1
-    if warn:
-        print("\nThe core solver is ready. The warnings only affect --validate, "
-              "--multiverse and sysid_fit.py.")
+    if missing_optional_packages():
+        print("\nThe core solver is ready. The optional packages are missing, so "
+              "--validate, --multiverse and sysid_fit.py do not work yet.")
+        print("  To install them: pip install -r requirements-optional.txt")
     else:
         print("\nEverything is ready.")
+    print("\nStart the studio with: python main.py --gui")
     return 0

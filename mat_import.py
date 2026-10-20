@@ -29,7 +29,7 @@ import sys
 import tempfile
 from typing import Optional, Tuple
 
-from PIL import Image, ImageChops
+from PIL import Image
 
 # The reference simulator's crop: the content below the page header and
 # above the footer. It matches FIRST's "Wireframe & Path Diagram" layout.
@@ -139,14 +139,20 @@ def compose_mat(source: str, out_path: str, mat_mm: str = "2004x1143",
 
     source_aspect = (x1 - x0 + 1) / (y1 - y0 + 1)
     mat_aspect = width_mm / height_mm
+    aspect_error = abs(source_aspect - mat_aspect) / mat_aspect
     result = {
         "crop": list(box),
         "source_aspect": source_aspect,
         "mat_aspect": mat_aspect,
+        "aspect_error": aspect_error,
         "size": list(size),
         "out": out_path,
     }
-    if abs(source_aspect - mat_aspect) / mat_aspect > 0.01:
+    if aspect_error > 0.01:
+        # The picture is stretched to the mat's size, so a crop that is not
+        # the mat's shape puts its features away from where they belong.
+        # The caller decides what to do about it; the number is in the
+        # result either way.
         print(
             "WARNING: the source aspect differs from the mat by more than 1% "
             f"({source_aspect:.4f} against {mat_aspect:.4f}); check the mat "

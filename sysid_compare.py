@@ -116,11 +116,6 @@ def load_trajectory_document(path: str) -> Dict[str, Any]:
     }
 
 
-def load_trajectory(path: str) -> List[Dict[str, Any]]:
-    """Load predicted pose samples from a .traj file or a CSV."""
-    return load_trajectory_document(path)["samples"]
-
-
 def _parse_indices(value: Optional[str], name: str) -> Optional[List[int]]:
     if value is None:
         return None

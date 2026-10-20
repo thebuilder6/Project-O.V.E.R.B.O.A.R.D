@@ -638,6 +638,24 @@ The seeds only change the initial guess; every waypoint, stop, and force limit i
 
 ## Troubleshooting Examples
 
+### The program does not start at all
+
+If `python main.py` dies with `ModuleNotFoundError: No module named 'click'`
+(or any other package), nothing is installed yet. Run the install script from
+the project folder:
+
+```bash
+install.bat            # Windows
+sh install.sh          # macOS/Linux
+```
+
+It creates a `.venv`, installs everything the solver and the studio need, and
+runs the check at the end. `python main.py --doctor` reports the same thing
+without needing any package, and it names the exact command that fixes what is
+missing.
+
+---
+
 ### Example 20: Debugging Optimization Failure
 
 If optimization fails or times out:

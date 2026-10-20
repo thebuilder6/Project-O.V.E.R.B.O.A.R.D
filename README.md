@@ -7,6 +7,56 @@ A trajectory optimizer for LEGO differential-drive robots in FIRST LEGO League (
 
 The current working tree contains uncommitted fixes for several audit items, including KI-001, KI-002, KI-003, KI-007 through KI-010, KI-013, KI-014, and KI-019 (see [KNOWN_ISSUES.md](KNOWN_ISSUES.md)). Multi-Verse refinement is still experimental: it runs, but the refined guess is discarded by the final polish (KI-004).
 
+## Start here (first time)
+
+Three steps. No Python knowledge needed.
+
+### 1. Get the code
+
+- **With git:**
+
+  ```bash
+  git clone https://github.com/thebuilder6/Project-O.V.E.R.B.O.A.R.D.git
+  cd Project-O.V.E.R.B.O.A.R.D
+  ```
+
+- **Without git:** download the **Code → Download ZIP** from
+  [the project page](https://github.com/thebuilder6/Project-O.V.E.R.B.O.A.R.D) and
+  unzip it. Everything below works from the unzipped folder.
+
+### 2. Install
+
+Double-click **`install.bat`** (Windows) or run **`sh install.sh`**
+(macOS/Linux).
+
+It creates a private virtual environment in `.venv`, installs the solver and the
+studio into it, and then checks the result. It is safe to run again: the
+existing `.venv` is reused and the packages are updated.
+
+You need **Python 3.9 or newer**. If the script says Python was not found,
+install it from [python.org](https://www.python.org/downloads/) and tick
+**Add python.exe to PATH** in the installer, then run the script again.
+
+### 3. Run the studio
+
+Double-click **`start_studio.bat`** (Windows) or run **`sh start_studio.sh`**
+(macOS/Linux). Your browser opens on the studio: draw a mission on the field,
+press **Solve**, and download the trajectory or the controller file.
+
+The studio script installs the virtual environment itself if it is not there
+yet, so on a fresh download you can skip step 2 and go straight to this one.
+
+That is the whole loop. The terminal runs the same program:
+
+```bash
+.venv\Scripts\python main.py --gui     # Windows
+.venv/bin/python main.py --gui         # macOS/Linux
+```
+
+If anything is missing, `python main.py --doctor` prints what is wrong and the
+exact command that fixes it. The [Installation](#installation) section below
+explains the same steps in detail.
+
 ## Features
 
 - **Time-optimal trajectories**: Minimizes travel time while respecting actuator and traction limits
@@ -22,10 +72,16 @@ The current working tree contains uncommitted fixes for several audit items, inc
 
 ## Installation
 
+The fast path is the one-click script: **`install.bat`** (Windows) or
+**`sh install.sh`** (macOS/Linux). It creates a `.venv` in the project folder,
+installs the core packages, installs the optional ones, and runs the check
+below. The steps underneath are what it does, if you would rather run them
+yourself.
+
 ### Prerequisites
 
-- Python 3.8+
-- pip
+- Python 3.9 or newer (the install script and the check both want 3.9)
+- pip (it comes with Python)
 
 ### Core install (solver and studio)
 
@@ -34,6 +90,15 @@ pip install -r requirements.txt
 ```
 
 This installs numpy, CasADi, Plotly, Click, Matplotlib and rsplan. It is enough for the default solver and the browser studio.
+
+A virtual environment is the safer place for it, because it keeps the packages
+out of the system Python and makes "uninstall" a matter of deleting the folder:
+
+```bash
+python -m venv .venv
+.venv\Scripts\python -m pip install -r requirements.txt   # Windows
+.venv/bin/python -m pip install -r requirements.txt       # macOS/Linux
+```
 
 ### Optional extras (validation, Multi-Verse, sysid fitting)
 
@@ -220,6 +285,10 @@ When validation passes, the command writes:
 python main.py --gui
 ```
 
+Or double-click `start_studio.bat` (Windows) / `sh start_studio.sh`
+(macOS/Linux), which uses the `.venv` from `install.bat` and opens the same
+studio.
+
 The studio opens in your browser: draw the mission on the field, set headings, stops and events, pick a preset, and solve. The result shows the trajectory, the reachability envelope and the numbers, and you can download the trajectory and the controller file.
 
 The page is three columns. The left one is what you set (tabs: **Mission**, **Robot**, **Field**, **Solve**), the canvas in the middle is the work, and the right one is what you read (tabs: **Result**, **Waypoint**, **Plots**, **Run**). The line in the header always carries the result, so a tabbed column can never hide the answer, and the field carries a key to its own colours. Every control is listed in [docs/STUDIO_UI_INVENTORY.md](docs/STUDIO_UI_INVENTORY.md), with the structure and how to extend it.
@@ -381,6 +450,8 @@ Options:
 
 ```text
 Project-O.V.E.R.B.O.A.R.D/
+├── install.bat / install.sh     # One-click install into .venv
+├── start_studio.bat / .sh       # One-click start of the browser studio
 ├── main.py                    # CLI entry point and export gate
 ├── optimizer.py               # CasADi + IPOPT trajectory optimizer
 ├── multiverse_optimizer.py    # Experimental Multi-Verse pipeline

@@ -14,7 +14,12 @@ const state = {
     showEnvelope: true,
     showPath: true,
     jobId: null,
+    // One timer per poll loop. They used to share one, so starting any
+    // second loop cancelled the first: the solve's poll stopped firing and
+    // the studio looked hung although the server had finished.
     pollTimer: null,
+    pushPollTimer: null,
+    collectPollTimer: null,
     health: null,
     presets: {},
     dirty: false,
@@ -24,9 +29,15 @@ const state = {
     failingSegments: new Set(),
     worstSegment: -1,
     reportCandidate: null,
+    // One retry budget per poll loop: they used to share one, so a solve
+    // that had used its three retries left the push with none.
     pollRetries: 0,
+    pushPollRetries: 0,
     solveJobId: null,
     solveHasTrajectory: false,
+    /* Whether the last solve passed the validator. The push to the robot
+       needs it: a trajectory that was never checked is not an approved one. */
+    solveValidated: false,
     pushJobId: null,
     measuredPoses: [],
     robotInfo: { events: [], geometry: {} },
@@ -152,19 +163,21 @@ const PLOTS = [
 ];
 
 /* The key to the field's colours. The legend is built from this list, so a
-   new drawn thing has one entry here and the key cannot go stale. */
+   new drawn thing has one entry here and the key cannot go stale. The key
+   is live: an entry for something that is not on the field is hidden, so the
+   list is a key to what the operator can see, not a list of possibilities. */
 const CANVAS_LEGEND = [
-    { color: '#38bdf8', label: 'Planned trajectory' },
-    { color: 'rgba(52, 211, 153, 0.65)', label: 'Reachability envelope', dash: true },
-    { color: 'rgba(148, 163, 184, 0.85)', label: 'Path between waypoints', dash: true },
-    { color: 'rgba(226, 232, 240, 0.6)', label: "Solver's first guess", dash: true },
-    { color: 'rgba(148, 163, 184, 0.5)', label: 'Earlier solves' },
-    { color: '#f472b6', label: 'Waypoint with a heading', dot: true },
-    { color: '#94a3b8', label: 'Waypoint, heading free', dot: true },
-    { color: '#34d399', label: 'Measured pose from the robot', dot: true },
-    { color: 'rgba(56, 189, 248, 0.95)', label: 'Mission model on the mat' },
-    { color: 'rgba(248, 113, 113, 0.95)', label: 'Collision with a mission model' },
-    { color: 'rgba(251, 191, 36, 0.95)', label: 'Failing segment, uncertain collision' },
+    { key: 'trajectory', color: '#38bdf8', label: 'Planned trajectory' },
+    { key: 'envelope', color: 'rgba(52, 211, 153, 0.65)', label: 'Reachability envelope', dash: true },
+    { key: 'path', color: 'rgba(148, 163, 184, 0.85)', label: 'Path between waypoints', dash: true },
+    { key: 'ghost', color: 'rgba(226, 232, 240, 0.6)', label: "Solver's first guess", dash: true },
+    { key: 'runs', color: 'rgba(148, 163, 184, 0.5)', label: 'Earlier solves' },
+    { key: 'heading', color: '#f472b6', label: 'Waypoint with a heading', dot: true },
+    { key: 'free', color: '#94a3b8', label: 'Waypoint, heading free', dot: true },
+    { key: 'measured', color: '#34d399', label: 'Measured pose from the robot', dot: true },
+    { key: 'models', color: 'rgba(56, 189, 248, 0.95)', label: 'Mission model on the mat' },
+    { key: 'collision', color: 'rgba(248, 113, 113, 0.95)', label: 'Collision with a mission model' },
+    { key: 'failing', color: 'rgba(251, 191, 36, 0.95)', label: 'Failing segment, uncertain collision' },
 ];
 
 /* ------------------------------------------------------------------ api */
@@ -245,6 +258,18 @@ function setStatus(text, kind = '') {
     const node = el('header-status');
     node.textContent = text;
     node.className = `status ${kind}`;
+}
+
+/* The result line: a badge and a sentence. The sentence comes from the
+   server, so it is put in as text and never as HTML. */
+function setResultStatus(badgeKind, badgeText, message) {
+    const node = el('result-status');
+    node.textContent = '';
+    const badge = document.createElement('span');
+    badge.className = `badge ${badgeKind}`;
+    badge.textContent = badgeText;
+    node.appendChild(badge);
+    if (message) node.appendChild(document.createTextNode(` ${message}`));
 }
 
 /* The one line in the header that says where the last solve stands: the
@@ -490,7 +515,20 @@ function timingName(entry) {
     return entry.timing === 'per-segment' ? 'per-segment' : 'equal-duration';
 }
 
-/* Why the solver picked what it picked: the winner, and what the others cost. */
+/* A candidate that produced no samples has no duration, and the report
+   carries that as null. */
+function durationText(entry) {
+    const seconds = entry ? entry.duration_s : null;
+    if (seconds === null || seconds === undefined || !Number.isFinite(seconds)) {
+        return 'an unknown time';
+    }
+    return `${seconds.toFixed(2)} s`;
+}
+
+/* Why the solver picked what it picked: the winner, and what the others cost.
+   The rule is said out loud, because the winner is not always the fastest:
+   a passing candidate with the tightest envelope wins, and the shortest
+   time only breaks a tie. */
 function describeCandidates(report, winner) {
     const candidates = report.candidates || [];
     const parts = [];
@@ -503,14 +541,16 @@ function describeCandidates(report, winner) {
         const weightOf = (entry) => (entry.accuracy_weight ? ` at weight ${entry.accuracy_weight}` : '');
         if (winner) {
             parts.push(`${candidates.length} candidates: ${timingName(winner)}`
-                + `${weightOf(winner)} won in ${winner.duration_s.toFixed(2)} s, ${passed} passed`);
+                + `${weightOf(winner)} won in ${durationText(winner)}, ${passed} passed`);
         }
         if (failed.length) {
             const best = failed[0];
             parts.push(`the fastest that failed was ${timingName(best)}`
-                + `${weightOf(best)} in ${best.duration_s.toFixed(2)} s: `
+                + `${weightOf(best)} in ${durationText(best)}: `
                 + `${(best.reasons || []).join('; ')}`);
         }
+        parts.push('the winner is the candidate that passes with the tightest envelope; '
+            + 'the shortest time only breaks a tie');
         return parts.join('. ');
     }
 
@@ -521,20 +561,47 @@ function describeCandidates(report, winner) {
             ? `${timingName(winner)} ${winner.style || 'baseline'} won${duration}`
             : `no candidate passed; ${timingName(winner)} ${winner.style || 'baseline'} came closest${duration}`;
         parts.push(lead);
+        if (winner.ok) {
+            parts.push('the winner is the candidate that passes with the tightest envelope, '
+                + 'and the shortest time only breaks a tie');
+        }
     }
     candidates.forEach((entry) => {
         if (winner && entry === winner) return;
         const other = entry.duration_s;
         const mine = winner ? winner.duration_s : null;
         let difference = '';
+        let sameTime = false;
         if (other !== null && other !== undefined && mine !== null && mine !== undefined) {
             const delta = Math.abs(mine - other);
-            difference = other < mine
-                ? ` was ${delta.toFixed(2)} s faster` : ` was ${delta.toFixed(2)} s slower`;
+            sameTime = delta < 0.005;
+            difference = sameTime
+                ? ' took the same time'
+                : (other < mine
+                    ? ` was ${delta.toFixed(2)} s faster` : ` was ${delta.toFixed(2)} s slower`);
         }
         const why = entry.reasons && entry.reasons.length ? `: ${entry.reasons.join('; ')}` : '';
+        /* A candidate that passed but did not win needs the reason, or the
+           reader is left with a faster one that lost. */
+        let tail = why;
+        if (entry.ok && winner && winner.ok && other !== null && other !== undefined
+                && mine !== null && mine !== undefined && other <= mine) {
+            const hasEnvelope = winner.envelope_cm !== null && winner.envelope_cm !== undefined
+                && entry.envelope_cm !== null && entry.envelope_cm !== undefined;
+            /* Two candidates that are the same to the eye still differ: the
+               envelope decides, and the numbers are given to three places so
+               the difference can be seen. */
+            const apart = hasEnvelope
+                && Math.abs(entry.envelope_cm - winner.envelope_cm) > 0.0005;
+            tail = apart
+                ? `, but its envelope was ${entry.envelope_cm.toFixed(3)} cm against `
+                    + `${winner.envelope_cm.toFixed(3)} cm, so it did not win`
+                : (hasEnvelope
+                    ? ', and the tie went to the one that came first'
+                    : ', but it did not win');
+        }
         parts.push(`${timingName(entry)} ${entry.style || 'baseline'}${difference} `
-            + `but ${entry.ok ? 'passed' : 'failed'}${why}`);
+            + `${entry.ok ? 'and passed' : 'but failed'}${tail}`);
     });
     return parts.join('. ');
 }
@@ -567,11 +634,19 @@ function renderValidationReport(report) {
             ? '' : ` ${entry.duration_s.toFixed(2)}s`;
         const weight = (entry.accuracy_weight !== null && entry.accuracy_weight !== undefined
             && entry.accuracy_weight > 0) ? ` @${entry.accuracy_weight}` : '';
-        chip.textContent = `${i + 1}. ${timing}${weight}${duration} `
+        /* The seed is in the chip, not only in the tooltip: two candidates
+           with the same timing model are otherwise the same chip. */
+        chip.textContent = `${i + 1}. ${entry.style || 'baseline'} ${timing}${weight}${duration} `
             + `${entry.ok ? 'ok' : 'failed'}`;
+        // One title: the candidate's identity and why it failed. The second
+        // assignment used to overwrite the first, so the tooltip never
+        // showed the style or the weight.
+        const reasons = (entry.reasons || []).join('; ');
         chip.title = `${entry.style || 'baseline'}, ${timing}, `
-            + `weight ${entry.accuracy_weight === null ? '-' : entry.accuracy_weight}`;
-        chip.title = (entry.reasons || []).join('; ');
+            + `weight ${entry.accuracy_weight === null ? '-' : entry.accuracy_weight}`
+            + (entry.envelope_cm === null || entry.envelope_cm === undefined
+                ? '' : `, envelope ${entry.envelope_cm.toFixed(2)} cm`)
+            + (reasons ? `: ${reasons}` : '');
         chip.addEventListener('click', () => {
             state.reportCandidate = i;
             renderValidationReport(report);
@@ -588,7 +663,7 @@ function renderValidationReport(report) {
     const table = el('validation-table');
     table.innerHTML = '';
     const header = document.createElement('tr');
-    ['Segment', 'Envelope', 'Limit', 'Drift'].forEach((label) => {
+    ['Segment', 'Envelope', 'Limit', 'Side drift'].forEach((label) => {
         const th = document.createElement('th');
         th.textContent = label;
         header.appendChild(th);
@@ -618,7 +693,8 @@ function renderValidationReport(report) {
 
     const notes = [];
     if (candidate.tracking_cm !== null && candidate.tracking_cm !== undefined) {
-        notes.push(`closed-loop tracking ${candidate.tracking_cm.toFixed(2)} cm (gate 0.50 cm)`);
+        notes.push(`the robot tracked the path to within ${candidate.tracking_cm.toFixed(2)} cm `
+            + `(the limit is 0.50 cm)`);
     }
     if (candidate.reasons && candidate.reasons.length) {
         notes.push(candidate.reasons.join('; '));
@@ -918,6 +994,10 @@ function renderPushResult(job) {
     facts.innerHTML = '';
     const rows = [];
 
+    // The poses come first: the summary is built from them, so it has to
+    // read them after they are stored and not before.
+    state.measuredPoses = result.poses || [];
+
     const summary = pushSummary();
     if (summary) {
         rows.push(['Robot ended', `${summary.measured.x.toFixed(3)}, ${summary.measured.y.toFixed(3)} m`]);
@@ -946,7 +1026,6 @@ function renderPushResult(job) {
         ? `The hub reported: ${result.events.join(', ')}.`
         : '';
 
-    state.measuredPoses = result.poses || [];
     renderComparison(result.report);
     draw();
 }
@@ -1008,10 +1087,16 @@ async function pushToHub() {
         toast('Solve a mission first: the push runs an approved trajectory.', true);
         return;
     }
+    if (!state.solveValidated) {
+        toast('This trajectory has not been validated. Validate it before pushing it '
+            + 'to the robot.', true);
+        return;
+    }
     setStatus(`Pushing to the hub over ${state.hubConn.toUpperCase()} - the robot is driving`);
     el('push-status').textContent = 'Pushing. The robot is driving.';
     el('btn-push').disabled = true;
     el('log').textContent = '';
+    state.pushPollRetries = 0;
     try {
         const job = await api('/api/push', {
             method: 'POST',
@@ -1032,8 +1117,8 @@ async function pushToHub() {
 }
 
 function pollPush() {
-    clearTimeout(state.pollTimer);
-    state.pollTimer = setTimeout(async () => {
+    clearTimeout(state.pushPollTimer);
+    state.pushPollTimer = setTimeout(async () => {
         try {
             const job = await api(`/api/jobs/${state.pushJobId}`);
             el('log').textContent = (job.log || []).join('\n');
@@ -1054,8 +1139,8 @@ function pollPush() {
             }
             updatePushButton();
         } catch (err) {
-            if (state.pushJobId && state.pollRetries < 3) {
-                state.pollRetries += 1;
+            if (state.pushJobId && state.pushPollRetries < 3) {
+                state.pushPollRetries += 1;
                 pollPush();
                 return;
             }
@@ -1067,13 +1152,21 @@ function pollPush() {
 }
 
 function updatePushButton() {
+    /* Only a checked trajectory goes to the robot. A solve that was never
+       validated has no verdict, so it is not an approved one, and the
+       button says so instead of calling it approved. */
     const ready = Boolean(state.solveJobId && state.solveHasTrajectory);
-    el('btn-push').disabled = !ready;
+    const checked = state.solveValidated;
+    el('btn-push').disabled = !ready || !checked;
     const status = el('push-status');
     if (!ready) {
         status.textContent = 'Solve a mission first.';
-    } else if (!status.textContent || status.textContent.startsWith('Solve a mission')) {
-        status.textContent = 'The approved trajectory is ready to run on the robot.';
+    } else if (!checked) {
+        status.textContent = 'This trajectory has not been validated against your robot. '
+            + 'Turn validation on in the Solve tab and solve again before pushing it.';
+    } else if (!status.textContent || status.textContent.startsWith('Solve a mission')
+            || status.textContent.startsWith('This trajectory')) {
+        status.textContent = 'The validated trajectory is ready to run on the robot.';
     }
 }
 
@@ -1428,8 +1521,8 @@ async function startCollect() {
 }
 
 function pollCollect() {
-    clearTimeout(state.pollTimer);
-    state.pollTimer = setTimeout(async () => {
+    clearTimeout(state.collectPollTimer);
+    state.collectPollTimer = setTimeout(async () => {
         try {
             const job = await api(`/api/jobs/${state.collectJobId}`);
             el('log').textContent = (job.log || []).join('\n');
@@ -1601,10 +1694,13 @@ function renderPlotTabs() {
 
 /* The key to the field's colours, built from the same list the drawing
    uses. */
+const legendRows = {};
+
 function renderLegend() {
     const box = el('legend-items');
     if (!box) return;
     box.innerHTML = '';
+    for (const key of Object.keys(legendRows)) delete legendRows[key];
     CANVAS_LEGEND.forEach((item) => {
         const row = document.createElement('div');
         row.className = 'legend-item';
@@ -1618,6 +1714,41 @@ function renderLegend() {
         row.appendChild(swatch);
         row.appendChild(label);
         box.appendChild(row);
+        legendRows[item.key] = row;
+    });
+    updateLegend();
+}
+
+/* What is on the field right now. The key shows only these, so the list is
+   a key to the picture and not a list of things that might appear. */
+function legendVisibility() {
+    const samples = state.trajectory || [];
+    const field = state.fields[state.season];
+    const withEnvelope = samples.filter((sample) => sample.reachability_envelope).length >= 2;
+    const hasHeading = state.waypoints.some(
+        (point) => point.heading !== null && point.heading !== undefined);
+    const hasFree = state.waypoints.some(
+        (point) => point.heading === null || point.heading === undefined);
+    return {
+        trajectory: samples.length > 0,
+        envelope: state.showEnvelope && withEnvelope,
+        path: state.showPath && state.waypoints.length > 1,
+        ghost: Boolean(state.ghostStates && state.ghostStates.length),
+        runs: state.showRuns && state.runs.length > 0,
+        heading: hasHeading,
+        free: hasFree,
+        measured: state.measuredPoses.length > 0,
+        models: Boolean(field && field.obstacles && field.obstacles.length),
+        collision: state.collisions.length > 0,
+        failing: state.failingSegments.size > 0 || state.worstSegment >= 0,
+    };
+}
+
+function updateLegend() {
+    const visible = legendVisibility();
+    Object.keys(legendRows).forEach((key) => {
+        const row = legendRows[key];
+        if (row) row.hidden = !visible[key];
     });
 }
 
@@ -1766,6 +1897,16 @@ function drawGhostPath() {
 
 /* ------------------------------------------------- what to try next */
 
+/* The report names the timing model the way the CLI does: "per-segment" or
+   "equal-duration". The dropdown's own names are "per-segment", "uniform"
+   and "auto". A name the dropdown does not have leaves it blank, and a
+   blank dropdown means no timing flag at all, so the re-solve would run the
+   auto mode instead of the model the button names. */
+function timingOptionFor(timing) {
+    if (timing === 'equal-duration') return 'uniform';
+    return timing;
+}
+
 /* When a validation fails, name the lever that might fix it and offer to
  * pull it. The levers are the ones the measurements point at: the accuracy
  * weight and the timing model. */
@@ -1784,7 +1925,7 @@ function suggestFixes(report) {
         fixes.push({
             id: 'timing',
             label: `the ${faster.timing} timing model`,
-            timing: faster.timing,
+            timing: timingOptionFor(faster.timing),
         });
     }
 
@@ -1976,8 +2117,20 @@ function renderWaypointList() {
         if (point.stop) tags.push('stop');
         if (point.event) tags.push(point.event);
         if (point.precision_mode) tags.push('precision');
-        item.innerHTML = `<span>W${index} <span class="mono">(${point.x.toFixed(2)}, ${point.y.toFixed(2)})</span></span>`
-            + `<span class="tags">${tags.join(', ')}</span>`;
+        // Built from text nodes, not from an HTML string: the event name is
+        // free text from the editor or from a mission file, and a file can
+        // carry anything.
+        const label = document.createElement('span');
+        label.appendChild(document.createTextNode(`W${index} `));
+        const coords = document.createElement('span');
+        coords.className = 'mono';
+        coords.textContent = `(${point.x.toFixed(2)}, ${point.y.toFixed(2)})`;
+        label.appendChild(coords);
+        const tagBox = document.createElement('span');
+        tagBox.className = 'tags';
+        tagBox.textContent = tags.join(', ');
+        item.appendChild(label);
+        item.appendChild(tagBox);
         item.addEventListener('click', () => {
             state.selected = index;
             renderWaypointList();
@@ -2041,8 +2194,11 @@ function renderResult() {
         rows.push(['Solve (wall)', `${state.jobWallS.toFixed(2)} s`]);
         const speed = topSpeed();
         if (speed && summary.path_length_m > 0) {
+            /* The ideal is a straight run at the top speed. The plan cannot
+               beat it, so the number says how much of it it got. */
             const fastest = summary.path_length_m / speed;
-            rows.push(['vs. top speed', `${(summary.duration_s / fastest).toFixed(2)}x`]);
+            rows.push(['Time vs. top speed',
+                `${(summary.duration_s / fastest).toFixed(2)}x the ideal (${fastest.toFixed(2)} s)`]);
         }
     }
     renderCollisions(rows);
@@ -2394,13 +2550,46 @@ function collectOptions() {
     };
 }
 
+/* The message the operator reads, without the internal details. The CLI
+   names the file it would have written - a temporary folder that is gone
+   once the job ends - and the solver log keeps the full text. */
+function cleanError(message) {
+    if (!message) return '';
+    return String(message)
+        .replace(/^Error:\s*/i, '')
+        .replace(/No trajectory written to '[^']*'\.?/g, 'No trajectory was written.')
+        .trim();
+}
+
+/* A solve that never starts still has to clear the last verdict. Otherwise
+   the header keeps saying "Failed" from a solve that has nothing to do with
+   the mission on the field. */
+function refuseSolve(message) {
+    setStatus(message, 'warn');
+    setResultStatus('warn', 'Not solved', message);
+    toast(message, true);
+}
+
+/* The path on the field is the path of the last solve. When there is no
+   solve - none yet, or one that failed - the field shows the waypoints and
+   nothing else, so a stale path cannot be mistaken for the answer. */
+function clearTrajectory() {
+    state.trajectory = null;
+    playback.duration = 0;
+    playback.time = 0;
+    playback.playing = false;
+    el('playback').value = 0;
+    el('btn-play').textContent = 'Play';
+    updatePlaybackLabel();
+}
+
 async function solve() {
     if (state.waypoints.length < 2) {
-        toast('Add at least two waypoints before solving.', true);
+        refuseSolve('Add at least two waypoints before solving.');
         return;
     }
     if (!state.config) {
-        toast('Choose a robot configuration first.', true);
+        refuseSolve('Choose a robot configuration first.');
         return;
     }
     setBusy(true);
@@ -2408,6 +2597,7 @@ async function solve() {
         ? 'Sweeping the timing model and weight - this solves ten candidates'
         : 'Solving...');
     el('result-status').textContent = 'Solving...';
+    el('validate-row').hidden = true;
     el('log').textContent = '';
     state.jobSummary = null;
     state.jobWallS = null;
@@ -2415,7 +2605,13 @@ async function solve() {
     state.pollRetries = 0;
     state.solveJobId = null;
     state.solveHasTrajectory = false;
+    state.solveValidated = false;
     state.measuredPoses = [];
+    /* The previous path is dropped here, not when the new one arrives. A
+       solve that fails must not leave the last solve's path on the field
+       looking like the answer to this one; it is remembered as an earlier
+       run instead. */
+    clearTrajectory();
     updatePushButton();
     renderResult();
     renderDownloads([]);
@@ -2434,7 +2630,7 @@ async function solve() {
     } catch (err) {
         setBusy(false);
         setStatus(err.message, 'error');
-        el('result-status').innerHTML = `<span class="badge error">Failed</span> ${err.message}`;
+        setResultStatus('error', 'Failed', err.message);
         toast(err.message, true);
     }
 }
@@ -2469,6 +2665,12 @@ function pollJob() {
                 state.solveJobId = state.jobId;
                 state.solveHasTrajectory = (job.artifacts || [])
                     .some((artifact) => artifact.kind === 'traj');
+                /* The validator's own verdict, not the switch on the Solve
+                   tab: a solve with a measured model is validated even when
+                   the box was not ticked. */
+                const selected = report && report.candidates
+                    ? (report.candidates[(report.selected || 1) - 1] || {}) : {};
+                state.solveValidated = Boolean(selected.ok);
                 updatePushButton();
                 state.jobResult = job.result || {};
                 state.collisions = state.jobResult.collisions || [];
@@ -2482,10 +2684,14 @@ function pollJob() {
                 renderResult();
                 renderDownloads(job.artifacts);
                 drawPlot();
-                const validated = el('opt-validate').checked;
+                const validated = state.solveValidated;
                 el('result-status').innerHTML = validated
-                    ? '<span class="badge ok">Validated</span> trajectory written and checked.'
-                    : '<span class="badge warn">Not validated</span> enable validation before driving.';
+                    ? '<span class="badge ok">Validated</span> The trajectory passed the validator '
+                        + 'and is ready to use.'
+                    : '<span class="badge warn">Not validated</span> This trajectory has not been '
+                        + 'checked against your robot. Validate it before you drive it.';
+                /* One click for the lever the message names. */
+                el('validate-row').hidden = validated;
                 // The answer goes in the header, so it is on screen whatever
                 // the column is showing.
                 const headline = resultHeadline();
@@ -2496,13 +2702,21 @@ function pollJob() {
             } else if (job.status === 'cancelled') {
                 el('result-status').innerHTML = '<span class="badge warn">Cancelled</span>';
                 setStatus('Cancelled', 'warn');
+                el('validate-row').hidden = true;
+                clearTrajectory();
+                updatePushButton();
             } else {
-                const reason = job.error || 'The solve failed.';
+                const reason = cleanError(job.error || 'The solve failed.');
                 state.jobFailed = true;
                 state.jobFailedReason = reason;
                 state.jobFinishedAt = new Date().toISOString();
-                el('result-status').innerHTML = `<span class="badge error">Failed</span> ${reason}`;
+                setResultStatus('error', 'Failed', reason);
                 setStatus('Failed', 'error');
+                el('validate-row').hidden = true;
+                /* The field must not keep showing the last solve's path as
+                   if it were the answer to this one. */
+                clearTrajectory();
+                updatePushButton();
                 // A failure is the one thing that must not be hidden behind a
                 // tab, so the result comes forward.
                 showPanel('panel-result');
@@ -2634,7 +2848,18 @@ function renderRunHistory() {
         + ` (the last took ${last.toFixed(2)} s).`;
 }
 
+/* The canvas is drawn only when something changed. draw() asks for a
+   frame; the drawing happens on the next animation frame. Without this the
+   whole canvas - the mat, the models, the trajectory, the envelope and
+   the eight earlier solves - was drawn sixty times a second, always. */
+let canvasDirty = true;
+
 function draw() {
+    canvasDirty = true;
+}
+
+function drawNow() {
+    canvasDirty = false;
     if (!ctx) return;
     const ratio = window.devicePixelRatio || 1;
     ctx.clearRect(0, 0, canvas.width, canvas.height);
@@ -2678,6 +2903,7 @@ function draw() {
     drawWaypoints();
     drawMeasuredPoses();
     drawRobot();
+    updateLegend();
     updatePlaybackLabel();
 }
 
@@ -3277,14 +3503,27 @@ function deleteSelected() {
 function updateField(field, value) {
     const point = currentWaypoint();
     if (!point) return;
+    if (field === 'x' || field === 'y') {
+        // An empty field is a half-typed number, not a zero: deleting the
+        // contents of X must not move the waypoint to the origin. A stray
+        // character is not a number either, and the mission file would
+        // write it as null and the server would reject the solve.
+        const raw = String(value === null || value === undefined ? '' : value).trim();
+        if (raw === '') return;
+        const number = Number(raw);
+        if (!Number.isFinite(number)) return;
+        value = number;
+    } else if (typeof value === 'number' && !Number.isFinite(value)) {
+        return;
+    }
     point[field] = value;
     state.dirty = true;
     renderWaypointList();
     updateMissionState();
 }
 
-el('wp-x').addEventListener('input', (e) => updateField('x', Number(e.target.value)));
-el('wp-y').addEventListener('input', (e) => updateField('y', Number(e.target.value)));
+el('wp-x').addEventListener('input', (e) => updateField('x', e.target.value));
+el('wp-y').addEventListener('input', (e) => updateField('y', e.target.value));
 el('wp-heading').addEventListener('input', (e) => {
     const point = currentWaypoint();
     if (!point) return;
@@ -3341,6 +3580,14 @@ function moveSelected(delta) {
 }
 
 el('btn-solve').addEventListener('click', solve);
+el('btn-validate').addEventListener('click', () => {
+    /* The lever the result names: turn the validator on and solve again.
+       The Solve tab comes forward, so the switch that changed is visible. */
+    el('opt-validate').checked = true;
+    updateCandidatesHint();
+    showPanel('panel-solve');
+    solve();
+});
 el('btn-report').addEventListener('click', openMissionReport);
 el('btn-download-project').addEventListener('click', downloadProject);
 el('btn-upload-project').addEventListener('click', () => el('file-project').click());
@@ -3580,7 +3827,12 @@ async function loadHistory(name) {
             `/api/missions/history?name=${encodeURIComponent(name || '')}`);
         renderHistory(payload.history || []);
     } catch (err) {
-        el('history-list').innerHTML = `<p class="hint">${err.message}</p>`;
+        const list = el('history-list');
+        list.textContent = '';
+        const hint = document.createElement('p');
+        hint.className = 'hint';
+        hint.textContent = err.message;
+        list.appendChild(hint);
     }
 }
 
@@ -3681,8 +3933,10 @@ function animate() {
         playback.time += 0.02;
         if (playback.time > playback.duration) playback.time = 0;
         el('playback').value = Math.round((playback.time / playback.duration) * 1000);
+        // The robot marker moves, so the canvas has to be redrawn.
+        canvasDirty = true;
     }
-    draw();
+    if (canvasDirty) drawNow();
     requestAnimationFrame(animate);
 }
 

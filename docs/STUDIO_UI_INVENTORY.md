@@ -22,7 +22,7 @@
 
 **Three columns, two of them tabbed.** The left column is what you set, the canvas is the work, the right column is what you read. Each side column is a strip of tabs over one panel, so a column holds one topic at a time.
 
-The page carries **147 element ids**: **75 controls with an id** (35 buttons, 33 inputs, 7 selects), of which 8 are the tab buttons themselves. Nine regions are filled in at run time:
+The page carries **150 element ids**: **76 controls with an id** (36 buttons, 33 inputs, 7 selects), of which 8 are the tab buttons themselves. Nine regions are filled in at run time:
 
 | Generated region | Element id | Where |
 |---|---|---|
@@ -48,14 +48,14 @@ The page carries **147 element ids**: **75 controls with an id** (35 buttons, 33
 
 **The header always carries the result.** The status line reads `3.70 s | 1.23 m - validated` after a solve, so the answer is on screen whatever the columns are showing. A tabbed layout can hide things; the header cannot.
 
-**The canvas carries a legend**, built from the same list the drawing uses, so the field's colours have a key that cannot go stale.
+**The canvas carries a legend**, built from the same list the drawing uses, so the field's colours have a key that cannot go stale. The key is *live*: an entry for something that is not on the field is hidden, so the list is a key to the picture rather than a list of possibilities.
 
 ### The rules the structure follows
 
 - One topic per tab. A tab is a *subject*, not a *section*.
 - The result is never hidden: the header carries the numbers, and a solve or a failure brings the Result tab forward by itself.
 - The action lives with its subject. The file actions are in the Mission tab, the hub actions in the Run tab, and Solve alone in the header.
-- Rare things are one click away, not on the page: the eight `<details>` elements (history, the measured model, the calibration wizard, the robot editor, the uncertainty ranges, the solve options, the solver log) hold what is used once in a while.
+- Rare things are one click away, not on the page: the nine `<details>` elements (the mission's files, the history, the measured model, the calibration wizard, the robot editor, the uncertainty ranges, the solve options, the solver log) hold what is used once in a while.
 - Every tab is wired by the same controller, so a new tab is a button and a panel and nothing else.
 
 ### The tabs and their panels
@@ -92,17 +92,16 @@ The page carries **147 element ids**: **75 controls with an id** (35 buttons, 33
 | **New** | Empties the mission to one waypoint at the origin. |
 | **Undo** / **Redo** | 100 steps. Covers the mission *and* the robot config. |
 | **Save** | Writes `missions/<name>.json` and commits it to the missions' git repository. |
-| **Download** | Saves the mission JSON to the machine. |
-| **Open file...** | Loads a mission JSON from disk. |
-| **Download project** | Saves one file with the mission, the robot, the options, the model and the field. |
-| **Open project...** | Loads such a project and brings all of it back. |
-| **Download project** | The mission, the robot and the options in one file. |
-| **Open project...** | Loads that file back. |
+| **Files** (details) | The file actions, which are used once in a while. |
+| **Download the mission** | Saves the mission JSON to the machine. |
+| **Open a mission file...** | Loads a mission JSON from disk. |
+| **Download the project** | Saves one file with the mission, the robot, the options, the model and the field. |
+| **Open a project file...** | Loads such a project and brings all of it back. |
 | *waypoint count* | Readout: "10 waypoints". |
 | *path summary* | Readout: "Path 1.36 m \| at least 2.85 s at 0.48 m/s top speed". |
 | *mission state* | Readout: "Not saved to missions/ yet" / "Saved as missions/x.json" / "Changed since ...". |
 | **History** (details) | The git commits for this mission, each with a **Restore** button. |
-| *hint* | "Ctrl+Z undo · Ctrl+S save · Space play". |
+| *hint* | "Ctrl+Z undo · Ctrl+S save · Space play · the arrow keys move the selected waypoint". |
 
 ### Robot tab
 
@@ -178,7 +177,7 @@ The page carries **147 element ids**: **75 controls with an id** (35 buttons, 33
 
 | Control | What it does |
 |---|---|
-| **Legend** (details) | The key to the field's colours, built from the list the drawing uses. |
+| **Legend** (details) | The key to the field's colours, built from the list the drawing uses. Live: an entry for something that is not on the field is hidden. |
 | **Frame all** | Fits the view to the mission. |
 | **Envelope** (check) | The reachability envelope. |
 | **Path** (check) | The straight-line path between the waypoints. |
@@ -193,11 +192,12 @@ Canvas contents: the mat, the grid, the mission models, the earlier runs, the pa
 
 | Element | What it does |
 |---|---|
-| *status* | "Validated trajectory written and checked" / "Not validated..." / the failure. |
-| *facts* | Duration, path, peak wheel speed, samples, max envelope, solve (wall), vs. top speed, the field. |
+| *status* | "Validated - the trajectory passed the validator" / "Not validated - this trajectory has not been checked against your robot" / the failure. |
+| **Check it, then solve again** | The lever the status names: turns validation on, brings the Solve tab forward and solves again. Shown only after a solve that was not validated. |
+| *facts* | Duration, path, peak wheel speed, samples, max envelope, solve (wall), the time against the top-speed ideal, the field. |
 | *solve diff* | "vs. the previous solve: 0.27 s slower, the path 48 mm longer." |
 | *collisions* | Where the plan met a mission model. |
-| **Validation detail** (details) | The explainer, the candidate chips (the leaderboard), the per-segment table, the note, and the **Try** buttons (the other timing model, a weight of 0.001, the sweep). |
+| **Validation detail** (details) | The explainer, the candidate chips (the leaderboard, each chip naming its seed), the per-segment table, the note, and the **Try** buttons (the other timing model, a weight of 0.001, the sweep). |
 | **Mission report** | The report of the last solve, as a file. |
 | *downloads* | The trajectory, the controller, the Python module, the stats, the session, and the report. |
 | **Mission report** | Writes the one-page report next to the trajectory and opens it: the mission, the robot and the result on one printable page. |
@@ -228,8 +228,8 @@ The plot tabs - Speed, Force, Acceleration, Heading, Convergence - are built fro
 |---|---|
 | **Connection** (select) | Bluetooth or USB. |
 | **Hub name** (text) | The hub's name or address (BLE only). |
-| **Push to hub** | Pushes the approved trajectory and runs it. Enabled only after a passed solve. |
-| *status* | "Pushing. The robot is driving." / the hub's error. |
+| **Push to hub** | Pushes the approved trajectory and runs it. Enabled only after a solve that **passed the validator**: a trajectory that was never checked is not an approved one, and the status says so. |
+| *status* | "Pushing. The robot is driving." / "This trajectory has not been validated against your robot. Turn validation on in the Solve tab and solve again before pushing it." / the hub's error. |
 | *facts* | Where the robot ended, the error, the heading error, inside the envelope, the events, the session. |
 | **Plan against the robot** (details) | The comparison table: the measured and planned pose per stop, the error, the heading error, inside the envelope. |
 

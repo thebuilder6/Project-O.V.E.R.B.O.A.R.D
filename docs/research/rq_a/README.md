@@ -22,35 +22,46 @@ python docs/research/rq_a/verify_backlash_fix.py
 python docs/research/rq_a/exp10_floor.py
 python docs/research/rq_a/exp10_gain_band.py
 python docs/research/rq_a/exp11_density.py
+python docs/research/rq_a/exp12_reference_consistency.py
+python docs/research/rq_a/exp13_package.py
+python docs/research/rq_a/exp14_which_inconsistency.py
+python docs/research/rq_a/exp15_interval_average.py
+python docs/research/rq_a/exp16_firmware_parity.py
+python docs/research/rq_a/exp16_combined.py
 ```
 
 Requirements: `casadi`, `jax`, `immrax`, `numpy`. The scripts write only to a
 temporary directory; nothing in the repository is modified.
 
+The output of the 2026-10-20 run against the tree that carries KI-025 to
+KI-028 is in
+[`../../measurements/2026-10-20-post-ki028/rq_a/`](../../measurements/2026-10-20-post-ki028/rq_a/),
+one file per script.
+
 ## Which script answers what
 
 | script | question | headline result |
 |---|---|---|
-| `exp1_uncertainty.py` | which declared uncertainty drives the tracking error? | none of them — collapsing all seven moves it by 0.1–0.2 % |
-| `exp2_reference_artefact.py` | how far does a robot that follows the reference exactly end up from the plan? | 91 % of the S-curve's tracking error |
-| `exp3_sampling.py` | does more sampling help? | the plan/profile deviation falls as 1/n², the tracking error does not |
-| `exp4_decompose.py` | quantisation, backlash, spline reference? | quantisation ≤ 0.5 %, backlash 1 % on curves, spline reference catastrophic |
-| `exp5_attribution.py` | what does a *self-consistent* trajectory score? | 0.16 cm at every sampling density — the validator is not the problem |
-| `exp6_consistency.py` | is the optimizer's plan self-consistent? | no: 61 % of the S-curve error is the plan/profile mismatch |
-| `exp7_recipe.py` | does exact positions + density fix it? | only at n=10; it gets worse at n=20–80 |
-| `exp8_proposal.py` | the two halves of the proposed fix | neither works alone; both together still fail |
+| `exp1_uncertainty.py` | which declared uncertainty drives the tracking error? | none of them — collapsing all seven moves it by 0.2–0.7 % |
+| `exp2_reference_artefact.py` | how far does a robot that follows the reference exactly end up from the plan? | 78 % of the S-curve's tracking error |
+| `exp3_sampling.py` | does more sampling help? | the plan/profile deviation falls as 1/n², and the tracking error follows it down to n=20 |
+| `exp4_decompose.py` | quantisation, backlash, spline reference? | quantisation 0 %, backlash 0 % of the tracking error (it only widens the envelope), spline reference catastrophic |
+| `exp5_attribution.py` | what does a *self-consistent* trajectory score? | 0.13 cm at every sampling density — the validator is not the problem |
+| `exp6_consistency.py` | is the optimizer's plan self-consistent? | no: rebuilding the plan's positions by exact integration removes 40 % of the S-curve's error |
+| `exp7_recipe.py` | does exact positions + density fix it? | only at n=10 (40 %); it gets 2–6 % worse at n=20–80 |
+| `exp8_proposal.py` | the two halves of the proposed fix | neither works alone; on the stops mission the spline half is the better one |
 | `exp9_summary.py` | the summary table in the notes | the headline numbers |
 | `check_hermite.py` | is the spline interpolant correct? | yes: 0.0012 mm against the exact circle |
 | `verify_backlash_fix.py` | does the KI-025 backlash fix behave as designed? | the backlash no longer touches the tracking error (0.0000 mm) and now widens the envelope |
 | `exp10_gain_band.py` | what does the digital twin's actuator-gain band do? | it blows up the **envelope** (54 mm at ±1 % over 1 m), not the tracking error (0.9 mm) - the controller corrects the speed error |
-| `exp10_floor.py` | what sets the tracking-error floor at fine sampling? | the 20 ms command hold: at n=40 a 2 ms tick takes the error from 0.979 cm to 0.048 cm; giving the controller the **interval-average velocity** removes it without touching the tick (0.110 cm), which pins the mechanism on the distance covered per interval |
-| `exp11_density.py` | how does the error vary with the sampling density? | it is **U-shaped**, with a minimum near 4-6 control ticks per sample interval; the default `-n 10` is on the coarse side |
-| `exp16_firmware_parity.py` | does the validator mirror the controller that runs? | **no, it did not**: it modelled a 20 ms hold with a rounded command and an interpolated gain, while the controllers in use pass floats and recompute the gain; and the two compact controllers ran at different periods from each other |
+| `exp10_floor.py` | what sets the tracking-error floor at fine sampling? | the 20 ms command hold: at n=40 a 2 ms tick takes the error from 0.271 cm to 0.071 cm; giving the controller the **interval-average velocity** removes it without touching the tick (0.098 cm), which pins the mechanism on the distance covered per interval |
+| `exp11_density.py` | how does the error vary with the sampling density? | it is **U-shaped**, with a minimum near 4-5 control ticks per sample interval (n=20 on the S-curve); the default `-n 10` is on the coarse side, where the error is now 6x the minimum |
 | `exp12_reference_consistency.py` | is the reference internally inconsistent? | yes: the heading and the turn rate are interpolated independently and disagree by up to 9 degrees mid-interval |
 | `exp13_package.py` | the two halves of the fix, together | the reference fix and the self-consistent plan are mirror images; the reference fix wins at fine sampling, the plan fix at coarse |
 | `exp14_which_inconsistency.py` | which of the reference's three inconsistencies matters? | the turn rate (2-3.6x); the Ramsete gain is worth nothing |
-| `exp15_interval_average.py` | the complete reference fix | reporting the interval averages of v, omega and kr is the best variant in 7 of the 9 cells, up to 10x better than shipped |
+| `exp15_interval_average.py` | the complete reference fix, measured on top of what ships | the turn-rate half is already in the tree (worth 1.00x everywhere); the **velocity** half is worth up to 7.2x at fine sampling and makes the coarse end 1.45x worse |
 | `exp16_combined.py` | the two fixes together, in both timing modes | the reference fix and the self-consistent plan are mirror images across the density |
+| `exp16_firmware_parity.py` | does the validator mirror the controller that runs? | **it does now**: the legacy mirror and the shipped model differ by 0.92-1.03x (the rounding and the gain are worth about 1 %), and the third column prices the 20 ms heartbeat: the hold costs the robot 2.6-4.1x the tracking error at the fine densities |
 | `sync_tables.py` | regenerate section 9's tables from the measurements | the tables are generated, so they cannot drift from the data they quote (`--check` to verify only) |
 | `verify_docs.py` | check the research documentation | encoding, markdown structure, table drift and the line-number citations |
 

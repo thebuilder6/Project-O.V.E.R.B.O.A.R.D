@@ -62,7 +62,13 @@ def run_suite(num_runs: int = 10, output_dir: str = "random_suite",
         try:
             # solve() returns (samples, stats). Treating the tuple as the
             # samples is what made the old script write garbage.
-            samples, stats = optimizer.solve(
+            #
+            # The result is not called ``samples``: that name is the
+            # samples-per-segment count, and reusing it shadowed the
+            # parameter, so the second mission solved with the first
+            # mission's sample *list* as the sample count and died in the
+            # optimizer with "can only concatenate list (not int) to list".
+            trajectory, stats = optimizer.solve(
                 waypoints,
                 num_samples_per_segment=samples,
                 stop_waypoint_indices=stop_indices,
@@ -70,7 +76,7 @@ def run_suite(num_runs: int = 10, output_dir: str = "random_suite",
             )
             converged = bool(stats.get("converged", False))
             with open(os.path.join(run_dir, "trajectory.json"), "w", encoding="utf-8") as handle:
-                json.dump({"trajectory": {"samples": samples}}, handle, indent=2)
+                json.dump({"trajectory": {"samples": trajectory}}, handle, indent=2)
 
             if plot:
                 import matplotlib
@@ -78,7 +84,7 @@ def run_suite(num_runs: int = 10, output_dir: str = "random_suite",
                 import matplotlib.pyplot as plt
                 from plotter import plot_trajectory
                 figure = plot_trajectory(
-                    samples, waypoints=waypoints,
+                    trajectory, waypoints=waypoints,
                     title=f"{run_name} ({mission['profile']})", show=False)
                 figure.savefig(os.path.join(run_dir, "plot.png"))
                 plt.close(figure)
@@ -88,13 +94,16 @@ def run_suite(num_runs: int = 10, output_dir: str = "random_suite",
                 "profile": mission["profile"],
                 "status": "converged" if converged else "failed",
                 "converged": converged,
-                "duration_s": samples[-1]["t"] if samples else None,
+                "duration_s": trajectory[-1]["t"] if trajectory else None,
                 "iterations": stats.get("iter_count"),
                 "review": {"is_wrong": False, "explanation": ""},
             })
-            print(f"--- {run_name} ({mission['profile']}): "
-                  f"{'converged' if converged else 'FAILED'} "
-                  f"{samples[-1]['t']:.3f}s" if samples else f"--- {run_name}: FAILED")
+            if trajectory:
+                print(f"--- {run_name} ({mission['profile']}): "
+                      f"{'converged' if converged else 'FAILED'} "
+                      f"{trajectory[-1]['t']:.3f}s")
+            else:
+                print(f"--- {run_name} ({mission['profile']}): FAILED")
         except Exception as exc:  # a failed solve is a result, not a crash
             suite_data.append({
                 "id": run_name,
@@ -102,7 +111,7 @@ def run_suite(num_runs: int = 10, output_dir: str = "random_suite",
                 "status": "failed",
                 "error": str(exc),
             })
-            print(f"--- {run_name}: failed: {exc}")
+            print(f"--- {run_name} ({mission['profile']}): failed: {exc}")
 
         with open(os.path.join(output_dir, "suite_metadata.json"), "w", encoding="utf-8") as handle:
             json.dump(suite_data, handle, indent=2)

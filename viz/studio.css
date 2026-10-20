@@ -18,6 +18,12 @@
 
 * { box-sizing: border-box; }
 
+/* The hidden attribute has to win. A class that sets display - a .row is a
+   flex row, a .legend-item is a flex row - is an author rule, so it beats
+   the browser's own [hidden] rule and puts a hidden element back on the
+   screen. Every hidden element in the page is hidden through this rule. */
+[hidden] { display: none !important; }
+
 body {
   margin: 0;
   height: 100vh;
@@ -160,6 +166,14 @@ input[type="text"], input[type="number"], select {
 input:focus-visible, select:focus-visible, button:focus-visible, summary:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 1px;
+}
+
+/* A field that cannot be edited has to look like it. The Candidates field
+   is disabled until validation is on, and without this it looks editable. */
+input:disabled, select:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  background: var(--panel);
 }
 
 .check { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }

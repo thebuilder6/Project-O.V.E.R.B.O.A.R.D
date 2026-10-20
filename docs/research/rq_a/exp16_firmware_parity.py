@@ -16,18 +16,24 @@ rounds the command to mm/s and deg/s and interpolates a per-sample gain
 instead of recomputing it. Those two differences are what this measures,
 against the model that ships.
 
-The period is the expensive line. The hold error is proportional to it
-(F6), so a hub that runs its heartbeat at 20 ms instead of 5 ms reports a
-tracking error four times the size for the same plan. The hub used to run
-a 5 ms loop (`await wait(5)`, until commit 12a365b), so the third column
-is the same model with the hold the robot used to have: it prices the
-20 ms heartbeat.
+The period is the expensive line in principle: the hold error is proportional
+to it (F6), so a hub that runs its heartbeat at 5 ms instead of 20 ms
+reports a tracking error four times the size for the same plan. The tree ran
+20 ms throughout, so this experiment's third column is there to *price* that
+difference, not to correct a period that was wrong.
 
 | column | what it is |
 |---|---|
 | `legacy` | the `ramsete_fast.py` mirror: the command rounded, the gain interpolated, a 20 ms hold |
 | `shipped` | the model as it ships: the command unrounded, the gain recomputed, a 20 ms hold |
-| `5 ms` | the shipped model with the hold the hub used to run |
+| `5 ms` | the shipped model with a 5 ms hold, to price the hold cost |
+
+For the history: the deployed controller (`ramsete_compact_events.py`) and the
+IDE missions (`ramsete.py`) ran a free-running `await wait(5)` loop - about
+5 ms - until commit 12a365b, which moved them to the synced 20 ms heartbeat
+the model already used. So the third column is the hold the robot actually
+had, and the difference it prices is the cost of the 20 ms heartbeat to the
+robot, not to the gate.
 """
 import json
 import math
@@ -126,7 +132,7 @@ def main():
             IV.quantize_drive_command = lambda v, w: (v, w)
             fw = validate(samples, control_dt=0.02)
 
-            # (c) the same model with the hold the hub used to run
+            # (c) the same model with a 5 ms hold, to price the hold cost
             fast = validate(samples, control_dt=0.005)
 
             IV._interpolated_reference = orig_ref

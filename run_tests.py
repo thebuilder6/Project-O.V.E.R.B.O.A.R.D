@@ -13,19 +13,35 @@ project_root = Path(__file__).parent
 sys.path.insert(0, str(project_root))
 
 # Import test modules (non-JAX dependent)
-from tests.test_optimizer import TestTrajectoryOptimizer, TestFastPolish, TestSolverIterationBudget
+from tests.test_optimizer import (
+    TestTrajectoryOptimizer,
+    TestFastPolish,
+    TestSolverIterationBudget,
+    TestMergeConditions,
+    TestBenchmarkDryRun,
+    TestSelfConsistentPlan,
+)
 from tests.test_robot_model import (
     TestRobotConfig,
     TestDifferentialDriveModel,
-    TestMeasuredMotor,
+    TestMeasuredMotorConfig,
 )
 from tests.test_validator import TestForwardIntegrate, TestAuditConstraints, TestComputeMetrics, TestValidateTrajectory
-from tests.test_sysid_fit import TestSysIdFit, TestNoLoadSpeed
+from tests.test_random_suite import (
+    TestRandomSuiteGenerator,
+)
+from tests.test_sysid_fit import (
+    TestSysIdFit,
+    TestNoLoadSpeed,
+    TestDrivebaseProfile,
+    TestHubSessionPoses,
+)
 from tests.test_digital_twin import (
     TestDigitalTwinConfig,
     TestDigitalTwinValidator,
-    TestMeasuredMotor,
+    TestMeasuredMotorFit,
     TestMeasuredMotorEndToEnd,
+    TestDigitalTwinMechanisms,
 )
 from tests.test_fields import (
     TestObstacleOverlap,
@@ -72,12 +88,15 @@ from tests.test_sysid_collect import (
 from tests.test_firmware_events import (
     TestFinalWaypointEvent,
     TestFinalWaypointEventCompact,
+    TestFirmwareParity,
+    TestLateTickEvents,
 )
 from tests.test_cli_ux import (
     TestCliBasics,
     TestStudioEntryPoints,
     TestParallelCandidates,
     TestValidationReport,
+    TestIterationHistory,
 )
 from tests.test_gui_server import (
     TestStudioRoutes,
@@ -94,6 +113,17 @@ from tests.test_studio_inventory import (
 from tests.test_studio_report import (
     TestReportBuilder,
     TestProjectFile,
+    TestStudioReportRoute,
+    TestStudioInventoryNewControls,
+)
+from tests.test_studio_honesty import (
+    TestTheHiddenAttributeWins,
+    TestThePushNeedsAValidatedTrajectory,
+    TestAFailedSolveLeavesNoPath,
+    TestASolveThatNeverStartsClearsTheVerdict,
+    TestTheMessageTheOperatorReads,
+    TestTheResultExplainsItself,
+    TestTheSheetWithoutASession,
 )
 
 # Regression tests (no JAX required)
@@ -113,7 +143,7 @@ from tests.test_regressions import (
 # JAX-dependent tests (skip if jax is not installed)
 try:
     from tests.test_jax_heuristics import TestJAXHeuristics
-    from tests.test_jax_ramsete import TestJAXRamsete
+    from tests.test_jax_ramsete import TestJAXRamsete, TestJAXDriveQuantization
     from tests.test_refinement_accuracy import TestRefinementAccuracy
     from tests.test_critic_metrics import TestCriticMetrics
     JAX_AVAILABLE = True
@@ -132,6 +162,7 @@ def run_tests():
     if JAX_AVAILABLE:
         suite.addTests(loader.loadTestsFromTestCase(TestJAXHeuristics))
         suite.addTests(loader.loadTestsFromTestCase(TestJAXRamsete))
+        suite.addTests(loader.loadTestsFromTestCase(TestJAXDriveQuantization))
         suite.addTests(loader.loadTestsFromTestCase(TestRefinementAccuracy))
         suite.addTests(loader.loadTestsFromTestCase(TestCriticMetrics))
     suite.addTests(loader.loadTestsFromTestCase(TestExportConfig))
@@ -147,17 +178,21 @@ def run_tests():
     suite.addTests(loader.loadTestsFromTestCase(TestTrajectoryOptimizer))
     suite.addTests(loader.loadTestsFromTestCase(TestRobotConfig))
     suite.addTests(loader.loadTestsFromTestCase(TestDifferentialDriveModel))
-    suite.addTests(loader.loadTestsFromTestCase(TestMeasuredMotor))
+    suite.addTests(loader.loadTestsFromTestCase(TestMeasuredMotorConfig))
     suite.addTests(loader.loadTestsFromTestCase(TestForwardIntegrate))
     suite.addTests(loader.loadTestsFromTestCase(TestAuditConstraints))
     suite.addTests(loader.loadTestsFromTestCase(TestComputeMetrics))
     suite.addTests(loader.loadTestsFromTestCase(TestValidateTrajectory))
     suite.addTests(loader.loadTestsFromTestCase(TestSysIdFit))
+    suite.addTests(loader.loadTestsFromTestCase(TestRandomSuiteGenerator))
     suite.addTests(loader.loadTestsFromTestCase(TestNoLoadSpeed))
+    suite.addTests(loader.loadTestsFromTestCase(TestDrivebaseProfile))
+    suite.addTests(loader.loadTestsFromTestCase(TestHubSessionPoses))
     suite.addTests(loader.loadTestsFromTestCase(TestDigitalTwinConfig))
     suite.addTests(loader.loadTestsFromTestCase(TestDigitalTwinValidator))
-    suite.addTests(loader.loadTestsFromTestCase(TestMeasuredMotor))
+    suite.addTests(loader.loadTestsFromTestCase(TestMeasuredMotorFit))
     suite.addTests(loader.loadTestsFromTestCase(TestMeasuredMotorEndToEnd))
+    suite.addTests(loader.loadTestsFromTestCase(TestDigitalTwinMechanisms))
     suite.addTests(loader.loadTestsFromTestCase(TestMotorLaw))
     suite.addTests(loader.loadTestsFromTestCase(TestDrivetrainModel))
     suite.addTests(loader.loadTestsFromTestCase(TestDeclaredMotorCheck))
@@ -177,6 +212,8 @@ def run_tests():
     suite.addTests(loader.loadTestsFromTestCase(TestResampleHeading))
     suite.addTests(loader.loadTestsFromTestCase(TestFinalWaypointEvent))
     suite.addTests(loader.loadTestsFromTestCase(TestFinalWaypointEventCompact))
+    suite.addTests(loader.loadTestsFromTestCase(TestFirmwareParity))
+    suite.addTests(loader.loadTestsFromTestCase(TestLateTickEvents))
     suite.addTests(loader.loadTestsFromTestCase(TestSessionFile))
     suite.addTests(loader.loadTestsFromTestCase(TestPushHubCli))
     suite.addTests(loader.loadTestsFromTestCase(TestFirmwareCompiles))
@@ -196,13 +233,16 @@ def run_tests():
     suite.addTests(loader.loadTestsFromTestCase(TestStudioPush))
     suite.addTests(loader.loadTestsFromTestCase(TestStudioModel))
     suite.addTests(loader.loadTestsFromTestCase(TestStudioCalibration))
-    suite.addTests(loader.loadTestsFromTestCase(TestSweepSpecs))
     suite.addTests(loader.loadTestsFromTestCase(TestBacklashModel))
     suite.addTests(loader.loadTestsFromTestCase(TestHeadingMetric))
     suite.addTests(loader.loadTestsFromTestCase(TestParallelCandidates))
     suite.addTests(loader.loadTestsFromTestCase(TestValidationReport))
+    suite.addTests(loader.loadTestsFromTestCase(TestIterationHistory))
     suite.addTests(loader.loadTestsFromTestCase(TestFastPolish))
     suite.addTests(loader.loadTestsFromTestCase(TestSolverIterationBudget))
+    suite.addTests(loader.loadTestsFromTestCase(TestMergeConditions))
+    suite.addTests(loader.loadTestsFromTestCase(TestBenchmarkDryRun))
+    suite.addTests(loader.loadTestsFromTestCase(TestSelfConsistentPlan))
     suite.addTests(loader.loadTestsFromTestCase(TestStudioRoutes))
     suite.addTests(loader.loadTestsFromTestCase(TestStudioSolve))
     suite.addTests(loader.loadTestsFromTestCase(TestStudioHelpers))
@@ -210,6 +250,15 @@ def run_tests():
     suite.addTests(loader.loadTestsFromTestCase(TestStudioReport))
     suite.addTests(loader.loadTestsFromTestCase(TestReportBuilder))
     suite.addTests(loader.loadTestsFromTestCase(TestProjectFile))
+    suite.addTests(loader.loadTestsFromTestCase(TestStudioReportRoute))
+    suite.addTests(loader.loadTestsFromTestCase(TestStudioInventoryNewControls))
+    suite.addTests(loader.loadTestsFromTestCase(TestTheHiddenAttributeWins))
+    suite.addTests(loader.loadTestsFromTestCase(TestThePushNeedsAValidatedTrajectory))
+    suite.addTests(loader.loadTestsFromTestCase(TestAFailedSolveLeavesNoPath))
+    suite.addTests(loader.loadTestsFromTestCase(TestASolveThatNeverStartsClearsTheVerdict))
+    suite.addTests(loader.loadTestsFromTestCase(TestTheMessageTheOperatorReads))
+    suite.addTests(loader.loadTestsFromTestCase(TestTheResultExplainsItself))
+    suite.addTests(loader.loadTestsFromTestCase(TestTheSheetWithoutASession))
     
     # Run tests
     runner = unittest.TextTestRunner(verbosity=2)

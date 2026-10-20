@@ -1399,14 +1399,6 @@ def fit_session(runs, poses=None, wheel_radius_m=0.028, wall_distance_m=None):
 # CLI
 # ---------------------------------------------------------------------------
 
-def _read_wheel_radius(path):
-    """Backward-compatible wrapper around read_drivebase_profile."""
-    profile = read_drivebase_profile(path)
-    if profile.get("wheel_radius_m") is None:
-        raise ValueError(f"no wheel_radius in {path}")
-    return profile["wheel_radius_m"]
-
-
 def _profile_sections(data):
     sections = []
     for key in ("drivebase", "robot", "config"):

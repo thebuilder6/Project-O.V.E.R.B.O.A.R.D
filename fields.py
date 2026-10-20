@@ -41,6 +41,27 @@ import os
 
 FIELDS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fields")
 
+# The path between two samples is walked at half the robot's radius, so a
+# model that lies between two samples is not missed. The step is never finer
+# than MIN_STEP_M, and never more than MAX_STEPS_PER_SEGMENT steps long.
+MIN_STEP_M = 0.005
+MAX_STEPS_PER_SEGMENT = 512
+
+
+def _steps_between(x0: float, y0: float, x1: float, y1: float,
+                   robot_radius_m: float) -> int:
+    """How many equal steps to walk the straight line between two samples.
+
+    The step is half the robot's radius: the disc reaches ``robot_radius_m``
+    sideways from the path, so a point the samples miss is at most that far
+    from the line, and half a radius of spacing keeps the loss to a graze.
+    """
+    spacing = max(robot_radius_m / 2.0, MIN_STEP_M)
+    length = math.hypot(x1 - x0, y1 - y0)
+    if length <= 0.0:
+        return 1
+    return max(1, min(MAX_STEPS_PER_SEGMENT, int(math.ceil(length / spacing))))
+
 
 @dataclass(frozen=True)
 class Obstacle:
@@ -172,13 +193,18 @@ class FieldModel:
         samples: List[Dict[str, Any]],
         robot_radius_m: float = 0.0,
     ) -> List[Collision]:
-        """Where the planned samples run into something.
+        """Where the planned path runs into something.
 
         The robot is treated as a disc of ``robot_radius_m`` centred on the
-        path, which is the axle-to-axle width of a differential drive. The
-        path between the samples is not checked: the samples are 20 ms
-        apart, so the path between them cannot leave the corridor the
-        samples cover.
+        path, which is the axle-to-axle width of a differential drive.
+
+        The path *between* the samples is checked too. The samples are ten
+        per waypoint segment, so their spacing is set by the length of the
+        segment, not by the clock: a two-metre straight is sampled every
+        200 mm. A model narrower than that can be driven straight through
+        without any sample landing on it. The path is therefore walked at
+        half the robot's radius, which is close enough that nothing the
+        samples cover is missed.
 
         A collision shallower than the placement uncertainty is still
         reported, but marked ``uncertain``: the footprint's own position is
@@ -200,23 +226,48 @@ class FieldModel:
                 y = float(sample["y"])
             except (KeyError, TypeError, ValueError):
                 continue
-            for obstacle in self.obstacles:
-                depth = obstacle.overlap(x, y, robot_radius_m)
-                if depth <= 0.0:
-                    continue
-                existing = found.get(obstacle.id)
-                if existing is not None and existing.depth_m >= depth:
-                    continue
-                found[obstacle.id] = Collision(
-                    obstacle=obstacle,
-                    index=index,
-                    t=float(sample.get("t", 0.0) or 0.0),
-                    x_m=x,
-                    y_m=y,
-                    depth_m=depth,
-                    uncertain=depth <= self.placement_uncertainty_m,
-                )
+            self._check_point(found, index, x, y,
+                              float(sample.get("t", 0.0) or 0.0),
+                              robot_radius_m)
+
+        # The path between the samples.
+        for index in range(len(samples) - 1):
+            first, second = samples[index], samples[index + 1]
+            try:
+                x0, y0 = float(first["x"]), float(first["y"])
+                x1, y1 = float(second["x"]), float(second["y"])
+            except (KeyError, TypeError, ValueError):
+                continue
+            t0 = float(first.get("t", 0.0) or 0.0)
+            t1 = float(second.get("t", 0.0) or 0.0)
+            steps = _steps_between(x0, y0, x1, y1, robot_radius_m)
+            for step in range(1, steps):
+                frac = step / steps
+                self._check_point(
+                    found, index,
+                    x0 + (x1 - x0) * frac, y0 + (y1 - y0) * frac,
+                    t0 + (t1 - t0) * frac,
+                    robot_radius_m)
         return sorted(found.values(), key=lambda item: item.index)
+
+    def _check_point(self, found, index, x, y, t, robot_radius_m):
+        """Record the deepest overlap at one point of the path."""
+        for obstacle in self.obstacles:
+            depth = obstacle.overlap(x, y, robot_radius_m)
+            if depth <= 0.0:
+                continue
+            existing = found.get(obstacle.id)
+            if existing is not None and existing.depth_m >= depth:
+                continue
+            found[obstacle.id] = Collision(
+                obstacle=obstacle,
+                index=index,
+                t=t,
+                x_m=x,
+                y_m=y,
+                depth_m=depth,
+                uncertain=depth <= self.placement_uncertainty_m,
+            )
 
     def as_dict(self) -> Dict[str, Any]:
         """A JSON-safe description, for the browser."""
@@ -286,28 +337,16 @@ def field_from_dict(payload: Dict[str, Any]) -> FieldModel:
 def list_fields() -> List[Dict[str, str]]:
     """The fields this repository knows about.
 
+    The rows come from the fields that load, so the list and the models
+    can never disagree about which fields exist.
+
     Returns:
         One row per season file: its id and its label.
     """
-    rows: List[Dict[str, str]] = []
-    if not os.path.isdir(FIELDS_DIR):
-        return rows
-    for name in sorted(os.listdir(FIELDS_DIR)):
-        if not name.endswith(".json"):
-            continue
-        path = os.path.join(FIELDS_DIR, name)
-        try:
-            with open(path, "r", encoding="utf-8") as handle:
-                payload = json.load(handle)
-        except (OSError, ValueError):
-            continue
-        rows.append({
-            "id": str(payload.get("season") or os.path.splitext(name)[0]),
-            "label": str(payload.get("label")
-                         or payload.get("season")
-                         or os.path.splitext(name)[0]),
-        })
-    return rows
+    return [
+        {"id": model.season, "label": model.label}
+        for model in load_all_fields().values()
+    ]
 
 
 def load_field(season: str) -> Optional[FieldModel]:

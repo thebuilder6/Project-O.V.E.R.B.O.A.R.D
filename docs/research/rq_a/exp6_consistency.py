@@ -117,6 +117,8 @@ def main():
         ("example_s_curve", True, 10),
         ("example_with_stops", True, 10),
         ("example_complex_mission", False, 10),
+        ("example_straight", True, 10),
+        ("example_with_events", True, 10),
     ]
 
     for mission, per_seg, n in cases:

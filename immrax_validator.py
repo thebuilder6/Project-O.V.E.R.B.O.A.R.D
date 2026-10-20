@@ -1,6 +1,6 @@
 import jax
 import jax.numpy as jnp
-from jax import jit, vmap
+from jax import vmap
 import immrax
 from immrax import Interval, interval
 from immrax.inclusion import natif
@@ -837,38 +837,4 @@ class ImmraxValidator:
             "diverged": diverged,
         }
 
-    def get_safety_ribbon_data(self, samples: List[Dict[str, Any]],
-                               cof_range: Tuple[float, float],
-                               torque_margin_range: Tuple[float, float],
-                               backlash_range: Tuple[float, float],
-                               track_width_range: Optional[Tuple[float, float]] = None,
-                               wheel_radius_range: Optional[Tuple[float, float]] = None,
-                               inertia_range: Optional[Tuple[float, float]] = None) -> List[Dict[str, Any]]:
-        unrolled = unroll_trajectory_headings(samples)
-        
-        tw_range = track_width_range if track_width_range else (self.cfg.track_width * 0.99, self.cfg.track_width * 1.01)
-        wr_range = wheel_radius_range if wheel_radius_range else (self.cfg.wheel_radius * 0.99, self.cfg.wheel_radius * 1.01)
-        ine_range = inertia_range if inertia_range else (self.cfg.inertia * 0.90, self.cfg.inertia * 1.10)
 
-        report = self.compute_reachability(
-            unrolled, backlash_range, tw_range, wr_range, cof_range, torque_margin_range, ine_range
-        )
-        
-        ribbon_data = []
-        envelope = report["envelope"]
-        
-        for i, s in enumerate(samples):
-            env_point = envelope[i] if i < len(envelope) else envelope[-1]
-            
-            ribbon_data.append({
-                "t": float(s["t"]),
-                "x": float(s["x"]),
-                "y": float(s["y"]),
-                "heading": float(s["heading"]),
-                "x_min": float(env_point["x_min"]),
-                "x_max": float(env_point["x_max"]),
-                "y_min": float(env_point["y_min"]),
-                "y_max": float(env_point["y_max"])
-            })
-            
-        return ribbon_data

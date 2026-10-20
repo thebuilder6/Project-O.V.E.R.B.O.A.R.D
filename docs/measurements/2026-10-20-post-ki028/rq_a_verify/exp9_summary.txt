@@ -1,0 +1,6 @@
+mission                      n  samples  dtheta/smp  plan_vs_profile_cm  track_cm   gate
+example_straight            10       11      0.0000               0.094     0.341   PASS
+example_s_curve             10       21      0.3277               1.206     1.468   fail
+example_with_stops          10       41      0.2202               1.170     2.191   fail
+example_complex_mission     10       91      0.1446               0.129     0.303   PASS
+example_with_events         10       31      0.1333               0.262     0.459   PASS

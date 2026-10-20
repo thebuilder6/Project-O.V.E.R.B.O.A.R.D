@@ -17,7 +17,7 @@
 5. **The timing model is a bigger lever than any seed.** Per-segment timing is 4.8–23.4 % faster on four of the six missions (complex 23.4 %, stops 17.7 %, first4 15.7 %, events 4.8 %), and it is what makes the events mission solvable at all. The seeds changed the outcome on 2 missions; the timing model changed it on 4. The per-segment model also had to be made legitimate at the waypoints the robot drives through (KI-024, [5.5](#55-where-the-time-allocation-may-change-ki-024)); the matrix in [Section 9](#9-measured-heuristic-comparison) was re-measured after that change.
 6. **The accuracy weight is the cheapest lever of all.** On the events mission, the *same* `baseline` seed fails at weight 0 (0.52 cm tracking) and passes at weight 0.001 (0.37 cm). The sweep grid is the only candidate-set change that has ever produced a new best trajectory, and it works because it adds a genuinely different parameter.
 7. **The Multi-Verse pipeline is dead weight.** Its JAX-refined guess converges to 8.1473 s against the trivial baseline's 6.0677 s, so the probe that was added to rescue it never wins. The plumbing works; the guess does not.
-8. **The measurement base is six hand-written paths.** The random benchmark that was supposed to supply a mission suite is broken (KI-015), though a mission-suite harness now exists under [`research/`](../../research/). Every claim above rests on those six paths.
+8. **The measurement base is six hand-written paths.** The random benchmark that was supposed to supply a mission suite is fixed (KI-015), and a mission-suite harness exists under [`research/`](../../research/). The six paths are still what [Section 9](#9-measured-heuristic-comparison) quotes; the wider suite is measured in `docs/research/pq_b/`.
 9. **Twelve research questions are listed in Part IV**, ordered so that the cheapest decisive experiment comes first. The first two are measurements, not experiments.
 10. **RQ-A is done, and it reorders the agenda.** [`docs/research/RQ-A_tracking_error.md`](research/RQ-A_tracking_error.md) identifies why the tracking gate binds: the optimizer's trapezoidal collocation, the controller's linear reference and the plant's integration are three different discretisations of the same trajectory, and on a curved path they disagree by about a centimetre. The tracking error is **not** an uncertainty problem and **not** a physical tracking problem. Fix the discretisation before reaching for reachability in the objective. RQ-A also finds that with a *calibrated* model the binding gate flips to the **envelope**, because the measured actuator-gain band widens the reachable set.
 
@@ -1294,9 +1294,9 @@ Each entry has the same fields:
 |---|---|
 | **Strategy** | Generate random missions and benchmark the planner on them |
 | **Mechanism** | `benchmark.py --mode random`; `RandomBenchmark` at `benchmark.py:380` |
-| **Outcome** | **Still broken.** The suite generator (`examples/generate_random_suite.py`) reads a missing `robot_config.json` and treats `solve()` as returning samples instead of `(samples, stats)`. The pipeline mode also does not check `stats["converged"]`, so a failed solve can be summarised as a normal result (KI-015) |
-| **Status** | **open** |
-| **What would revive it** | Fix it. This is the single highest-value fix in this ledger: **without a mission suite, every claim in [Section 9](#9-measured-heuristic-comparison) rests on six example paths**, and the baseline's dominance may be an artefact of those six paths (Q8) |
+| **Outcome** | **Fixed** (KI-015). The suite generator unpacks `solve()`'s tuple, uses `examples/fll_choreo.json`, and solves every mission; the pipeline mode reads `stats["converged"]` and prints `FAILED`; the random mode validates against the config it actually used (`benchmarks/config_used.json`) and draws its waypoints as a random walk instead of independent uniform draws. A third defect surfaced while checking: the generator's `samples` parameter was shadowed by the solve result, so the *second* mission solved with the first mission's sample list as the sample count and died in the optimizer. `tests/test_random_suite.py` runs two missions and fails if either raises |
+| **Status** | **closed** |
+| **What would revive it** | Nothing. The mission suite it was supposed to supply now comes from `research/suite.py` and is measured by `research/harness.py` (Q8, answered in `docs/research/pq_b/FINDINGS.md`) |
 
 ### 21.4 `sysid_solver.py`
 
@@ -1305,8 +1305,8 @@ Each entry has the same fields:
 | **Strategy** | A pandas/JAX system identification solver with hardcoded CSV paths |
 | **Mechanism** | `sysid_solver.py` (1155 lines) |
 | **Outcome** | **Not wired into the CLI**, does not emit the current `sysid_fit.json` format, and its CSV paths are hardcoded. `sysid_fit.py` is the live path |
-| **Status** | **dead** (KI-018 territory) |
-| **What would revive it** | Nothing. It should be deleted, or rewritten against the current fit format |
+| **Status** | **dead** (kept as a documented prototype, KI-018; the decision to delete or rewrite it is still open) |
+| **What would revive it** | Rewrite it against the current fit format, or delete it. It is the only unwired module left in the root |
 
 ### 21.5 Interaction forces
 
@@ -1386,7 +1386,7 @@ Four lessons from the ledger, and they are the reason Part IV is shaped the way 
 
 **4. The candidate set is a selection mechanism, not a search mechanism.** The candidate set works: it tries a handful of options and picks the one that passes. What it does not do is explore. The sweep grid was the only candidate-set change that ever produced a new best trajectory, and it worked because it added a genuinely different *parameter* (the weight), not a different *path*.
 
-**5. The measurement base is too narrow to support strong claims.** Everything in [Section 9](#9-measured-heuristic-comparison) rests on six example missions, and the random benchmark that was supposed to provide a mission suite is broken (KI-015). "The baseline wins the complex mission" might be a fact about the planner, or it might be a fact about that one path. Distinguishing the two is Q8, and it is cheap to do.
+**5. The measurement base is too narrow to support strong claims.** Everything in [Section 9](#9-measured-heuristic-comparison) rests on six example missions. The random benchmark that was supposed to provide a mission suite is fixed (KI-015) and the harness under [`research/`](../../research/) answers Q8 on 32 missions; what is still missing is a **re-run of that suite on the current tree**, because the numbers in `docs/research/pq_b/` predate KI-025 to KI-028. "The baseline wins the complex mission" might be a fact about the planner, or it might be a fact about that one path.
 
 ---
 
@@ -1433,6 +1433,7 @@ Each question has the current evidence, a hypothesis, and an experiment with a m
 | **Metric** | The fraction of missions where a non-baseline seed is the only source of a passing trajectory; the duration cost of that insurance |
 | **Success criterion** | A clear answer either way, and a cost figure: "one extra seed buys a passing trajectory on N % of missions, at M seconds per solve". If N is small, the candidate count should be cut and the budget spent on the sweep grid, which also wins (19.1) |
 | **Cost** | Low. The data is already in `attempt_record` (`main.py:1058-1059`). This is a measurement, not an experiment |
+| **Answer (2026-10-20)** | **The hypothesis is half right, and the other half is the opposite.** The insurance is real but small, and it comes from the **timing model**, not from a seed. The seeds buy **speed** where they reach a different optimum, which the hypothesis said they would not. The measurement is in [`docs/measurements/2026-10-20/matrix/`](measurements/2026-10-20/matrix/) and the analysis is `analyse_matrix.py` in that folder. See the summary below. |
 
 ### Q4 — Should reachability be an objective term?
 
@@ -1489,7 +1490,7 @@ Each question has the current evidence, a hypothesis, and an experiment with a m
 | | |
 |---|---|
 | **Question** | Every conclusion in [Section 9](#9-measured-heuristic-comparison) rests on six hand-written example paths. Does the baseline still win on paths nobody designed for it? |
-| **Current evidence** | The random benchmark is broken (21.3, KI-015). The example missions are geometrically simple: short, mostly straight, few segments. And the answer is already nuanced on the six we have: the baseline is selected on 2 of 6, a non-baseline seed on 2 of 6 (one of them a tie), and 2 of 6 have no passing candidate at all under the most thorough configuration tried |
+| **Current evidence** | The random benchmark is fixed (21.3, KI-015) and the question has been answered on 32 missions in `docs/research/pq_b/FINDINGS.md`: the baseline has the **lowest** pass rate of the five seeds. The example missions are geometrically simple: short, mostly straight, few segments. And the answer is already nuanced on the six we have: the baseline is selected on 2 of 6, a non-baseline seed on 2 of 6 (one of them a tie), and 2 of 6 have no passing candidate at all under the most thorough configuration tried |
 | **Hypothesis** | On paths with many sharp turns, close waypoints, or segments whose optimal durations differ by an order of magnitude, the structured seeds *will* win more often, because the baseline's straight-line guess is then a poor approximation of anything |
 | **Experiment** | 1. Repair the random benchmark (`benchmark.py --mode random`): fix the config path, fix the `solve()` unpacking, and check `stats["converged"]` in pipeline mode. 2. Generate 50–100 random missions with a realistic waypoint distribution (segment lengths 0.2–2 m, heading changes 0–180°, optional stops and events). 3. Run the seed matrix on each. 4. Report the win rate per seed per timing mode, and the rate at which *no* candidate passes. |
 | **Metric** | Win rate per seed per timing mode; the distribution of the duration gap between the best and the baseline; the **no-pass rate** |
@@ -1520,6 +1521,7 @@ Each question has the current evidence, a hypothesis, and an experiment with a m
 | **Metric** | Pass rate and selected duration under each rule. |
 | **Success criterion** | A rule that passes at least as often and selects a faster trajectory. |
 | **Cost** | Low. The scores are already computed; only the comparison rule changes. |
+| **Answer (2026-10-20)** | **The hypothesis is wrong on the tracking error and right about the excess, but neither is the lever.** The envelope is almost a proxy for the **duration** (r = +0.97 over 162 candidates), so the current rule is "shortest run" in disguise — and it throws away 11 % of the run time on the complex mission to hold a 0.6 mm difference in a number that is 8 mm inside its limit. The tracking error is nearly independent of the duration (r = +0.33), so preferring it is *slower* in 7 of the 17 groups. The per-sample excess agrees with the envelope on every mission here, because every segment limit is the default 2 cm. The envelope never rejects a candidate either. The measurement is in [`docs/measurements/2026-10-20/matrix/`](measurements/2026-10-20/matrix/); the analysis is `analyse_matrix.py` in that folder, and every candidate now carries its score vector in the `##OVERBOARD-VALIDATION##` line. |
 
 ### Q11 — Should the executor be part of the planner?
 
@@ -1550,6 +1552,10 @@ Each question has the current evidence, a hypothesis, and an experiment with a m
 ```text
   ---  DONE: RQ-A  the tracking gate's cause is identified. See
                 docs/research/RQ-A_tracking_error.md. It reorders Q4 and Q9.
+  ---  DONE: Q3  the selection is instrumented and the insurance rate is
+                measured. See the matrix folder and its analyse_matrix.py.
+  ---  DONE: Q10 the selection rules are compared offline on the same
+                matrix. The envelope is a proxy for the duration.
   OQ1  explain the residual tracking floor at fine sampling   (RQ-A open item)
   OQ2  reformulate the optimizer so the plan is self-consistent
   Q8  repair the random benchmark and get a mission suite   (prerequisite)
@@ -1754,7 +1760,6 @@ Every symbol this document mentions, with its location in the tree that was meas
 | `check_sample_interval` | 444 | The per-sample interval physics |
 | `compute_reachability` | 537 | The interval propagation |
 | the divergence radius | 714 | 0.05 m |
-| `get_safety_ribbon_data` | 728 | **Unused** (KI-018) |
 
 ## `multiverse_optimizer.py`
 
@@ -1836,8 +1841,8 @@ Every symbol this document mentions, with its location in the tree that was meas
 | KI-009 | Safety / config | The declared uncertainty ranges were ignored | [Section 11](#11-the-uncertainty-model) |
 | KI-010 | Physics | The weight-transfer math was wrong and the tools disagreed | [22.5](#225-the-weight-transfer-math-was-wrong-and-the-tools-disagreed-ki-010) |
 | KI-014 | Safety model | The JAX Ramsete used a poor large-angle approximation | [Section 12](#12-controller-and-plant-parity) |
-| KI-015 | Benchmarks | The random benchmark tools are broken | [21.3](#213-the-random-benchmark-mode), Q8 |
-| KI-018 | Maintenance | Dead code, duplicates, generated files | [21.4](#214-sysidsolverpy), [20.4](#204-the-critics-config-block) |
+| KI-015 | Benchmarks | ~~The random benchmark tools are broken~~ (fixed) | [21.3](#213-the-random-benchmark-mode), Q8 |
+| KI-018 | Maintenance | ~~Dead code, duplicates, generated files~~ (fixed) | [21.4](#214-sysidsolverpy), [20.4](#204-the-critics-config-block) |
 | KI-019 | Safety | The reachability tube lagged the reference by one sample | [22.2](#222-the-reachability-tube-lagged-the-reference-by-one-sample-ki-019) |
 | KI-020 | Digital twin | The validator is not a full twin; reachability is not an objective | [Section 14](#14-what-each-layer-proves-and-does-not-prove), [21.2](#212-reachability-as-a-post-hoc-score), Q4, Q9 |
 | KI-021 | Robot runtime | The DriveBase capped the acceleration the plan asked for | [Section 12](#12-controller-and-plant-parity) |

@@ -252,13 +252,14 @@ class TrajectoryCritic:
 class MasterTrajectoryOptimizer:
     """Orchestrates the Multi-Verse refinement pipeline (JAX Enhanced)."""
 
-    def __init__(self, config: RobotConfig, enable_parallel: bool = True, num_workers: int = 8, verbose: bool = True) -> None:
+    def __init__(self, config: RobotConfig, enable_parallel: bool = True, num_workers: int = 8, verbose: bool = True, seed: int = 0) -> None:
         if not HAS_JAX:
             raise ImportError("JAX is required for Multi-Verse optimization. Please install JAX or run with the --simple flag.")
         self.config = config
         self.enable_parallel = enable_parallel
         self.num_workers = num_workers
         self.verbose = verbose
+        self.seed = int(seed)
         self.bootstrapper = PathBootstrapper(config)
         self.critic = TrajectoryCritic(config)
         self.iteration_history: List[Dict[str, Any]] = []
@@ -267,7 +268,13 @@ class MasterTrajectoryOptimizer:
         # JAX Initialization
         self.jax_config = JAXRobotConfig(config.__dict__)
         self.jax_refiner = get_jax_refiner(self.jax_config)
-        self.prng_key = jax.random.PRNGKey(int(time.time()))
+        # The STOMP perturbations are the only random part of the pipeline,
+        # and the pipeline has to be reproducible: the same mission must
+        # give the same trajectory every time, or a plan cannot be compared
+        # with the plan before it. The key used to be seeded from the
+        # clock, which made the same mission come out 4.62 s on one run and
+        # 5.50 s on the next.
+        self.prng_key = jax.random.PRNGKey(self.seed)
         # What the refined-guess probe did in the last solve (KI-004).
         self.refine_probe = None
 
@@ -303,54 +310,10 @@ class MasterTrajectoryOptimizer:
         phase4_start = time.time()
         if len(bad_windows) > 0:
             if verbose: print(f"Phase 4: Refining {len(bad_windows)} segments using JAX (N={JAX_TARGET_SAMPLES})...")
-            
-            for window_start, window_end in bad_windows:
-                start_idx = window_start * num_samples_per_segment
-                end_idx = min(window_end * num_samples_per_segment, len(global_traj) - 1)
-                num_window_samples = end_idx - start_idx + 1
-                
-                # Extract original states for resampling
-                orig_states = np.array([[global_traj[idx][k] for k in ['x', 'y', 'heading', 'vl', 'vr']] for idx in range(start_idx, end_idx + 1)])
-
-                # CPU-side Resampling to JAX_TARGET_SAMPLES
-                resampled_states = resample_window_cpu(orig_states, JAX_TARGET_SAMPLES)
-
-                s_state = jnp.array(resampled_states[0])
-                e_state = jnp.array(resampled_states[-1])
-
-                self.prng_key, subkey = jax.random.split(self.prng_key)
-                guesses, initial_costs, biases = generate_candidates_jax(
-                    s_state, e_state, JAX_TARGET_SAMPLES, DEFAULT_STOMP_VARIANTS, self.jax_config, subkey
-                )
-
-                top_k = 10
-                indices = jnp.argsort(initial_costs)[:top_k]
-
-                refined_params, refined_costs, iters = self.jax_refiner(
-                    guesses[indices],
-                    {'forward_weight': biases['forward_weight'][indices],
-                     'reverse_weight': biases['reverse_weight'][indices],
-                     'accuracy_weight': jnp.full(top_k, accuracy_weight)},
-                    JAX_TARGET_SAMPLES, s_state, e_state, 100
-                )
-
-                best_idx = jnp.argmin(refined_costs)
-                best_refined = refined_params[best_idx]
-
-                # Resample back to original num_window_samples
-                refined_states_fixed = np.array(best_refined[1:].reshape((JAX_TARGET_SAMPLES, 5)))
-                refined_states_orig = resample_window_cpu(refined_states_fixed, num_window_samples)
-
-                for j in range(num_window_samples):
-                    idx = start_idx + j
-                    global_traj[idx].update({
-                        'x': float(refined_states_orig[j, 0]), 'y': float(refined_states_orig[j, 1]), 'heading': float(refined_states_orig[j, 2]),
-                        'vl': float(refined_states_orig[j, 3]), 'vr': float(refined_states_orig[j, 4]),
-                        'omega': float((refined_states_orig[j, 4] - refined_states_orig[j, 3]) / self.config.track_width)
-                    })
-
-                self.stats.refinements_attempted += 1
-                self.stats.refinements_solved += 1
+            self.stats.refinements_attempted = self._refine_segments(
+                global_traj, num_samples_per_segment, bad_windows,
+                accuracy_weight, apply_headroom)
+            self.stats.refinements_solved = self.stats.refinements_attempted
 
         self.stats.phase_times["refinement"] = time.time() - phase4_start
         
@@ -375,6 +338,155 @@ class MasterTrajectoryOptimizer:
         if final_traj: self.stats.final_cost = float(final_traj[-1]['t'])
         if verbose: print(f"\nOptimization complete in {self.stats.total_time:.2f}s. Final cost: {self.stats.final_cost:.4f}s")
         return final_traj, self.stats.to_dict()
+
+    def _refine_segments(self, global_traj, num_samples_per_segment, bad_windows,
+                          accuracy_weight, apply_headroom):
+        """Phase 4: refine the flagged segments, one segment at a time.
+
+        The critic reports two-segment windows. A window holds the waypoint
+        in its middle, and refining the window as a whole moves that
+        waypoint: the refined trajectory no longer passes through it, and
+        the waypoint is a hard constraint of the problem. The unit of
+        refinement is therefore a **single segment**, whose two endpoints
+        are waypoints and are preserved exactly. Nothing between two
+        waypoints can be clobbered any more, because there is nothing
+        between them.
+
+        Returns the number of segments refined.
+        """
+        num_segments = (len(global_traj) - 1) // num_samples_per_segment
+        flagged = set()
+        for window_start, window_end in bad_windows:
+            for index in range(window_start, min(window_end, num_segments)):
+                flagged.add(index)
+        if not flagged:
+            return 0
+
+        v_max = float(self.config.max_linear_speed(apply_headroom))
+        refined = 0
+        for index in sorted(flagged):
+            if self._refine_segment(global_traj, index, num_samples_per_segment,
+                                     v_max, accuracy_weight):
+                refined += 1
+        return refined
+
+    def _refine_segment(self, global_traj, index, num_samples_per_segment,
+                         v_max, accuracy_weight):
+        """Refine one segment and write it back.
+
+        The endpoints are the waypoints at both ends of the segment: they
+        are kept exactly, whatever the refinement does in between.
+        """
+        start_idx = index * num_samples_per_segment
+        end_idx = min((index + 1) * num_samples_per_segment, len(global_traj) - 1)
+        count = end_idx - start_idx + 1
+        if count < 3:
+            return False
+
+        # The physics of the segment: how long it is, and therefore how
+        # long it should take and how fast it should go. A segment of L
+        # metres at 80 % of the robot's top speed takes L / (0.8 * v_max).
+        length = 0.0
+        for k in range(start_idx, end_idx):
+            length += float(np.hypot(global_traj[k + 1]['x'] - global_traj[k]['x'],
+                                     global_traj[k + 1]['y'] - global_traj[k]['y']))
+        nominal_speed = max(0.8 * v_max, 1e-3)
+        dt_window = (length / nominal_speed) / max(JAX_TARGET_SAMPLES - 1, 1)
+        dt_window = float(min(max(dt_window, 0.001), 1.0))
+
+        orig_states = np.array([[global_traj[idx][k] for k in ['x', 'y', 'heading', 'vl', 'vr']]
+                                for idx in range(start_idx, end_idx + 1)])
+        resampled_states = resample_window_cpu(orig_states, JAX_TARGET_SAMPLES)
+
+        s_state = jnp.array(resampled_states[0])
+        e_state = jnp.array(resampled_states[-1])
+
+        self.prng_key, subkey = jax.random.split(self.prng_key)
+        guesses, initial_costs, biases = generate_candidates_jax(
+            s_state, e_state, JAX_TARGET_SAMPLES, DEFAULT_STOMP_VARIANTS,
+            self.jax_config, subkey, dt_window, nominal_speed)
+
+        top_k = 10
+        indices = jnp.argsort(initial_costs)[:top_k]
+
+        refined_params, refined_costs, iters = self.jax_refiner(
+            guesses[indices],
+            {'forward_weight': biases['forward_weight'][indices],
+             'reverse_weight': biases['reverse_weight'][indices],
+             'accuracy_weight': jnp.full(top_k, accuracy_weight)},
+            JAX_TARGET_SAMPLES, s_state, e_state, 100
+        )
+
+        best_idx = jnp.argmin(refined_costs)
+        best_refined = refined_params[best_idx]
+
+        # The refined window's own interval, and the segment's interval
+        # that it corresponds to: the window holds JAX_TARGET_SAMPLES
+        # samples, the segment holds count.
+        dt_refined = float(best_refined[0])
+        dt_segment = dt_refined * (JAX_TARGET_SAMPLES - 1) / max(count - 1, 1)
+
+        refined_states_fixed = np.array(best_refined[1:].reshape((JAX_TARGET_SAMPLES, 5)))
+        refined_states_orig = resample_window_cpu(refined_states_fixed, count)
+
+        # The endpoints are waypoints. Keep them exactly.
+        first = {k: global_traj[start_idx][k] for k in ('x', 'y', 'heading', 'vl', 'vr')}
+        last = {k: global_traj[end_idx][k] for k in ('x', 'y', 'heading', 'vl', 'vr')}
+
+        for j in range(count):
+            idx = start_idx + j
+            global_traj[idx].update({
+                'x': float(refined_states_orig[j, 0]),
+                'y': float(refined_states_orig[j, 1]),
+                'heading': float(refined_states_orig[j, 2]),
+                'vl': float(refined_states_orig[j, 3]),
+                'vr': float(refined_states_orig[j, 4]),
+                'omega': float((refined_states_orig[j, 4] - refined_states_orig[j, 3])
+                               / self.config.track_width),
+            })
+        global_traj[start_idx].update(first)
+        global_traj[end_idx].update(last)
+
+        self._propagate_timing(global_traj, start_idx, end_idx, dt_segment)
+        self._refresh_forces(global_traj, start_idx, end_idx)
+        return True
+
+    @staticmethod
+    def _propagate_timing(global_traj, start_idx, end_idx, dt_segment):
+        """Write the refined interval into the timestamps.
+
+        The guess the polish is started from reads its per-segment
+        intervals out of the timestamps (``guess_from_samples``), so a
+        refinement that changed the timing has to change the timestamps
+        too. The segment gets the new interval; everything after it shifts
+        by the same amount, so the later segments keep their own.
+        """
+        count = end_idx - start_idx + 1
+        t0 = float(global_traj[start_idx]['t'])
+        old_end = float(global_traj[end_idx]['t'])
+        new_end = t0 + (count - 1) * dt_segment
+        shift = new_end - old_end
+        for j in range(count):
+            global_traj[start_idx + j]['t'] = t0 + j * dt_segment
+        for idx in range(end_idx + 1, len(global_traj)):
+            global_traj[idx]['t'] = float(global_traj[idx]['t']) + shift
+
+    def _refresh_forces(self, global_traj, start_idx, end_idx):
+        """Recompute the accelerations and forces of a refined segment.
+
+        The refinement changed the wheel speeds, so the accelerations and
+        the forces derived from them are stale.
+        """
+        model = DifferentialDriveModel(self.config)
+        for k in range(start_idx, end_idx):
+            dt = max(float(global_traj[k + 1]['t']) - float(global_traj[k]['t']), 1e-3)
+            al = (global_traj[k + 1]['vl'] - global_traj[k]['vl']) / dt
+            ar = (global_traj[k + 1]['vr'] - global_traj[k]['vr']) / dt
+            global_traj[k]['al'] = float(al)
+            global_traj[k]['ar'] = float(ar)
+            fl, fr = model.get_dynamics(global_traj[k]['vl'], global_traj[k]['vr'], al, ar)
+            global_traj[k]['fl'] = float(fl)
+            global_traj[k]['fr'] = float(fr)
 
     def _profile_kinematics(self, guess: np.ndarray, num_samples_per_segment: int, stops: List[int], events: Dict[int, str], apply_headroom: bool) -> List[Dict[str, Any]]:
         """Converts geometric Reeds-Shepp arrays into a continuous time-series dictionary format without invoking CasADi."""
@@ -487,6 +599,16 @@ class MasterTrajectoryOptimizer:
     def _probe_refined_guess(self, optimizer, waypoints, num_samples, accuracy, stops, events, headroom, initial_samples):
         """Solve once from the refined trajectory with a bounded cold pass.
 
+        The probe reads the **per-segment** timing model, because that is
+        what the refined trajectory carries: the refinement gave every
+        segment the interval its own length and speed call for, and those
+        intervals are in the guess's ``dt`` array. The equal-duration model
+        keeps only the first of them and re-reads every sample against one
+        interval, so the guess's states - whose wheel speeds and positions
+        were computed with the refined intervals - would be read against a
+        timing they do not belong to. That is a guess far from the feasible
+        manifold, and it is why the probe used to lose (KI-004).
+
         Returns (samples, stats) or None when the probe cannot run.
         """
         num_segments = len(waypoints) - 1
@@ -497,7 +619,7 @@ class MasterTrajectoryOptimizer:
         try:
             return optimizer.solve(
                 waypoints, num_samples, accuracy, stops, events, headroom, False,
-                initial_guess=guess,
+                initial_guess=guess, per_segment_dt=True,
                 solver_options={"max_iter": REFINE_PROBE_MAX_ITER, "warm_start_init_point": "no"})
         except Exception:
             return None

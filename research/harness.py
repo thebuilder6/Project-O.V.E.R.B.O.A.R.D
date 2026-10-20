@@ -146,6 +146,12 @@ def build_specs(name: str, base_weight: float, samples: int) -> List[Dict[str, A
             add(_spec(f"spline/{timing}/a={base_weight:g}", "baseline", timing,
                       base_weight, samples, guess="spline"))
 
+    if name in ("reeds", "matrix"):
+        # Q12: the Multi-Verse bootstrap, with its rsplan API fixed.
+        for timing in timings:
+            add(_spec(f"reeds-shepp/{timing}/a={base_weight:g}", "baseline", timing,
+                      base_weight, samples, guess="reeds_shepp"))
+
     if name in ("proportional", "matrix"):
         # Q2: a length-proportional time allocation.
         add(_spec(f"proportional-dt/per-segment/a={base_weight:g}", "rolling",
@@ -373,6 +379,8 @@ def _initial_guess(spec: Dict[str, Any], mission: Dict[str, Any], robot_cfg):
         return seed_lib.spline_guess(waypoints, samples, robot_cfg, stops)
     if guess_kind == "proportional_dt":
         return seed_lib.proportional_dt_guess(waypoints, samples, robot_cfg, stops)
+    if guess_kind == "reeds_shepp":
+        return seed_lib.reeds_shepp_guess(waypoints, samples, robot_cfg, stops)
     raise ValueError(f"Unknown guess kind {guess_kind!r}")
 
 
@@ -408,7 +416,8 @@ def run_mission(mission: Dict[str, Any], specs: List[Dict[str, Any]], robot_cfg,
         payloads.append((robot_cfg, waypoints, spec, solve_kwargs,
                          engine == "multiverse"))
 
-    solved = cli._solve_candidates(payloads, workers, quiet=True, parallel=workers > 1)
+    solved, _histories = cli._solve_candidates(payloads, workers, quiet=True,
+                                                parallel=workers > 1)
 
     records = []
     state = tree_state()

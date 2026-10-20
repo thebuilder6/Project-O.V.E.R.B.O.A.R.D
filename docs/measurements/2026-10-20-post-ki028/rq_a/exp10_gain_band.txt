@@ -1,0 +1,28 @@
+tracking gate = 5.00 mm
+
+    path          gain band   tracking mm   envelope mm  passes gate
+    0.5m       none (1.000)         0.000         2.151          yes
+    0.5m           +/-0.1 %         0.005         4.676          yes
+    0.5m           +/-0.5 %         0.094        15.217          yes
+    0.5m             +/-1 %         0.363        28.599          yes
+    0.5m             +/-3 %         1.679        54.561          yes
+    0.5m             +/-5 %         2.003        53.081          yes
+    1.0m       none (1.000)         0.001         2.916          yes
+    1.0m           +/-0.1 %         0.026        13.108          yes
+    1.0m           +/-0.5 %         0.598        54.989          yes
+    1.0m             +/-1 %         0.910        54.026          yes
+    1.0m             +/-3 %         1.679        54.561          yes
+    1.0m             +/-5 %         2.003        53.081          yes
+    2.0m       none (1.000)         0.001         4.482          yes
+    2.0m           +/-0.1 %         0.143        45.690          yes
+    2.0m           +/-0.5 %         0.598        54.989          yes
+    2.0m             +/-1 %         1.302        69.898          yes
+    2.0m             +/-3 %         1.679        54.561          yes
+    2.0m             +/-5 %         4.542        91.330          yes
+
+A gain band of g means the robot travels (1-g) of the distance it was
+told to travel, so the position error over a path of length L is about
+g * L. The tracking gate of 5 mm is therefore reached at g = 5 mm / L:
+  L = 0.5 m -> a gain band of +/-10.00 % already fails the gate
+  L = 1.0 m -> a gain band of +/-5.00 % already fails the gate
+  L = 2.0 m -> a gain band of +/-2.50 % already fails the gate

@@ -40,6 +40,11 @@ CALIBRATION_DIR = REPO_ROOT / "calibration"
 MATS_DIR = REPO_ROOT / "mats"
 
 MAX_BODY_BYTES = 2_000_000
+# The field guide is under a megabyte; anything larger is not it.
+MAX_MAT_DOCUMENT_BYTES = 32_000_000
+# How far the picture's shape may differ from the mat's before the studio
+# says so: one percent is about 20 mm of a 2 m mat.
+MAT_ASPECT_TOLERANCE = 0.01
 LOG_LINES = 800
 SLUG_RE = re.compile(r"[^a-z0-9_-]+")
 
@@ -61,6 +66,23 @@ def slugify(name, fallback="mission"):
     slug = SLUG_RE.sub("-", str(name or "").strip().lower()).strip("-_")
     slug = slug[:60]
     return slug or fallback
+
+
+class BusyError(RuntimeError):
+    """The studio is already running a job, so this one cannot start."""
+
+
+def _register_job(server, job):
+    """Register a job, or refuse it when one is already running.
+
+    The job's temporary folder is removed when the studio is busy: the job
+    never runs, so nothing will ever read it.
+    """
+    try:
+        server.add_job(job)
+    except BusyError:
+        shutil.rmtree(str(job.output_dir), ignore_errors=True)
+        raise
 
 
 def _read_json(path):
@@ -192,7 +214,17 @@ class StudioServer(ThreadingHTTPServer):
             return f"job{self.counter}"
 
     def add_job(self, job):
+        """Register a job, or refuse it when one is already running.
+
+        The check and the registration are one step under the lock. The
+        studio runs one job at a time, so the check the handlers do first
+        is only a fast path: two requests that arrive together would both
+        pass it, and two solves would run at once.
+        """
         with self.lock:
+            for other in self.jobs.values():
+                if other.status == "running":
+                    raise BusyError("A solve is already running. Cancel it first.")
             self.jobs[job.id] = job
             return job
 
@@ -308,7 +340,7 @@ def start_job(server, payload):
     command = build_command(job_dir, config_path, waypoints_path, output_path, options)
     job = Job(server.next_job_id(), name, job_dir)
     job.result = {"limits": {}, "iterations": []}
-    server.add_job(job)
+    _register_job(server, job)
 
     def run():
         try:
@@ -330,11 +362,24 @@ def start_job(server, payload):
             # The plots need the limits and, when asked for, the way the
             # trajectory converged. Fill them in before the status flips, so a
             # poll that sees the job finished also sees the result.
+            #
+            # The status is set first, and the post-processing is guarded:
+            # a failure here must not leave the job "running", or the studio
+            # would refuse every later job and the operator could not even
+            # cancel it.
+            if job.status == "running":
+                job.status = "ok" if job.exit_code == 0 else "failed"
+            if job.status == "failed" and not job.error:
+                job.error = job.lines[-1] if job.lines else "The solve failed."
             samples = []
-            traj = artifact_path(job, "traj")
-            if traj and traj.is_file():
-                document = _read_json(traj) or {}
-                samples = document.get("trajectory", {}).get("samples", [])
+            try:
+                traj = artifact_path(job, "traj")
+                if traj and traj.is_file():
+                    document = _read_json(traj) or {}
+                    samples = (document.get("trajectory") or {}).get("samples", [])
+            except Exception as exc:  # noqa: BLE001 - a plot is not worth a failure
+                job.log(f"Studio could not read the trajectory: {exc}")
+                samples = []
             try:
                 job.result["limits"] = trajectory_limits(config_path, samples)
             except Exception:  # noqa: BLE001 - a plot is not worth a failure
@@ -347,14 +392,9 @@ def start_job(server, payload):
             history = job_dir / "iterations.json"
             if history.is_file():
                 job.result["iterations"] = _read_json(history) or []
-            if job.status == "running":
-                job.status = "ok" if job.exit_code == 0 else "failed"
-            if job.status == "failed" and not job.error:
-                job.error = job.lines[-1] if job.lines else "The solve failed."
 
     thread = threading.Thread(target=run, daemon=True, name=f"Solve{job.id}")
     thread.start()
-    job.thread = thread
     return job
 
 
@@ -450,6 +490,21 @@ def field_payload():
     }
 
 
+def _read_bounded(response, limit):
+    """Read a response, up to ``limit`` bytes. None if it is longer."""
+    chunks = []
+    total = 0
+    while True:
+        chunk = response.read(65536)
+        if not chunk:
+            break
+        total += len(chunk)
+        if total > limit:
+            return None
+        chunks.append(chunk)
+    return b"".join(chunks)
+
+
 def download_field_mat(season, timeout=120):
     """Compose a season's mat picture from FIRST's own documents.
 
@@ -490,22 +545,39 @@ def download_field_mat(season, timeout=120):
                 url, headers={"User-Agent": "overboard-studio"})
             try:
                 with urllib.request.urlopen(request, timeout=timeout) as response:
-                    data = response.read()
+                    # Read it in chunks and stop at the limit: the document
+                    # is under a megabyte, and a server that sends more
+                    # than that is not the one the field file names.
+                    data = _read_bounded(response, MAX_MAT_DOCUMENT_BYTES)
+            except ValueError:
+                raise
             except Exception as exc:  # noqa: BLE001 - reported to the browser
                 raise ValueError(
                     f"Could not fetch FIRST's field guide: {exc}") from exc
+            if data is None:
+                raise ValueError("The field guide is larger than expected.")
             if not data.startswith(b"%PDF"):
                 raise ValueError("What came back is not a PDF.")
             with open(document, "wb") as handle:
                 handle.write(data)
         try:
             from mat_import import compose_mat
-            compose_mat(
+            composed = compose_mat(
                 str(document), str(target),
                 mat_mm=mat_mm,
                 page=int(source.get("page", 2) or 2))
         except RuntimeError as exc:
             raise ValueError(str(exc)) from exc
+        # The picture is stretched to the mat's size, so a crop that is not
+        # the mat's shape puts its features up to a tenth of the mat away
+        # from where they belong. The composition is still kept - the
+        # operator can see it - but the studio is told.
+        if composed.get("aspect_error", 0.0) > MAT_ASPECT_TOLERANCE:
+            raise ValueError(
+                "The mat's picture does not have the mat's shape "
+                f"({composed['source_aspect']:.4f} against "
+                f"{composed['mat_aspect']:.4f}); the picture would be "
+                "stretched. Check the field's mat size or the page.")
 
     return {
         "url": f"/mats/{target.name}",
@@ -659,16 +731,83 @@ def read_sheet_rows(sheet_path, rows):
     return out
 
 
+def _sheet_key(row):
+    """The identity of one measurement row: the test, the repeat, the stop."""
+    return (str(row.get("test", "") or "").strip(),
+            str(row.get("repeat", "0") or "0").strip(),
+            str(row.get("stop", "0") or "0").strip())
+
+
+# The three numbers the fitter needs for a row. A row without all three is
+# skipped whole, so a partly filled row is still missing.
+MEASUREMENT_FIELDS = ("x_mm", "y_mm", "turn_right_deg")
+
+
 def save_sheet(sheet_path, rows):
-    """Write the operator's measurements, in the fitter's sheet format."""
+    """Write the operator's measurements, in the fitter's sheet format.
+
+    The browser's rows are merged with the ones already on disk. A row the
+    browser sends empty keeps what the file holds, and a row the browser
+    does not send at all is kept. A tab that was open before the last
+    collection must not wipe what another tab - or the operator's own last
+    save - put there.
+    """
     from sysid_fit import SHEET_FIELDS
     sheet_path.parent.mkdir(parents=True, exist_ok=True)
+    merged = {}
+    if sheet_path.is_file():
+        try:
+            with open(sheet_path, "r", encoding="utf-8", newline="") as handle:
+                for raw in csv.DictReader(handle):
+                    if not (raw.get("test") or "").strip():
+                        continue
+                    merged[_sheet_key(raw)] = {
+                        field: str(raw.get(field, "") or "").strip()
+                        for field in SHEET_FIELDS
+                    }
+        except OSError:
+            merged = {}
+    for row in rows:
+        key = _sheet_key(row)
+        values = {field: str(row.get(field, "") or "").strip()
+                  for field in SHEET_FIELDS}
+        # Only the measurement cells count: the row's name is never blank.
+        measured = any(values.get(field, "") for field in MEASUREMENT_FIELDS)
+        if not measured and key in merged:
+            # The browser knows nothing about this row: keep what is on disk.
+            continue
+        merged[key] = values
     with open(sheet_path, "w", encoding="utf-8", newline="") as handle:
         writer = csv.DictWriter(handle, fieldnames=SHEET_FIELDS)
         writer.writeheader()
-        for row in rows:
-            writer.writerow({key: row.get(key, "") for key in SHEET_FIELDS})
+        for key in merged:
+            writer.writerow({field: merged[key].get(field, "")
+                             for field in SHEET_FIELDS})
     return sheet_path
+
+
+def count_missing(rows):
+    """How many of the measurements the fitter still needs are missing.
+
+    The fitter needs all three numbers of a row: a row with one blank cell
+    is skipped whole, so a partly filled row is still missing.
+    """
+    missing = 0
+    for row in rows:
+        complete = True
+        for field in MEASUREMENT_FIELDS:
+            value = str(row.get(field, "") or "").strip()
+            if value == "":
+                complete = False
+                break
+            try:
+                float(value)
+            except (TypeError, ValueError):
+                complete = False
+                break
+        if not complete:
+            missing += 1
+    return missing
 
 
 def fit_from_sheet(name):
@@ -754,7 +893,7 @@ def start_collect(server, payload):
     job = Job(server.next_job_id(), f"collect {name}", job_dir, kind="collect")
     job.result = {"name": name, "connection": connection,
                   "session_path": str(session_path), "progress": None}
-    server.add_job(job)
+    _register_job(server, job)
 
     def run():
         try:
@@ -777,18 +916,24 @@ def start_collect(server, payload):
                 job.status = "ok" if job.exit_code == 0 else "failed"
             if job.status == "failed" and not job.error:
                 job.error = job.lines[-1] if job.lines else "The collection failed."
-            if job.exit_code == 0 and session_path.is_file():
+            # The session is kept whenever it exists, not only when the
+            # collection succeeded: the collector writes the session as the
+            # output arrives, so a dropped link costs the last test and not
+            # the run. What arrived is still a measurement.
+            if session_path.is_file():
                 try:
                     paths = calibration_paths(name)
                     paths["session"].parent.mkdir(parents=True, exist_ok=True)
                     shutil.copyfile(str(session_path), str(paths["session"]))
                     job.result["session_path"] = str(paths["session"])
+                    if job.exit_code != 0:
+                        job.log("The link dropped; the session that arrived "
+                                "was kept.")
                 except OSError as exc:
                     job.log(f"Could not save the session: {exc}")
 
     thread = threading.Thread(target=run, daemon=True, name=f"Collect{job.id}")
     thread.start()
-    job.thread = thread
     return job
 
 
@@ -1032,7 +1177,7 @@ def start_push(server, payload):
     job = Job(server.next_job_id(), source.name, job_dir, kind="push")
     job.result = {"connection": connection, "hub_name": hub_name or "",
                   "poses": [], "events": [], "report": None}
-    server.add_job(job)
+    _register_job(server, job)
 
     def run():
         try:
@@ -1051,14 +1196,28 @@ def start_push(server, payload):
             job.exit_code = -1
         finally:
             job.finished = time.time()
-            # The measured pose and the comparison are filled in before the
-            # status flips, so a poll that sees the job finished also sees the
+            # The status is set first, so a failure in the post-processing
+            # below cannot leave the job "running" and block the studio.
+            if job.status == "running":
+                job.status = "ok" if job.exit_code == 0 else "failed"
+            if job.status == "failed" and not job.error:
+                job.error = job.lines[-1] if job.lines else "The push failed."
+            # The measured pose and the comparison are filled in after the
+            # status, so a poll that sees the job finished also sees the
             # result.
-            if job.exit_code == 0 and session_path.is_file():
-                poses, events = read_session_poses(session_path)
-                job.result["poses"] = poses
-                job.result["events"] = events
-                job.result["report"] = compare_with_plan(traj, session_path)
+            #
+            # The session is read whenever it exists, not only when the push
+            # succeeded: the console is written as the output arrives, so a
+            # link that drops at the end still leaves what the robot
+            # reported.
+            if session_path.is_file():
+                try:
+                    poses, events = read_session_poses(session_path)
+                    job.result["poses"] = poses
+                    job.result["events"] = events
+                    job.result["report"] = compare_with_plan(traj, session_path)
+                except Exception as exc:  # noqa: BLE001 - a comparison is not worth a failure
+                    job.log(f"Could not compare the run with the plan: {exc}")
                 # The session belongs next to the mission it came from.
                 try:
                     MISSIONS_DIR.mkdir(exist_ok=True)
@@ -1067,14 +1226,9 @@ def start_push(server, payload):
                     job.result["session_path"] = str(target)
                 except OSError as exc:
                     job.log(f"Could not save the session next to the mission: {exc}")
-            if job.status == "running":
-                job.status = "ok" if job.exit_code == 0 else "failed"
-            if job.status == "failed" and not job.error:
-                job.error = job.lines[-1] if job.lines else "The push failed."
 
     thread = threading.Thread(target=run, daemon=True, name=f"Push{job.id}")
     thread.start()
-    job.thread = thread
     return job
 
 
@@ -1350,14 +1504,20 @@ class StudioHandler(BaseHTTPRequestHandler):
         if self.server.active_job() is not None:
             return self._error(409, "A solve is already running. Cancel it first.")
         payload = self._read_body()
-        job = start_job(self.server, payload)
+        try:
+            job = start_job(self.server, payload)
+        except BusyError as exc:
+            return self._error(409, str(exc))
         return self._json(202, job.snapshot())
 
     def _push(self):
         if self.server.active_job() is not None:
             return self._error(409, "Something is already running. Cancel it first.")
         payload = self._read_body()
-        job = start_push(self.server, payload)
+        try:
+            job = start_push(self.server, payload)
+        except BusyError as exc:
+            return self._error(409, str(exc))
         return self._json(202, job.snapshot())
 
     def _load_model(self):
@@ -1396,7 +1556,10 @@ class StudioHandler(BaseHTTPRequestHandler):
         if self.server.active_job() is not None:
             return self._error(409, "Something is already running. Cancel it first.")
         payload = self._read_body()
-        job = start_collect(self.server, payload)
+        try:
+            job = start_collect(self.server, payload)
+        except BusyError as exc:
+            return self._error(409, str(exc))
         return self._json(202, job.snapshot())
 
     def _sheet(self):
@@ -1407,14 +1570,18 @@ class StudioHandler(BaseHTTPRequestHandler):
         paths = calibration_paths(name)
         session = paths["session"]
         if not session.is_file():
-            return self._error(404, "There is no collected session for this robot yet.")
+            # No session yet is not an error. The studio asks for the sheet
+            # every time it loads, and a 404 there is noise in the console
+            # and in the operator's face. The empty sheet says the same
+            # thing: there is nothing to fill in yet.
+            return self._json(200, {"rows": [], "missing": 0, "total": 0,
+                                    "name": name, "session": False})
         rows = _sheet_rows(_session_runs(session))
         filled = read_sheet_rows(paths["sheet"], rows)
-        missing = sum(1 for row in filled
-                      if row["x_mm"] == "" and row["y_mm"] == ""
-                      and row["turn_right_deg"] == "")
+        missing = count_missing(filled)
         return self._json(200, {"rows": filled, "missing": missing,
-                                "total": len(filled), "name": name})
+                                "total": len(filled), "name": name,
+                                "session": True})
 
     def _fit(self):
         """Fit the model from the session and the filled sheet."""
@@ -1438,12 +1605,17 @@ class StudioHandler(BaseHTTPRequestHandler):
             save_sheet(paths["sheet"], rows)
         except OSError as exc:
             return self._error(500, f"Could not save the sheet: {exc}")
-        filled = read_sheet_rows(paths["sheet"], rows)
-        missing = sum(1 for row in filled
-                      if row["x_mm"] == "" and row["y_mm"] == ""
-                      and row["turn_right_deg"] == "")
-        return self._json(200, {"rows": filled, "missing": missing,
-                                "total": len(filled), "name": name})
+        # The same rows the GET returns: every measurement the session
+        # needs, with whatever is filled in. The rows the browser sent are
+        # not the whole sheet.
+        if paths["session"].is_file():
+            shown = read_sheet_rows(
+                paths["sheet"], _sheet_rows(_session_runs(paths["session"])))
+        else:
+            shown = read_sheet_rows(paths["sheet"], rows)
+        missing = count_missing(shown)
+        return self._json(200, {"rows": shown, "missing": missing,
+                                "total": len(shown), "name": name})
 
     def _cancel_job(self, job_id):
         job = self.server.get_job(job_id)

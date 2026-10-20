@@ -22,6 +22,7 @@ wheels/
 
 # Virtual environments
 venv/
+.venv/
 ENV/
 env/
 
@@ -41,6 +42,10 @@ examples/*_controller.json
 examples/*_stats.json
 examples/test_*.json
 examples/complex_mission_optimized*.json
+# The generated mission exports. The two copies the robot needs live in
+# pybricks_code/ and are tracked; a stray copy in examples/ is not.
+examples/complex_mission.py
+examples/complete_mission.py
 complex_mission_optimized*
 straight_controller.json
 test_output*

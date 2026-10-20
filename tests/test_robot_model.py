@@ -359,7 +359,7 @@ class TestDifferentialDriveModel(unittest.TestCase):
         self.assertLess(nl + nr, 2.0 * base_normal + 1e-9)
 
 
-class TestMeasuredMotor(unittest.TestCase):
+class TestMeasuredMotorConfig(unittest.TestCase):
     """A measured motor replaces the declared one in the config (KI-010)."""
 
     def _config(self, **extra):

@@ -29,7 +29,7 @@ What is still incomplete:
 - Multi-Verse refinement is discarded by the final polish (KI-004).
 - The validator is kinematic and has no motor, DriveBase, odometry, or slip dynamics (KI-020).
 - Under the narrowed test ranges in `examples/fll_choreo.json`, the straight and complex-mission examples pass; the S-curve, stops, and events examples still fail.
-- Convergence flags, random benchmarks, and some export edge cases remain open (KI-011, KI-012, KI-015, KI-017).
+- Convergence flags and some export edge cases remain open (KI-017). The random benchmarks work (KI-015).
 
 ---
 
@@ -460,9 +460,9 @@ The simple optimizer records `iteration_history` when `--show-convergence` is se
 
 ### 9.4 Benchmarks
 
-- `benchmark.py --mode pipeline` works and produced the comparison above, but it does not check `stats["converged"]`; a failed solve can still be summarized as a normal result.
-- `--mode random` validates against a written `config_used.json` after the partial KI-015 fix, but the random suite generator still reads a missing `robot_config.json` and treats `solve()` as returning samples instead of `(samples, stats)`.
-- The benchmark default config is `robot_config.json`, which is not in the repository. Pass `--config examples/fll_choreo.json`.
+- `benchmark.py --mode pipeline` works and produced the comparison above. It checks `stats["converged"]`, so a failed solve is reported as `FAILED` rather than as a normal result.
+- `--mode random` validates against the `config_used.json` it wrote, and the random suite generator unpacks `solve()`'s tuple and solves every mission (KI-015).
+- The benchmark default config is `examples/fll_choreo.json`.
 
 ### 9.5 Export
 
@@ -533,7 +533,7 @@ The pipeline benchmark in §7.6 produced identical final costs for simple and Mu
 | KI-006 | Open | Fresh `requirements.txt` install cannot run the default or validation paths |
 | KI-011 | Open | Controller heading interpolation can cross ±π the long way |
 | KI-012 | Open | Final-waypoint events do not fire in the deployed runtime |
-| KI-015 | Partial | Pipeline benchmark works; random suite generator still broken |
+| KI-015 | Fixed | The benchmark tools work: the pipeline mode checks convergence, the random mode validates against the config it used, and the suite generator solves every mission |
 | KI-016 | Fixed | The live view that missed the config is gone; the studio loads the mission itself |
 | KI-017 | Open | Convergence animate/output flags do nothing; Multi-Verse has no history |
 | KI-018 | Open | Generated mission copies, unused diagnostic API, dead UI state |
@@ -552,7 +552,7 @@ Priority order:
 3. **KI-006:** done. The simple solver is the default and the optional stack lives in `requirements-optional.txt`.
 4. **KI-005/KI-016:** stop killing the port and replay config/waypoints to new clients.
 5. **KI-011/KI-012:** unwrap headings on export and fire the final event.
-6. **KI-015:** make random benchmarks use an explicit config and check convergence.
+6. **KI-015:** done - the random benchmarks use an explicit config and check convergence.
 7. **KI-017/KI-018:** wire or remove convergence flags, dead UI state, and generated duplicates.
 
 The path-planning side of this list — the seed heuristics, the timing models, the candidate set, the reachability objective, and the research agenda with a suggested order — is in [`docs/HEURISTICS_AND_VERIFICATION.md`](HEURISTICS_AND_VERIFICATION.md) Part IV.

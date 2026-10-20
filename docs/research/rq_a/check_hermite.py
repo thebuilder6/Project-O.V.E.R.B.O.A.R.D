@@ -5,6 +5,7 @@ nothing. Compare the Hermite's curve against the true circle and print the
 endpoint curvature it implies.
 """
 import math
+import os
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))

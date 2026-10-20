@@ -14,10 +14,23 @@ def local_trajectory_cost(params, s, e, b, config, num_samples):
     vl, vr = X[:, 3], X[:, 4]
     x, y, theta = X[:, 0], X[:, 1], X[:, 2]
     v = (vl[:-1] + vr[:-1]) / 2.0
+    v_next = (vl[1:] + vr[1:]) / 2.0
     omega = (vr[:-1] - vl[:-1]) / config.track_width
-    dx_target = v * jnp.cos(theta[:-1]) * dt
-    dy_target = v * jnp.sin(theta[:-1]) * dt
-    dtheta_target = omega * dt
+    omega_next = (vr[1:] - vl[1:]) / config.track_width
+
+    # The collocation is the one IPOPT uses (optimizer.py, the default
+    # branch): the trapezoidal rule over the interval.
+    #
+    #     x[k+1] = x[k] + 0.5 * (v_k cos(th_k) + v_{k+1} cos(th_{k+1})) * dt
+    #
+    # The cost used to integrate from the left endpoint only, so it graded
+    # the plan on a different trajectory than the solver produces. A proxy
+    # that measures a different motion cannot rank two candidates the way
+    # the solver would, and that is what made the refined guess lose
+    # (KI-004).
+    dx_target = 0.5 * (v * jnp.cos(theta[:-1]) + v_next * jnp.cos(theta[1:])) * dt
+    dy_target = 0.5 * (v * jnp.sin(theta[:-1]) + v_next * jnp.sin(theta[1:])) * dt
+    dtheta_target = 0.5 * (omega + omega_next) * dt
     dyn_err_x = x[1:] - (x[:-1] + dx_target)
     dyn_err_y = y[1:] - (y[:-1] + dy_target)
     dyn_err_theta = (theta[1:] - (theta[:-1] + dtheta_target) + jnp.pi) % (2 * jnp.pi) - jnp.pi
@@ -49,7 +62,16 @@ def local_trajectory_projection(params, hp):
 # --- CANDIDATE GENERATION ---
 
 @partial(jit, static_argnums=(2, 3))
-def generate_candidates_jax(start_state, end_state, num_samples, num_stomp, config, key):
+def generate_candidates_jax(start_state, end_state, num_samples, num_stomp, config, key,
+                             dt0=0.1, v_nom=0.1):
+    """The topology candidates for one segment.
+
+    ``dt0`` is the interval the segment should have at its own length and
+    the robot's own speed, and ``v_nom`` is the speed it should travel at:
+    the candidates start from the physics of the segment instead of from a
+    fixed 0.1 s and a fixed 0.1 m/s, which were wrong by an order of
+    magnitude for every segment but one (KI-004).
+    """
     N = 10
     dx, dy = end_state[0] - start_state[0], end_state[1] - start_state[1]
     t = jnp.linspace(0, 1, 10)
@@ -68,12 +90,12 @@ def generate_candidates_jax(start_state, end_state, num_samples, num_stomp, conf
     def make_guess(theta, v_val):
         # We also seed with non-zero velocities for TEB-style biases
         X = jnp.stack([x, y, theta, jnp.full(10, v_val), jnp.full(10, v_val)], axis=1)
-        return jnp.concatenate([jnp.array([0.1]), X.flatten()])
+        return jnp.concatenate([jnp.stack([dt0]), X.flatten()])
 
     # Generate Forward/Reverse/Neutral variants
     base_guesses = jnp.concatenate([
-        vmap(lambda th: make_guess(th, 0.1))(seeds_theta),
-        vmap(lambda th: make_guess(th, -0.1))(seeds_theta),
+        vmap(lambda th: make_guess(th, v_nom))(seeds_theta),
+        vmap(lambda th: make_guess(th, -v_nom))(seeds_theta),
         vmap(lambda th: make_guess(th, 0.0))(seeds_theta)
     ])
 

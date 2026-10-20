@@ -71,8 +71,8 @@
       "rot_deg": 0.0
     },
     {
-      "id": "m06",
-      "name": "Leafcutter Frenzy",
+      "id": "m06-07",
+      "name": "Leafcutter Frenzy / Humongous Fungus",
       "kind": "rect",
       "x_m": 1.537,
       "y_m": 1.07,
@@ -81,28 +81,8 @@
       "rot_deg": 0.0
     },
     {
-      "id": "m07",
-      "name": "Humongous Fungus",
-      "kind": "rect",
-      "x_m": 1.537,
-      "y_m": 1.07,
-      "w_m": 0.155,
-      "h_m": 0.124,
-      "rot_deg": 0.0
-    },
-    {
-      "id": "m08",
-      "name": "Tangled",
-      "kind": "rect",
-      "x_m": 0.578,
-      "y_m": 1.059,
-      "w_m": 0.153,
-      "h_m": 0.128,
-      "rot_deg": 0.0
-    },
-    {
-      "id": "m09",
-      "name": "Research Platform",
+      "id": "m08-09",
+      "name": "Tangled / Research Platform",
       "kind": "rect",
       "x_m": 0.578,
       "y_m": 1.059,
@@ -195,7 +175,7 @@
     "provenance": "Measured off FIRST's own field wireframe, which is public: https://firstinspires.blob.core.windows.net/fll/challenge/2026-27/fll-challenge-bioglow-wireframe-grid.pdf",
     "frame": "The mat's own frame: the mat's south-west corner is (0, 0) and its north edge is up. The mat is 2004 x 1143 mm, centred in the 2362 x 1143 mm table.",
     "checked_against": "Two independent readings of the same printed wireframe agree on the sizes to a few millimetres but place the features up to 100 mm apart, so a footprint here is good to about 50 mm, not to a millimetre.",
-    "mat_picture": "The mat picture is 1908 x 1076 px, an aspect of 1.7732 against the mat's 1.7544. Drawn at the mat's size it is stretched by about 1%, which puts its features up to 20 mm from where they belong - inside the 50 mm placement uncertainty, but the collision check uses the footprints above, not the picture.",
+    "mat_picture": "The studio composes the picture from the field guide above: the wireframe page is rendered, cropped to the mat and scaled to the mat size, so the picture and the footprints share one frame. The crop has the mat shape to 0.03%, so the picture is not stretched. The mat_image block below points at the colour mat, which is a different picture and is not the one the studio shows; it is here for reference.",
     "adjust_it": "The operator can move a model on their own mat. A team that has measured their own field should trust their measurement over this file."
   }
 }

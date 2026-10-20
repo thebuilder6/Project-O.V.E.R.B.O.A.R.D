@@ -44,8 +44,8 @@
       "velocity_chattering_threshold": 3
     },
     "bootstrap": {
-      "turning_radius": 0.0,
-      "resolution": 0.05
+      "turning_radius": 0.05,
+      "resolution": 0.02
     }
   }
 }

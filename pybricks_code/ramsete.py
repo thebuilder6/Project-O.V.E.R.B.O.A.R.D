@@ -286,14 +286,21 @@ async def follow_trajectory(drivebase, samples, config=None, b=2.0, zeta=0.7, de
             
         calc_start = watch.time()
             
+        # --- EVENT HANDLING ---
+        #
+        # Fire the event of every sample the robot has reached, not only of
+        # the one it is on. A tick that arrives late jumps the index over
+        # more than one sample, and the event of a sample that was jumped
+        # over would then never be looked at: the action would be silently
+        # lost (KI-029). The compact controller, the one that runs on the
+        # hub, fires its events the same way.
         while sample_idx < num_samples - 2 and samples[sample_idx + 1]['t'] <= t:
             sample_idx += 1
+            _fire_event(samples[sample_idx], event_map, debug, t)
+        _fire_event(samples[sample_idx], event_map, debug, t)
 
         s1 = samples[sample_idx]
         s2 = samples[sample_idx + 1]
-
-        # --- EVENT HANDLING ---
-        _fire_event(s1, event_map, debug, t)
 
         # Interpolate between s1 and s2
         if s2['t'] == s1['t']:

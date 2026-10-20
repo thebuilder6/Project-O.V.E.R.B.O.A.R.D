@@ -178,6 +178,77 @@ class TestStudioSolve(StudioTestCase):
             _request(f"{self.base}/api/solve", method="POST", payload=payload)
         self.assertEqual(ctx.exception.code, 409)
 
+    def test_two_solves_cannot_start_at_the_same_time(self):
+        """The check and the registration are one step.
+
+        Two requests that arrive together used to both pass the "is
+        something running" check, and two solves ran at once.
+        """
+        payload = {
+            "name": "race",
+            "config": self._config(),
+            "waypoints": [{"x": 0.0, "y": 0.0}, {"x": 0.3, "y": 0.0}],
+            "options": {"samples": 4, "candidates": 1},
+        }
+        results = []
+        lock = threading.Lock()
+        barrier = threading.Barrier(4)
+
+        def ask():
+            barrier.wait()
+            try:
+                status, _ = _request(f"{self.base}/api/solve", method="POST",
+                                     payload=payload)
+                code = status
+            except urllib.error.HTTPError as exc:
+                code = exc.code
+            with lock:
+                results.append(code)
+
+        threads = [threading.Thread(target=ask) for _ in range(4)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=120)
+        self.assertEqual(len(results), 4)
+        self.assertEqual(results.count(202), 1,
+                         f"more than one solve started: {results}")
+        self.assertEqual(results.count(409), 3, f"the rest were not refused: {results}")
+
+    def test_a_failed_post_processing_does_not_block_the_studio(self):
+        """The job must leave "running" whatever the post-processing does.
+
+        A job that stays "running" is the studio's active job, so every
+        later solve, push and collection is refused with 409 and the studio
+        cannot be used until the server is restarted.
+        """
+        class Boom(BaseException):
+            """Not an Exception, so the guards do not catch it."""
+
+        payload = {
+            "name": "broken result",
+            "config": self._config(),
+            "waypoints": [{"x": 0.0, "y": 0.0}, {"x": 0.3, "y": 0.0}],
+            "options": {"samples": 4, "candidates": 1},
+        }
+        # The worker thread's traceback is expected here; keep it out of the
+        # test output.
+        quiet = threading.excepthook
+        threading.excepthook = lambda args: None
+        try:
+            with patch.object(gui_server, "trajectory_limits", side_effect=Boom()):
+                status, job = _request(f"{self.base}/api/solve", method="POST",
+                                       payload=payload)
+                self.assertEqual(status, 202)
+                done = self._wait(job["id"])
+        finally:
+            threading.excepthook = quiet
+        self.assertNotEqual(done["status"], "running")
+        # The studio still takes work.
+        status, _ = _request(f"{self.base}/api/solve", method="POST",
+                             payload=payload)
+        self.assertEqual(status, 202)
+
     def test_a_running_job_is_reported_as_current(self):
         payload = {
             "name": "current",
@@ -577,9 +648,9 @@ TEST_END,3
         self._write_session()
         rows = [
             {"test": "odometry_straight", "repeat": "0", "stop": "0",
-             "x_mm": "998", "y_mm": "2", "turn_right_deg": ""},
+             "x_mm": "998", "y_mm": "2", "turn_right_deg": "0"},
             {"test": "multi_stop", "repeat": "0", "stop": "0",
-             "x_mm": "500", "y_mm": "0", "turn_right_deg": ""},
+             "x_mm": "500", "y_mm": "0", "turn_right_deg": "0"},
             {"test": "multi_stop", "repeat": "0", "stop": "1",
              "x_mm": "", "y_mm": "", "turn_right_deg": ""},
             {"test": "multi_stop", "repeat": "0", "stop": "2",
@@ -598,6 +669,57 @@ TEST_END,3
         self.assertEqual(filled[("multi_stop", 0)]["x_mm"], "500")
         self.assertEqual(filled[("multi_stop", 1)]["x_mm"], "")
 
+    def test_a_partly_filled_row_is_still_missing(self):
+        """The fitter needs all three numbers of a row.
+
+        A row with a blank turn is skipped whole, so the studio must not
+        count it as measured.
+        """
+        self._write_session()
+        rows = [
+            {"test": "odometry_straight", "repeat": "0", "stop": "0",
+             "x_mm": "998", "y_mm": "2", "turn_right_deg": ""},
+            {"test": "multi_stop", "repeat": "0", "stop": "0",
+             "x_mm": "500", "y_mm": "0", "turn_right_deg": "0"},
+            {"test": "multi_stop", "repeat": "0", "stop": "1",
+             "x_mm": "500", "y_mm": "0", "turn_right_deg": "0"},
+            {"test": "multi_stop", "repeat": "0", "stop": "2",
+             "x_mm": "500", "y_mm": "0", "turn_right_deg": "0"},
+        ]
+        status, payload = _request(f"{self.base}/api/calibration/sheet", method="POST",
+                                   payload={"name": "my robot", "rows": rows})
+        self.assertEqual(status, 200)
+        # Three rows are complete; the straight one has no turn, so the
+        # fitter will skip it whole.
+        self.assertEqual(payload["missing"], 1)
+
+    def test_a_stale_tab_does_not_wipe_what_was_filled_in(self):
+        """The rows are merged with the ones on disk.
+
+        A tab that was open before the collection posts rows it knows
+        nothing about, and must not erase what another tab put there.
+        """
+        self._write_session()
+        filled = [
+            {"test": "odometry_straight", "repeat": "0", "stop": "0",
+             "x_mm": "998", "y_mm": "2", "turn_right_deg": "0"},
+        ]
+        _request(f"{self.base}/api/calibration/sheet", method="POST",
+                 payload={"name": "my robot", "rows": filled})
+        # The stale tab posts the same rows, empty.
+        stale = [
+            {"test": "odometry_straight", "repeat": "0", "stop": "0",
+             "x_mm": "", "y_mm": "", "turn_right_deg": ""},
+            {"test": "multi_stop", "repeat": "0", "stop": "0",
+             "x_mm": "", "y_mm": "", "turn_right_deg": ""},
+        ]
+        status, payload = _request(f"{self.base}/api/calibration/sheet", method="POST",
+                                   payload={"name": "my robot", "rows": stale})
+        self.assertEqual(status, 200)
+        kept = {(row["test"], row["stop"]): row for row in payload["rows"]}
+        self.assertEqual(kept[("odometry_straight", 0)]["x_mm"], "998",
+                         "the stale tab wiped the measurement")
+
     def test_a_collect_pushes_the_collector_and_saves_the_session(self):
         status, job = _request(f"{self.base}/api/calibration/collect", method="POST",
                                payload={"name": "my robot", "connection": "ble"})
@@ -613,6 +735,41 @@ TEST_END,3
         # The session is kept with the robot.
         session = gui_server.calibration_paths("my robot")["session"]
         self.assertTrue(session.is_file())
+        self.assertIn("odometry_straight", session.read_text(encoding="utf-8"))
+
+    def test_a_dropped_link_keeps_the_session_that_arrived(self):
+        """A link that drops costs the last test, not the run.
+
+        The collector writes the session as the output arrives, so a run
+        that ends with a non-zero exit still holds a measurement.
+        """
+        broken = os.path.join(self.calibration, "fake_collect_broken.py")
+        with open(broken, "w", encoding="utf-8") as handle:
+            handle.write(
+                "import sys\n"
+                f"session = {self.SESSION!r}\n"
+                "out = sys.argv[sys.argv.index('--out') + 1]\n"
+                "with open(out, 'w', encoding='utf-8') as handle:\n"
+                "    handle.write(session)\n"
+                "print('Hub runner: collecting')\n"
+                "print('Hub link lost')\n"
+                "sys.exit(1)\n"
+            )
+        with patch.object(gui_server, "HUB_DEPLOY", Path(broken)):
+            status, job = _request(f"{self.base}/api/calibration/collect",
+                                   method="POST",
+                                   payload={"name": "dropped", "connection": "ble"})
+            self.assertEqual(status, 202)
+            deadline = time.time() + 120
+            while time.time() < deadline:
+                status, body = _request(f"{self.base}/api/jobs/{job['id']}")
+                if body["status"] != "running":
+                    break
+                time.sleep(0.2)
+        self.assertEqual(body["status"], "failed")
+        session = gui_server.calibration_paths("dropped")["session"]
+        self.assertTrue(session.is_file(),
+                        "the session that arrived was thrown away")
         self.assertIn("odometry_straight", session.read_text(encoding="utf-8"))
 
     def test_fitting_without_a_session_is_refused(self):

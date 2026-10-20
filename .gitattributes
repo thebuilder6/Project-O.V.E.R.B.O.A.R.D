@@ -1,2 +1,11 @@
 # Auto detect text files and perform LF normalization
 * text=auto
+
+# A Windows batch file needs CRLF: cmd.exe cannot find the labels in a file
+# with LF endings, and the one-click install calls a subroutine. The file is
+# kept out of the line-ending conversion so the CRLF survives in the
+# repository, and therefore in a ZIP download as well.
+*.bat -text
+
+# A shell script needs LF: a CR in it is a syntax error.
+*.sh text eol=lf

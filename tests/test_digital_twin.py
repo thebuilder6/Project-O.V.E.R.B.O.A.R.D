@@ -409,7 +409,7 @@ if __name__ == "__main__":
     unittest.main()
 
 
-class TestMeasuredMotor(unittest.TestCase):
+class TestMeasuredMotorFit(unittest.TestCase):
     """The measured motor numbers reach the config (KI-010)."""
 
     def _fit(self, **drivetrain):

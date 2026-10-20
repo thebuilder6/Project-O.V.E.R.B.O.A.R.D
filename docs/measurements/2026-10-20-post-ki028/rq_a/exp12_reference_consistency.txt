@@ -1,0 +1,36 @@
+
+example_s_curve  n=10  dt=181.2 ms
+  mid-interval disagreement between the two interpolations: 8.733 deg
+  A  as shipped (theta line, omega line) track   1.2261 cm  env  0.7303 cm  fail  (1.000 x)
+  B  theta = integral of omega           track   0.8930 cm  env  0.7407 cm  fail  (0.728 x)
+  C  omega = derivative of theta         track   1.4678 cm  env  0.7324 cm  fail  (1.197 x)
+
+example_s_curve  n=20  dt=86.3 ms
+  mid-interval disagreement between the two interpolations: 4.641 deg
+  A  as shipped (theta line, omega line) track   0.5553 cm  env  0.6506 cm  fail  (1.000 x)
+  B  theta = integral of omega           track   0.8396 cm  env  0.6544 cm  fail  (1.512 x)
+  C  omega = derivative of theta         track   0.2454 cm  env  0.6423 cm  fail  (0.442 x)
+
+example_s_curve  n=40  dt=43.9 ms
+  mid-interval disagreement between the two interpolations: 1.759 deg
+  A  as shipped (theta line, omega line) track   0.9689 cm  env  0.6778 cm  fail  (1.000 x)
+  B  theta = integral of omega           track   1.0285 cm  env  0.6785 cm  fail  (1.061 x)
+  C  omega = derivative of theta         track   0.2714 cm  env  0.6639 cm  PASS  (0.280 x)
+
+example_with_stops  n=10  dt=119.6 ms
+  mid-interval disagreement between the two interpolations: 9.218 deg
+  A  as shipped (theta line, omega line) track   1.7878 cm  env  0.9538 cm  fail  (1.000 x)
+  B  theta = integral of omega           track   1.5587 cm  env  0.9696 cm  fail  (0.872 x)
+  C  omega = derivative of theta         track   2.1913 cm  env  0.9448 cm  fail  (1.226 x)
+
+example_with_stops  n=20  dt=56.9 ms
+  mid-interval disagreement between the two interpolations: 5.042 deg
+  A  as shipped (theta line, omega line) track   1.0580 cm  env  0.7696 cm  fail  (1.000 x)
+  B  theta = integral of omega           track   1.3202 cm  env  0.7741 cm  fail  (1.248 x)
+  C  omega = derivative of theta         track   0.4610 cm  env  0.7455 cm  fail  (0.436 x)
+
+example_with_stops  n=40  dt=28.2 ms
+  mid-interval disagreement between the two interpolations: 2.701 deg
+  A  as shipped (theta line, omega line) track   1.2957 cm  env  0.9153 cm  fail  (1.000 x)
+  B  theta = integral of omega           track   1.3625 cm  env  0.9159 cm  fail  (1.052 x)
+  C  omega = derivative of theta         track   0.4183 cm  env  0.8952 cm  PASS  (0.323 x)

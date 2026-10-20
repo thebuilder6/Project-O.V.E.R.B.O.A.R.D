@@ -236,3 +236,164 @@ def proportional_dt_guess(waypoints: Sequence[Sequence[float]],
     dts = np.array([min(max(length * scale, 0.001), 1.0) for length in lengths])
     guess[:num_segments] = dts
     return guess
+
+
+# ---------------------------------------------------------------------------
+# The Q12 repair: the Multi-Verse bootstrap, working.
+#
+# The pipeline's bootstrap was supposed to give the solver a kinematically
+# valid path. It never did: ``path_planning.py`` read rsplan's Path object
+# as a list, the TypeError was swallowed, and every call returned None - so
+# the "Reeds-Shepp bootstrap" fell back to the straight line every time. The
+# shipped config compounded it with ``turning_radius: 0.0``, which rsplan
+# cannot plan with at all.
+#
+# A Reeds-Shepp path is worth having as a guess because the straight-line
+# guess is kinematically wrong whenever a waypoint's heading does not point
+# along the chord: the guess says "the robot is here, facing that way", and
+# the solver has to undo the impossibility. The RS path is feasible by
+# construction, including the reverse manoeuvres the TEB topologies
+# approximate.
+# ---------------------------------------------------------------------------
+
+# The robot can turn on the spot, so its minimum turning radius is small.
+# The half track is the radius of the tightest arc it can hold while moving.
+DEFAULT_TURNING_RADIUS = 0.05
+
+
+def _arc_lengths(points: Sequence[Tuple[float, float]]) -> List[float]:
+    lengths = [0.0]
+    for index in range(1, len(points)):
+        dx = points[index][0] - points[index - 1][0]
+        dy = points[index][1] - points[index - 1][1]
+        lengths.append(lengths[-1] + math.hypot(dx, dy))
+    return lengths
+
+
+def _resample_path(states: Sequence[Tuple[float, float, float, int]],
+                   fractions: Sequence[float]
+                   ) -> List[Tuple[float, float, float, int]]:
+    """Sample a path at the given fractions of its arc length.
+
+    The path's states carry a direction of travel, so a resampled point
+    knows whether the robot drives forwards or backwards there.
+    """
+    lengths = _arc_lengths([(s[0], s[1]) for s in states])
+    total = lengths[-1]
+    if total <= 0.0:
+        return [states[0]] * len(fractions)
+
+    out = []
+    index = 0
+    for fraction in fractions:
+        target = fraction * total
+        while index < len(lengths) - 2 and lengths[index + 1] < target:
+            index += 1
+        span = lengths[index + 1] - lengths[index]
+        blend = 0.0 if span <= 0 else (target - lengths[index]) / span
+        a = states[index]
+        b = states[index + 1]
+        x = a[0] + blend * (b[0] - a[0])
+        y = a[1] + blend * (b[1] - a[1])
+        # The heading is the path's own tangent, so it is the tangent of the
+        # chord between two samples too - the guess is self-consistent.
+        heading = a[2] + blend * ((b[2] - a[2] + math.pi) % (2 * math.pi) - math.pi)
+        direction = a[3] if blend < 0.5 else b[3]
+        out.append((x, y, heading, direction))
+    return out
+
+
+def _signed_rolling_speeds(states: np.ndarray, dt: float,
+                           stop_indices: Sequence[int], num_samples_per_segment: int,
+                           robot_cfg) -> None:
+    """Wheel speeds implied by the guessed motion, forwards or backwards.
+
+    ``TrajectoryOptimizer._set_rolling_speeds`` assumes the robot moves
+    along its heading. A Reeds-Shepp path may drive backwards, so the speed
+    is the motion projected onto the heading: negative when the robot
+    reverses.
+    """
+    count = len(states)
+    half_track = robot_cfg.track_width / 2.0
+    cap = float(robot_cfg.max_linear_speed(apply_headroom=True))
+    for k in range(count - 1):
+        dx = states[k + 1, 0] - states[k, 0]
+        dy = states[k + 1, 1] - states[k, 1]
+        dtheta = (states[k + 1, 2] - states[k, 2] + math.pi) % (2 * math.pi) - math.pi
+        speed = (dx * math.cos(states[k, 2]) + dy * math.sin(states[k, 2])) / dt
+        omega = dtheta / dt
+        states[k, 3] = float(np.clip(speed - omega * half_track, -cap, cap))
+        states[k, 4] = float(np.clip(speed + omega * half_track, -cap, cap))
+    states[count - 1, 3] = states[count - 1, 4] = 0.0
+    states[0, 3] = states[0, 4] = 0.0
+    for index in (stop_indices or []):
+        k = int(index) * num_samples_per_segment
+        if 0 <= k < count:
+            states[k, 3] = states[k, 4] = 0.0
+
+
+def reeds_shepp_guess(waypoints: Sequence[Sequence[float]],
+                      num_samples_per_segment: int, robot_cfg,
+                      stop_indices: Optional[Sequence[int]] = None,
+                      turning_radius: float = DEFAULT_TURNING_RADIUS
+                      ) -> np.ndarray:
+    """The Q12 guess: the Multi-Verse bootstrap, with the API fixed.
+
+    Every segment whose two endpoints have a heading is planned as a
+    Reeds-Shepp path and sampled along its arc length; a segment without
+    both headings keeps the straight-line geometry, because the planner has
+    nothing to plan from.
+    """
+    from path_planning import ReedsSheppPath
+
+    num_segments = len(waypoints) - 1
+    planner = ReedsSheppPath(turning_radius=turning_radius)
+    rows: List[List[float]] = []
+
+    for index in range(num_segments):
+        p1 = waypoints[index]
+        p2 = waypoints[index + 1]
+        h1 = p1[2] if len(p1) > 2 else None
+        h2 = p2[2] if len(p2) > 2 else None
+        count = (num_samples_per_segment if index < num_segments - 1
+                 else num_samples_per_segment + 1)
+        fractions = [j / num_samples_per_segment for j in range(count)]
+
+        states = None
+        if h1 is not None and h2 is not None:
+            path = planner.plan_with_direction(
+                (float(p1[0]), float(p1[1]), float(h1)),
+                (float(p2[0]), float(p2[1]), float(h2)),
+                step_size=0.02)
+            if path and len(path) >= 2:
+                states = _resample_path(path, fractions)
+
+        if states is None:
+            # No plan: the straight-line geometry, as the stock seeds use.
+            for j in range(count):
+                frac = fractions[j]
+                if h1 is not None and h2 is not None:
+                    diff = (float(h2) - float(h1) + math.pi) % (2 * math.pi) - math.pi
+                    heading = float(h1) + diff * frac
+                elif h1 is not None:
+                    heading = float(h1)
+                elif h2 is not None:
+                    heading = float(h2)
+                else:
+                    heading = math.atan2(float(p2[1]) - float(p1[1]),
+                                         float(p2[0]) - float(p1[0]))
+                rows.append([float(p1[0]) + frac * (float(p2[0]) - float(p1[0])),
+                             float(p1[1]) + frac * (float(p2[1]) - float(p1[1])),
+                             heading, 0.0, 0.0])
+            continue
+
+        for x, y, heading, _direction in states:
+            rows.append([x, y, heading, 0.0, 0.0])
+
+    states_array = np.array(rows, dtype=float)
+    _signed_rolling_speeds(states_array, FLAT_DT, stop_indices or [],
+                            num_samples_per_segment, robot_cfg)
+    return np.concatenate([
+        np.full(num_segments, FLAT_DT, dtype=float),
+        states_array.flatten(),
+    ])

@@ -1,4 +1,10 @@
-numpy>=1.24.0,<2.0.0
+# The solver and the studio.
+#
+# numpy: the upper bound is 3.0, not 2.0, because the optional stack (JAX)
+# needs numpy 2.2 or newer. A pin under 2.0 made the two requirement files
+# impossible to install together, and the two-step install silently put numpy
+# outside the range this file declares.
+numpy>=1.24.0,<3.0.0
 casadi>=3.6.0,<4.0.0
 plotly>=5.18.0,<6.0.0
 click>=8.1.0,<9.0.0

@@ -52,31 +52,6 @@ def _optional_positive_float(value: Any, name: str) -> Optional[float]:
     return result
 
 
-def _non_negative_float(value: Any, name: str, default: float = 0.0) -> float:
-    result = _optional_float(value, name)
-    if result is None:
-        return float(default)
-    if result < 0.0:
-        raise ValueError(f"{name} must be >= 0, got {result}")
-    return result
-
-
-def _range(payload: Dict[str, Any], key: str,
-           default: Tuple[float, float]) -> Tuple[float, float]:
-    raw = payload.get(key)
-    if raw is None:
-        return default
-    if not isinstance(raw, (list, tuple)) or len(raw) != 2:
-        raise ValueError(f"{key} must be a two-element range, got {raw!r}")
-    lower = _optional_float(raw[0], f"{key}[0]")
-    upper = _optional_float(raw[1], f"{key}[1]")
-    if lower is None or upper is None:
-        raise ValueError(f"{key} must contain two numbers")
-    if lower > upper:
-        raise ValueError(f"{key} lower bound {lower} exceeds upper bound {upper}")
-    return lower, upper
-
-
 @dataclass(frozen=True)
 class ActuatorFit:
     """First-order response fitted from a straight or turn step test."""

@@ -167,6 +167,49 @@ def _samples(final_event=None):
     return samples
 
 
+class _ScriptedClock:
+    """A clock that jumps forward on every sleep.
+
+    The control loop reads the clock and sleeps until the next tick. A real
+    clock rarely lands exactly on time, and one late tick is enough for the
+    sample index to jump over the sample an event is attached to. This clock
+    makes that happen on purpose, so the event path is tested instead of
+    hoped for.
+    """
+
+    def __init__(self, step_ms=60):
+        self.now_ms = 0
+        self.step_ms = step_ms
+
+    def time(self):
+        return self.now_ms
+
+    async def wait(self, _ms):
+        self.now_ms += self.step_ms
+
+
+class _JumpyClock:
+    """Installs a scripted clock into a firmware module, then puts it back."""
+
+    def __init__(self, module, step_ms=60):
+        self.module = module
+        self.step_ms = step_ms
+        self.clock = None
+
+    def __enter__(self):
+        clock = self.clock = _ScriptedClock(self.step_ms)
+        self._watch = self.module.StopWatch
+        self._wait = self.module.wait
+        self.module.StopWatch = lambda: clock
+        self.module.wait = clock.wait
+        return clock
+
+    def __exit__(self, *exc):
+        self.module.StopWatch = self._watch
+        self.module.wait = self._wait
+        return False
+
+
 class TestFinalWaypointEvent(unittest.TestCase):
     """KI-012: the event on the final waypoint must fire."""
 
@@ -263,6 +306,53 @@ class TestFinalWaypointEventCompact(unittest.TestCase):
         self.assertAlmostEqual(x, 0.25, places=5)
         self.assertAlmostEqual(y, -0.1, places=5)
         self.assertAlmostEqual(heading, 0.3, places=5)
+
+
+class TestLateTickEvents(unittest.TestCase):
+    """KI-029: an event must fire even when a late tick skips its sample.
+
+    The control period and the sample spacing are both 20 ms, so a tick
+    that arrives late jumps the sample index over one or more samples. The
+    event of a sample that was jumped over used to be never looked at, and
+    the mission action was silently lost - the same failure KI-012 was
+    about, in a different place.
+    """
+
+    def _samples_with_a_mid_event(self):
+        samples = _samples()
+        samples[2]["event"] = "lower_arm"
+        return samples
+
+    def test_the_reference_controller_fires_an_event_a_late_tick_skipped(self):
+        fired = []
+        with _JumpyClock(ramsete, step_ms=60):
+            asyncio.run(ramsete.follow_trajectory(
+                _FakeDriveBase(), self._samples_with_a_mid_event(), event_map={
+                    "lower_arm": lambda: fired.append("lower_arm")},
+            ))
+        self.assertEqual(fired, ["lower_arm"],
+                         "the event on the skipped sample was never fired")
+
+    def test_the_deployed_controller_fires_an_event_a_late_tick_skipped(self):
+        """The controller that runs on the hub must not lose one either."""
+        fired = []
+        blob, events = encode_compact_trajectory(self._samples_with_a_mid_event())
+        with _JumpyClock(ramsete_compact_events, step_ms=60):
+            asyncio.run(ramsete_compact_events.follow_trajectory(
+                _FakeDriveBase(), blob, events=events, event_map={
+                    "lower_arm": lambda: fired.append("lower_arm")},
+            ))
+        self.assertEqual(fired, ["lower_arm"],
+                         "the event on the skipped sample was never fired")
+
+    def test_the_event_fires_once_and_not_twice(self):
+        fired = []
+        with _JumpyClock(ramsete, step_ms=60):
+            asyncio.run(ramsete.follow_trajectory(
+                _FakeDriveBase(), self._samples_with_a_mid_event(), event_map={
+                    "lower_arm": lambda: fired.append("lower_arm")},
+            ))
+        self.assertEqual(len(fired), 1)
 
 
 if __name__ == "__main__":
