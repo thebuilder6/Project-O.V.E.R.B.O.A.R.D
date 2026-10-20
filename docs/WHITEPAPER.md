@@ -458,8 +458,8 @@ The simple optimizer records `iteration_history` when `--show-convergence` is se
 `python run_tests.py` with JAX installed:
 
 ```text
-Ran 151 tests
-Successes: 151
+Ran 152 tests
+Successes: 152
 Failures: 0
 Errors: 0
 Skipped: 0

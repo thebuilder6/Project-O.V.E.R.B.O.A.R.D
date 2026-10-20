@@ -16,13 +16,13 @@ The docs describe the current tree, but the source is still the authority. In pa
 - Drop `--simple` for Multi-Verse. It works, but the refined guess is not passed to the final solve, so it currently has no effect on the final trajectory (KI-004). Do not use `--workers`/`--no-parallel` as a quality claim.
 - `--validate` gates every output and the exit code. It requires JAX/Immrax. With `--candidates N` (default 2, max 5), `main.py` solves N trajectories. With `--simple` they are distinct initial-guess seeds (`baseline`, `rolling`, `bow_left`, `bow_right`, `turn_first`) at the same base accuracy weight; the Multi-Verse path still uses accuracy weights `base, base+2.0, ...` because seed plumbing is only in `TrajectoryOptimizer`. It validates each candidate and selects a passing one by smallest envelope (shortest breaks ties). Without `--validate`, only the first candidate is solved. If validation fails, no `.traj`, controller, Python file, or `_stats.json` is written.
 - `--validate --export-format controller` writes `<output>_controller.json`; `--export-format python` writes `<output>.py` (legacy list format); `--export-format python-compact` writes a packed module for `ramsete_compact.py`/`ramsete_compact_events.py`; `--benchmark` writes `<output>_stats.json` after the export gate.
-- Tests: `python run_tests.py` (151 tests with JAX installed). Single test: `python -m unittest tests.test_optimizer.TestTrajectoryOptimizer.test_init -v`
+- Tests: `python run_tests.py` (152 tests with JAX installed). Single test: `python -m unittest tests.test_optimizer.TestTrajectoryOptimizer.test_init -v`
 - Benchmarks: `python benchmark.py --mode pipeline --config examples/fll_choreo.json` (also `cli`/`random`; the default `robot_config.json` does not exist). Pipeline mode works but reports failed solves as normal results; random mode is still broken (KI-015).
 - Digital-twin fit: `python sysid_fit.py <session.csv> --poses <poses.csv> --profile examples/drivebase_profile.example.json --out sysid_fit.json`. Logs come from running `pybricks_code/sysid_digital_twin.py` on the Hub; no hardware logs are checked in. Compare planned and measured poses with `python sysid_compare.py output.traj poses.csv --run-id <id>`.
 - `--plot`, `--animate`, and `--live` are blocking. `--live` serves ws://127.0.0.1:8765, waits for Enter, kills whatever owns the port (KI-005), and does not replay config to the first client (KI-016). Keep automated runs headless.
 
 ## Test quirks (verified)
-- `run_tests.py` imports the JAX test modules in a `try`; if JAX is missing it prints a warning and skips those modules. With JAX installed the suite is 151 tests, 0 skipped.
+- `run_tests.py` imports the JAX test modules in a `try`; if JAX is missing it prints a warning and skips those modules. With JAX installed the suite is 152 tests, 0 skipped.
 - The old `test_stomp_variants.py` and `test_teb_topologies.py` modules are deleted. Do not reintroduce tests for removed `MultiVerseRefiner`/`LocalSegmentOptimizer` classes.
 - JAX/refinement modules: `python -m unittest tests.test_jax_heuristics tests.test_jax_ramsete tests.test_refinement_accuracy tests.test_critic_metrics`
 
