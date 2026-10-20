@@ -158,12 +158,14 @@ The `uncertainties` block is normalized once and consumed by the optimizer and I
 
 ### 4.1 Decision variables
 
-For `N = segments * samples_per_segment + 1` samples, the optimizer chooses:
+For `N = 1 + sum_i(s_i)` samples, where `s_i` is the number of sample intervals in waypoint segment `i`, the optimizer chooses:
 
 - one timestep `dt` (the default), or one interval length `dt_i` per waypoint segment with `--per-segment-dt`
 - for each sample `k`: `x_k, y_k, theta_k, vl_k, vr_k`
 
-Every segment has exactly `samples_per_segment` intervals. The per-segment variant uses `dt_i` inside segment `i`; total time is `samples_per_segment * sum_i(dt_i)`, and the interval starting at sample `k` uses `dt[k // samples_per_segment]`. The uniform variant keeps all segments on one `dt`. Because every segment has the same sample count, that also forces every segment to take the SAME time, so on a path with unequal segment lengths the short segment inherits the long segment's duration. The per-segment variant is therefore the general model: setting every `dt_i` equal recovers the uniform solution exactly. The candidate loop solves both variants by default; `--uniform-dt` and `--per-segment-dt` force one.
+**The sample count follows the path.** `TrajectoryOptimizer.get_segment_sample_counts` splits the budget `segments * samples_per_segment` across the waypoint segments in proportion to their arc length, with at least three samples each, so a long segment is sampled finely and a short one coarsely. The total is the same as before (`N = 1 + sum_i(s_i) = 1 + segments * samples_per_segment`), but the layout is not: the sample-to-waypoint mapping is a table, not `k * samples_per_segment`, and the code carries it as `waypoint_sample_indices`.
+
+The per-segment variant uses `dt_i` inside segment `i`; total time is `sum_i(s_i * dt_i)`, and the interval starting at sample `k` uses the `dt` of the segment that sample belongs to. The uniform variant keeps all segments on one `dt`, and its total time is `dt * (N - 1)`. The uniform variant spends the same *interval* on every segment whatever its length, so a segment's duration is `s_i * dt` and the short segments inherit less time than the long ones - the opposite of the old layout, where equal counts gave every segment the same time. The per-segment variant is therefore the general model: setting every `dt_i` equal recovers the uniform solution exactly. The candidate loop solves both variants by default; `--uniform-dt` and `--per-segment-dt` force one.
 
 **Where the time allocation may change (KI-024).** A waypoint is a legitimate timing boundary only when the robot stops there *and* the heading is pinned: the state there is then fully determined, so the pieces on either side need agree on nothing. At every other waypoint the pieces stay linked, and the four cases are:
 
@@ -186,7 +188,7 @@ J = duration + accuracy_weight * dt_ref^2 * sum_k [
     ]
 ```
 
-The first term is trajectory duration. The optional second term penalizes wheel jerk, where `span_k` is the spacing between the midpoints of the two intervals that meet at boundary `k` and `dt_ref` is the mean interval over the whole path. Normalising by `dt_ref` makes the price of physical jerk independent of the timing layout, so the same `accuracy_weight` means the same smoothness in either variant; without it the raw acceleration jump is proportional to `jerk * dt`, and a short interval would be charged `dt^2` less per unit of jerk (KI-022). `accuracy_weight = 0` is pure time-optimal. With `--per-segment-dt` the duration term is `samples_per_segment * sum_i(dt_i)`.
+The first term is trajectory duration. The optional second term penalizes wheel jerk, where `span_k` is the spacing between the midpoints of the two intervals that meet at boundary `k` and `dt_ref` is the mean interval over the whole path. Normalising by `dt_ref` makes the price of physical jerk independent of the timing layout, so the same `accuracy_weight` means the same smoothness in either variant; without it the raw acceleration jump is proportional to `jerk * dt`, and a short interval would be charged `dt^2` less per unit of jerk (KI-022). `accuracy_weight = 0` is pure time-optimal. With `--per-segment-dt` the duration term is `sum_i(s_i * dt_i)`, the sum over the segments of their own sample count times their own interval.
 
 ### 4.3 Constraints
 
