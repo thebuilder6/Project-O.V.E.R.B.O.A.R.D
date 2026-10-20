@@ -12,6 +12,8 @@ see.
 | `exp19_envelope_scatter.txt` | the reachable set sampled over the declared uncertainty, against the box the validator reports, for three plant parameterisations and three inclusion functions |
 | `exp17_envelope_headroom.txt` | the same question the other way round: how much of the tube is over-approximation, and whether the integrator or the inclusion function can take any of it back |
 | `exp18_real_missions.txt` | the six example missions under the three inclusion functions, with and without a calibrated model |
+| `exp20_closed_loop_tick.txt` | the closed-loop tick map against the shipped open-loop propagation |
+| `exp21_curve_geometry.txt` | the envelope on a curve: the box against the sampled set, sample by sample |
 | `exp10_gain_band.txt` | the gain band against the tracking and the envelope, re-measured after the fix |
 | `envelope_plain_*.png` | the plain plant: the interval box against the sampled reachable set, one figure per inclusion function |
 | `envelope_twin_wheels_*.png` | the digital twin carrying the two wheel speeds as states - the layout before the fix |
@@ -43,6 +45,32 @@ the digital twin needed the state to carry the mean and the difference
 instead of the two wheel speeds. The default stayed on the natural
 inclusion because it is now the better one: on the six example missions the
 Jacobian is 0.00-0.08 mm **wider** and 5-15 % slower.
+
+## What is left, and where it comes from
+
+On a **curve** the tube still crosses the 50 mm guard. That is not the
+reachable set being wide: on the S-curve with a ±1 % band
+(`exp21_curve_geometry.txt`) the sampled reachable set is **4.09 mm**
+against a 48.44 mm box, and the box with the gain band collapsed is 7.98 mm.
+
+The reason is structural. The validator propagates the **plant** and
+evaluates the controller *outside* the propagation, at the tube's midpoint,
+so the feedback contraction is never in the tube: what it bounds is the
+reachable set of an open-loop plant driven by a pre-recorded command. The
+lever is to embed the **closed-loop tick map** as a discrete map, so the
+Jacobian carries the feedback term `dF/dx = dPhi/dx + (dPhi/du)(dN/dx)`
+(`exp20_closed_loop_tick.txt`):
+
+| propagation | inclusion | tube | reachable set |
+|---|---|---:|---:|
+| shipped (open loop) | natural | 11.77 mm | 4.51 mm |
+| closed-loop tick map | natural | 627.03 mm, diverged | 4.51 mm |
+| closed-loop tick map | **Jacobian** | **6.31 mm** | 4.51 mm |
+| closed-loop tick map | mixed-Jacobian | 5.98 mm | 4.51 mm |
+
+So the Jacobian is the right tool for the closed loop and the wrong tool
+for the open-loop plant: on the tick map the natural extension is
+catastrophic and the Jacobian is what makes the enclosure work at all.
 
 ## The check is one-sided
 
