@@ -86,8 +86,20 @@ class JAXRamseteController:
         are kept continuous (unrolled). It avoids jnp.mod, which Immrax's
         natural inclusion does not implement.
         """
-        x, y, theta = current_pose
-        xr, yr, thetar = ref_pose
+        # The pose is read by indexing, not by unpacking the array.  Unpacking
+        # a traced array is a JAX "unstack" primitive, and Immrax's natural
+        # inclusion has no rule for it, so the closed-loop tick map - which
+        # embeds this controller and is evaluated with a Jacobian inclusion -
+        # dies with "unstack not in inclusion_registry".  Indexing compiles to
+        # slice+squeeze, which the registry has, and it is the same number:
+        # the nominal path is unchanged.  (JAX 0.6, which the measurements
+        # were taken on, compiled the unpacking to slices; JAX 0.12 does not.)
+        x = current_pose[0]
+        y = current_pose[1]
+        theta = current_pose[2]
+        xr = ref_pose[0]
+        yr = ref_pose[1]
+        thetar = ref_pose[2]
         ex_global = xr - x
         ey_global = yr - y
         ex = jnp.cos(theta) * ex_global + jnp.sin(theta) * ey_global

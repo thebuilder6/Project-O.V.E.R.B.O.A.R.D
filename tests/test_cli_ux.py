@@ -61,6 +61,61 @@ class TestCliBasics(unittest.TestCase):
         for flag in ("--gui", "--doctor", "--multiverse", "--preset"):
             self.assertIn(flag, result.output)
 
+    def test_the_propagation_flag_is_offered(self):
+        """The reachability model is a user-facing choice, so it is a flag."""
+        result = self._invoke(["--help"])
+        self.assertEqual(result.exit_code, 0)
+        self.assertIn("--propagation", result.output)
+        self.assertIn("tick", result.output)
+
+    def test_the_default_propagation_is_the_validator_default(self):
+        """The CLI and the validator must not drift apart on the default.
+
+        The CLI names the propagation explicitly, so the validator's own
+        default is only reachable in tests and in the research scripts. If
+        the two disagree, a run through the CLI measures a different model
+        from the one the research scripts measured.
+        """
+        if not HAS_IMMRAX:
+            self.skipTest("immrax not installed")
+        import immrax_validator
+        import main
+        for param in main.main.params:
+            if param.name == "propagation":
+                self.assertEqual(param.default, immrax_validator.PROPAGATION)
+                return
+        self.fail("main.main has no --propagation option")
+
+    def test_the_report_names_the_model_that_produced_the_numbers(self):
+        """An envelope is the width of a tube, and the tube has a model.
+
+        The report is the machine-readable line the studio parses and the
+        offline analysis reads, so the propagation and the inclusion
+        functions have to be in it: a number whose model is not stated
+        cannot be compared with a number from another run (KI-049).
+        """
+        import main
+        attempts = [{
+            "guess_style": "baseline", "per_segment_dt": False,
+            "accuracy_weight": 0.0, "duration": 2.0, "tube": 0.003,
+            "envelope_truncated": False, "propagation": "tick",
+            "inclusion": {"plant": "nat", "controller": "nat", "tick": "mjac"},
+            "tracking_m": 0.001, "ok": True, "converged": True, "reasons": [],
+            "segments": [],
+        }]
+        buffer = io.StringIO()
+        with redirect_stdout(buffer):
+            main._emit_validation_report(attempts, 1, propagation="tick")
+        payload = json.loads(
+            buffer.getvalue().split(main.VALIDATION_MARKER)[1])
+        self.assertEqual(payload["propagation"], "tick")
+        candidate = payload["candidates"][0]
+        self.assertEqual(candidate["propagation"], "tick")
+        self.assertEqual(candidate["inclusion"]["tick"], "mjac")
+        # The envelope is still there, with its truncation flag.
+        self.assertAlmostEqual(candidate["envelope_cm"], 0.3)
+        self.assertFalse(candidate["envelope_truncated"])
+
     def test_missing_waypoints_explains_what_to_pass(self):
         result = self._invoke([])
         self.assertEqual(result.exit_code, 2)

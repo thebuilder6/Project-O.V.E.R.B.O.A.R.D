@@ -562,7 +562,7 @@ def _segment_report(samples_data, samples_per_segment, thresholds, immrax_report
     return segments
 
 
-def _emit_validation_report(attempts, selected_index):
+def _emit_validation_report(attempts, selected_index, propagation=None):
     """Print the machine-readable validation summary.
 
     Every candidate carries its score vector: the duration, the reachability
@@ -570,6 +570,12 @@ def _emit_validation_report(attempts, selected_index):
     excess of the envelope over the local threshold. The selection rule can
     therefore be re-run offline on the numbers, without solving anything
     again (Q3's step 1, Q10's step 1).
+
+    Every candidate also carries the **model** that produced its numbers: the
+    propagation ("plant" or "tick") and the inclusion functions it used. The
+    envelope is the width of a reachability tube, and the tube is a property
+    of the propagation, so a number whose model is not stated cannot be
+    compared with a number from another run (KI-049).
     """
     candidates = []
     for number, attempt in enumerate(attempts, 1):
@@ -588,6 +594,10 @@ def _emit_validation_report(attempts, selected_index):
             # True when the propagation was cut off, so envelope_cm is a
             # lower bound and a property of the 50 mm guard (KI-049).
             "envelope_truncated": bool(attempt.get("envelope_truncated")),
+            # The model the numbers came from, so no envelope is ever read
+            # without it.
+            "propagation": attempt.get("propagation", propagation),
+            "inclusion": attempt.get("inclusion", {}),
             "tracking_cm": _finite(attempt.get("tracking_m", 0.0) * 100.0),
             "max_excess_cm": _finite(excess * 100.0),
             "peak_jerk_m_s3": _finite(attempt.get("peak_jerk_m_s3")),
@@ -598,7 +608,8 @@ def _emit_validation_report(attempts, selected_index):
             "reasons": list(attempt.get("reasons", [])),
             "segments": segments,
         })
-    payload = {"selected": selected_index, "candidates": candidates}
+    payload = {"selected": selected_index, "candidates": candidates,
+               "propagation": propagation}
     click.echo(VALIDATION_MARKER + json.dumps(payload))
 
 
@@ -969,10 +980,21 @@ def _print_summary(output, samples_data, robot_cfg, validate, attempt_passed, tu
               help='Fixed timestep for controller export (seconds).')
 @click.option('--control-dt', default=0.02, type=click.FloatRange(min=0.001, max=0.2),
               help='The control period the validator models, in seconds. The deployed '
-                   'controllers hold their command for 5 ms, but a robot that cannot '
+                   'controllers hold their command for 20 ms, but a robot that cannot '
                    'sustain it runs slower; set this to the period the robot actually '
                    'achieves (the pushed session reports it) so the gate is measured '
                    'against the controller that will run.')
+@click.option('--propagation', type=click.Choice(['plant', 'tick'], case_sensitive=False),
+              default='plant',
+              help='Which reachability propagation the envelope gate uses. "plant" is '
+                   'the default: the plant is embedded and propagated, and the '
+                   'controller is evaluated outside the propagation, so the tube bounds '
+                   'an open-loop plant driven by a pre-recorded command. "tick" embeds '
+                   'one control tick of the closed loop - controller, pose estimate and '
+                   'delayed command inside the map - and propagates that, so the '
+                   'feedback contracts the tube the way the robot\'s does. It needs a '
+                   'Jacobian inclusion and costs 7-10x the validation time. The '
+                   'propagation in force is reported with every candidate.')
 @click.option('--benchmark', is_flag=True,
               help='Collect comprehensive benchmarking data for whitepaper.')
 
@@ -1007,7 +1029,7 @@ def _print_summary(output, samples_data, robot_cfg, validate, attempt_passed, tu
 def main(ctx, config, waypoints, output, gui, gui_port, doctor, multiverse, simple, preset,
          samples, accuracy_weight, candidates, stop_waypoints, events, per_segment_dt, uniform_dt,
          no_parallel, workers, fast_polish, sweep, self_consistent, refine, validate,
-         sysid_fit, export_format, controller_dt, control_dt, benchmark,
+         sysid_fit, export_format, controller_dt, control_dt, propagation, benchmark,
          push_hub, hub_conn, hub_name, hub_log,
          plot, animate, live, show_convergence, convergence_mode, iteration_history,
          verbose, quiet):
@@ -1390,10 +1412,12 @@ def main(ctx, config, waypoints, output, gui, gui_port, doctor, multiverse, simp
                 validator_cls, robot_config_cls = _ensure_jax_classes()
                 jax_cfg = robot_config_cls(robot_cfg)
                 if digital_twin is None:
-                    immrax_val = validator_cls(jax_cfg, control_dt=control_dt)
+                    immrax_val = validator_cls(jax_cfg, control_dt=control_dt,
+                                               propagation=propagation)
                 else:
                     immrax_val = validator_cls(jax_cfg, digital_twin=digital_twin,
-                                               control_dt=control_dt)
+                                               control_dt=control_dt,
+                                               propagation=propagation)
 
                 # Use the uncertainty ranges declared in the config (KI-009).
                 cof_range = robot_cfg.uncertainties["cof"]
@@ -1456,6 +1480,13 @@ def main(ctx, config, waypoints, output, gui, gui_port, doctor, multiverse, simp
             attempt_record["envelope_truncated"] = bool(
                 immrax_report['reachability'].get('envelope_truncated',
                                                   attempt_record["diverged"]))
+            # Which model produced the number. The envelope is the width of a
+            # tube, and the tube is a property of the propagation, so a
+            # number without its model cannot be read (KI-049).
+            attempt_record["propagation"] = str(
+                immrax_report.get("propagation", propagation))
+            attempt_record["inclusion"] = dict(
+                immrax_report.get("inclusion", {}) or {})
             attempt_record["tracking_m"] = float(immrax_report.get("max_tracking_error_m", 0.0))
             attempt_record["heading_rad"] = float(immrax_report.get("max_heading_error_rad", 0.0))
             attempt_record["ok"] = (attempt_record["converged"] and not failed_threshold
@@ -1592,7 +1623,7 @@ def main(ctx, config, waypoints, output, gui, gui_port, doctor, multiverse, simp
 
     if use_validation:
         # The studio reads this to show which part of the path failed.
-        _emit_validation_report(all_attempts, selected_index)
+        _emit_validation_report(all_attempts, selected_index, propagation=propagation)
 
     # --- EXPORT GATE (KI-001 / KI-002) ---
     block_reason = _export_block_reason(stats, validate, attempt_passed)

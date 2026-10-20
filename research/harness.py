@@ -222,7 +222,8 @@ def _score(samples_data: List[Dict[str, Any]], stats: Dict[str, Any],
            robot_cfg, validator_cls, robot_config_cls,
            thresholds: Dict[int, float], samples_per_segment: int,
            waypoints: Sequence[Tuple[float, float, Optional[float]]],
-           critic=None, profiles: bool = False, spread: float = 1.0) -> Dict[str, Any]:
+           critic=None, profiles: bool = False, spread: float = 1.0,
+           propagation: str = "plant") -> Dict[str, Any]:
     """Run the full gate chain on one candidate and return the measurements."""
     record: Dict[str, Any] = {
         "converged": bool(stats.get("converged", False)),
@@ -231,6 +232,10 @@ def _score(samples_data: List[Dict[str, Any]], stats: Dict[str, Any],
         "solve_s": float(stats.get("total_time", float("nan"))),
         "iter_count": int(stats.get("iter_count", -1)),
         "segment_dt": [float(d) for d in (stats.get("segment_dt") or [])],
+        # The model the envelope came from. The tube is a property of the
+        # propagation, so a record without it cannot be compared with a
+        # record from another propagation (KI-049).
+        "propagation": propagation,
     }
     probe = stats.get("refine_probe")
     if isinstance(probe, dict):
@@ -248,7 +253,7 @@ def _score(samples_data: List[Dict[str, Any]], stats: Dict[str, Any],
 
     try:
         jax_cfg = robot_config_cls(robot_cfg)
-        immrax_val = validator_cls(jax_cfg)
+        immrax_val = validator_cls(jax_cfg, propagation=propagation)
         uncertainties = robot_cfg.uncertainties
         report = immrax_val.validate_trajectory(
             samples_data,
@@ -448,7 +453,8 @@ def _payloads(mission: Dict[str, Any], specs: List[Dict[str, Any]], robot_cfg,
 
 def _score_jobs(jobs: List[Any], solved: List[Any], validator_cls,
                 robot_config_cls, spreads: Sequence[float] = (1.0,),
-                profiles: bool = False, self_consistent: bool = False
+                profiles: bool = False, self_consistent: bool = False,
+                propagation: str = "plant"
                 ) -> List[Dict[str, Any]]:
     """Score a solved batch. One job per solved payload, in order.
 
@@ -465,7 +471,8 @@ def _score_jobs(jobs: List[Any], solved: List[Any], validator_cls,
             record = _score(samples_data, stats, robot_cfg, validator_cls,
                             robot_config_cls, mission["thresholds"],
                             spec["samples"], mission["waypoints"],
-                            critic=critic, profiles=profiles, spread=spread)
+                            critic=critic, profiles=profiles, spread=spread,
+                            propagation=propagation)
             record.update({
                 "mission": mission["meta"].get("id") or mission["meta"]["file"],
                 "mission_file": mission["meta"]["file"],
@@ -493,7 +500,8 @@ def run_mission(mission: Dict[str, Any], specs: List[Dict[str, Any]], robot_cfg,
                 validator_cls, robot_config_cls, critic=None,
                 workers: int = 8, profiles: bool = False,
                 spreads: Sequence[float] = (1.0,),
-                self_consistent: bool = False) -> List[Dict[str, Any]]:
+                self_consistent: bool = False,
+                propagation: str = "plant") -> List[Dict[str, Any]]:
     """Solve every spec for one mission and score each result."""
     payloads = _payloads(mission, specs, robot_cfg, self_consistent)
     solved, _histories = cli._solve_candidates(payloads, workers, quiet=True,
@@ -501,7 +509,8 @@ def run_mission(mission: Dict[str, Any], specs: List[Dict[str, Any]], robot_cfg,
     jobs = [(mission, spec, robot_cfg, critic, None, None) for spec in specs]
     return _score_jobs(jobs, solved, validator_cls, robot_config_cls,
                        spreads=spreads, profiles=profiles,
-                       self_consistent=self_consistent)
+                       self_consistent=self_consistent,
+                       propagation=propagation)
 
 
 def main() -> None:
@@ -551,6 +560,12 @@ def main() -> None:
                              "solves. The pool is not rebuilt between chunks.")
     parser.add_argument("--append", action="store_true",
                         help="Append to the output file instead of replacing it.")
+    parser.add_argument("--propagation", default="plant",
+                        choices=("plant", "tick"),
+                        help="Which reachability propagation the envelope gate "
+                             "uses: 'plant' (the shipped open-loop tube) or "
+                             "'tick' (the closed-loop tick map). The record "
+                             "carries which one produced it.")
     args = parser.parse_args()
 
     # Collect the mission files.
@@ -637,7 +652,8 @@ def main() -> None:
                 payloads, args.workers, quiet=True, parallel=args.workers > 1)
             records = _score_jobs(batch, solved, validator_cls, robot_config_cls,
                                   spreads=spreads, profiles=args.profiles,
-                                  self_consistent=args.self_consistent)
+                                  self_consistent=args.self_consistent,
+                                  propagation=args.propagation)
             for record in records:
                 handle.write(json.dumps(record) + "\n")
             handle.flush()

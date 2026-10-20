@@ -1000,6 +1000,11 @@ class ImmraxValidator:
             "inclusion": {
                 "plant": self.plant_inclusion,
                 "controller": self.controller_inclusion,
+                # The tick propagation does not use the plant or the
+                # controller inclusion: it embeds the whole closed-loop tick
+                # map with one inclusion, and that is the one that produced
+                # the tube.  Say which.
+                "tick": self.tick_inclusion,
             },
             "propagation": getattr(self, "propagation", PROPAGATION),
             "digital_twin": (

@@ -426,6 +426,19 @@ Options:
                                   format).
   --controller-dt FLOAT RANGE     Fixed timestep for controller export
                                   (seconds).  [0.001<=x<=1.0]
+  --propagation [plant|tick]      Which reachability propagation the envelope
+                                  gate uses. "plant" is the default: the plant
+                                  is embedded and propagated, and the controller
+                                  is evaluated outside the propagation, so the
+                                  tube bounds an open-loop plant driven by a
+                                  pre-recorded command. "tick" embeds one
+                                  control tick of the closed loop - controller,
+                                  pose estimate and delayed command inside the
+                                  map - and propagates that, so the feedback
+                                  contracts the tube the way the robot's does.
+                                  It needs a Jacobian inclusion and costs
+                                  7-10x the validation time. The propagation
+                                  in force is reported with every candidate.
   --benchmark                     Collect comprehensive benchmarking data for
                                   whitepaper.
   --push-hub                      Push the trajectory to a Pybricks hub and
@@ -750,7 +763,7 @@ The `pybricks_code/` directory contains the robot-side controller:
 - `sysid_digital_twin.py`: Robot-side calibration collector
 - `plot_tracking.py`: Tracking visualization
 
-**Known limitation:** an event on the final waypoint is exported but not fired by the deployed loop (KI-012). Trigger the final action after `follow_trajectory` returns, or use `ramsete.py` if you need the reference event path.
+**Note:** an event on the final waypoint *is* fired: the event-capable controllers fire the events that are left after the loop, once the robot has arrived and the drivebase has stopped (KI-012). The controllers that are in use are `ramsete_compact_events.py` (the pushed run) and `ramsete.py` (the IDE missions).
 
 ### Pushing to the hub without the IDE
 

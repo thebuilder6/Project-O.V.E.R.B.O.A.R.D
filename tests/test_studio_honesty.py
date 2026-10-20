@@ -411,5 +411,38 @@ class TestTheDownloadsBelongToTheirJob(unittest.TestCase):
         self.assertIn("renderDownloads(job.artifacts, job.id);", self.source)
 
 
+class TestTheEnvelopeNamesItsModel(unittest.TestCase):
+    """An envelope is the width of a reachability tube.
+
+    The tube is a property of the propagation, and the two propagations
+    answer different questions: the plant propagation bounds an open-loop
+    plant driven by a pre-recorded command, and the tick map bounds the
+    closed loop the robot actually runs. An envelope shown without its
+    model cannot be judged, so the studio names it (KI-049).
+    """
+
+    def setUp(self):
+        self.source = _read(VIZ / "studio.js")
+
+    def _function(self, name):
+        start = self.source.index(f"function {name}(")
+        end = self.source.find("\nfunction ", start + 1)
+        return self.source[start:end if end > 0 else len(self.source)]
+
+    def test_the_note_names_the_model(self):
+        body = self._function("renderValidationReport")
+        self.assertIn("candidate.propagation", body)
+        self.assertIn("report.propagation", body)
+
+    def test_both_models_are_named(self):
+        body = self._function("renderValidationReport")
+        self.assertIn("closed-loop tick map", body)
+        self.assertIn("open-loop plant", body)
+
+    def test_the_chip_tooltip_carries_it(self):
+        body = self._function("renderValidationReport")
+        self.assertIn("entry.propagation", body)
+
+
 if __name__ == "__main__":
     unittest.main()

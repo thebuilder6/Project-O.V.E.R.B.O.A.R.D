@@ -720,10 +720,16 @@ function renderValidationReport(report) {
            operator reads a truncation as a measurement (KI-049). */
         const truncated = entry.envelope_truncated
             ? ' (cut off at the guard, so it is a lower bound)' : '';
+        /* The envelope is the width of a reachability tube, and the tube is
+           a property of the propagation, so the model belongs next to the
+           number (KI-049). */
+        const model = entry.propagation === 'tick'
+            ? 'closed-loop tick map' : 'open-loop plant';
         chip.title = `${entry.style || 'baseline'}, ${timing}, `
             + `weight ${entry.accuracy_weight === null ? '-' : entry.accuracy_weight}`
             + (entry.envelope_cm === null || entry.envelope_cm === undefined
-                ? '' : `, envelope ${entry.envelope_cm.toFixed(2)} cm${truncated}`)
+                ? '' : `, envelope ${entry.envelope_cm.toFixed(2)} cm${truncated}`
+                    + ` (${model})`)
             + (reasons ? `: ${reasons}` : '');
         chip.addEventListener('click', () => {
             state.reportCandidate = i;
@@ -770,6 +776,15 @@ function renderValidationReport(report) {
     state.worstSegment = worst;
 
     const notes = [];
+    /* Which model produced the envelope. The tube is a property of the
+       propagation, and the two propagations answer different questions: the
+       plant propagation bounds an open-loop plant driven by a pre-recorded
+       command, and the tick map bounds the closed loop the robot actually
+       runs. An envelope without its model cannot be judged (KI-049). */
+    const propagation = candidate.propagation || report.propagation || 'plant';
+    notes.push(propagation === 'tick'
+        ? 'the envelope is the closed-loop tick map\'s tube: the feedback contracts it'
+        : 'the envelope is the open-loop plant\'s tube: the controller is outside it');
     if (candidate.tracking_cm !== null && candidate.tracking_cm !== undefined) {
         notes.push(`the robot tracked the path to within ${candidate.tracking_cm.toFixed(2)} cm `
             + `(the limit is 0.50 cm)`);

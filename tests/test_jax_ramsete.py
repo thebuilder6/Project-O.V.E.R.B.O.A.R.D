@@ -158,6 +158,46 @@ class TestJAXRamsete(unittest.TestCase):
         self.assertTrue(np.isfinite(float(v_cmd)))
         self.assertTrue(np.isfinite(float(om_cmd)))
 
+    def test_the_pose_is_read_without_unstack(self):
+        """The pose must not be unpacked as a tuple.
+
+        Unpacking a traced array (``x, y, theta = current_pose``) is a JAX
+        ``unstack`` primitive, and Immrax's natural inclusion has no rule
+        for it.  The closed-loop tick map embeds this controller inside a
+        Jacobian inclusion, so it dies with "unstack not in
+        inclusion_registry" - the tick propagation cannot run at all.  (JAX
+        0.6, which the tick measurements were taken on, compiled the
+        unpacking to slices; JAX 0.12 does not.)  Reading the pose by
+        indexing compiles to slice+squeeze, which the registry has.
+        """
+        controller = JAXRamseteController(2.0, 0.7)
+        pose = jnp.array([0.1, 0.2, 0.3])
+        ref = jnp.array([0.0, 0.0, 0.0])
+        jaxpr = jax.make_jaxpr(
+            lambda p, r: controller.calculate(p, r, 0.5, 0.0))(pose, ref)
+        primitives = {eqn.primitive.name for eqn in jaxpr.jaxpr.eqns}
+        self.assertNotIn("unstack", primitives)
+        self.assertIn("slice", primitives)
+
+    def test_reading_the_pose_by_indexing_is_the_same_number(self):
+        """The fix must not change the command by a single bit."""
+        controller = JAXRamseteController(2.0, 0.7)
+        reference = FastRamseteReference(2.0, 0.7)
+        pose = (0.1, 0.2, 0.3)
+        ref = (0.05, -0.1, 0.25)
+        ref_v, ref_omega = 0.4, 0.2
+        # The controller's own gain, the one ramsete_fast.py interpolates.
+        kr = math.sqrt(ref_omega ** 2 + 2.0 * ref_v ** 2)
+        v_cmd, omega_cmd = controller.calculate(
+            jnp.array(pose), jnp.array(ref), ref_v, ref_omega, ref_k=kr)
+        expected = reference.command(
+            pose[0], pose[1], pose[2], ref[0], ref[1], ref[2],
+            ref_v, ref_omega, kr)
+        # The controller runs in float32, so the parity is the same tolerance
+        # the randomized parity test above uses.
+        self.assertAlmostEqual(float(v_cmd), expected[0], places=6)
+        self.assertAlmostEqual(float(omega_cmd), expected[1], places=6)
+
 
 class TestJAXDriveQuantization(unittest.TestCase):
     """The deployed controller rounds its drive() arguments, so must the model.
