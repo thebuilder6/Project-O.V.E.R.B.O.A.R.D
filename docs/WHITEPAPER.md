@@ -528,18 +528,18 @@ The pipeline benchmark in §7.6 produced identical final costs for simple and Mu
 
 | ID | State | Impact |
 |---|---|---|
-| KI-004 | Open | Multi-Verse refinement and worker flags do not change the final trajectory |
+| KI-004 | Fixed | The Multi-Verse refinement is repaired and used as a seed: `--refine` puts the refined trajectory into the candidate set (4.936 s against the default set's 6.068 s on the complex mission; the full stock set gives 4.877 s there) |
 | KI-005 | Fixed | The live view that killed port owners is gone; the studio never takes a port |
-| KI-006 | Open | Fresh `requirements.txt` install cannot run the default or validation paths |
-| KI-011 | Open | Controller heading interpolation can cross ±π the long way |
-| KI-012 | Open | Final-waypoint events do not fire in the deployed runtime |
+| KI-006 | Fixed | The optional stack lives in `requirements-optional.txt`; `install.bat` / `install.sh` set up both |
+| KI-011 | Fixed | The controller heading interpolation no longer crosses ±π the long way |
+| KI-012 | Fixed | The final-waypoint event fires in the deployed runtime |
 | KI-015 | Fixed | The benchmark tools work: the pipeline mode checks convergence, the random mode validates against the config it used, and the suite generator solves every mission |
 | KI-016 | Fixed | The live view that missed the config is gone; the studio loads the mission itself |
-| KI-017 | Open | Convergence animate/output flags do nothing; Multi-Verse has no history |
-| KI-018 | Open | Generated mission copies, unused diagnostic API, dead UI state |
+| KI-017 | Partial | The convergence animate/output flags still do nothing; Multi-Verse has no history |
+| KI-018 | Fixed | The generated mission copies, the unused diagnostic API and the dead UI state are gone |
 | KI-020 | Partial | Validator is not a full digital twin; reachability is a post-solve candidate score, not an optimizer term |
 
-Fixed in the working tree: KI-001, KI-002, KI-003, KI-007, KI-008, KI-009, KI-010, KI-013, KI-014, KI-019. See `KNOWN_ISSUES.md` for evidence and fixes.
+Fixed in the working tree: KI-001, KI-002, KI-003, KI-004, KI-005, KI-006, KI-007, KI-008, KI-009, KI-010, KI-011, KI-012, KI-013, KI-014, KI-015, KI-016, KI-018, KI-019, KI-021, KI-022, KI-023, KI-024, KI-025, KI-026, KI-027, KI-028, KI-029, KI-030, KI-031. KI-017 is partially fixed and KI-032 is mitigated. See `KNOWN_ISSUES.md` for evidence and fixes.
 
 ---
 
@@ -548,12 +548,12 @@ Fixed in the working tree: KI-001, KI-002, KI-003, KI-007, KI-008, KI-009, KI-01
 Priority order:
 
 1. **KI-020:** collect and fit hardware logs, compare the fitted model with measured poses, add integrated odometry and the remaining motor/DriveBase/slip dynamics, then use reachability in optimization. Keep the current gate strict until then.
-2. **KI-004:** add a way to pass the Multi-Verse refined sample matrix into `TrajectoryOptimizer.solve` (the existing `guess_style` parameter only selects deterministic seeds), or remove the Multi-Verse path and its flags.
+2. **The objective, not the search:** the Multi-Verse seed provider buys speed with tracking accuracy, because its cost is duration plus a jerk term and the 5 mm gate rejects the trade. Making the objective answer the gate is the same lever as reachability in the objective.
 3. **KI-006:** done. The simple solver is the default and the optional stack lives in `requirements-optional.txt`.
-4. **KI-005/KI-016:** stop killing the port and replay config/waypoints to new clients.
-5. **KI-011/KI-012:** unwrap headings on export and fire the final event.
+4. **KI-005/KI-016:** done - the studio never takes a port and it loads the mission itself.
+5. **KI-011/KI-012:** done - the headings unwrap across ±π and the final event fires.
 6. **KI-015:** done - the random benchmarks use an explicit config and check convergence.
-7. **KI-017/KI-018:** wire or remove convergence flags, dead UI state, and generated duplicates.
+7. **KI-017:** wire or remove the convergence flags and the Multi-Verse history.
 
 The path-planning side of this list — the seed heuristics, the timing models, the candidate set, the reachability objective, and the research agenda with a suggested order — is in [`docs/HEURISTICS_AND_VERIFICATION.md`](HEURISTICS_AND_VERIFICATION.md) Part IV.
 

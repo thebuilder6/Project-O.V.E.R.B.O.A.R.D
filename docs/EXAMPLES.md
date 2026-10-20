@@ -2,7 +2,7 @@
 
 This document provides practical examples for using the FLL Trajectory Optimizer.
 
-> **Optimizer choice:** the simple CasADi solver is the default, so every example below works with a core `requirements.txt` install. The Multi-Verse path is opt-in with `--multiverse`; it needs JAX and currently produces the same final trajectory (KI-004). `--validate` always needs JAX/Immrax. With `--validate`, `--candidates N` (default 2, max 5) solves N candidates and exports the passing one with the smallest envelope; with the simple solver the candidates combine initial-guess seeds with uniform or per-segment timing, on the Multi-Verse path they are accuracy-weight variants. Use `--candidates 1` for a single solve. Without `--validate`, only the first candidate is solved.
+> **Optimizer choice:** the simple CasADi solver is the default, so every example below works with a core `requirements.txt` install. The Multi-Verse path is opt-in with `--multiverse`; it needs JAX, and its refined trajectory reaches the solver as a seed (KI-004). `--validate` always needs JAX/Immrax. With `--validate`, `--candidates N` (default 2, max 5) solves N candidates and exports the passing one with the smallest envelope; with the simple solver the candidates combine initial-guess seeds with uniform or per-segment timing, on the Multi-Verse path they are accuracy-weight variants. Use `--candidates 1` for a single solve. Without `--validate`, only the first candidate is solved.
 
 ## Table of Contents
 
@@ -374,13 +374,21 @@ python main.py --multiverse -c examples/fll_choreo.json -w complex_waypoints.jso
   --plot
 ```
 
-**Current behaviour:** the refinement phase updates an intermediate trajectory, but the final CasADi polish does not receive that refined guess (`multiverse_optimizer.py:_global_solve`, KI-004). The final trajectory is therefore the same as the simple solve, and `--workers`/`--no-parallel` do not change the result. A measured 3-waypoint pipeline benchmark produced 0.00 % cost improvement.
+**Current behaviour:** the refinement phase updates an intermediate trajectory and the polish now **probes** it as a second starting point (`multiverse_optimizer.py:_global_solve`, KI-004). The probe wins where it used to lose — 4.617 s against 6.049 s on the complex mission — and `main.py --refine` puts the refined trajectory into the candidate set of the simple solver, so the pipeline is a **seed provider** rather than a second solver. `--workers`/`--no-parallel` still do not change the result.
 
 **The simple solver is the default, so it needs no flag:**
 
 ```bash
 python main.py -c examples/fll_choreo.json -w waypoints.json -o output.traj
 ```
+
+**The refined seed, opt-in:**
+
+```bash
+python main.py --refine -c examples/fll_choreo.json -w examples/example_complex_mission.json -o complex.traj
+```
+
+On the complex mission that gives 4.936 s where the default two-candidate set gives 6.068 s — but the full ten-candidate stock set gives 4.877 s there, and over 30 missions the refined seed rescues nothing. It is a cheaper way to reach the stock set's speed, not a better one, which is why it stays opt-in.
 
 **Flags kept for compatibility:**
 
@@ -389,7 +397,7 @@ python main.py --multiverse -c examples/fll_choreo.json -w waypoints.json -o out
 python main.py --multiverse -c examples/fll_choreo.json -w waypoints.json -o output.traj --workers 16
 ```
 
-Do not expect these to improve quality or speed up the final solve until KI-004 is fixed.
+Do not expect these to improve quality or speed up the final solve.
 
 ---
 
@@ -513,7 +521,7 @@ print(f"Number of samples: {len(samples)}")
 print(f"Refinement phase: {stats['phase_times']['refinement']:.4f}s")
 ```
 
-> **Current status:** the Multi-Verse `solve()` returns `(samples, stats)`, but the final polish ignores the refined guess (KI-004). For predictable output, use `TrajectoryOptimizer`, which is the default.
+> **Current status:** the Multi-Verse `solve()` returns `(samples, stats)` and the polish probes the refined guess as a second starting point (KI-004). The pipeline is a **seed provider**: `main.py --refine` adds its refined trajectory to the candidate set. For predictable output, use `TrajectoryOptimizer`, which is the default.
 
 ---
 

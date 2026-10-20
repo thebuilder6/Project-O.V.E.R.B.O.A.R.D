@@ -27,6 +27,7 @@ from robot_model import RobotConfig
 from export import write_python_file
 from benchmark import RandomBenchmark
 from validator import check_final_waypoint, forward_integrate, validate_samples
+import main
 
 try:
     from immrax_validator import ImmraxValidator
@@ -781,6 +782,128 @@ class TestBenchmarkValidationConfig(unittest.TestCase):
         self.assertEqual(os.path.normpath(args[1]),
                          os.path.normpath(rb.config_file))
         self.assertFalse(kwargs["apply_headroom"])
+
+
+class TestSegmentLimits(unittest.TestCase):
+    """The local envelope limit belongs to the waypoint the segment ends at.
+
+    A waypoint's limit is the limit for the way *into* it: the robot has
+    to be tight where it arrives. The old rule applied the limit of
+    waypoint j to the segment that *started* at j, so a precision waypoint
+    was not held to its tight limit on the approach, and the limit of the
+    final waypoint was never read at all (KI-034).
+    """
+
+    def test_the_default_is_two_centimetres(self):
+        self.assertAlmostEqual(main._segment_limit({}, 0), 0.02)
+        self.assertAlmostEqual(main._segment_limit({}, 3), 0.02)
+
+    def test_the_last_waypoint_limit_governs_the_last_segment(self):
+        self.assertAlmostEqual(main._segment_limit({3: 0.001}, 2), 0.001)
+
+    def test_a_precision_waypoint_limit_governs_the_approach(self):
+        # The segment that ends at waypoint 1.
+        self.assertAlmostEqual(main._segment_limit({1: 0.005}, 0), 0.005)
+
+    def test_the_start_waypoint_limit_is_the_fallback(self):
+        self.assertAlmostEqual(main._segment_limit({0: 0.005}, 0), 0.005)
+
+    def test_the_report_gives_every_segment_a_limit(self):
+        samples_per_segment = 2
+        count = 3 * samples_per_segment + 1
+        samples = [{"t": i * 0.1, "x": 0.0, "y": 0.0, "heading": 0.0,
+                    "vl": 0.0, "vr": 0.0, "al": 0.0, "ar": 0.0}
+                   for i in range(count)]
+        report = main._segment_report(samples, samples_per_segment,
+                                      {0: 0.005, 3: 0.001}, None, None)
+        self.assertEqual(len(report), 3)
+        self.assertAlmostEqual(report[0]["limit_m"], 0.005)
+        self.assertAlmostEqual(report[1]["limit_m"], 0.02)
+        # The final waypoint's limit is used, not dropped.
+        self.assertAlmostEqual(report[2]["limit_m"], 0.001)
+
+
+class TestGearedSpeedLimit(unittest.TestCase):
+    """The wheel-speed limit must know the gearing (KI-035).
+
+    The motor turns ``gearing`` times per wheel revolution, so the wheel's
+    no-load speed is the motor's divided by it. Leaving the gearing out
+    made the optimizer plan above the motor's real top speed, and every
+    such plan failed the motor gate with a confusing reason.
+    """
+
+    def _config(self, gearing):
+        return RobotConfig({"robot": dict(_TEST_ROBOT["robot"], gearing=gearing)})
+
+    def test_the_wheel_speed_limit_divides_by_the_gearing(self):
+        direct = self._config(1.0)
+        geared = self._config(2.0)
+        self.assertAlmostEqual(geared.max_linear_speed(),
+                               direct.max_linear_speed() / 2.0)
+
+    def test_the_cpu_audit_uses_the_same_limit(self):
+        direct = self._config(1.0)
+        geared = self._config(2.0)
+        self.assertAlmostEqual(geared.no_load_wheel_speed_worst_case(),
+                               direct.no_load_wheel_speed_worst_case() / 2.0)
+
+    def test_a_geared_robot_is_not_planned_above_its_top_speed(self):
+        geared = self._config(2.0)
+        bound = 0.99 * geared.max_linear_speed()
+        motor_omega = (bound / geared.wheel_radius) * geared.gearing
+        self.assertLess(motor_omega, geared.v_max_rad_s)
+
+    def test_a_direct_drive_robot_is_unchanged(self):
+        config = self._config(1.0)
+        self.assertAlmostEqual(config.max_linear_speed(),
+                               config.v_max_rad_s * config.wheel_radius
+                               * config.speed_headroom)
+
+
+class TestEventNameEscaping(unittest.TestCase):
+    """An event name is free text and must not break the generated file.
+
+    The name was pasted into the generated Python source unescaped, so a
+    name with a quote in it was a syntax error on the hub, and it could
+    inject keys into the sample dict (KI-038).
+    """
+
+    def _export(self, name):
+        with tempfile.TemporaryDirectory() as tmp:
+            traj = os.path.join(tmp, "a.traj")
+            out = os.path.join(tmp, "a.py")
+            samples = [
+                {"t": 0.0, "x": 0.0, "y": 0.0, "heading": 0.0, "vl": 0.0,
+                 "vr": 0.0, "omega": 0.0, "event": name},
+                {"t": 0.1, "x": 0.1, "y": 0.0, "heading": 0.0, "vl": 0.1,
+                 "vr": 0.1, "omega": 0.0},
+            ]
+            with open(traj, "w", encoding="utf-8") as handle:
+                json.dump({"trajectory": {"config": _TEST_ROBOT["robot"],
+                                          "samples": samples}}, handle)
+            write_python_file(traj, out)
+            with open(out, "r", encoding="utf-8") as handle:
+                source = handle.read()
+        return source
+
+    def test_a_quote_in_an_event_name_still_produces_valid_python(self):
+        source = self._export('raise_arm" , "x": 99')
+        compile(source, "a.py", "exec")
+
+    def test_the_event_name_stays_one_string(self):
+        source = self._export('raise_arm" , "x": 99')
+        namespace = {}
+        exec(compile(source, "a.py", "exec"), namespace)
+        sample = namespace["samples"][0]
+        self.assertEqual(sample["event"], 'raise_arm" , "x": 99')
+        # The injected text did not become a key of its own.
+        self.assertEqual(sample["x"], 0.0)
+
+    def test_a_plain_name_is_unchanged(self):
+        source = self._export("lower_arm")
+        namespace = {}
+        exec(compile(source, "a.py", "exec"), namespace)
+        self.assertEqual(namespace["samples"][0]["event"], "lower_arm")
 
 
 if __name__ == "__main__":
