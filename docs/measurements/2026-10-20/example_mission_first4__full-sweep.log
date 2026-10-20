@@ -1,0 +1,122 @@
+# command: C:\Users\jumpi\AppData\Local\Microsoft\WindowsApps\PythonSoftwareFoundation.Python.3.12_qbz5n2kfra8p0\python.exe main.py -c examples/fll_choreo.json -w examples/example_mission_first4.json -o C:\Users\jumpi\AppData\Local\Temp\opencode\sweep\example_mission_first4__full-sweep.traj --validate --candidates 5 --sweep
+# wall_seconds: 29.7
+# exit_code: 0
+
+Using the example robot config (examples/fll_choreo.json). Pass -c/--config with your own robot to plan for your build.
+Using the simple CasADi optimizer
+Solving 4 waypoints (samples=10, accuracy_weight=0.0, candidates=5, mixed equal-duration/per-segment dt)...
+Solving 13 candidates (in parallel)...
+Candidate 1/13 (guess_style=baseline, equal-duration dt, a=0)...
+  Running the Immrax robustness check...
+  Passed! envelope 0.32 cm, all segments within thresholds.
+Candidate 2/13 (guess_style=baseline, per-segment dt, a=0)...
+  Running the Immrax robustness check...
+  Passed! envelope 0.31 cm, all segments within thresholds.
+Candidate 3/13 (guess_style=rolling, equal-duration dt, a=0)...
+  Running the Immrax robustness check...
+  Passed! envelope 0.34 cm, all segments within thresholds.
+Candidate 4/13 (guess_style=rolling, per-segment dt, a=0)...
+  Running the Immrax robustness check...
+  Passed! envelope 0.31 cm, all segments within thresholds.
+Candidate 5/13 (guess_style=bow_left, equal-duration dt, a=0)...
+  Running the Immrax robustness check...
+  Passed! envelope 0.35 cm, all segments within thresholds.
+Candidate 6/13 (guess_style=baseline, equal-duration dt, a=0.001)...
+  Running the Immrax robustness check...
+  Passed! envelope 0.34 cm, all segments within thresholds.
+Candidate 7/13 (guess_style=baseline, per-segment dt, a=0.001)...
+  Running the Immrax robustness check...
+  FAILED: motor force 0.001 N over limit; 1 constraint violations.
+Candidate 8/13 (guess_style=baseline, equal-duration dt, a=0.002)...
+  Running the Immrax robustness check...
+  Passed! envelope 0.34 cm, all segments within thresholds.
+Candidate 9/13 (guess_style=baseline, per-segment dt, a=0.002)...
+  Running the Immrax robustness check...
+  Passed! envelope 0.32 cm, all segments within thresholds.
+Candidate 10/13 (guess_style=baseline, equal-duration dt, a=0.005)...
+  Running the Immrax robustness check...
+  Passed! envelope 0.35 cm, all segments within thresholds.
+Candidate 11/13 (guess_style=baseline, per-segment dt, a=0.005)...
+  Running the Immrax robustness check...
+  Passed! envelope 0.32 cm, all segments within thresholds.
+Candidate 12/13 (guess_style=baseline, equal-duration dt, a=0.01)...
+  Running the Immrax robustness check...
+  Passed! envelope 0.35 cm, all segments within thresholds.
+Candidate 13/13 (guess_style=baseline, per-segment dt, a=0.01)...
+  Running the Immrax robustness check...
+  Passed! envelope 0.35 cm, all segments within thresholds.
+  Candidate 1 (baseline, equal-dur, a=0):  2.176 s, envelope 0.32 cm (ok)
+      segment times: 0.73 0.73 0.73 s
+  Candidate 2 (baseline, per-seg, a=0):  1.833 s, envelope 0.31 cm (ok)
+      segment times: 0.65 0.41 0.78 s
+  Candidate 3 (rolling, equal-dur, a=0):  2.567 s, envelope 0.34 cm (ok)
+      segment times: 0.86 0.86 0.86 s
+  Candidate 4 (rolling, per-seg, a=0):  1.796 s, envelope 0.31 cm (ok)
+      segment times: 0.63 0.40 0.77 s
+  Candidate 5 (bow_left, equal-dur, a=0):  2.723 s, envelope 0.35 cm (ok)
+      segment times: 0.91 0.91 0.91 s
+  Candidate 6 (baseline, equal-dur, a=0.001):  2.256 s, envelope 0.34 cm (ok)
+      segment times: 0.75 0.75 0.75 s
+  Candidate 7 (baseline, per-seg, a=0.001):  1.775 s, envelope 0.31 cm (failed)
+      segment times: 0.60 0.39 0.78 s
+  Candidate 8 (baseline, equal-dur, a=0.002):  2.301 s, envelope 0.34 cm (ok)
+      segment times: 0.77 0.77 0.77 s
+  Candidate 9 (baseline, per-seg, a=0.002):  1.835 s, envelope 0.32 cm (ok)
+      segment times: 0.61 0.41 0.82 s
+  Candidate 10 (baseline, equal-dur, a=0.005):  2.424 s, envelope 0.35 cm (ok)
+      segment times: 0.81 0.81 0.81 s
+  Candidate 11 (baseline, per-seg, a=0.005):  1.939 s, envelope 0.32 cm (ok)
+      segment times: 0.63 0.43 0.87 s
+  Candidate 12 (baseline, equal-dur, a=0.01):  2.558 s, envelope 0.35 cm (ok)
+      segment times: 0.85 0.85 0.85 s
+  Candidate 13 (baseline, per-seg, a=0.01):  2.299 s, envelope 0.35 cm (ok)
+      segment times: 0.72 0.51 1.07 s
+  Selected candidate 4.
+##OVERBOARD-VALIDATION## {"selected": 4, "candidates": [{"index": 1, "style": "baseline", "timing": "equal-duration", "duration_s": 2.1760454431579066, "envelope_cm": 0.3220803023370396, "tracking_cm": 0.4048624075949192, "heading_error_deg": 3.6867175479194425, "ok": true, "converged": true, "reasons": [], "segments": [{"from": 0, "to": 1, "limit_m": 0.02, "envelope_m": 0.00192945125827009, "drift_m": 0.00048207168917254394, "violations": 0, "slip_points": 0, "ok": true}, {"from": 1, "to": 2, "limit_m": 0.02, "envelope_m": 0.0024183970007932536, "drift_m": 0.00036717242627533266, "violations": 0, "slip_points": 0, "ok": true}, {"from": 2, "to": 3, "limit_m": 0.02, "envelope_m": 0.003189995115910782, "drift_m": 0.0012064426531828074, "violations": 0, "slip_points": 0, "ok": true}]}, {"index": 2, "style": "baseline", "timing": "per-segment", "duration_s": 1.8333813555656195, "envelope_cm": 0.31128259874393804, "tracking_cm": 0.38376713637262583, "heading_error_deg": 2.883432660012583, "ok": true, "converged": true, "reasons": [], "segments": [{"from": 0, "to": 1, "limit_m": 0.02, "envelope_m": 0.0019044212257626964, "drift_m": 0.00046240664595243087, "violations": 0, "slip_points": 0, "ok": true}, {"from": 1, "to": 2, "limit_m": 0.02, "envelope_m": 0.0022993887095580836, "drift_m": 0.00028014059604472395, "violations": 0, "slip_points": 0, "ok": true}, {"from": 2, "to": 3, "limit_m": 0.02, "envelope_m": 0.0030770580801414028, "drift_m": 0.0013448998584062997, "violations": 0, "slip_points": 0, "ok": true}]}, {"index": 3, "style": "rolling", "timing": "equal-duration", "duration_s": 2.567152557207665, "envelope_cm": 0.33641366873870854, "tracking_cm": 0.2716338261961937, "heading_error_deg": 3.0695962960304506, "ok": true, "converged": true, "reasons": [], "segments": [{"from": 0, "to": 1, "limit_m": 0.02, "envelope_m": 0.001975802731025273, "drift_m": 0.00046257118864272704, "violations": 0, "slip_points": 0, "ok": true}, {"from": 1, "to": 2, "limit_m": 0.02, "envelope_m": 0.002520653197197172, "drift_m": 0.00033654978998712666, "violations": 0, "slip_points": 0, "ok": true}, {"from": 2, "to": 3, "limit_m": 0.02, "envelope_m": 0.0033329821285290762, "drift_m": 0.0014584099405624445, "violations": 0, "slip_points": 0, "ok": true}]}, {"index": 4, "style": "rolling", "timing": "per-segment", "duration_s": 1.7963768108391969, "envelope_cm": 0.31012047299495216, "tracking_cm": 0.399907398968935, "heading_error_deg": 2.8933637550657814, "ok": true, "converged": true, "reasons": [], "segments": [{"from": 0, "to": 1, "limit_m": 0.02, "envelope_m": 0.0018990544910904184, "drift_m": 0.0004832450868172504, "violations": 0, "slip_points": 0, "ok": true}, {"from": 1, "to": 2, "limit_m": 0.02, "envelope_m": 0.0022908735059947462, "drift_m": 0.00027862957282284793, "violations": 0, "slip_points": 0, "ok": true}, {"from": 2, "to": 3, "limit_m": 0.02, "envelope_m": 0.0030656620348027816, "drift_m": 0.0013334849967497663, "violations": 0, "slip_points": 0, "ok": true}]}, {"index": 5, "style": "bow_left", "timing": "equal-duration", "duration_s": 2.7225540080273842, "envelope_cm": 0.35199374714648696, "tracking_cm": 0.29288374353200197, "heading_error_deg": 2.4085705881566164, "ok": true, "converged": true, "reasons": [], "segments": [{"from": 0, "to": 1, "limit_m": 0.02, "envelope_m": 0.0019918200620841512, "drift_m": 0.0006070457257330333, "violations": 0, "slip_points": 0, "ok": true}, {"from": 1, "to": 2, "limit_m": 0.02, "envelope_m": 0.0025494030103475774, "drift_m": 0.00043353580713345694, "violations": 0, "slip_points": 0, "ok": true}, {"from": 2, "to": 3, "limit_m": 0.02, "envelope_m": 0.003424791114331619, "drift_m": 0.002480876602190516, "violations": 0, "slip_points": 0, "ok": true}]}, {"index": 6, "style": "baseline", "timing": "equal-duration", "duration_s": 2.255619783903162, "envelope_cm": 0.33862596297429354, "tracking_cm": 0.3411786165088415, "heading_error_deg": 2.8131363530748117, "ok": true, "converged": true, "reasons": [], "segments": [{"from": 0, "to": 1, "limit_m": 0.02, "envelope_m": 0.0019320617833779412, "drift_m": 0.00047743725473584244, "violations": 0, "slip_points": 0, "ok": true}, {"from": 1, "to": 2, "limit_m": 0.02, "envelope_m": 0.0024834048601415893, "drift_m": 0.00041037925329152604, "violations": 0, "slip_points": 0, "ok": true}, {"from": 2, "to": 3, "limit_m": 0.02, "envelope_m": 0.003344227440483685, "drift_m": 0.001407792529396192, "violations": 0, "slip_points": 0, "ok": true}]}, {"index": 7, "style": "baseline", "timing": "per-segment", "duration_s": 1.7750819159846496, "envelope_cm": 0.3127942307100519, "tracking_cm": 0.37476830184459686, "heading_error_deg": 2.9180070775911875, "ok": false, "converged": true, "reasons": ["motor force 0.001 N over limit", "1 constraint violations"], "segments": [{"from": 0, "to": 1, "limit_m": 0.02, "envelope_m": 0.0018893811369893967, "drift_m": 0.0004682765657867293, "violations": 0, "slip_points": 0, "ok": true}, {"from": 1, "to": 2, "limit_m": 0.02, "envelope_m": 0.002287521215221888, "drift_m": 0.00030293458120164056, "violations": 0, "slip_points": 0, "ok": true}, {"from": 2, "to": 3, "limit_m": 0.02, "envelope_m": 0.00308360291927945, "drift_m": 0.0013719972255790555, "violations": 1, "slip_points": 0, "ok": false}]}, {"index": 8, "style": "baseline", "timing": "equal-duration", "duration_s": 2.300916286661688, "envelope_cm": 0.34089927087481314, "tracking_cm": 0.341748702339828, "heading_error_deg": 2.89777605726961, "ok": true, "converged": true, "reasons": [], "segments": [{"from": 0, "to": 1, "limit_m": 0.02, "envelope_m": 0.0019348518716237244, "drift_m": 0.00046332247291919025, "violations": 0, "slip_points": 0, "ok": true}, {"from": 1, "to": 2, "limit_m": 0.02, "envelope_m": 0.0024909476888937037, "drift_m": 0.0004511904747013262, "violations": 0, "slip_points": 0, "ok": true}, {"from": 2, "to": 3, "limit_m": 0.02, "envelope_m": 0.0033631008547984707, "drift_m": 0.001369299263545275, "violations": 0, "slip_points": 0, "ok": true}]}, {"index": 9, "style": "baseline", "timing": "per-segment", "duration_s": 1.835251380707131, "envelope_cm": 0.31661956906417965, "tracking_cm": 0.3671243553981185, "heading_error_deg": 2.7975225406321624, "ok": true, "converged": true, "reasons": [], "segments": [{"from": 0, "to": 1, "limit_m": 0.02, "envelope_m": 0.001892615747030246, "drift_m": 0.0004647959152322381, "violations": 0, "slip_points": 0, "ok": true}, {"from": 1, "to": 2, "limit_m": 0.02, "envelope_m": 0.002298208693183705, "drift_m": 0.0003126276383251932, "violations": 0, "slip_points": 0, "ok": true}, {"from": 2, "to": 3, "limit_m": 0.02, "envelope_m": 0.0031148345598356513, "drift_m": 0.001436423556679074, "violations": 0, "slip_points": 0, "ok": true}]}, {"index": 10, "style": "baseline", "timing": "equal-duration", "duration_s": 2.4242345328257815, "envelope_cm": 0.34673310520689793, "tracking_cm": 0.33343920949846506, "heading_error_deg": 2.8129997492914116, "ok": true, "converged": true, "reasons": [], "segments": [{"from": 0, "to": 1, "limit_m": 0.02, "envelope_m": 0.0019489145424444608, "drift_m": 0.0004386468638627501, "violations": 0, "slip_points": 0, "ok": true}, {"from": 1, "to": 2, "limit_m": 0.02, "envelope_m": 0.0025285411630932204, "drift_m": 0.0004276599577915457, "violations": 0, "slip_points": 0, "ok": true}, {"from": 2, "to": 3, "limit_m": 0.02, "envelope_m": 0.003412325726372869, "drift_m": 0.0013887982188628641, "violations": 0, "slip_points": 0, "ok": true}]}, {"index": 11, "style": "baseline", "timing": "per-segment", "duration_s": 1.9388136927363124, "envelope_cm": 0.3206318166257608, "tracking_cm": 0.3122274298220873, "heading_error_deg": 2.617232867300506, "ok": true, "converged": true, "reasons": [], "segments": [{"from": 0, "to": 1, "limit_m": 0.02, "envelope_m": 0.0019018071202316239, "drift_m": 0.0004734756535460823, "violations": 0, "slip_points": 0, "ok": true}, {"from": 1, "to": 2, "limit_m": 0.02, "envelope_m": 0.0023222077614944276, "drift_m": 0.00032993953368543717, "violations": 0, "slip_points": 0, "ok": true}, {"from": 2, "to": 3, "limit_m": 0.02, "envelope_m": 0.003153282182083742, "drift_m": 0.0014718432375211963, "violations": 0, "slip_points": 0, "ok": true}]}, {"index": 12, "style": "baseline", "timing": "equal-duration", "duration_s": 2.5584672812380123, "envelope_cm": 0.3513798621630657, "tracking_cm": 0.2864707726985216, "heading_error_deg": 2.571784788563241, "ok": true, "converged": true, "reasons": [], "segments": [{"from": 0, "to": 1, "limit_m": 0.02, "envelope_m": 0.0019665087966016436, "drift_m": 0.000429186523593752, "violations": 0, "slip_points": 0, "ok": true}, {"from": 1, "to": 2, "limit_m": 0.02, "envelope_m": 0.002564468179141671, "drift_m": 0.00043714126432669833, "violations": 0, "slip_points": 0, "ok": true}, {"from": 2, "to": 3, "limit_m": 0.02, "envelope_m": 0.0034600657271887025, "drift_m": 0.001470356587332603, "violations": 0, "slip_points": 0, "ok": true}]}, {"index": 13, "style": "baseline", "timing": "per-segment", "duration_s": 2.2987008535409994, "envelope_cm": 0.35040705593786825, "tracking_cm": 0.30450751073658466, "heading_error_deg": 1.8468285100580877, "ok": true, "converged": true, "reasons": [], "segments": [{"from": 0, "to": 1, "limit_m": 0.02, "envelope_m": 0.0019343305377768235, "drift_m": 0.0009654832618365504, "violations": 0, "slip_points": 0, "ok": true}, {"from": 1, "to": 2, "limit_m": 0.02, "envelope_m": 0.002384700105810694, "drift_m": 0.0015358385600407168, "violations": 0, "slip_points": 0, "ok": true}, {"from": 2, "to": 3, "limit_m": 0.02, "envelope_m": 0.0034196680501167227, "drift_m": 0.0039046713704569253, "violations": 0, "slip_points": 0, "ok": true}]}]}
+
+=== Validation Report: C:\Users\jumpi\AppData\Local\Temp\opencode\sweep\example_mission_first4__full-sweep.traj ===
+Samples: 31 | Config: examples/fll_choreo.json
+Safety margins: torque_headroom=0.85, speed_headroom=0.90
+
+-- Metrics --
+  total_time_s: 1.7964
+  path_length_m: 0.4623
+  max_linear_speed_m_s: 0.4132
+  avg_linear_speed_m_s: 0.2596
+  max_wheel_speed_m_s: 0.4417
+  max_accel_m_s2: 7.0125
+  max_jerk_m_s3: 195.2343
+  avg_jerk_m_s3: 23.3147
+  tortuosity: 1.1332
+  velocity_chattering: 3
+  avg_force_utilization: 0.1930
+  max_force_utilization: 0.6817
+
+-- Constraint Audit --
+  Violating samples: 0
+  Max left_motor_force violation: 0.000000 N
+  Max right_motor_force violation: 0.000000 N
+  Max traction_total violation: 0.000000 N
+  Max wheel speed: 0.4417 m/s (limit 0.5209 m/s)
+
+-- Wheel Slip Detection --
+  Slip points: 0
+  Max left wheel slip: 0.000000 N
+  Max right wheel slip: 0.000000 N
+
+-- Forward Integration (1 ms RK4) --
+  max_pos_error_m: 0.001478
+  rms_pos_error_m: 0.000601
+  max_heading_error_rad: 0.007340
+  final_pos_error_m: 0.001478
+  final_heading_error_rad: 0.000032
+
+-- Waypoint Check --
+  Final position error: 0.000000 m
+  Final heading error: 0.000000 rad
+
+PASS — trajectory is safe to run.
+
+Trajectory written to C:\Users\jumpi\AppData\Local\Temp\opencode\sweep\example_mission_first4__full-sweep.traj
+  duration 1.796 s | path 0.462 m | peak wheel speed 0.44 m/s | 31 samples
+  validation: passed (envelope 0.31 cm)
