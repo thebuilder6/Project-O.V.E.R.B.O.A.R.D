@@ -164,6 +164,8 @@ python sysid_compare.py output.traj poses.csv --run-id 4 \
 
 `--robot-config` remains supported for a full robot config, and `--wheel-radius` overrides either source. The comparator also accepts a plain predicted-pose CSV (`t,x,y,heading`) instead of a `.traj`, so it is not tied to this optimizer. It warns if the profile geometry differs from the trajectory config.
 
+For the end-to-end profile, fit, validate, and compare walkthrough, see [docs/SYSID_QUICKSTART.md](docs/SYSID_QUICKSTART.md).
+
 After a hardware run, compare the planned and measured stop/final poses:
 
 ```bash
