@@ -687,6 +687,105 @@ class TestDriftRegression(unittest.TestCase):
         self.assertLess(drift["drift_disagreement_deg_per_m"], 0.1)
 
 
+class TestWallHoming(unittest.TestCase):
+    """The wall is a reference that does not move and is not read by hand."""
+
+    @staticmethod
+    def _homing_run(name, run_id, repeat, odometry_mm, final_speed,
+                    command=60.0):
+        rows = [[0, command, 0, 0, command, 0, 0, 8000, 0, 0],
+                [1000, command, 0, odometry_mm, final_speed, 0.5, 0, 8000,
+                 120, 120]]
+        return "\n".join([
+            f"TEST_START {name}",
+            f"META,run_id,{run_id}",
+            f"META,test,{name}",
+            f"META,repeat,{repeat}",
+            "META,poses,0",
+            "DATA",
+            "t_ms,v_cmd_mm_s,w_cmd_deg_s,db_d_mm,db_v_mm_s,db_a_deg,"
+            "db_w_deg_s,batt_mv,l_load_mNm,r_load_mNm",
+        ] + [",".join(str(v) for v in row) for row in rows] + ["TEST_END,2"])
+
+    def _fit(self, session, wall_distance_m):
+        from sysid_fit import fit_session, parse_session
+        return fit_session(parse_session(session), wheel_radius_m=0.028,
+                           wall_distance_m=wall_distance_m)
+
+    def test_the_wall_gives_the_distance_scale(self):
+        session = "\n".join([
+            self._homing_run("wall_homing", 1, 0, 1000.0, 0.0),
+            self._homing_run("wall_homing", 2, 1, 1000.0, 0.0),
+        ]) + "\n"
+        odometry = self._fit(session, 0.998)["odometry"]
+
+        self.assertTrue(odometry["calibrated"])
+        self.assertAlmostEqual(odometry["distance_scale_homing"], 0.998,
+                               places=6)
+        self.assertEqual(odometry["n_homing_sources"], 2)
+
+    def test_a_run_that_never_reached_the_wall_is_rejected(self):
+        """The robot was still moving when the run ended: no wall."""
+        session = self._homing_run("wall_homing", 1, 0, 1000.0, 60.0) + "\n"
+        odometry = self._fit(session, 0.998)["odometry"]
+
+        self.assertNotIn("distance_scale_homing", odometry)
+        self.assertFalse(odometry["calibrated"])
+
+    def test_without_a_wall_distance_the_run_is_ignored(self):
+        session = self._homing_run("wall_homing", 1, 0, 1000.0, 0.0) + "\n"
+        odometry = self._fit(session, None)["odometry"]
+
+        self.assertNotIn("distance_scale_homing", odometry)
+
+    def test_the_wall_and_the_tape_are_both_reported(self):
+        """Two estimates of the same scale, so a bad mark shows up."""
+        session = "\n".join([
+            self._homing_run("wall_homing", 1, 0, 1000.0, 0.0),
+            "TEST_START odometry_straight",
+            "META,run_id,2",
+            "META,test,odometry_straight",
+            "META,repeat,0",
+            "META,poses,1",
+            "DATA",
+            "t_ms,v_cmd_mm_s,w_cmd_deg_s,db_d_mm,db_v_mm_s,db_a_deg,"
+            "db_w_deg_s,batt_mv",
+            "0,100,0,0,0,0,0,8000",
+            "10000,0,0,1000,0,0,0,8000",
+            "TEST_END,2",
+        ]) + "\n"
+        poses = {"2": [{"stop": 0, "x_m": 0.990, "y_m": 0.0,
+                        "heading_deg": 0.0}]}
+        from sysid_fit import fit_session, load_poses, parse_session
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "poses.csv")
+            with open(path, "w", encoding="utf-8") as handle:
+                handle.write("run_id,stop,x_m,y_m,heading_deg\n"
+                             "2,0,0.990,0.0,0.0\n")
+            loaded = load_poses(path)
+        odometry = fit_session(parse_session(session), poses=loaded,
+                              wheel_radius_m=0.028,
+                              wall_distance_m=0.998)["odometry"]
+
+        self.assertAlmostEqual(odometry["distance_scale_homing"], 0.998,
+                               places=6)
+        self.assertAlmostEqual(odometry["distance_scale_tape"], 0.990,
+                               places=6)
+        self.assertAlmostEqual(odometry["distance_scale_disagreement"], 0.008,
+                               places=6)
+
+    def test_the_profile_carries_the_wall_distance(self):
+        from sysid_fit import read_drivebase_profile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "profile.json")
+            with open(path, "w", encoding="utf-8") as handle:
+                json.dump({"name": "test", "wheel_radius_m": 0.028,
+                           "wall": {"distance_m": 1.05}}, handle)
+            profile = read_drivebase_profile(path)
+        self.assertAlmostEqual(profile["wall_distance_m"], 1.05)
+
+
 class TestCollectCommand(unittest.TestCase):
 
     def _run(self, tmp, extra=None):

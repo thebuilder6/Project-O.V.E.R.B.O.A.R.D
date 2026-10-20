@@ -62,6 +62,14 @@ ODOM_HEADER = (
 )
 ODOM_COLS = 8
 
+# The wall homing run: the odometry columns plus the motor load, so the same
+# run gives the distance to the wall and the stall torque.
+HOMING_HEADER = (
+    "t_ms,v_cmd_mm_s,w_cmd_deg_s,db_d_mm,db_v_mm_s,"
+    "db_a_deg,db_w_deg_s,batt_mv,l_load_mNm,r_load_mNm"
+)
+HOMING_COLS = 10
+
 _RUN_ID = 0
 
 
@@ -510,6 +518,111 @@ def test_odometry_straight():
     )
 
 
+def run_homing_test(name, v_cmd_mm_s, timeout_ms, instructions, notes=""):
+    """Drive into a wall and stop as soon as the robot is blocked.
+
+    The distance the robot covers is the distance to the wall, so the host
+    can check the robot's odometry against a reference that does not move and
+    does not have to be read by hand. That is what makes it possible to
+    re-check the calibration unattended, over and over.
+
+    The robot stops when the wheels stop turning while the command is still
+    on, so the contact is a stall and not a bounce. A bounce lets the tyres
+    slip, and the encoders then read further than the robot actually went,
+    which would bias the scale.
+    """
+    _wait_for_start(name, instructions)
+    drivebase.reset(0, 0)
+    _print_metadata(name, notes)
+
+    buf = bytearray()
+    watch = StopWatch()
+    watch.reset()
+    start = watch.time()
+    next_tick = start
+    blocked = 0
+
+    while True:
+        now = watch.time()
+        t = now - start
+        if t >= timeout_ms:
+            break
+
+        if now >= next_tick:
+            state = drivebase.state()
+            # The speed is the second entry of the drivebase state.
+            if state[1] < 0.2 * v_cmd_mm_s:
+                blocked += 1
+            else:
+                blocked = 0
+            drivebase.drive(v_cmd_mm_s, 0)
+            buf.extend(ustruct.pack(
+                "<10f",
+                t,
+                v_cmd_mm_s,
+                0.0,
+                state[0],
+                state[1],
+                state[2],
+                state[3],
+                hub.battery.voltage(),
+                motorLeft.load(),
+                motorRight.load(),
+            ))
+            next_tick += CONTROL_MS
+            if next_tick <= now:
+                next_tick = now + CONTROL_MS
+            if blocked >= 5:
+                # Blocked for a fifth of a second: it has reached the wall.
+                break
+
+        slack = next_tick - watch.time()
+        if slack > 0:
+            wait(slack)
+
+    drivebase.drive(0, 0)
+    wait(300)
+    final_state = drivebase.state()
+    buf.extend(ustruct.pack(
+        "<10f",
+        watch.time() - start,
+        0.0,
+        0.0,
+        final_state[0],
+        final_state[1],
+        final_state[2],
+        final_state[3],
+        hub.battery.voltage(),
+        motorLeft.load(),
+        motorRight.load(),
+    ))
+    drivebase.stop()
+
+    def formatter(values, i):
+        return (
+            "%.2f,%.2f,%.2f,%.0f,%.2f,%.2f,%.2f,%.0f,%.1f,%.1f"
+            % (values[i], values[i + 1], values[i + 2], values[i + 3],
+               values[i + 4], values[i + 5], values[i + 6], values[i + 7],
+               values[i + 8], values[i + 9])
+        )
+
+    print(HOMING_HEADER)
+    _dump(buf, 10, formatter)
+
+
+def test_wall_homing():
+    run_homing_test(
+        "wall_homing",
+        60,
+        30000,
+        "Put the robot's centre on the start mark, square to the wall. The "
+        "wall is about a metre ahead. Do not touch the robot once it is "
+        "running.",
+        "drive into the wall and stop when it is blocked; the host checks "
+        "the odometry against the marked distance",
+    )
+
+
 def test_odometry_turn():
     run_odometry_test(
         "odometry_turn_cw",
@@ -610,6 +723,28 @@ def test_wall_stall():
         _sequence(((2500, 30, 0),)),
         "Front bumper flat against a rigid wall. Use a low-traction-safe setup.",
         "drive(30, 0) into the wall; measure stall load/battery",
+    )
+
+
+def test_top_speed():
+    """The motor's free-running speed, with the wheels off the ground.
+
+    The torque-speed line the force model uses is fixed by its two ends:
+    the stall torque, which the wall test measures, and the speed at which
+    the motor makes no torque, which is this one. With the wheels lifted the
+    motor pushes nothing, so it runs up to that speed and stops there.
+
+    The robot config declares that speed; this measures it. The command is
+    deliberately larger than any LEGO motor can reach, so the motor is
+    torque-limited rather than speed-limited: if the wheels were still on the
+    ground the measurement would be the traction limit instead.
+    """
+    run_rate_test(
+        "top_speed",
+        3000,
+        _sequence(((3000, 1000, 0),)),
+        "Lift the robot so both wheels spin free. They must not touch the mat.",
+        "free-running speed; the motor's no-load speed",
     )
 
 
@@ -743,7 +878,18 @@ async def main():
         test_multi_stop()
         test_brake_from_speed(300)
         test_brake_from_speed(600)
+
+    # The wall tests, from the start mark to the wall and then into it. The
+    # homing run leaves the robot against the wall, which is where the stall
+    # test wants it, so the operator only sets the robot up once.
+    for _REPEAT in range(REPEATS):
+        test_wall_homing()
         test_wall_stall()
+
+    # The robot has to be lifted off the ground for this one, so it runs on
+    # its own after the measuring tests are done.
+    for _REPEAT in range(REPEATS):
+        test_top_speed()
 
     _REPEAT = 0
     await test_replay("complex_mission")

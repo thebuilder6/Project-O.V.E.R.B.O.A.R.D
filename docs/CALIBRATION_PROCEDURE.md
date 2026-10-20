@@ -33,6 +33,26 @@ cp examples/drivebase_profile.example.json my_drivebase.json
 Then open `my_drivebase.json` and set `wheel_radius_m` and `track_width_m` for
 your robot. The rest of this document assumes that file exists.
 
+### The wall, if you have one
+
+The `wall` block is optional. It says how far the start mark is from a wall
+the robot can drive into, and it is what makes the wall homing test work:
+
+```json
+"wall": { "distance_m": 1.05 }
+```
+
+Measure it **to where the robot's centre rests against the wall**, not to
+the wall's surface, so the bumper's offset does not have to be known. Do it
+once: put the robot against the wall, mark where its centre is, then measure
+from that mark to the wall and put the robot back on the mark for the
+calibration.
+
+With a wall in the profile, the robot can check its own odometry against
+something that does not move and that nobody has to read, so the scale can
+be re-measured without a human. Without one, leave the block out and the
+homing test is skipped.
+
 ---
 
 ## The measurement convention
@@ -114,13 +134,32 @@ measure it each time:
 | 13 | `multi_stop` ×3 | 2 m runway. Mark the start pose and a measuring spot at each stop. | **the pose at each of 3 stops** |
 | 14 | `brake_from_300` ×3 | Mark the start and final pose. 2 m runway required. | **the end pose** |
 | 15 | `brake_from_600` ×3 | Same, at 600 mm/s. | **the end pose** |
-| 16 | `wall_stall` ×3 | Front bumper flat against a rigid wall. | — |
-| 17 | `replay_complex_mission` | Place the robot at the trajectory start pose. Clear the full path. | — |
+| 16 | `wall_homing` ×3 | Robot's centre on the start mark, square to the wall. | — |
+| 17 | `wall_stall` ×3 | The robot is against the wall now, from the homing run. | — |
+| 18 | `top_speed` ×3 | **Lift the robot so both wheels spin free.** They must not touch the mat. | — |
+| 19 | `replay_complex_mission` | Place the robot at the trajectory start pose. Clear the full path. | — |
 
 Only tests 11 to 15 need a tape measure. The rest are for the actuator model
-and the gyro bias, and you only have to watch them. Test 16 is the one that
-measures the motor's stall torque: the robot pushes into the wall and the
-load on the motors is read, so it has to be a real wall and not a hand.
+and the gyro bias, and you only have to watch them.
+
+**Test 16, `wall_homing`, checks the distance scale against the wall.** The
+robot drives slowly forward from the start mark and stops when it is blocked,
+so the distance it covered is the distance to the wall. The wall does not
+move and nobody has to read it, so the scale can be re-checked later
+without a human. It needs the `wall` block in the drivebase profile.
+
+**Test 17, `wall_stall`, measures the motor's stall torque** from the same
+wall, which is why it runs straight after the homing run: the robot is
+already against it.
+
+**Test 17, `top_speed`, needs the robot off the ground.** With the wheels
+lifted the motor pushes nothing, so it runs up to the speed at which it makes
+no torque. That speed is the other end of the motor's torque-speed line, and
+the robot config otherwise has to declare it. It runs last, after the
+measuring tests, so the runway is not disturbed. The command is deliberately
+larger than any LEGO motor can reach, so the motor is torque-limited rather
+than speed-limited; if the robot somehow reached the commanded speed, the
+fit rejects the number and says why.
 
 **Measure these seven, in each of the three repeats:**
 
@@ -231,6 +270,9 @@ Straight drift: 1.472 deg/m (the robot curves when told to drive straight)
   tape says 1.455 deg/m, disagreement 0.017 deg/m. A big disagreement means
   the gyro bias or the start mark is off, so do not trust the drift term.
 Stall torque: 0.1314 Nm
+No-load speed: 21.318 rad/s at the wheel (the speed at which the motor makes
+  no torque)
+  no_load_speed_rad_s: 95% interval [21.105, 21.531] over 3 repeats (std 0.206).
 The intervals cover the run-to-run variation of the robot. They do not cover
 the error of the tape measure, which is the same every time and never averages
 out.
@@ -246,7 +288,9 @@ out.
 - **Odometry distance scale** — the ratio between how far the robot really
   went and how far its wheel encoders think it went. `0.998` means the
   encoders over-read by 2 mm per metre, which is the usual amount of tyre
-  squash.
+  squash. The wall and the tape are two estimates of the same number, so
+  the report gives both and the difference between them: a big disagreement
+  means the start mark or the tape is off.
 - **Odometry heading scale** — the same thing for turns.
 - **Brake slip** — how much of the commanded distance the robot loses when it
   brakes. A median of `0.011` means it slides about 11 mm for every metre it
@@ -263,6 +307,11 @@ out.
   pushing into a wall. The robot config can only declare it, so this
   replaces a guess. The planner uses it as the limit on the force a wheel may
   need.
+- **No-load speed** — the speed the motor reaches with the wheels off the
+  ground, which is the speed at which it makes no torque. Together with the
+  stall torque it is the whole torque-speed line the planner uses, so both
+  numbers are now measured instead of declared. The planner, the validator
+  and the exported controller all use the measured pair.
 
 ### What the interval covers, and what it does not
 

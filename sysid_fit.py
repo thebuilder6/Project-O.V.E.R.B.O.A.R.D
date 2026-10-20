@@ -667,6 +667,9 @@ def _straight_measured(run, wheel_radius_m):
     times = _column(run, "t_ms")
     if left is None or right is None or times is None:
         return None, None
+    if times.size < 2:
+        # A gradient needs two points, and a run that short says nothing.
+        return None, None
     times = times / 1000.0
     average_angle = 0.5 * (left + right) * np.pi / 180.0
     speed = np.gradient(average_angle, times) * wheel_radius_m
@@ -677,6 +680,8 @@ def _turn_measured(run):
     gyro_z = _column(run, "gyro_z_rad_s")
     times = _column(run, "t_ms")
     if gyro_z is None or times is None:
+        return None, None
+    if times.size < 2:
         return None, None
     # Pybricks turn rate is positive clockwise; IMU z is positive CCW.
     return times / 1000.0, -gyro_z
@@ -842,15 +847,58 @@ def _pose_distance(pose):
     return float(np.hypot(pose["x_m"], pose["y_m"]))
 
 
-def _fit_odometry(runs, poses, distance_scale_default=1.0):
+def _wall_homing_scale(run, wall_distance_m):
+    """The distance scale from a run that drove into a wall.
+
+    The wall is the reference: the robot was a known distance from it and
+    the odometry says how far it thinks it went. The ratio is the same
+    distance scale the tape gives, but the reference does not move and
+    nobody has to read it, so the run can be repeated unattended.
+
+    Two things are checked. The robot has to have actually reached the
+    wall: the run ends with the wheels barely turning while the command is
+    still on, and a run that times out against nothing is rejected. And the
+    approach has to be roughly square: a robot that meets the wall at an
+    angle travels a little further, so the estimate is wrong by the cosine
+    of that angle, which is second order and therefore small.
+    """
+    if not wall_distance_m or wall_distance_m <= 0:
+        return None
+    distance_m = _last(run, "db_d_mm")
+    speed = _last(run, "db_v_mm_s")
+    command = _last(run, "v_cmd_mm_s")
+    if distance_m is None or speed is None or command is None:
+        return None
+    if abs(command) < 1e-6:
+        return None
+    if abs(speed) > 0.2 * abs(command):
+        # Still moving: the robot never reached the wall.
+        return None
+    odometry_m = distance_m / 1000.0
+    if odometry_m <= 1e-6:
+        return None
+    return float(wall_distance_m) / odometry_m
+
+
+def _fit_odometry(runs, poses, distance_scale_default=1.0, wall_distance_m=None):
     distance_candidates = []
     heading_candidates = []
     brake_pairs = []
+    homing_candidates = []
 
     for run in runs:
         run_id = run["meta"].get("run_id")
         if run_id is None:
             continue
+
+        # The wall homing run needs no measured pose: the wall is the
+        # reference, so it is handled before the pose lookup.
+        if run["name"] == "wall_homing":
+            ratio = _wall_homing_scale(run, wall_distance_m)
+            if ratio is not None:
+                homing_candidates.append((_run_repeat(run), ratio))
+            continue
+
         entries = poses.get(str(run_id))
         if not entries:
             continue
@@ -907,9 +955,14 @@ def _fit_odometry(runs, poses, distance_scale_default=1.0):
                 measured_distance,
             ))
 
+    # The wall and the tape are two estimates of the same distance scale, so
+    # they are pooled for the value and reported separately, the same way the
+    # drift is. A disagreement means the mark or the tape is off.
+    all_distance = ([value for _repeat, value in distance_candidates]
+                    + [value for _repeat, value in homing_candidates])
     distance_scale = (
-        float(np.median([value for _repeat, value in distance_candidates]))
-        if distance_candidates
+        float(np.median(all_distance))
+        if all_distance
         else float(distance_scale_default)
     )
     heading_scale = (
@@ -944,15 +997,28 @@ def _fit_odometry(runs, poses, distance_scale_default=1.0):
     else:
         slip_summary = {"calibrated": False}
 
-    return {
+    summary = {
         "distance_scale": distance_scale,
         "heading_scale": heading_scale,
-        "calibrated": bool(distance_candidates or heading_candidates),
+        "calibrated": bool(all_distance or heading_candidates),
         "n_distance_sources": len(distance_candidates),
         "n_heading_sources": len(heading_candidates),
         "distance_scale_between_runs": _between_runs(distance_candidates),
         "heading_scale_between_runs": _between_runs(heading_candidates),
-    }, slip_summary
+    }
+    if distance_candidates:
+        summary["distance_scale_tape"] = float(
+            np.median([value for _repeat, value in distance_candidates]))
+    if homing_candidates:
+        summary["distance_scale_homing"] = float(
+            np.median([value for _repeat, value in homing_candidates]))
+        summary["n_homing_sources"] = len(homing_candidates)
+        summary["distance_scale_homing_between_runs"] = _between_runs(
+            homing_candidates)
+    if distance_candidates and homing_candidates:
+        summary["distance_scale_disagreement"] = abs(
+            summary["distance_scale_homing"] - summary["distance_scale_tape"])
+    return summary, slip_summary
 
 
 # ---------------------------------------------------------------------------
@@ -1200,7 +1266,7 @@ def _fit_no_load_speed(runs, wheel_radius_m):
     return result
 
 
-def fit_session(runs, poses=None, wheel_radius_m=0.028):
+def fit_session(runs, poses=None, wheel_radius_m=0.028, wall_distance_m=None):
     poses = poses or {}
     _add_measured_outputs(runs, wheel_radius_m)
 
@@ -1269,7 +1335,7 @@ def fit_session(runs, poses=None, wheel_radius_m=0.028):
                 ),
             }
 
-    odometry, slip = _fit_odometry(runs, poses)
+    odometry, slip = _fit_odometry(runs, poses, wall_distance_m=wall_distance_m)
     sensors = _static_summary(runs)
     drift = _fit_drift(runs, poses, sensors.get("gyro_z_bias_deg_s"))
     stall = _fit_stall_torque(runs)
@@ -1409,10 +1475,19 @@ def read_drivebase_profile(path):
             f"{path} has no drivebase geometry; expected wheel_radius_m or "
             "track_width_m")
 
+    # The wall the homing run drives into. It is a setup number, not a robot
+    # number: how far the start mark is from the wall, measured to where the
+    # robot's centre rests against it.
+    wall = data.get("wall") if isinstance(data.get("wall"), dict) else {}
+    wall_distance = _profile_value([wall, data], "distance_m", "wall_distance_m")
+    if wall_distance is not None:
+        wall_distance = _positive_profile_value(wall_distance, "wall distance")
+
     return {
         "name": str(name) if name is not None else None,
         "wheel_radius_m": wheel_radius,
         "track_width_m": track_width,
+        "wall_distance_m": wall_distance,
         "source": path,
     }
 
@@ -1513,12 +1588,16 @@ def main(argv=None):
         return 1
 
     poses = load_poses(args.poses) if args.poses else {}
-    result = fit_session(runs, poses=poses, wheel_radius_m=wheel_radius)
+    wall_distance = profile.get("wall_distance_m") if profile else None
+    result = fit_session(runs, poses=poses, wheel_radius_m=wheel_radius,
+                         wall_distance_m=wall_distance)
     result["source"] = files
     result["drivebase"] = {
         "name": profile.get("name") if profile else None,
         "wheel_radius_m": float(wheel_radius),
         "track_width_m": float(track_width) if track_width is not None else None,
+        "wall_distance_m": (float(wall_distance)
+                            if wall_distance is not None else None),
         "source": profile_path,
     }
 
@@ -1565,6 +1644,18 @@ def main(argv=None):
             "heading_scale={heading_scale:.4f}".format(**result["odometry"])
         )
         _print_interval(result["odometry"], "distance_scale")
+        if "distance_scale_homing" in result["odometry"]:
+            print(
+                "  the wall says {distance_scale_homing:.4f}, the tape says "
+                "{distance_scale_tape:.4f}".format(**result["odometry"])
+            )
+            if "distance_scale_disagreement" in result["odometry"]:
+                print(
+                    "  they disagree by "
+                    "{distance_scale_disagreement:.4f}. A big disagreement "
+                    "means the start mark or the tape is off.".format(
+                        **result["odometry"])
+                )
     else:
         print("Odometry: no measured poses supplied.")
     if result["slip"]["calibrated"]:
