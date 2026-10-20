@@ -29,13 +29,118 @@ ORDER = ["baseline", "rolling", "bow_left", "bow_right", "turn_first"]
 
 
 def newest_folder():
+    """The newest measurement folder that has the sweep results.
+
+    A folder without them is an error, not a reason to fall back to an older
+    one: falling back silently checks the document against measurements that
+    predate the change under test, and reports "no drift".
+    """
     root = os.path.join(REPO, "docs", "measurements")
     folders = sorted(d for d in os.listdir(root)
                      if os.path.isdir(os.path.join(root, d)))
-    for f in reversed(folders):
-        if os.path.exists(os.path.join(root, f, "sweep_results.json")):
-            return os.path.join(root, f)
-    raise SystemExit("no measurement folder with sweep_results.json")
+    if not folders:
+        raise SystemExit("no measurement folder under docs/measurements/")
+    newest = folders[-1]
+    base = os.path.join(root, newest)
+    if not os.path.exists(os.path.join(base, "sweep_results.json")):
+        raise SystemExit(
+            f"the newest measurement folder is {newest}, and it has no "
+            "sweep_results.json. Run the measurement again, or pass "
+            "--folder for an older one on purpose.")
+    return base
+
+
+def newest_matrix_folder():
+    """The newest folder that holds the candidate-matrix results.
+
+    The matrix is its own experiment: the default candidate set, the sweep
+    and the sweep with the self-consistent collocation, one row per
+    mission. Its table lives next to it, in the same folder's README.
+    """
+    root = os.path.join(REPO, "docs", "measurements")
+    found = []
+    for folder in sorted(os.listdir(root)):
+        sub = os.path.join(root, folder, "matrix")
+        if os.path.isfile(os.path.join(sub, "matrix_results.json")):
+            found.append(sub)
+    if not found:
+        return None
+    return found[-1]
+
+
+# The matrix's mission names, and the three modes it runs.
+MATRIX_SHORT = {
+    "example_straight": "straight",
+    "example_s_curve": "s_curve",
+    "example_mission_first4": "first4",
+    "example_complex_mission": "complex",
+    "example_with_stops": "with_stops",
+    "example_with_events": "with_events",
+}
+MATRIX_MODES = ("default", "sweep", "sweep-self-consistent")
+
+
+def matrix_cells(base):
+    """The matrix table's cells, computed from the measurements."""
+    with open(os.path.join(base, "matrix_results.json"), encoding="utf-8") as fh:
+        rows = json.load(fh)
+    out = {}
+    for mission, short in MATRIX_SHORT.items():
+        cells = []
+        for mode in MATRIX_MODES:
+            match = [r for r in rows
+                     if r.get("mission") == mission and r.get("mode") == mode]
+            if not match or not match[0].get("report"):
+                cells.append(None)
+                continue
+            candidates = match[0]["report"]["candidates"]
+            passing = sum(1 for c in candidates if c["ok"])
+            best = min(candidates, key=lambda c: c["tracking_cm"])
+            cells.append(f"{passing}/{len(candidates)}, "
+                         f"{best['tracking_cm']:.2f} / {best['envelope_cm']:.2f} cm")
+        out[short] = cells
+    return out
+
+
+def check_matrix():
+    """Check the matrix table against the matrix measurements.
+
+    The table is written by hand, so the emphasis on the numbers that matter
+    survives; but the numbers themselves are checked, so they cannot drift.
+    """
+    base = newest_matrix_folder()
+    if base is None:
+        print("no candidate-matrix results found; the matrix table is unchecked")
+        return []
+    readme = os.path.join(base, "README.md")
+    if not os.path.isfile(readme):
+        print(f"no matrix README in {os.path.relpath(base, REPO)}; unchecked")
+        return []
+    with open(readme, encoding="utf-8") as fh:
+        lines = fh.read().split("\n")
+    expected = matrix_cells(base)
+    problems = []
+    seen = set()
+    for line in lines:
+        if not line.startswith("|"):
+            continue
+        cells = [c.strip().replace("**", "") for c in line.strip("|").split("|")]
+        if len(cells) != 4 or cells[0] not in expected:
+            continue
+        seen.add(cells[0])
+        for index, mode in enumerate(MATRIX_MODES, start=1):
+            want = expected[cells[0]][index - 1]
+            if want is None:
+                continue
+            if cells[index] != want:
+                problems.append(
+                    f"{cells[0]}/{mode}: the table says {cells[index]!r}, "
+                    f"the measurements say {want!r}")
+    for short in expected:
+        if short not in seen:
+            problems.append(f"{short}: the matrix table has no row for it")
+    print(f"candidate matrix: {os.path.relpath(base, REPO)}")
+    return problems
 
 
 def load(base, name):
@@ -286,6 +391,8 @@ def main():
     print(f"max envelope: {c['max_envelope']:.2f} cm")
     print(f"cells with a passing candidate: {b['cells_ok']} of 12; "
           f"non-baseline selected in {b['non_base']}")
+
+    problems += check_matrix()
 
     if problems:
         print(f"\n!! {len(problems)} drift")

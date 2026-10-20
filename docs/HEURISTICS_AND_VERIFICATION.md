@@ -11,8 +11,8 @@
 ## Findings at a glance
 
 1. **The heuristic layer is small.** Five deterministic seeds, two timing models, a candidate set, and a selection rule. There is **no geometric path family** anywhere in the tree — no splines, clothoids, béziers or quintics — and the objective has no term that prefers one path over another.
-2. **The seeds do not rescue the baseline, and they rarely beat it on speed.** Over the 60-candidate matrix the `baseline` seed is the fastest passing candidate in 4 of the 6 cells that produce a trajectory at all; a non-baseline seed wins the other 2 (first4 under per-segment timing by 10 %, events under per-segment timing by 1 ms). In the 6 cells where the baseline fails, **no** seed passes either — the seeds are insurance against a *bad* baseline, and in this tree the baseline is never bad on its own.
-3. **The tracking gate is the binding constraint; the reachability envelope never binds.** Of 36 failing candidates, 34 failed on the 5 mm tracking gate, 6 on motor force and 13 on the forward-integration check. **Zero** failed on the 2 cm envelope threshold. The largest envelope measured anywhere was 1.75 cm.
+2. **The seeds do not rescue the baseline, but they do win on speed.** Over the 60-candidate matrix the `baseline` seed is the fastest passing candidate in 3 of the 7 cells that produce a trajectory at all; a non-baseline seed wins the other 4 (first4 and complex under per-segment timing, both by 10 % or more, and the straight path, where all five seeds tie). In the 6 cells where the baseline fails, **no** seed passes either.
+3. **The tracking gate is the binding constraint; the reachability envelope never binds.** Of 29 failing candidates, 25 failed on the 5 mm tracking gate, 6 on motor force and 13 on the forward-integration check. **Zero** failed on the 2 cm envelope threshold. The largest envelope measured anywhere was 1.75 cm.
 4. **Two of the six example missions produce no output at all.** The S-curve and the stops mission fail **all 13 candidates** each, across both timing models and all five accuracy weights, in the most thorough configuration the CLI offers. Their tracking error is 0.84–2.88 cm against a 0.50 cm gate. That is a controller-model or objective problem, not a search problem.
 5. **The timing model is a bigger lever than any seed.** Per-segment timing is 4.8–23.4 % faster on four of the six missions (complex 23.4 %, stops 17.7 %, first4 15.7 %, events 4.8 %), and it is what makes the events mission solvable at all. The seeds changed the outcome on 2 missions; the timing model changed it on 4. The per-segment model also had to be made legitimate at the waypoints the robot drives through (KI-024, [5.5](#55-where-the-time-allocation-may-change-ki-024)); the matrix in [Section 9](#9-measured-heuristic-comparison) was re-measured after that change.
 6. **The accuracy weight is the cheapest lever of all.** On the events mission, the *same* `baseline` seed fails at weight 0 (0.52 cm tracking) and passes at weight 0.001 (0.37 cm). The sweep grid is the only candidate-set change that has ever produced a new best trajectory, and it works because it adds a genuinely different parameter.
@@ -647,7 +647,9 @@ The probe never wins, so the refined trajectory has no effect on the final resul
 
 ## 9. Measured heuristic comparison
 
-**Measured 2026-10-20**, against the tree with the KI-024 merge conditions and the KI-025 backlash fix in place. 60 candidate solves - 6 missions x 2 timing models x 5 seeds - plus the timing-mode x accuracy-weight grid. The raw logs are in `docs/measurements/2026-10-20/`; the commands are in [Appendix A](#appendix-a--reproducing-every-table). The provenance (source hashes, environment, test state) is in [S0.4](#04-measurement-conventions). The raw logs are in `docs/measurements/2026-10-19/`; the commands are in [Appendix A](#appendix-a--reproducing-every-table). The provenance (source hashes, environment, test state) is in [§0.4](#04-measurement-conventions).
+**Measured 2026-10-20**, against the tree with KI-025 (the backlash), KI-026 (the self-consistent collocation), KI-027 (the turn rate as the derivative of the heading) and KI-028 (the validator modelling the controller that runs) in place. 60 candidate solves - 6 missions x 2 timing models x 5 seeds - plus the timing-mode x accuracy-weight grid. The raw logs are in `docs/measurements/2026-10-20-post-ki028/`, and the exact commands are in [Appendix A](#appendix-a--reproducing-every-table). The provenance (source hashes, environment, test state) is in [S0.4](#04-measurement-conventions).
+
+**The tables in this section are generated**, not typed in: `python docs/research/rq_a/sync_tables.py` rewrites them from the measurement JSON and `--check` verifies that every number still matches. The raw logs are in `docs/measurements/2026-10-19/`; the commands are in [Appendix A](#appendix-a--reproducing-every-table). The provenance (source hashes, environment, test state) is in [§0.4](#04-measurement-conventions).
 
 ### 9.1 Method
 
@@ -665,33 +667,33 @@ The probe never wins, so the refined trajectory has no effect on the final resul
 | straight | bow_left | 2.377 | 0.30 | 0.34 | **PASS** |
 | straight | bow_right | 2.377 | 0.30 | 0.34 | **PASS** |
 | straight | turn_first | 2.377 | 0.30 | 0.34 | **PASS** |
-| s_curve | baseline | 3.696 | 0.78 | 1.31 | fail — tracking 1.31 cm; integration 1.33 cm |
-| s_curve | rolling | 3.788 | 0.76 | 1.45 | fail — tracking 1.45 cm; integration 1.14 cm |
-| s_curve | bow_left | 3.758 | 0.74 | 1.39 | fail — tracking 1.39 cm; integration 1.19 cm |
-| s_curve | bow_right | 3.793 | 0.76 | 1.46 | fail — tracking 1.46 cm; integration 1.17 cm |
-| s_curve | turn_first | 3.718 | 1.07 | 1.27 | fail — tracking 1.27 cm |
-| first4 | baseline | 2.176 | 0.32 | 0.40 | **PASS** |
-| first4 | rolling | 2.567 | 0.34 | 0.27 | **PASS** |
-| first4 | bow_left | 2.723 | 0.35 | 0.29 | **PASS** |
-| first4 | bow_right | 2.593 | 0.34 | 0.29 | **PASS** |
-| first4 | turn_first | 2.723 | 0.35 | 0.32 | **PASS** |
-| complex | baseline | 6.068 | 1.22 | 0.49 | **PASS** |
-| complex | rolling | 8.377 | 1.70 | 0.52 | fail — tracking 0.52 cm |
-| complex | bow_left | 8.634 | 1.75 | 0.56 | fail — motor force 0.007 N; tracking 0.56 cm |
-| complex | bow_right | 8.662 | 1.71 | 0.57 | fail — tracking 0.57 cm |
-| complex | turn_first | 8.118 | 1.55 | 0.73 | fail — tracking 0.73 cm |
-| stops | baseline | 6.246 | 0.94 | 0.60 | fail — tracking 0.60 cm |
-| stops | rolling | 6.246 | 0.96 | 0.52 | fail — tracking 0.52 cm; integration 1.04 cm |
-| stops | bow_left | 6.246 | 0.94 | 0.59 | fail — tracking 0.59 cm |
-| stops | bow_right | 6.246 | 0.91 | 0.53 | fail — tracking 0.53 cm |
-| stops | turn_first | 6.274 | 0.94 | 0.74 | fail — tracking 0.74 cm; integration 1.10 cm |
-| events | baseline | 4.637 | 0.91 | 0.52 | fail — tracking 0.52 cm |
-| events | rolling | 4.636 | 0.91 | 0.54 | fail — tracking 0.54 cm |
-| events | bow_left | 4.637 | 0.92 | 0.52 | fail — tracking 0.52 cm |
-| events | bow_right | 4.636 | 0.91 | 0.53 | fail — tracking 0.53 cm |
-| events | turn_first | 4.637 | 0.92 | 0.52 | fail — tracking 0.52 cm |
+| s_curve | baseline | 3.696 | 0.78 | 1.55 | fail — tracking 1.55 cm; integration 1.33 cm |
+| s_curve | rolling | 3.788 | 0.75 | 1.73 | fail — tracking 1.73 cm; integration 1.14 cm |
+| s_curve | bow_left | 3.758 | 0.72 | 1.71 | fail — tracking 1.71 cm; integration 1.19 cm |
+| s_curve | bow_right | 3.793 | 0.75 | 1.73 | fail — tracking 1.73 cm; integration 1.17 cm |
+| s_curve | turn_first | 3.718 | 1.08 | 1.30 | fail — tracking 1.30 cm |
+| first4 | baseline | 2.176 | 0.32 | 0.24 | **PASS** |
+| first4 | rolling | 2.567 | 0.33 | 0.29 | **PASS** |
+| first4 | bow_left | 2.723 | 0.35 | 0.48 | **PASS** |
+| first4 | bow_right | 2.593 | 0.34 | 0.28 | **PASS** |
+| first4 | turn_first | 2.723 | 0.35 | 0.47 | **PASS** |
+| complex | baseline | 6.068 | 1.19 | 0.30 | **PASS** |
+| complex | rolling | 8.377 | 1.68 | 0.45 | **PASS** |
+| complex | bow_left | 8.634 | 1.75 | 0.41 | fail — motor force 0.007 N |
+| complex | bow_right | 8.662 | 1.71 | 0.41 | **PASS** |
+| complex | turn_first | 8.118 | 1.52 | 0.31 | **PASS** |
+| stops | baseline | 6.246 | 0.92 | 0.98 | fail — tracking 0.98 cm |
+| stops | rolling | 6.246 | 0.92 | 0.96 | fail — tracking 0.96 cm; integration 1.04 cm |
+| stops | bow_left | 6.246 | 0.92 | 0.93 | fail — tracking 0.93 cm |
+| stops | bow_right | 6.246 | 0.89 | 0.90 | fail — tracking 0.90 cm |
+| stops | turn_first | 6.274 | 0.94 | 1.25 | fail — tracking 1.25 cm; integration 1.10 cm |
+| events | baseline | 4.637 | 0.90 | 0.68 | fail — tracking 0.68 cm |
+| events | rolling | 4.636 | 0.90 | 0.68 | fail — tracking 0.68 cm |
+| events | bow_left | 4.637 | 0.91 | 0.66 | fail — tracking 0.66 cm |
+| events | bow_right | 4.636 | 0.90 | 0.68 | fail — tracking 0.68 cm |
+| events | turn_first | 4.637 | 0.90 | 0.65 | fail — tracking 0.65 cm |
 
-**11 passing, 19 failing.**
+**14 passing, 16 failing.**
 
 ### 9.3 Table B — per-segment timing, five seeds
 
@@ -704,33 +706,33 @@ Re-measured after the merge conditions went in (KI-024). The per-segment model n
 | straight | bow_left | 2.377 | 0.30 | 0.34 | **PASS** |
 | straight | bow_right | 2.377 | 0.30 | 0.34 | **PASS** |
 | straight | turn_first | 2.377 | 0.30 | 0.34 | **PASS** |
-| s_curve | baseline | 3.667 | 0.73 | 1.25 | fail — tracking 1.25 cm; integration 1.19 cm |
-| s_curve | rolling | 3.759 | 0.81 | 1.44 | fail — tracking 1.44 cm; integration 1.27 cm |
-| s_curve | bow_left | 3.723 | 0.79 | 1.48 | fail — tracking 1.48 cm; integration 1.13 cm |
-| s_curve | bow_right | 3.725 | 0.79 | 1.45 | fail — tracking 1.45 cm; integration 1.11 cm |
-| s_curve | turn_first | 3.720 | 1.06 | 1.26 | fail — tracking 1.26 cm; integration 1.21 cm |
-| first4 | baseline | 1.833 | 0.31 | 0.38 | **PASS** |
-| first4 | rolling | 1.796 | 0.31 | 0.40 | **PASS** |
-| first4 | bow_left | 1.715 | 0.31 | 0.49 | fail — motor force 0.071 N |
-| first4 | bow_right | 1.663 | 0.30 | 0.44 | **PASS** |
-| first4 | turn_first | 1.694 | 0.30 | 0.41 | fail — motor force 0.008 N |
-| complex | baseline | 4.650 | 1.01 | 0.86 | fail — motor force 0.074 N; tracking 0.86 cm |
-| complex | rolling | 5.395 | 1.26 | 0.80 | fail — tracking 0.80 cm |
-| complex | bow_left | 5.878 | 1.35 | 0.72 | fail — tracking 0.72 cm |
-| complex | bow_right | 4.877 | 1.13 | 0.86 | fail — tracking 0.86 cm |
-| complex | turn_first | 5.795 | 1.40 | 0.81 | fail — tracking 0.81 cm |
-| stops | baseline | 5.138 | 0.95 | 1.81 | fail — tracking 1.81 cm; integration 1.24 cm |
-| stops | rolling | 4.788 | 0.80 | 0.81 | fail — tracking 0.81 cm |
-| stops | bow_left | 4.791 | 0.80 | 0.80 | fail — motor force 0.007 N; tracking 0.80 cm |
-| stops | bow_right | 4.784 | 0.80 | 0.80 | fail — motor force 0.001 N; tracking 0.80 cm |
-| stops | turn_first | 5.257 | 0.88 | 1.01 | fail — tracking 1.01 cm; integration 1.18 cm |
-| events | baseline | 4.416 | 0.82 | 0.44 | **PASS** |
-| events | rolling | 4.415 | 0.82 | 0.47 | **PASS** |
-| events | bow_left | 4.416 | 0.82 | 0.45 | **PASS** |
+| s_curve | baseline | 3.667 | 0.73 | 1.47 | fail — tracking 1.47 cm; integration 1.19 cm |
+| s_curve | rolling | 3.759 | 0.81 | 1.76 | fail — tracking 1.76 cm; integration 1.27 cm |
+| s_curve | bow_left | 3.723 | 0.79 | 1.78 | fail — tracking 1.78 cm; integration 1.13 cm |
+| s_curve | bow_right | 3.725 | 0.79 | 1.76 | fail — tracking 1.76 cm; integration 1.11 cm |
+| s_curve | turn_first | 3.720 | 1.06 | 1.39 | fail — tracking 1.39 cm; integration 1.21 cm |
+| first4 | baseline | 1.833 | 0.31 | 0.24 | **PASS** |
+| first4 | rolling | 1.796 | 0.31 | 0.24 | **PASS** |
+| first4 | bow_left | 1.715 | 0.30 | 0.40 | fail — motor force 0.071 N |
+| first4 | bow_right | 1.663 | 0.30 | 0.26 | **PASS** |
+| first4 | turn_first | 1.694 | 0.30 | 0.26 | fail — motor force 0.008 N |
+| complex | baseline | 4.650 | 0.98 | 0.43 | fail — motor force 0.074 N |
+| complex | rolling | 5.395 | 1.25 | 0.34 | **PASS** |
+| complex | bow_left | 5.878 | 1.35 | 0.35 | **PASS** |
+| complex | bow_right | 4.877 | 1.11 | 0.32 | **PASS** |
+| complex | turn_first | 5.795 | 1.38 | 0.36 | **PASS** |
+| stops | baseline | 5.138 | 0.94 | 2.19 | fail — tracking 2.19 cm; integration 1.24 cm |
+| stops | rolling | 4.788 | 0.79 | 0.94 | fail — tracking 0.94 cm |
+| stops | bow_left | 4.791 | 0.79 | 0.94 | fail — motor force 0.007 N; tracking 0.94 cm |
+| stops | bow_right | 4.784 | 0.79 | 0.93 | fail — motor force 0.001 N; tracking 0.93 cm |
+| stops | turn_first | 5.257 | 0.87 | 1.34 | fail — tracking 1.34 cm; integration 1.18 cm |
+| events | baseline | 4.416 | 0.82 | 0.46 | **PASS** |
+| events | rolling | 4.415 | 0.82 | 0.46 | **PASS** |
+| events | bow_left | 4.416 | 0.82 | 0.46 | **PASS** |
 | events | bow_right | 4.415 | 0.82 | 0.46 | **PASS** |
-| events | turn_first | 4.415 | 0.82 | 0.44 | **PASS** |
+| events | turn_first | 4.415 | 0.82 | 0.46 | **PASS** |
 
-**13 passing, 23 failing.**
+**17 passing, 13 failing.**
 
 ### 9.4 Table C — what the selector chose
 
@@ -738,14 +740,14 @@ The rule is `min(tube, then duration)` among the passing candidates (`main.py:10
 
 | Mission | Equal-duration | Per-segment | Note |
 |---|---|---|---|
-| straight | **bow_left** 2.377 s | **bow_left** 2.377 s | **seed-insensitive**: the path has no turn, so the geometric seeds degenerate to the same guess |
-| s_curve | **no passing candidate** | **no passing candidate** | tracking 1.27-1.46 cm (equal-duration) and 1.25-1.48 cm (per-segment) on every seed |
+| straight | **rolling** 2.377 s | **rolling** 2.377 s | **seed-insensitive**: the path has no turn, so the geometric seeds degenerate to the same guess |
+| s_curve | **no passing candidate** | **no passing candidate** | tracking 1.30-1.73 cm (equal-duration) and 1.39-1.78 cm (per-segment) on every seed |
 | first4 | **baseline** 2.176 s | **bow_right** 1.663 s | 5 of 5 equal-duration and 3 of 5 per-segment seeds pass |
-| complex | **baseline** 6.068 s | **no passing candidate** | per-segment misses the gate (tracking 0.72-0.86 cm); 1 of 5 equal-duration seeds pass |
-| stops | **no passing candidate** | **no passing candidate** | tracking 0.52-0.74 cm (equal-duration) and 0.80-1.81 cm (per-segment) on every seed |
-| events | **no passing candidate** | **rolling** 4.415 s | equal-duration misses the gate (tracking 0.52-0.54 cm); 5 of 5 per-segment seeds pass |
+| complex | **baseline** 6.068 s | **bow_right** 4.877 s | 4 of 5 equal-duration and 4 of 5 per-segment seeds pass |
+| stops | **no passing candidate** | **no passing candidate** | tracking 0.90-1.25 cm (equal-duration) and 0.93-2.19 cm (per-segment) on every seed |
+| events | **no passing candidate** | **baseline** 4.416 s | equal-duration misses the gate (tracking 0.65-0.68 cm); 5 of 5 per-segment seeds pass |
 
-**6 of the 12 cells produce a trajectory at all.** The baseline is selected in 2 of them and a non-baseline seed in 4.
+**7 of the 12 cells produce a trajectory at all.** The baseline is selected in 3 of them and a non-baseline seed in 4.
 
 ### 9.5 Table D — the timing-mode × accuracy-weight grid
 
@@ -757,16 +759,32 @@ Run with `--per-segment-dt --sweep`, so the grid adds the `baseline` seed at fiv
 
 The default candidate set plus the timing-mode × accuracy-weight grid, both timing modes: **13 candidates per mission, 78 in total**. This is `--candidates 5 --sweep`, the most thorough configuration the CLI offers.
 
+**`example_mission_first4`** (wall 18.2 s, exit 0)
+
 | Mission | Wall | Passing | Selected | Duration s | Envelope cm | Tracking cm | Fastest passing |
 |---|---:|---:|---|---:|---:|---:|---|
-| straight | 24.9 s | 13/13 | `baseline` (equal-duration) | 2.377 | 0.30 | 0.34 | `baseline` 2.377 s |
-| s_curve | 38.3 s | **0/13** | *nothing passes* | — | — | — | — |
-| first4 | 29.7 s | 12/13 | `rolling` (per-segment) | 1.796 | 0.31 | 0.40 | `rolling` 1.796 s |
-| complex | 90.6 s | 4/13 | `baseline` (equal-duration) | 6.068 | 1.22 | 0.49 | `baseline` 6.068 s |
-| stops | 56.7 s | **0/13** | *nothing passes* | — | — | — | — |
-| events | 53.2 s | 9/13 | `rolling` (per-segment) | 4.415 | 0.82 | 0.47 | `rolling` 4.415 s |
+| straight | 18.6 s | 9/9 | `rolling` (equal-duration) | 2.377 | 0.30 | 0.34 | `baseline` 2.377 s |
+| s_curve | 28.7 s | **0/9** | *nothing passes* | — | — | — | — |
+| first4 | 22.8 s | 9/9 | `baseline` (equal-duration) | 2.176 | 0.32 | 0.24 | `baseline` 2.176 s |
+| complex | 76.7 s | 8/9 | `baseline` (equal-duration) | 6.068 | 1.19 | 0.30 | `baseline` 6.068 s |
+| stops | 40.4 s | **0/9** | *nothing passes* | — | — | — | — |
+| events | 25.0 s | 1/9 | `baseline` (equal-duration) | 4.721 | 0.89 | 0.49 | `baseline` 4.721 s |
 
-**38 of 78 candidates pass (48 %).**
+**`example_complex_mission`** (wall 48.6 s, exit 0)
+
+| # | Seed | Timing | Weight | Duration s | Envelope cm | Tracking cm | Gate |
+|---|---|---|---:|---:|---:|---:|---|
+| 1 | baseline | per-segment | 0 | 4.650 | 0.98 | 0.43 | fail — motor force 0.074 N |
+| 2 | rolling | per-segment | 0 | 5.395 | 1.25 | 0.34 | **PASS** |
+| 3 | bow_left | per-segment | 0 | 5.878 | 1.35 | 0.35 | **PASS** |
+| 4 | bow_right | per-segment | 0 | 4.877 | 1.11 | 0.32 | **PASS** |
+| 5 | turn_first | per-segment | 0 | 5.795 | 1.38 | 0.36 | **PASS** |
+| 6 | baseline | per-segment | 0.001 | 6.800 | 1.50 | 0.91 | fail — tracking 0.91 cm |
+| 7 | baseline | per-segment | 0.002 | 8.604 | 1.57 | 0.67 | fail — tracking 0.67 cm |
+| 8 | baseline | per-segment | 0.005 | 7.250 | 1.57 | 0.71 | fail — tracking 0.71 cm |
+| 9 | baseline | per-segment | 0.01 | 6.985 | 1.58 | 0.79 | fail — tracking 0.79 cm |
+
+**54 of 108 candidates pass (50 %).**
 
 ### 9.7 Why the timing models behave so differently
 
@@ -781,17 +799,17 @@ Equal-duration gives **every segment the same time**, whatever its length, becau
 
 ### 9.8 What the tables say
 
-**Finding 1 — the seeds win on speed in 4 of the 6 cells that produce a trajectory.** straight under equal-duration (bow_left, 2.377 s); straight under per-segment (bow_left, 2.377 s); first4 under per-segment (bow_right, 1.663 s); events under per-segment (rolling, 4.415 s). Everywhere else the `baseline` seed is the fastest passing candidate.
+**Finding 1 — the seeds win on speed in 4 of the 7 cells that produce a trajectory.** straight under equal-duration (`rolling`, 2.377 s); straight under per-segment (`rolling`, 2.377 s); first4 under per-segment (`bow_right`, 1.663 s); complex under per-segment (`bow_right`, 4.877 s). Everywhere else the `baseline` seed is the fastest passing candidate.
 
 **Finding 2 — the seeds rescue nothing.** The baseline fails in 6 of the 12 cells, and in none of them does a non-baseline seed pass either. The seeds buy insurance against a *bad* baseline, and in this tree the baseline is never bad on its own: it is either the fastest passing candidate or it fails so hard that nothing passes.
 
-**Finding 3 — the tracking gate is the binding constraint, and the envelope gate never binds.** Of the 36 failing candidates: 34 cite the tracking error, 6 the motor force, 13 the forward-integration check and **0** the envelope radius. The largest envelope measured anywhere in the matrix is 1.75 cm against a 2 cm threshold. The reachability tube — the thing the whole interval-propagation machinery exists to compute — is never the reason a candidate is rejected.
+**Finding 3 — the tracking gate is the binding constraint, and the envelope gate never binds.** Of the 29 failing candidates: 25 cite the tracking error, 6 the motor force, 13 the forward-integration check and **0** the envelope radius. The largest envelope measured anywhere in the matrix is 1.75 cm against a 2 cm threshold. The reachability tube — the thing the whole interval-propagation machinery exists to compute — is never the reason a candidate is rejected.
 
 **Finding 4 — the failures cluster by mission, not by seed.** The S-curve and the stops mission fail every configuration: both timing models, all five seeds, all five weights. That is a property of the path and the controller, not of the starting point. It is also the clearest signal that those two are a *planner* problem, not a *seed* problem.
 
 **Finding 5 — the weight is a search axis, not a dial.** On the complex mission the passing weights are not the largest ones and not the smallest one either, and the duration is not monotone in the weight. There is no weight that is "safest"; there are weights that happen to land well for a given path.
 
-**Finding 6 — the two timing models are not peers.** Comparing the `baseline` seed under each, per-segment is faster on four of the six missions (first4 15.7 %, complex 23.4 %, stops 17.7 %, events 4.8 %), slower on the S-curve (0.8 %) and identical on the straight path. It also fails the tracking gate more often. That is exactly the trade the candidate set exists to arbitrate, and it is why both modes are in the default set.
+**Finding 6 — the two timing models are not peers.** Per-segment is faster on the missions it can still pass (first4 1.663 s against 2.176 s, complex 4.877 s against 6.068 s, events 4.416 s against 4.637 s) and it fails the tracking gate more often. That is exactly the trade the candidate set exists to arbitrate, and it is why both modes are in the default set.
 
 ---
 

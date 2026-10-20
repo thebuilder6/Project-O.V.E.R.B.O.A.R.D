@@ -1,22 +1,33 @@
 """RQ-A experiment 16: does the validator mirror the firmware that runs?
 
-The validator was written against `ramsete_fast.py`. The controller that
-actually runs is `ramsete_compact_events.py` (hub_runner.py imports it), and
-the two do not agree:
+The controllers in use run a synced 20 ms heartbeat and hand the robot
+floats:
 
-| | ramsete_compact_events.py (deployed) | the validator |
-|---|---|---|
-| control period | `await wait(5)` -> ~5 ms | `CONTROL_DT = 0.02` -> 20 ms |
-| command quantisation | none, floats to drive() | rounds to mm/s and deg/s |
-| Ramsete gain kr | recomputed from the interpolated v, w | a precomputed per-sample value, interpolated |
-| command rate limit | `KinematicLimiter` (motor force, backlash) | none |
+| | ramsete_compact_events.py (the pushed run) | ramsete_compact.py (the SysId replay) | ramsete.py (the IDE missions) | the validator |
+|---|---|---|---|---|
+| control period | 20 ms, synced | 20 ms, synced | 20 ms, synced | **20 ms** (`CONTROL_DT`) |
+| drive command | floats | floats | floats | **not rounded** |
+| Ramsete gain | recomputed from the interpolated v, w | recomputed | recomputed | **recomputed** |
+| turn rate | dh/dt | dh/dt | dh/dt | **dh/dt** |
+| rate limit | `KinematicLimiter` | `KinematicLimiter` | `KinematicLimiter` | none |
 
-The control period is the expensive one: the tracking error is proportional to
-it (F6), so a validator that holds the command four times too long reports
-four times the error the robot will have.
+The validator was written against `ramsete_fast.py`, the legacy path: it
+rounds the command to mm/s and deg/s and interpolates a per-sample gain
+instead of recomputing it. Those two differences are what this measures,
+against the model that ships.
 
-This measures the gate outcome with the validator configured to mirror the
-deployed firmware.
+The period is the expensive line. The hold error is proportional to it
+(F6), so a hub that runs its heartbeat at 20 ms instead of 5 ms reports a
+tracking error four times the size for the same plan. The hub used to run
+a 5 ms loop (`await wait(5)`, until commit 12a365b), so the third column
+is the same model with the hold the robot used to have: it prices the
+20 ms heartbeat.
+
+| column | what it is |
+|---|---|
+| `legacy` | the `ramsete_fast.py` mirror: the command rounded, the gain interpolated, a 20 ms hold |
+| `shipped` | the model as it ships: the command unrounded, the gain recomputed, a 20 ms hold |
+| `5 ms` | the shipped model with the hold the hub used to run |
 """
 import json
 import math
@@ -65,37 +76,23 @@ def main():
     orig_ref = IV._interpolated_reference
     orig_q = IV.quantize_drive_command
 
-    def firmware_ref(s0, s1, dt, track_width, s, ramsete_b=2.0):
-        """The reference the DEPLOYED firmware builds: x, y, heading, v and
-        omega interpolated, and the Ramsete gain recomputed from the
-        interpolated v and omega (ramsete.py:104), not interpolated."""
-        v0 = (s0["vl"] + s0["vr"]) / 2.0
-        v1 = (s1["vl"] + s1["vr"]) / 2.0
-        om0 = s0.get("omega", (s0["vr"] - s0["vl"]) / track_width)
-        om1 = s1.get("omega", (s1["vr"] - s1["vl"]) / track_width)
-        ref_x = s0["x"] + (s1["x"] - s0["x"]) * s
-        ref_y = s0["y"] + (s1["y"] - s0["y"]) * s
-        ref_h = s0["heading"] + (s1["heading"] - s0["heading"]) * s
-        ref_v = v0 + (v1 - v0) * s
-        ref_om = om0 + (om1 - om0) * s
-        ref_k = math.sqrt(ref_om ** 2 + ramsete_b * ref_v ** 2)
-        return ref_x, ref_y, ref_h, ref_v, ref_om, ref_k
-
     def legacy_ref(s0, s1, dt, track_width, s, ramsete_b=2.0):
-        """The reference the LEGACY firmware builds: x, y, heading, v, omega
-        and a precomputed Ramsete gain, each interpolated as its own line
-        (ramsete_fast.py:73-76)."""
+        """The reference the LEGACY firmware builds (ramsete_fast.py:73-76):
+        x, y, heading and v interpolated, the turn rate the derivative of
+        the heading (KI-027), and a per-sample Ramsete gain interpolated
+        instead of recomputed."""
         v0 = (s0["vl"] + s0["vr"]) / 2.0
         v1 = (s1["vl"] + s1["vr"]) / 2.0
         om0 = s0.get("omega", (s0["vr"] - s0["vl"]) / track_width)
         om1 = s1.get("omega", (s1["vr"] - s1["vl"]) / track_width)
         kr0 = math.sqrt(om0 ** 2 + ramsete_b * v0 ** 2)
         kr1 = math.sqrt(om1 ** 2 + ramsete_b * v1 ** 2)
+        dh = (s1["heading"] - s0["heading"] + math.pi) % (2.0 * math.pi) - math.pi
         return (s0["x"] + (s1["x"] - s0["x"]) * s,
                 s0["y"] + (s1["y"] - s0["y"]) * s,
-                s0["heading"] + (s1["heading"] - s0["heading"]) * s,
+                s0["heading"] + dh * s,
                 v0 + (v1 - v0) * s,
-                om0 + (om1 - om0) * s,
+                dh / dt if dt > 0 else om0,
                 kr0 + (kr1 - kr0) * s)
 
     def validate(samples, **kw):
@@ -106,9 +103,9 @@ def main():
              ("example_complex_mission", False), ("example_straight", True),
              ("example_with_events", True), ("example_mission_first4", True)]
 
-    print(f"{'mission':<26} {'n':>4} {'legacy mirror':>15} {'gate':>6} "
-          f"{'deployed mirror':>16} {'gate':>6} {'factor':>7}")
-    print("-" * 88)
+    print(f"{'mission':<26} {'n':>4} {'legacy':>9} {'gate':>6} "
+          f"{'shipped':>9} {'gate':>6} {'5 ms':>9} {'gate':>6} {'hold cost':>10}")
+    print("-" * 100)
     for mission, per_seg in cases:
         for n in (10, 20, 40, 80):
             try:
@@ -117,26 +114,33 @@ def main():
                 print(f"{mission:<26} {n:>4}  solve failed: {str(exc)[:40]}")
                 continue
 
-            # (a) the legacy mirror: 20 ms, the command rounded to mm/s and
-            #     deg/s, a precomputed gain interpolated
+            # (a) the legacy mirror: the command rounded to mm/s and deg/s,
+            #     a per-sample gain interpolated, a 20 ms hold
             IV._interpolated_reference = legacy_ref
             IV.quantize_drive_command = orig_q
             base = validate(samples, control_dt=0.02)
 
-            # (b) mirroring the controller that runs: 20 ms synced hold, no
-            #     rounding, the gain recomputed from the interpolated v and
-            #     omega (ramsete.py:104)
-            IV._interpolated_reference = firmware_ref
+            # (b) the model as it ships: the command unrounded, the gain
+            #     recomputed from the interpolated v and omega, a 20 ms hold
+            IV._interpolated_reference = orig_ref
             IV.quantize_drive_command = lambda v, w: (v, w)
             fw = validate(samples, control_dt=0.02)
+
+            # (c) the same model with the hold the hub used to run
+            fast = validate(samples, control_dt=0.005)
+
             IV._interpolated_reference = orig_ref
             IV.quantize_drive_command = orig_q
 
-            print(f"{mission:<26} {n:>4} {base['max_tracking_error_m']*100:15.4f} "
+            cost = (fw["max_tracking_error_m"] / max(fast["max_tracking_error_m"], 1e-12))
+            print(f"{mission:<26} {n:>4} "
+                  f"{base['max_tracking_error_m']*100:9.4f} "
                   f"{'PASS' if base['passed'] else 'fail':>6} "
-                  f"{fw['max_tracking_error_m']*100:16.4f} "
+                  f"{fw['max_tracking_error_m']*100:9.4f} "
                   f"{'PASS' if fw['passed'] else 'fail':>6} "
-                  f"{base['max_tracking_error_m']/max(fw['max_tracking_error_m'],1e-12):7.2f}x")
+                  f"{fast['max_tracking_error_m']*100:9.4f} "
+                  f"{'PASS' if fast['passed'] else 'fail':>6} "
+                  f"{cost:9.2f}x")
 
 
 if __name__ == "__main__":

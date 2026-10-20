@@ -1,5 +1,5 @@
 # command: C:\Users\jumpi\AppData\Local\Microsoft\WindowsApps\PythonSoftwareFoundation.Python.3.12_qbz5n2kfra8p0\python.exe main.py -c examples/fll_choreo.json -w examples/example_with_stops.json -o C:\Users\jumpi\AppData\Local\Temp\opencode\sweep\example_with_stops__full-sweep.traj --validate --candidates 5 --uniform-dt --sweep
-# wall_seconds: 43.7
+# wall_seconds: 40.4
 # exit_code: 1
 
 Using the example robot config (examples/fll_choreo.json). Pass -c/--config with your own robot to plan for your build.

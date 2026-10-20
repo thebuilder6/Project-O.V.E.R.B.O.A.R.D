@@ -87,14 +87,28 @@ planner. On 32 missions it is not true:
 | turn_first | equal-duration | 19 % (9-28 %) | 6.23 s |
 | turn_first | per-segment | 12 % (5-28 %) | 5.43 s |
 
-The baseline has the **lowest pass rate of the five seeds**, and it produces
-the fastest candidate on only **2 of 32** missions (the per-segment baseline
-on 9, `rolling` on 8, `bow_right` on 6, `bow_left` on 4, `turn_first` on 3).
+The baseline has the **lowest pass rate of the five seeds**. It is also the
+fastest seed more often than any other — but those two facts do not combine.
+The fastest candidate per mission:
 
-**Answer to Q8:** the baseline is not universally dominant; it is
-*locally* dominant on the paths it was designed next to. The agenda's
-"seeds never win on speed" is wrong in general and right only for the six
-paths it was measured on.
+| seed | times it produced the fastest candidate |
+|---|---:|
+| baseline (9 per-segment, 2 equal-duration) | 11/32 |
+| rolling | 8/32 |
+| bow_right | 6/32 |
+| bow_left | 4/32 |
+| turn_first | 3/32 |
+
+So the baseline is the speed winner *and* the gate loser. It produces the
+quickest trajectory on a third of the missions and then fails the gates on
+them. On the six example paths, where the gate happened to be forgiving, that
+looked like dominance.
+
+**Answer to Q8:** the baseline is not universally dominant; it is *locally*
+dominant on the paths it was designed next to. The agenda's "seeds never win
+on speed" is wrong in general and right only for the six paths it was
+measured on; the sharper statement is that the seeds differ in **which gate
+they escape**, not in speed.
 
 ### F2 — The envelope gate does bind, on a wider suite
 
@@ -452,7 +466,7 @@ KI-026 before touching the candidate set.
 | Q5 | feed the critic back into the solver? | **No**: the critic flags 100 % of passing and 100 % of failing candidates, so it cannot select anything | F7 |
 | Q6 | does the accuracy weight buy accuracy? | **Yes, within a mission** (median per-mission Spearman -0.68: more weight, less tracking error) **but it is a trade, not a dial** (21 of 192 steps are non-monotone, and the best weight differs per mission). The best trade found: per-segment at `a = 0.005` gives 42 % pass against 17 % at weight 0, for 5 % more time | section 4 |
 | Q7 | sample density against timing flexibility? | **Per-segment timing at low density wins.** n = 10 is the sweet spot: more samples cost 5x the solve time and do not improve the tracking error (0.60 cm at n = 10, 0.72 cm at n = 40) and can lose gate coverage (n = 20 passes on 0 of 6 missions) | `MEASUREMENTS_density.md` |
-| Q8 | is the baseline's dominance an artefact? | **Yes.** The baseline has the lowest pass rate of the five seeds and produces the fastest candidate on 2 of 32 missions. And under the self-consistent collocation the seed set buys nothing at all | F1, section 7 |
+| Q8 | is the baseline's dominance an artefact? | **Yes.** The baseline is the speed winner (11 of 32 missions) and the gate loser (lowest pass rate of the five seeds) — on the six example paths those two roles did not conflict. And under the self-consistent collocation the seed set buys nothing at all | F1, section 7 |
 | Q9 | what would make the validator a digital twin? | **Not answerable without hardware.** What *is* answerable: the tracking error is a discretisation artefact (RQ-A), the declared uncertainty does not move it at all (section 6), and the plant still assumes instant tracking, so 8 % of passing plans exceed the hub's acceleration limit | F3, F10, section 6 |
 | Q10 | is "smallest envelope" the right selection rule? | **It does not matter**: five rules pick the same trajectory on every mission | F6 |
 | Q11 | should the executor be part of the planner? | **Partly answerable now**: 7 % of candidates, and 8 % of the passing ones, demand more acceleration than the DriveBase delivers. The gate cannot see it | F10 |
@@ -466,9 +480,12 @@ KI-026 before touching the candidate set.
    (the baseline dominates, the envelope never binds, the seeds never win) do
    not survive a 32-mission suite. Every future claim needs a mission suite
    and a stated n.
-2. **The seed ordering should be revisited.** `rolling` has the highest pass
-   rate of the five seeds on the wide suite (28 % against the baseline's 16 %).
-   The seeds are not interchangeable lottery tickets: they differ.
+2. **The seed ordering should be revisited, but only after KI-026.**
+   `rolling` has the highest pass rate of the five seeds on the wide suite
+   (28 % against the baseline's 16 %), and the baseline is both the speed
+   winner and the gate loser. The seeds are not interchangeable lottery
+   tickets: they differ. But under the self-consistent collocation the whole
+   seed axis is worth nothing (section 7), so this is second priority.
 3. **But do not spend effort there yet.** Under the self-consistent
    collocation the seed set buys nothing at all (section 7). The
    discretisation fix is worth more than the whole seed axis.

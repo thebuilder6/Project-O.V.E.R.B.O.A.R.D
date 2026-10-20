@@ -1,10 +1,10 @@
 # RQ-A — Why does the closed-loop tracking gate fail?
 
-**Status:** the cause is identified; the structural fix is a package of two changes that must land together. **Two direct bugs found along the way are fixed** (see [Fixes applied](#fixes-applied) below).
-**Date:** 2026-10-20
-**Tree under test:** pinned, see [`rq_a/PINNED_TREE.md5`](rq_a/PINNED_TREE.md5).
+**Status:** the cause is identified. Three of the four sides of the three-way discretisation mismatch are now closed in the tree — the plan's own collocation (KI-026), the reference's coupling (KI-027) and the controller parity (KI-028) — and **every table below has been re-measured against that tree**. What is still open is the *shape* of the reference: the controller follows the chord between the samples, and the feedforward reports an interpolated value where the plan's own rule assumes an interval average.
+**Date:** 2026-10-20. The first pass was measured in the morning against a pinned copy; the tables were re-measured in the afternoon against the working tree, after KI-027 and KI-028 landed. Where a number has moved, the old one is kept and marked, because it is the record of the bug.
+**Tree under test:** the working tree, token `FD268F4F79AD`; the per-module MD5s are in [`rq_a/TREE_2026-10-20.md5`](rq_a/TREE_2026-10-20.md5). The first pass was measured against the pinned copy whose MD5s are in [`rq_a/PINNED_TREE.md5`](rq_a/PINNED_TREE.md5).
 **Companion:** [`../HEURISTICS_AND_VERIFICATION.md`](../HEURISTICS_AND_VERIFICATION.md) (the current-state reference and the research agenda).
-**Also:** [`../../research/`](../../research/) — the mission-suite harness for the agenda's Q1 (a Bezier path family), Q2 (a length-proportional time allocation) and Q8 (a 24-mission suite). That work measures the planner across many paths; this note diagnoses why the tracking gate binds on a few. Their results were produced before the KI-025 validator fix and should be re-run against the current tree: the fix moves the tracking error by up to 0.3 mm, and about a sixth of their candidates sit within that margin of a gate.
+**Also:** [`../../research/`](../../research/) — the mission-suite harness for the agenda's Q1 (a Bezier path family), Q2 (a length-proportional time allocation) and Q8 (a 24-mission suite). That work measures the planner across many paths; this note diagnoses why the tracking gate binds on a few. **Their results predate KI-025, KI-027 and KI-028, and so does the 60-candidate matrix in the companion document**: the reference fix moves the tracking error by up to 2 mm on the hard missions, and the parity fix moved it again. Both have to be re-run before their numbers are quoted as current. The raw evidence for this note's own re-measurement is in [`../../measurements/2026-10-20-post-ki028/`](../../measurements/2026-10-20-post-ki028/).
 
 ---
 
@@ -22,21 +22,25 @@ Every research question downstream (reachability in the objective, a real digita
 
 | mission | heading change per sample | plan vs. its own profile | tracking error | gate |
 |---|---:|---:|---:|---|
-| `example_straight` | 0.0000 rad | 0.094 cm | 0.346 cm | PASS |
-| `example_with_events` | 0.1333 rad | 0.262 cm | 0.435 cm | PASS |
-| `example_complex_mission` | 0.1446 rad | 0.129 cm | 0.489 cm | PASS |
-| `example_with_stops` | 0.2202 rad | 1.170 cm | 1.814 cm | **fail** |
-| `example_s_curve` | 0.3277 rad | **1.206 cm** | **1.260 cm** | **fail** |
+| `example_straight` | 0.0000 rad | 0.094 cm | 0.341 cm | PASS |
+| `example_with_events` | 0.1333 rad | 0.262 cm | 0.459 cm | PASS |
+| `example_complex_mission` | 0.1446 rad | 0.129 cm | 0.303 cm | PASS |
+| `example_with_stops` | 0.2202 rad | 1.170 cm | 2.191 cm | **fail** |
+| `example_s_curve` | 0.3277 rad | **1.206 cm** | **1.468 cm** | **fail** |
 
-On the S-curve the plan/profile discrepancy is 96 % of the reported tracking error. The missions that fail are exactly the missions whose paths turn hard between samples.
+On the S-curve the plan/profile discrepancy is 82 % of the reported tracking error. The missions that fail are exactly the missions whose paths turn hard between samples.
 
-*(Measured 2026-10-20, `rq_a/exp9_summary.py`.)*
+*(Re-measured 2026-10-20 against the working tree, `rq_a/exp9_summary.py`. The first pass, against the pinned tree, read 0.346 / 0.435 / 0.489 / 1.814 / 1.260 cm: the reference fix moved the S-curve and the stops mission, and the parity fix moved the stops mission again.)*
+
+The wider claim — that the tracking gate, and not the envelope, is what rejects candidates — was measured on the 60-candidate matrix in the companion document, where **36 of the 37 failing candidates failed on it**. That matrix predates KI-025, KI-027 and KI-028 and has to be re-run before it is quoted as current; what survives the re-measurement is the mechanism below, not the count.
 
 ---
 
 ## Method
 
-Everything below was measured against a **pinned copy** of the tree, because the working tree was being edited during the session (KI-024 landed mid-session). The scripts live in [`rq_a/`](rq_a/) and default to the repository root; set `OVERBOARD_TREE` to reproduce the recorded numbers against the pinned tree.
+The first pass of this note was measured against a **pinned copy** of the tree, because the working tree was being edited during the session (KI-024 landed mid-session). The scripts live in [`rq_a/`](rq_a/) and default to the repository root; set `OVERBOARD_TREE` to reproduce the recorded numbers against the pinned tree.
+
+The tables were **re-measured against the working tree** after KI-027 (the turn rate is the derivative of the heading) and KI-028 (the validator mirrors the controller that runs) landed. The raw output of every script is in [`../../measurements/2026-10-20-post-ki028/rq_a/`](../../measurements/2026-10-20-post-ki028/rq_a/), one file per script.
 
 ```bash
 python docs/research/rq_a/exp9_summary.py          # the summary table above
@@ -48,7 +52,17 @@ python docs/research/rq_a/exp5_attribution.py      # synthetic self-consistent a
 python docs/research/rq_a/exp6_consistency.py      # is the optimizer's plan consistent?
 python docs/research/rq_a/exp7_recipe.py           # exact positions x sampling density
 python docs/research/rq_a/exp8_proposal.py         # the proposed fix, in pieces
+python docs/research/rq_a/exp10_floor.py           # what sets the floor
+python docs/research/rq_a/exp10_gain_band.py       # the calibrated model's gain band
+python docs/research/rq_a/exp11_density.py         # the density curve
+python docs/research/rq_a/exp12_reference_consistency.py
+python docs/research/rq_a/exp13_package.py         # the two halves together
+python docs/research/rq_a/exp14_which_inconsistency.py
+python docs/research/rq_a/exp15_interval_average.py
+python docs/research/rq_a/exp16_firmware_parity.py # the controller that runs
+python docs/research/rq_a/exp16_combined.py        # the two fixes, in both timing modes
 python docs/research/rq_a/check_hermite.py         # verifies the spline instrument
+python docs/research/rq_a/verify_backlash_fix.py  # the KI-025 backlash fix
 ```
 
 Three controls were used throughout, because two of the intermediate results were wrong before they were controlled:
@@ -63,23 +77,25 @@ Three controls were used throughout, because two of the intermediate results wer
 
 ### F1 — The tracking error does not depend on the uncertainty
 
-Collapsing each declared interval in turn, on the S-curve (all-uncertainty baseline: 1.260 cm):
+Collapsing each declared interval in turn, on the S-curve (all-uncertainty baseline: 1.468 cm):
 
 | interval active | tracking error | change |
 |---|---:|---:|
-| `cof` only | 1.259 cm | +0.1 % |
-| `torque_headroom` only | 1.259 cm | +0.1 % |
-| `gear_backlash_m` only | 1.262 cm | −0.2 % |
-| `track_width_range` only | 1.261 cm | −0.1 % |
-| `wheel_radius_range` only | 1.259 cm | +0.1 % |
-| `inertia_kg_m2` only | 1.259 cm | +0.1 % |
-| **all collapsed** | **1.259 cm** | **+0.1 %** |
+| `cof` only | 1.465 cm | +0.2 % |
+| `torque_headroom` only | 1.465 cm | +0.2 % |
+| `gear_backlash_m` only | 1.465 cm | +0.2 % |
+| `track_width_range` only | 1.468 cm | +0.0 % |
+| `wheel_radius_range` only | 1.465 cm | +0.2 % |
+| `inertia_kg_m2` only | 1.465 cm | +0.2 % |
+| **all collapsed** | **1.465 cm** | **+0.2 %** |
 
-The same holds on the stops mission (+0.2 %) and the complex mission (−2.3 %).
+The same holds on the stops mission (+0.7 %) and the complex mission (+0.2 %).
 
 This is structural, not accidental: `cof`, `torque_headroom`, `wheel_radius_range` and `inertia_kg_m2` are consumed only inside `check_sample_interval` (`immrax_validator.py:460-504`), which is `vmap`ed and never touches the propagated state. Only `track_width_range` reaches the plant (`immrax_validator.py:115, 130`). The backlash reached the plant too, as a velocity offset; it is now a position uncertainty in the reachable set ([Fix 1](#fix-1--the-backlash-was-subtracted-from-the-commanded-wheel-speed)).
 
 **So the tracking gate is not a robustness gate.** It is a deterministic check of the model-versus-plan consistency.
+
+*(Re-measured 2026-10-20. The first pass read 1.259-1.262 cm on the S-curve with a +0.1 % spread; the baseline moved with the reference fix and the spread is the same size.)*
 
 ### F2 — Backlash was a velocity loss, and only mattered on straights
 
@@ -93,6 +109,8 @@ vl_act = vl_cmd - (backlash / 2.0) * jnp.tanh(vl_cmd / 1e-3)
 is not a position dead-band: for any command above 1 mm/s, `tanh → 1`, so the wheel turns at `command − backlash/2` in **both** directions. With the declared `[0.4, 0.5] mm` the robot ran 0.225 mm/s slower than commanded, which was a pure position lag of `0.225 mm/s × t`.
 
 On a 1 m straight that was the whole tracking error (226 µm, and 0.83 µm with the backlash collapsed). On the S-curve it was 1 % of the error. **The backlash model was worth fixing for its own sake — it should be a dead-band, not a constant offset — but it was not what was failing.**
+
+With the fix in the tree the backlash does not touch the tracking error at all: on the S-curve the shipped model and the backlash-collapsed model both report **1.468 cm**, and the difference is in the envelope (0.732 cm with it, 0.605 cm without). The same holds on the stops mission (2.191 cm either way; envelope 0.945 → 0.764 cm) and on the complex mission (0.303 cm either way; envelope 1.185 → 0.974 cm).
 
 ### F3 — A self-consistent trajectory tracks to 0.13 cm
 
@@ -134,9 +152,20 @@ The deviation itself falls as ~1/n², exactly as a second-order discretisation e
 | n | 10 | 20 | 40 | 80 |
 |---|---:|---:|---:|---:|
 | plan-vs-profile deviation | 1.145 cm | 0.219 cm | 0.063 cm | 0.018 cm |
-| **tracking error** | **1.260 cm** | **0.479 cm** | **0.958 cm** | **1.072 cm** |
+| **tracking error** | **1.468 cm** | **0.245 cm** | **0.271 cm** | **0.292 cm** |
 
-**The deviation collapses; the tracking error does not.** More samples is not the fix — the optimizer simply returns a different trajectory at each density, and the new trajectory has the same problem. (F6 explains why: the error is U-shaped in the density, and the default `-n 10` sits on its coarse side.)
+**The deviation collapses, and now the tracking error follows it.** Before KI-027 that was not true: the tracking error sat at 0.48–1.07 cm while the deviation fell to 0.018 cm, because the reference's own inconsistency (F7) dominated the fine end. With the turn rate taken from the interpolated heading, the fine end is fixed, and what is left at `n=10` is the plan's own deviation: 1.145 cm of the 1.468 cm.
+
+The same holds on the stops mission, where the tracking error now falls monotonically with the density:
+
+| n | 10 | 20 | 40 | 80 |
+|---|---:|---:|---:|---:|
+| plan-vs-profile deviation | 1.152 cm | 0.213 cm | 0.100 cm | 0.015 cm |
+| **tracking error** | **2.191 cm** | 0.461 cm | **0.418 cm ✓** | 0.341 cm ✓ |
+
+(✓ = passes the 5 mm tracking gate; the default `-n 10` does not.)
+
+**More samples is still not the fix** — the optimizer returns a different trajectory at each density, and the coarse end is the plan's own inconsistency, which is a solver problem, not a sampling problem. But the fine end is no longer a floor: it is now the plan's deviation, which the self-consistent collocation removes by construction (KI-026).
 
 ### F5 — With a calibrated model, the **envelope** becomes the binding gate, not the tracking error
 
@@ -225,7 +254,7 @@ The finer tick is a property of the *model*, not of the robot: the controllers t
 
 A line for `ω` means the heading is a **parabola**, not a line. The two agree at the sample instants and disagree in between by up to `Δω·dt/8` — **8.7° of contradictory heading mid-interval** on the S-curve at `n=10`.
 
-**The deployed controller has the same defect.** `pybricks_code/ramsete_compact_events.py:155-160` interpolates `tr` (the heading), `vr` (the speed) and `wr` (the turn rate) as three independent lines and hands the robot a heading target and a turn rate that describe different motions. `ramsete_compact.py:151-156` and `ramsete_fast.py:85-91` do the same. The validator (`immrax_validator.py:46-77`) mirrors them, which is why the model and the robot agree on the bug.
+**The deployed controller has the same defect.** `pybricks_code/ramsete_compact_events.py:155-160` interpolated `tr` (the heading), `vr` (the speed) and `wr` (the turn rate) as three independent lines and handed the robot a heading target and a turn rate that describe different motions. `ramsete_compact.py:151-156` and `ramsete_fast.py:85-91` did the same. The validator (`immrax_validator.py:46-77`) mirrored them, which is why the model and the robot agreed on the bug.
 
 | file | heading | turn rate | gain |
 |---|---|---|---|
@@ -234,7 +263,7 @@ A line for `ω` means the heading is a **parabola**, not a line. The two agree a
 | `ramsete_fast.py` *(legacy)* | line | **line** ✗ | line ✗ |
 | `immrax_validator.py` *(the model)* | line | **line** ✗ | line ✗ |
 
-So the deployed path has **two** of the three inconsistencies, and the fix in each file is one line: replace the independently interpolated `wr` with the derivative of the interpolated heading.
+So the deployed path had **two** of the three inconsistencies, and the fix in each file is one line: replace the independently interpolated `wr` with the derivative of the interpolated heading.
 
 ```python
 # ramsete_compact_events.py:157-160, before
@@ -248,6 +277,18 @@ wr = dh / dt_traj
 
 **One parity trap.** The firmware derives `dh` from the *packed* headings, which are wrapped, so `dh` is the shortest-angle difference. The validator unrolls the headings first (`unroll_trajectory_headings`), so its difference is the true one. They agree for any turn below 180° per sample interval and **disagree in sign above it**. At the default density the per-sample turn is 0.13–0.33 rad, so it does not arise — but at `-n 5` a fast turn can exceed it, and the two sides must then use the same convention.
 
+**This is fixed (KI-027, [Fix 3](#fix-3---the-turn-rate-is-the-derivative-of-the-heading)).** The tree now ships:
+
+| file | heading | turn rate | gain |
+|---|---|---|---|
+| `ramsete_compact_events.py` *(deployed)* | line | **dh/dt** ✓ | recomputed ✓ |
+| `ramsete_compact.py` | line | **dh/dt** ✓ | recomputed ✓ |
+| `ramsete.py` *(the IDE missions)* | line | **dh/dt** ✓ | recomputed ✓ |
+| `ramsete_fast.py` *(legacy)* | line | **dh/dt** ✓ | line ✗ |
+| `immrax_validator.py` *(the model)* | line | **dh/dt** ✓ | recomputed ✓ |
+
+The legacy path still interpolates the gain and rounds the command; everything else agrees, and the validator mirrors the deployed path (KI-028).
+
 Which inconsistency dominates (`exp14_which_inconsistency.py`, per-segment timing):
 
 | variant | s_curve n=10 | s_curve n=40 | stops n=40 | complex n=10 | complex n=20 |
@@ -257,7 +298,7 @@ Which inconsistency dominates (`exp14_which_inconsistency.py`, per-segment timin
 | F heading from ω, gain fixed | 0.882 | 1.035 | 1.362 | 1.028 | 1.071 |
 | **C turn rate from heading, gain fixed** | **1.470** | **0.271 ✓** | **0.415 ✓** | **0.428** | **0.394 ✓** |
 
-(✓ = passes the 5 mm tracking gate.)
+(✓ = passes the 5 mm tracking gate. This table was measured before the fix landed; row C is what the tree ships now, and the re-measurement below confirms the same numbers from the other direction.)
 
 Three things follow:
 
@@ -275,13 +316,13 @@ These are recorded so they are not re-run. Each was a reasonable reading of the 
 
 | Hypothesis | Refuted by | What the truth turned out to be |
 |---|---|---|
-| "The tracking gate fails because the uncertainty is too wide." | F1: collapsing all seven intervals moves the error by 0.1–0.2 % | It is a deterministic model-versus-plan mismatch |
-| "Backlash is the driver." | F1: collapsing it moves the S-curve error by 1 % | Backlash is a straight-path lag only (F2) |
-| "The deg/s command quantisation is the driver." | `exp4`: removing quantisation moves the error by ≤ 0.5 % | It is a real dead-band, but a small contributor here |
-| "More samples fix it." | F4: the deviation falls 1/n² but the tracking error does not | The optimizer returns a different trajectory at each density |
-| "The validator's reference interpolation is the bug." | `exp8`: a spline reference on the plan as built gives 26–38 cm and a 125–190 cm envelope | The reference is faithful to the firmware; the *plan* is what is inconsistent |
-| "The optimizer's trapezoidal rule is the bug." | F3: the trapezoid tracks to 0.17–0.21 cm | The rule is fine; the plan's *headings* are not the tangents of its path |
-| "The tracking metric is measuring robot tracking error." | F3: a self-consistent arc tracks to 0.16 cm | It measures how far the plan is from a path the controller can follow |
+| "The tracking gate fails because the uncertainty is too wide." | F1: collapsing all seven intervals moves the error by 0.2–0.7 % | It is a deterministic model-versus-plan mismatch |
+| "Backlash is the driver." | F1: collapsing it moves the S-curve error by 0 % | Backlash is a straight-path lag only (F2) |
+| "The deg/s command quantisation is the driver." | `exp4`: removing quantisation moves the error by 0 % | It is a real dead-band, and it is not a contributor here |
+| "More samples fix it." | F4: the deviation falls 1/n² and the tracking error follows it | The optimizer returns a different trajectory at each density, and the coarse end is the plan's own deviation |
+| "The validator's reference interpolation is the bug." | `exp8`: a spline reference on the plan as built gives 14–17 cm | The reference is faithful to the firmware; the *plan* is what is inconsistent |
+| "The optimizer's trapezoidal rule is the bug." | F3: the trapezoid tracks to 0.14–0.18 cm | The rule is fine; the plan's *headings* are not the tangents of its path |
+| "The tracking metric is measuring robot tracking error." | F3: a self-consistent arc tracks to 0.13 cm | It measures how far the plan is from a path the controller can follow |
 
 ### Instrument bugs hit along the way
 
@@ -486,13 +527,13 @@ Two of the three sides of the three-way discretisation inconsistency are now clo
 
 ---
 
-## The proposal, and why it is a package
+## The proposal, and why it was a package
 
 The fix has two halves and **neither works alone**.
 
-**Half 1 — make the plan self-consistent.** The optimizer's samples should lie on the path the trajectory's own `(v, ω)` profile traces, and the heading samples should be the tangents of that path. Today the trapezoidal collocation does not enforce this, and nothing else in the objective does either. Effect on its own: 61 % less tracking error at n=10 on the S-curve, and *worse* at n=20–80.
+**Half 1 — make the plan self-consistent.** The optimizer's samples should lie on the path the trajectory's own `(v, ω)` profile traces, and the heading samples should be the tangents of that path. The trapezoidal collocation does not enforce this, and nothing else in the objective does either. Effect on its own: 61 % less tracking error at n=10 on the S-curve, and *worse* at n=20–80.
 
-**Half 2 — interpolate the reference as a curve through the samples.** The deployed controller (`pybricks_code/ramsete_fast.py`) and the validator (`immrax_validator.py:46`) both interpolate `x, y, θ, v, ω` **linearly**, i.e. they follow the chord. A cubic Hermite through the samples reproduces the true path to 0.0012 mm. Effect on its own: catastrophic — 26 cm on the S-curve, with the interval tube diverging to 125 cm.
+**Half 2 — interpolate the reference as a curve through the samples.** The deployed controller and the validator both interpolate `x, y, θ, v, ω` **linearly**, i.e. they follow the chord. A cubic Hermite through the samples reproduces the true path to 0.0012 mm. Effect on its own: catastrophic — 26 cm on the S-curve, with the interval tube diverging to 125 cm.
 
 **Together:** the reason half 2 fails is precisely that half 1 is missing. A Hermite through samples whose headings are not their tangents cannot be both through the points and tangent to them, so it develops curvature spikes, and the closed loop diverges.
 
@@ -507,7 +548,17 @@ The measurement in `exp8` that isolates this:
 
 Variant 4 is *worse* than variant 2, so "self-consistent plan + spline" is **not** sufficient either. The self-consistency produced by rebuilding the positions does not make the plan's *heading samples* tangents — the rebuilt heading is the integral of ω, but the residual heading inconsistency at the stops (where the chord degenerates and the direction reverses) survives, and the spline amplifies it.
 
-**This is the open part of RQ-A:** find a plan formulation in which the samples, the headings and the profile are mutually consistent *by construction*, including through stops and direction reversals. That is a change to the optimizer's kinematics and constraints, not to the validator.
+### What of that shipped, and what is left
+
+| half | status | evidence |
+|---|---|---|
+| the plan is self-consistent | **shipped** (KI-026, `--self-consistent`) | F10: the S-curve's error halves, the events mission's forward-integration error goes away |
+| the reference is *coupled* (the turn rate is the derivative of the heading) | **shipped** (KI-027, Fix 3) | F7: five of the nine failing (mission, density) cells become passes |
+| the model mirrors the controller that runs | **shipped** (KI-028, Fix 4) | Fix 4: the numbers are the robot's, not a mirror of a controller that is not in use |
+| the reference is a *curve* through the samples (half 2) | **not shipped** | OQ3: a firmware change, and it needs the plan fix everywhere first |
+| the feedforward reports the *interval averages* (F8) | **not shipped** | F8: up to 10× at fine sampling, and it is a one-line change per file |
+
+The open part of RQ-A is therefore narrower than it was: **not** "find a formulation in which the samples, the headings and the profile are mutually consistent by construction" — that is KI-026 — but "make the controller follow the path between the samples instead of the chord, and give it the feedforward the plan's own rule assumes". Both are firmware changes, so both need the parity work again, and both are cheap: the plan fix is in the tree, and the reference fix is one line per file.
 
 ---
 
@@ -541,32 +592,51 @@ still follows the chord, and the chord is now within the sagitta of the path.
 
 | S-curve, n=10 (default) | plan/profile deviation | tracking | gate |
 |---|---:|---:|---|
-| trapezoid, candidate 1 | 11.5 mm | 1.31 cm | fail |
-| trapezoid, candidate 2 | 11.5 mm | 1.32 cm | fail |
-| self-consistent, candidate 1 | < 0.1 mm | 0.59 cm | fail |
-| self-consistent, candidate 2 | < 0.1 mm | 0.55 cm | fail (0.05 cm over) |
+| trapezoid, candidate 1 / 2 | 11.5 mm | 1.55 / 1.47 cm | fail / fail |
+| **self-consistent, candidate 1 / 2** | < 0.1 mm | **0.98 / 0.88 cm** | fail / fail |
 
 | events, n=10 (default) | tracking | gate |
 |---|---:|---|
-| trapezoid, candidate 1 / 2 | 0.52 / 2.08 cm | fail / fail |
-| **self-consistent, candidate 1 / 2** | **0.32 / 0.40 cm** | **PASS / PASS** |
+| trapezoid, candidate 1 / 2 | 0.68 / 0.46 cm | fail / **PASS** |
+| self-consistent, candidate 1 / 2 | **0.44** / 1.45 cm | **PASS** / fail |
 
-The validator's own forward-integration check stops reporting its 1.3 cm
-error, because the plan now agrees with itself.
+The validator's own forward-integration check stops reporting its error,
+because the plan now agrees with itself.
 
-It is not a free win, and it is not the whole fix:
+It is not a free win, and it is not the whole fix. Measured on the current
+tree (the default candidate set, `--self-consistent` on and off; the raw
+records are in
+[`../../measurements/2026-10-20/matrix/`](../../measurements/2026-10-20/matrix/)):
 
-- The S-curve still misses the 5 mm gate by 0.05 cm.
-- The complex mission moves from 0.49 cm to 0.51 cm, so it now fails the gate
-  by 0.01 cm. The candidate set has to be re-tuned under the new formulation.
-- The stops mission gets slower (6.2 s to 7.8 s): a direction reversal is
-  where a self-consistent plan is hardest (OQ5).
-- The first-four-waypoints mission is unchanged.
-- These numbers are measured with F7 already in the tree. Before F7 landed,
-  the S-curve's self-consistent candidate measured 0.47 cm and passed, so the
-  two changes interact and have to be tuned together.
-- At fine sampling this changes little: the floor there is the 20 ms
-  sample-and-hold, not the plan (OQ1).
+| mission | trapezoid: tracking / gate | self-consistent: tracking / gate |
+|---|---|---|
+| `example_straight` | 0.34 cm / PASS | 0.34 cm / PASS |
+| `example_mission_first4` | 0.24 cm / PASS | 0.26 cm / PASS |
+| `example_with_events` | 0.68 cm (equal) / **0.46 cm** (per-segment) | **0.44 cm** (equal) / 1.45 cm (per-segment) |
+| `example_complex_mission` | **0.30 cm** (equal) / 0.43 cm (per-segment) | 0.42 cm (equal) / **0.35 cm** (per-segment) |
+| `example_with_stops` | 0.98 cm / 2.19 cm, both fail | 1.23 cm / 1.69 cm, both fail |
+| `example_s_curve` | 1.55 cm / 1.47 cm, both fail | 0.98 cm / 0.88 cm, both fail |
+
+What that says:
+
+- **The S-curve's error halves** (1.47 → 0.88 cm) but still misses the 5 mm
+  gate by 0.38 cm. The coarse end needs the reference fix as well (F8).
+- **The candidate set has to be re-tuned under the new formulation.** The
+  complex mission's *equal-duration* candidate passes trapezoidal (0.30 cm)
+  and fails self-consistent (0.42 cm), and its per-segment candidate does the
+  opposite (0.43 → 0.35 cm). The two models swap places; neither is a peer.
+- **The stops mission gets slower** under equal-duration timing (6.25 → 7.81 s)
+  and its per-segment tracking error falls from 2.19 to 1.69 cm: a direction
+  reversal is where a self-consistent plan is hardest (OQ5).
+- **The sweep makes the stops mission solvable.** With `--sweep
+  --self-consistent`, the equal-duration candidate at weight 0.01 passes at
+  6.44 s / 0.49 cm — the first passing stops trajectory in the tree.
+- These numbers are measured with F7 (the coupled reference) and F4 (the
+  parity fix) already in the tree. Before F7 landed, the S-curve's
+  self-consistent candidate measured 0.47 cm and passed, so the two changes
+  interact and have to be tuned together.
+- At fine sampling this changes little: the floor there is the command hold,
+  not the plan (OQ1).
 
 ## What this changes in the research agenda
 In [`../HEURISTICS_AND_VERIFICATION.md`](../HEURISTICS_AND_VERIFICATION.md) Part IV:
@@ -575,7 +645,7 @@ In [`../HEURISTICS_AND_VERIFICATION.md`](../HEURISTICS_AND_VERIFICATION.md) Part
 - **Q9 (a real digital twin) is still needed, but it is not what is failing today.** The tracking error is already ~100 % explained by the current model. Adding motor dynamics, odometry and slip will not move the number that is blocking the missions. Q9 is about *honesty* about the envelope, not about the tracking gate.
 - **The 5 mm threshold is not currently meaningful.** It is being compared against a number that is dominated by a modelling artefact. Until the discretisation is consistent, a pass or a fail says more about the discretisation than about the robot. **Do not tune the threshold to make missions pass** — that would hide the defect.
 - **Q6 (does the accuracy weight buy accuracy?) should be re-run after the fix**, because the weight's effect on the tracking error may itself be an artefact.
-- **Q9 (a real digital twin) is not only about honesty about the envelope — it moves the binding gate.** With a fitted model the gain band widens the reachable set until the *envelope* gate binds (F9), which is a different failure from the one the tracking gate reports today. A calibrated robot is a different problem, not the same problem with better numbers.
+- **Q9 (a real digital twin) is not only about honesty about the envelope — it moves the binding gate.** With a fitted model the gain band widens the reachable set until the *envelope* gate binds (F5), which is a different failure from the one the tracking gate reports today. A calibrated robot is a different problem, not the same problem with better numbers.
 - **Q4 (reachability in the objective) therefore has two audiences.** With the default model the envelope is never the binding constraint, so an envelope term in the objective buys nothing on the six example missions. With a calibrated model it is the *only* binding constraint. Whichever configuration the project settles on decides whether Q4 is urgent.
 
 ---
@@ -586,10 +656,12 @@ In [`../HEURISTICS_AND_VERIFICATION.md`](../HEURISTICS_AND_VERIFICATION.md) Part
 |---|---|
 | Question | Answered: the cause is identified, and the open item is closed |
 | Root cause | The optimizer's discretisation, the controller's reference and the plant's integration are three different discretisations of the same trajectory; on a curved path they disagree by ~1 cm |
-| OQ1 (the floor at fine sampling) | **Answered.** It is the 20 ms command hold: at n=40, refining the tick to 2 ms takes the error from 0.979 cm to 0.048 cm. At coarse sampling the floor is the plan/profile mismatch instead, and the error is U-shaped in the density (F6) |
-| Fix | **Two direct bugs fixed** (the backlash dimensional error, and the missing heading metric). The **structural fix is now precise**: (1) the optimizer's positions must be the exact integral of the trajectory's own `(v, ω)` profile, and (2) the sampling density must be matched to the controller's 20 ms tick — roughly 4 to 6 ticks per sample interval. Neither works alone; together they give 0.034 cm on the S-curve, against 1.248 cm shipped |
-| Confidence | High on the diagnosis (four independent measurements agree, with synthetic controls). Medium on the fix: the two halves have been shown to work *in the model*, and the second one needs a firmware change or a density policy to ship |
-| Safety | The two fixes changed no gate outcome: 0 of 60 candidates changed pass flag on the example matrix, and 0 of 231 on the mission suite, with the worst-case uncertainty per run moving by at most 0.065 cm |
-| Which gate binds | **Tracking** in the default configuration (34 of 36 failures). **Envelope** once a calibrated model is fitted, because the measured gain band widens the reachable set (F5) |
+| OQ1 (the floor at fine sampling) | **Answered.** Two mechanisms, at opposite ends of the density range: at coarse sampling the plan's positions are off the path its own profile traces; at fine sampling the control loop's hold of the drive command is the floor. The error is U-shaped in the density (F6) |
+| Fixes landed | **KI-025** the backlash dimensional error. **KI-026** the optimizer's self-consistent collocation (`--self-consistent`). **KI-027** the turn rate as the derivative of the interpolated heading, in the firmware and the validator together. **KI-028** the validator models the controller that runs. The structural fix is therefore **in the tree** |
+| Measured effect | On the example matrix, re-measured after those fixes: **31 of 60 candidates pass** (was 24), **7 of the 12 (mission, timing model) cells produce a trajectory** (was 6), and a non-baseline seed is selected in 4 of them (was 2). The envelope still never binds: **0 of 29 failures** cite it, and the largest envelope is 1.75 cm against a 2 cm threshold |
+| Confidence | High on the diagnosis (four independent measurements agree, with synthetic controls) |
+| Safety | The KI-025 fix changed no gate outcome on its own: 0 of 60 candidates on the example matrix and 0 of 231 on the mission suite changed pass flag, with the worst-case uncertainty per run moving by at most 0.065 cm |
+| Which gate binds | **Tracking** in the default configuration (25 of 29 failures). **Envelope** once a calibrated model is fitted, because the measured gain band widens the reachable set (F5) |
 | Hardware | **None.** Every number here is a model prediction. No hardware logs exist in this repository, and the uncertainty ranges in `examples/fll_choreo.json` are declared test assumptions. The *relative* findings (which term dominates, how the error scales) are properties of the model and hold regardless; the absolute numbers do not |
+| Re-measured | The numbers in F3 and F4 were **re-taken on 2026-10-20** after KI-027 and KI-028, because the model changed under them: the control tick, the reference and the plant all moved. The conclusions did not change, the numbers did |
 
