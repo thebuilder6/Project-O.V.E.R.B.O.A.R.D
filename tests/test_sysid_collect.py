@@ -653,6 +653,33 @@ class TestDriftRegression(unittest.TestCase):
             run_id += 1
         return "\n".join(lines) + "\n"
 
+    @staticmethod
+    def _step_run(name, run_id, repeat, command, steps=1, drift=2.0,
+                  bias=0.05, gain=0.98, dt=0.01):
+        """A step run: the wheel angles give the speed, the gyro the rate."""
+        import math
+        rows = []
+        t = 0.0
+        angle = 0.0
+        for _ in range(steps):
+            for _ in range(90):
+                t += dt
+                value = gain * command
+                angle += value * dt / 0.028 * 180.0 / math.pi
+                gyro = math.radians(drift * value + bias)
+                rows.append([t * 1000, 10, command * 1000, 0, angle, angle,
+                             gyro, 0, 0, 8000, 50, 0, 0])
+        return "\n".join([
+            f"TEST_START {name}",
+            f"META,run_id,{run_id}",
+            f"META,test,{name}",
+            f"META,repeat,{repeat}",
+            "META,poses,0",
+            "DATA",
+            "t_ms,loop_ms,v_cmd_mm_s,w_cmd_deg_s,l_deg,r_deg,gyro_z_rad_s,"
+            "ax_m_s2,ay_m_s2,batt_mv,batt_ma,l_load_mNm,r_load_mNm",
+        ] + [",".join(str(v) for v in row) for row in rows] + [f"TEST_END,{len(rows)}"])
+
     def _fit(self, poses=None, **kwargs):
         from sysid_fit import fit_session, load_poses, parse_session
         if poses is None:
@@ -686,16 +713,37 @@ class TestDriftRegression(unittest.TestCase):
         self.assertAlmostEqual(drift["drift_deg_per_m_tape"], 2.007, places=2)
         self.assertLess(drift["drift_disagreement_deg_per_m"], 0.1)
 
+    def test_too_few_points_does_not_crash_the_fit(self):
+        """A line through two points has no standard error to report."""
+        from sysid_fit import fit_session, parse_session
+
+        # One step in the forward run and one in the reverse run: two points.
+        session = "\n".join([
+            self._step_run("straight_steps_fwd", 1, 0, 0.4),
+            self._step_run("straight_steps_rev", 2, 0, -0.4),
+        ]) + "\n"
+        result = fit_session(parse_session(session), wheel_radius_m=0.028)
+        self.assertFalse(result["drift"]["calibrated"])
+
 
 class TestWallHoming(unittest.TestCase):
     """The wall is a reference that does not move and is not read by hand."""
 
     @staticmethod
     def _homing_run(name, run_id, repeat, odometry_mm, final_speed,
-                    command=60.0):
+                    command=60.0, reached=True):
+        """A homing run written the way the collector writes it.
+
+        The collector logs the drive, and then a settle row after the robot
+        has stopped, with the command at zero. The settle row is the last
+        one, so the check has to look at the last row that was still
+        commanded.
+        """
         rows = [[0, command, 0, 0, command, 0, 0, 8000, 0, 0],
-                [1000, command, 0, odometry_mm, final_speed, 0.5, 0, 8000,
-                 120, 120]]
+                [1000, command, 0, odometry_mm,
+                 0.0 if reached else command, 0, 0, 8000, 0, 0],
+                [16000, 0, 0, odometry_mm, final_speed, 0.3, 0, 8000,
+                 130, 130]]
         return "\n".join([
             f"TEST_START {name}",
             f"META,run_id,{run_id}",
@@ -705,7 +753,7 @@ class TestWallHoming(unittest.TestCase):
             "DATA",
             "t_ms,v_cmd_mm_s,w_cmd_deg_s,db_d_mm,db_v_mm_s,db_a_deg,"
             "db_w_deg_s,batt_mv,l_load_mNm,r_load_mNm",
-        ] + [",".join(str(v) for v in row) for row in rows] + ["TEST_END,2"])
+        ] + [",".join(str(v) for v in row) for row in rows] + ["TEST_END,3"])
 
     def _fit(self, session, wall_distance_m):
         from sysid_fit import fit_session, parse_session
@@ -726,7 +774,8 @@ class TestWallHoming(unittest.TestCase):
 
     def test_a_run_that_never_reached_the_wall_is_rejected(self):
         """The robot was still moving when the run ended: no wall."""
-        session = self._homing_run("wall_homing", 1, 0, 1000.0, 60.0) + "\n"
+        session = self._homing_run("wall_homing", 1, 0, 1000.0, 0.0,
+                                   reached=False) + "\n"
         odometry = self._fit(session, 0.998)["odometry"]
 
         self.assertNotIn("distance_scale_homing", odometry)

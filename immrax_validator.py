@@ -359,11 +359,12 @@ class ImmraxValidator:
         )
         # The motor's stall torque, measured by pushing into a wall. The
         # config can only declare it, so without the measurement the force
-        # limit is a guess.
-        self.stall_torque_range_nm = (
-            digital_twin.stall_torque_range_nm()
-            if self._digital_twin_active else None
-        )
+        # limit is a guess. The measurement itself is carried by the robot
+        # config: main.py --sysid-fit writes it there with
+        # apply_measured_motor, so the optimizer, the CPU audit, the
+        # validator and the exported controller all plan against the same
+        # motor (KI-010). Reading it here as well would check the plan
+        # against a different limit than the one it was planned with.
 
         self.sys = ClosedLoopRobotSystem(
             config, self.ramsete_b, self.ramsete_zeta)
@@ -473,15 +474,11 @@ class ImmraxValidator:
         cof_interval = Interval(*cof_range)
         torque_margin_interval = Interval(*torque_margin_range)
 
-        # The motor's stall torque, measured by pushing into a wall. The
-        # robot config can only declare it, so the declared number is a
-        # guess about what the motor can actually deliver. When the fit
-        # measured it, that measurement is the limit.
-        stall_range = self.stall_torque_range_nm
-        if stall_range is not None:
-            t_max_interval = Interval(*stall_range)
-        else:
-            t_max_interval = interval(self.cfg.t_max_nm)
+        # The motor's stall torque comes from the robot config, which
+        # main.py --sysid-fit fills with the measured number. The config is
+        # the one place the motor lives, so the optimizer, this audit, the
+        # validator and the exported controller all use the same limit.
+        t_max_interval = interval(self.cfg.t_max_nm)
         
         tw_range = track_width_range if track_width_range else (self.cfg.track_width * 0.99, self.cfg.track_width * 1.01)
         wr_range = wheel_radius_range if wheel_radius_range else (self.cfg.wheel_radius * 0.99, self.cfg.wheel_radius * 1.01)

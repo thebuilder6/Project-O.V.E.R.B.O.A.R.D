@@ -856,25 +856,38 @@ def _wall_homing_scale(run, wall_distance_m):
     nobody has to read it, so the run can be repeated unattended.
 
     Two things are checked. The robot has to have actually reached the
-    wall: the run ends with the wheels barely turning while the command is
-    still on, and a run that times out against nothing is rejected. And the
-    approach has to be roughly square: a robot that meets the wall at an
-    angle travels a little further, so the estimate is wrong by the cosine
-    of that angle, which is second order and therefore small.
+    wall: the last row that was still commanded has to show the wheels
+    barely turning, and a run that times out against nothing is rejected.
+    And the approach has to be roughly square: a robot that meets the wall
+    at an angle travels a little further, so the estimate is wrong by the
+    cosine of that angle, which is second order and therefore small.
     """
     if not wall_distance_m or wall_distance_m <= 0:
         return None
-    distance_m = _last(run, "db_d_mm")
-    speed = _last(run, "db_v_mm_s")
-    command = _last(run, "v_cmd_mm_s")
-    if distance_m is None or speed is None or command is None:
+    commands = _column(run, "v_cmd_mm_s")
+    speeds = _column(run, "db_v_mm_s")
+    distances = _column(run, "db_d_mm")
+    if commands is None or speeds is None or distances is None:
         return None
-    if abs(command) < 1e-6:
+    if commands.size == 0 or speeds.size == 0 or distances.size == 0:
         return None
-    if abs(speed) > 0.2 * abs(command):
-        # Still moving: the robot never reached the wall.
+
+    command = float(np.max(np.abs(commands)))
+    if command < 1e-6:
         return None
-    odometry_m = distance_m / 1000.0
+
+    # The last row that was still commanded. The settle row the collector
+    # writes after the robot stops has the command at zero, so the final
+    # row says nothing about whether the robot was blocked.
+    commanded = np.nonzero(np.abs(commands) > 1e-6)[0]
+    if commanded.size == 0:
+        return None
+    last = int(commanded[-1])
+    if abs(float(speeds[last])) > 0.2 * command:
+        # Still moving when the run ended: the robot never reached the wall.
+        return None
+
+    odometry_m = float(distances[-1]) / 1000.0
     if odometry_m <= 1e-6:
         return None
     return float(wall_distance_m) / odometry_m
@@ -1088,7 +1101,10 @@ def _fit_drift(runs, poses, gyro_bias_deg_s):
     sources = []
     for repeat in sorted(by_repeat):
         group = by_repeat[repeat]
-        if len(group) < 2:
+        if len(group) < 3:
+            # A line through two points has no degrees of freedom, so the
+            # standard error of its slope is not defined. Three points is the
+            # least that has one.
             continue
         x = np.array([point[0] for point in group])
         y = np.array([point[1] for point in group])
@@ -1096,15 +1112,18 @@ def _fit_drift(runs, poses, gyro_bias_deg_s):
             continue
         coeffs, cov = np.polyfit(x, y, 1, cov=True)
         slope, intercept = float(coeffs[0]), float(coeffs[1])
+        slope_se = float(np.sqrt(max(cov[0][0], 0.0)))
+        if not np.isfinite(slope_se):
+            slope_se = None
         estimates.append((repeat, slope))
         sources.append({
             "repeat": repeat,
             "points": len(group),
             "speed_range_m_s": [float(np.min(x)), float(np.max(x))],
-            "slope_se": float(np.sqrt(max(cov[0][0], 0.0))),
+            "slope_se": slope_se,
             # The intercept is the gyro's bias, read off while the robot was
             # moving. It is a second opinion on the static measurement.
-            "gyro_bias_deg_s": float(intercept),
+            "gyro_bias_deg_s": intercept,
         })
 
     if not estimates:

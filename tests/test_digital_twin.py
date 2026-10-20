@@ -5,8 +5,11 @@ import math
 import os
 import tempfile
 import unittest
+from unittest.mock import patch
 
 import numpy as np
+
+from robot_model import RobotConfig
 
 from digital_twin import (
     ActuatorFit,
@@ -325,15 +328,31 @@ class TestDigitalTwinMechanisms(unittest.TestCase):
 
         self.assertEqual(validator.plant.drift_rad_per_m, 0.0)
 
-    def test_the_measured_stall_torque_is_the_force_limit(self):
-        """The wall test measures what the config can only declare."""
+    def test_the_measured_motor_is_carried_by_the_config(self):
+        """One motor, one number, everywhere.
+
+        The wall test measures the stall torque and the fit hands it over.
+        The robot config is where it lives, so the optimizer, the CPU
+        audit, the validator and the exported controller all plan against
+        the same limit. A second limit in the validator would check the
+        plan against a different number than the one it was planned with.
+        """
+        twin = self._twin()
+        config = RobotConfig(_TEST_ROBOT)
+
+        changes = config.apply_measured_motor(**twin.measured_motor())
+
+        self.assertAlmostEqual(config.t_max_nm, 0.13, places=9)
+        validator = ImmraxValidator(JAXRobotConfig(config), digital_twin=twin)
+        self.assertAlmostEqual(validator.cfg.t_max_nm, 0.13, places=9)
+        # The interval follows the measured number, in the config.
+        self.assertEqual(tuple(config.uncertainties["t_max_range"]),
+                         (0.12, 0.14))
+
+    def test_the_validator_has_no_second_motor_limit(self):
         validator = self._validator(self._twin())
-        self.assertEqual(validator.stall_torque_range_nm, (0.12, 0.14))
 
-    def test_without_a_measurement_the_config_value_is_used(self):
-        validator = self._validator(self._twin(stall_torque={"calibrated": False}))
-
-        self.assertIsNone(validator.stall_torque_range_nm)
+        self.assertFalse(hasattr(validator, "stall_torque_range_nm"))
 
     def test_braking_slip_shortens_the_ground_covered(self):
         w = jnp.array([1.37, 0.85, 0.0004, 0.0965, 0.028, 0.001, 1.0])
@@ -388,3 +407,116 @@ class TestDigitalTwinMechanisms(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestMeasuredMotor(unittest.TestCase):
+    """The measured motor numbers reach the config (KI-010)."""
+
+    def _fit(self, **drivetrain):
+        payload = dict(_FIT)
+        payload["drivetrain"] = drivetrain or {
+            "calibrated": True,
+            "no_load_speed_rad_s": 22.5,
+            "no_load_speed_rad_s_ci95": [22.0, 23.0],
+            "n_sources": 3,
+        }
+        return DigitalTwinConfig.from_dict(payload)
+
+    def test_the_no_load_speed_is_read(self):
+        twin = self._fit()
+        self.assertAlmostEqual(twin.no_load_speed_rad_s(), 22.5)
+
+    def test_the_measured_motor_carries_both_ends_of_the_curve(self):
+        twin = self._fit()
+        measured = twin.measured_motor()
+        self.assertAlmostEqual(measured["t_max_nm"], 0.13)
+        self.assertEqual(measured["t_max_range"], (0.12, 0.14))
+        self.assertAlmostEqual(measured["no_load_speed_rad_s"], 22.5)
+
+    def test_the_gearing_moves_the_speed_to_the_motor(self):
+        twin = self._fit()
+        measured = twin.measured_motor(gearing=2.0)
+        self.assertAlmostEqual(measured["no_load_speed_rad_s"], 45.0)
+
+    def test_an_uncalibrated_fit_keeps_the_declared_motor(self):
+        payload = dict(_FIT)
+        twin = DigitalTwinConfig.from_dict(payload)
+        self.assertIsNone(twin.no_load_speed_rad_s())
+        self.assertNotIn("no_load_speed_rad_s", twin.measured_motor())
+
+    def test_the_summary_reports_the_drivetrain(self):
+        summary = self._fit().summary()
+        self.assertTrue(summary["drivetrain"]["calibrated"])
+        self.assertAlmostEqual(
+            summary["drivetrain"]["no_load_speed_rad_s"], 22.5)
+        self.assertTrue(summary["applied"]["measured_motor"])
+
+
+class TestMeasuredMotorEndToEnd(unittest.TestCase):
+    """--sysid-fit puts the measured motor into the solver's config.
+
+    Before this, the optimizer planned against the declared motor while the
+    validator checked the measured one, so a plan could satisfy its own
+    constraint and still trip the validator (KI-010).
+    """
+
+    def test_the_solver_gets_the_measured_motor(self):
+        try:
+            import main  # noqa: F401
+            from click.testing import CliRunner
+        except ImportError:
+            self.skipTest("click is not installed")
+        if not HAS_IMMRAX:
+            self.skipTest("JAX and Immrax are not installed")
+
+        recorded = {}
+
+        class StubOptimizer:
+            def __init__(self, config):
+                recorded["config"] = config
+
+            def solve(self, waypoints, **kwargs):
+                samples = [{
+                    "t": i * 0.1, "x": 0.02 * i, "y": 0.0, "heading": 0.0,
+                    "vl": 0.2, "vr": 0.2, "omega": 0.0,
+                    "al": 0.0, "ar": 0.0, "fl": 0.0, "fr": 0.0,
+                } for i in range(11)]
+                return samples, {"converged": True, "final_cost": 1.0}
+
+        fit = {
+            "actuator": {"straight": {"calibrated": True, "gain": 0.95}},
+            "stall_torque": {
+                "calibrated": True,
+                "t_max_nm": 0.110,
+                "t_max_nm_ci95": [0.105, 0.115],
+                "n_sources": 3,
+            },
+            "drivetrain": {
+                "calibrated": True,
+                "no_load_speed_rad_s": 21.5,
+                "no_load_speed_rad_s_ci95": [21.0, 22.0],
+                "n_sources": 3,
+            },
+        }
+
+        with tempfile.TemporaryDirectory() as tmp:
+            out = os.path.join(tmp, "out.traj")
+            wp = os.path.join(tmp, "wp.json")
+            fit_path = os.path.join(tmp, "fit.json")
+            with open(wp, "w", encoding="utf-8") as handle:
+                json.dump([{"x": 0.0, "y": 0.0}, {"x": 0.2, "y": 0.0}], handle)
+            with open(fit_path, "w", encoding="utf-8") as handle:
+                json.dump(fit, handle)
+            import main
+            with patch.object(main, "TrajectoryOptimizer", StubOptimizer):
+                result = CliRunner().invoke(
+                    main.main,
+                    ["-w", wp, "-o", out, "--sysid-fit", fit_path, "--validate"])
+
+        self.assertIn("config", recorded, result.output)
+        config = recorded["config"]
+        self.assertAlmostEqual(config.t_max_nm, 0.110)
+        self.assertAlmostEqual(config.v_max_rad_s, 21.5)
+        # The measured stall torque's interval replaces the derived one.
+        self.assertEqual(config.uncertainties["t_max_range"], (0.105, 0.115))
+        self.assertIn("Measured motor", result.output)
