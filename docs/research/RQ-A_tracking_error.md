@@ -628,7 +628,7 @@ The stops mission is the exception, and it is the interesting one: there the spl
 
 | half | status | evidence |
 |---|---|---|
-| the plan is self-consistent | **shipped** (KI-026, `--self-consistent`) | F10: the S-curve's error halves, the events mission's forward-integration error goes away |
+| the plan is self-consistent | **shipped** (KI-026, the CLI's default) | F10: the S-curve's error halves, the events mission's forward-integration error goes away |
 | the reference is *coupled* (the turn rate is the derivative of the heading) | **shipped** (KI-027, Fix 3) | F7: seven of the nine (mission, density) cells come under the 5 mm tracking gate, where none of them was |
 | the model mirrors the controller that runs | **shipped** (KI-028, Fix 4) | Fix 4: the numbers are the robot's, not a mirror of a controller that is not in use |
 | the reference is a *curve* through the samples (half 2) | **not shipped** | OQ3: a firmware change, and it needs the plan fix everywhere first |
@@ -643,7 +643,7 @@ The open part of RQ-A is therefore narrower than it was: **not** "find a formula
 | # | Question | Why it matters | Next step |
 |---|---|---|---|
 | **OQ1** | What sets the floor of ~0.5–1.1 cm at n=40–80 on the S-curve? The plan/profile deviation is 0.063 cm there, so 95 % of the error is unexplained. | Until this is answered, no fix can be shown to work. | **CLOSED (F6).** It is the 20 ms command hold: refining the tick to 2 ms takes the error from 0.271 cm to 0.071 cm at n=40. At coarse sampling the floor is the plan/profile mismatch instead, and the error is U-shaped in the density. The mechanism is the distance covered per interval: giving the controller the interval-average velocity removes the hold without touching the tick (F6, F8) |
-| **OQ2** | Can the optimizer be reformulated so that consistency is structural? | It is the only fix that addresses the root cause. | **CLOSED (KI-026, F10).** The trapezoidal collocation was replaced with a four-node Gauss-Legendre quadrature over the *integrated* heading, so the samples lie on the path by construction and the headings are the tangents. It is behind `--self-consistent` (off by default, so the measured plans stay reproducible) |
+| **OQ2** | Can the optimizer be reformulated so that consistency is structural? | It is the only fix that addresses the root cause. | **CLOSED (KI-026, F10).** The trapezoidal collocation was replaced with a four-node Gauss-Legendre quadrature over the *integrated* heading, so the samples lie on the path by construction and the headings are the tangents. The CLI plans it **by default** and `--no-self-consistent` restores the trapezoid; the library's default is the trapezoid (KI-051) |
 | **OQ3** | Should the reference become a spline in the validator **and** the firmware? | The firmware and the validator must agree, or the parity is lost. | The controllers in use interpolate linearly today. Any change there is a firmware change and needs the plan fix to be in place everywhere first. The spline on its own is catastrophic (F8's variant 3) |
 | **OQ4** | Does the tracking metric need a heading term? | The metric is position-only (`immrax_validator.py:1112-1114`). A plan can be followed in position while the heading is off by up to Δθ/2 — 9.4° on the S-curve at n=10. | Measure the heading error the closed loop actually shows, and decide whether it is a gate, a reported metric, or both. The heading error is reported now (Fix 2) but not gated |
 | **OQ5** | What is the stops mission's extra 0.6 cm? (1.15 cm of deviation but 2.19 cm of tracking error on the current tree.) | Stops are where the discretisations interact worst: the robot reverses, the backlash sign flips, the chord degenerates. | Separate the reversals from the curvature. Build a variant of the stops mission with the stops removed but the same geometry |
@@ -658,8 +658,9 @@ structural. It can: replace the trapezoidal position rule with a quadrature
 over the *integrated* heading, and the samples land on the path the plan's own
 (v, omega) profile traces, with the heading samples as its tangents.
 
-`optimizer.py` now has it behind `--self-consistent` (off by default, so the
-measured plans stay reproducible). The position rule integrates the interval's
+The command line plans it by default (`--self-consistent/--no-self-consistent`,
+default on) and `--no-self-consistent` restores the trapezoidal rule; the
+library's default is the trapezoid (KI-052). The position rule integrates the interval's
 velocity along the heading the robot will hold - the turn rate integrated, not
 the two endpoints - with a four-node Gauss-Legendre rule, O(dt^7) per interval
 against the trapezoid's O(dt^3). The heading rule is unchanged, so the headings
@@ -679,10 +680,10 @@ still follows the chord, and the chord is now within the sagitta of the path.
 The validator's own forward-integration check stops reporting its error,
 because the plan now agrees with itself.
 
-It is not a free win, and it is not the whole fix. Measured on the current
-tree (the default candidate set, `--self-consistent` on and off; the raw
-records are in
-[`../../measurements/2026-10-20/matrix/`](../../measurements/2026-10-20/matrix/)):
+It is not a free win, and it is not the whole fix. Measured on the tree that
+carried F7 and F4, with the default candidate set and the collocation on and
+off; the raw records are in
+[`../../measurements/2026-10-20/matrix/`](../../measurements/2026-10-20/matrix/):
 
 | mission | trapezoid: tracking / gate | self-consistent: tracking / gate |
 |---|---|---|
@@ -819,7 +820,7 @@ In [`../HEURISTICS_AND_VERIFICATION.md`](../HEURISTICS_AND_VERIFICATION.md) Part
 | Question | Answered: the cause is identified. Three of the four things that stood between the plan and the robot are closed in the tree; what is open is the *shape* of the reference and the velocity it reports |
 | Root cause | The optimizer's discretisation, the controller's reference and the plant's integration are three different discretisations of the same trajectory; on a curved path they disagree by ~1 cm |
 | OQ1 (the floor at fine sampling) | **Answered.** Two mechanisms, at opposite ends of the density range: at coarse sampling the plan's positions are off the path its own profile traces; at fine sampling the control loop's hold of the drive command is the floor. The error is U-shaped in the density (F6) |
-| Fixes landed | **KI-025** the backlash dimensional error. **KI-026** the optimizer's self-consistent collocation (`--self-consistent`). **KI-027** the turn rate as the derivative of the interpolated heading, in the firmware and the validator together. **KI-028** the validator models the controller that runs. **KI-049** the envelope's phantom turn rate, and the truncation reported as a width. The structural fix is therefore **in the tree** |
+| Fixes landed | **KI-025** the backlash dimensional error. **KI-026** the optimizer's self-consistent collocation, which the CLI plans by default. **KI-027** the turn rate as the derivative of the interpolated heading, in the firmware and the validator together. **KI-028** the validator models the controller that runs. **KI-049** the envelope's phantom turn rate, and the truncation reported as a width. The structural fix is therefore **in the tree** |
 | Measured effect | On the example matrix, re-measured after those fixes: **31 of 60 candidates pass** (was 24), **7 of the 12 (mission, timing model) cells produce a trajectory** (was 6), and a non-baseline seed is selected in 4 of them (was 2). The envelope still never binds: **0 of 29 failures** cite it, and the largest envelope is 1.75 cm against a 2 cm threshold |
 | Confidence | High on the diagnosis (four independent measurements agree, with synthetic controls) |
 | Safety | The KI-025 fix changed no gate outcome on its own: 0 of 60 candidates on the example matrix and 0 of 231 on the mission suite changed pass flag, with the worst-case uncertainty per run moving by at most 0.065 cm |

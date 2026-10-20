@@ -4,6 +4,14 @@ The closed-loop tick map and the shipped open-loop plant propagation, run
 through the CLI on the six example missions, on the same tree and the same
 robot, with the same candidates.
 
+**Which collocation these numbers describe: the trapezoidal one.** The run
+was measured on 2026-10-20, before the command line switched to the
+self-consistent collocation by default (`--self-consistent/--no-self-consistent`,
+KI-051). The same planner is still reachable with `--no-self-consistent`, so
+these numbers are still quotable — but they are the trapezoidal plan's
+numbers and not the command line's default. The re-measurement under the new
+default is the runner in `../2026-10-20-variable-samples/`.
+
 The question: the tick map is the *correct* model of the loop the robot
 runs — the controller is inside the map, so the map's Jacobian carries the
 feedback term and the tube contracts the way the robot's does. The plant

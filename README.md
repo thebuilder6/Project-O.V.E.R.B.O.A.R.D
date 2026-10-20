@@ -304,7 +304,7 @@ The studio runs the same command line in the background, so the export gate, the
 
 The studio also draws the plots the command line can make, from the same samples: the velocity profiles, the wheel forces against the force limit, the accelerations, the heading over time, and how the solve converged. The solver's first guess is drawn on the field as a dashed path, so you can see what the optimizer changed.
 
-The Advanced section has the same levers the command line has: **fast polish**, **self-consistent** samples, and **sweep** (the timing model x weight grid, ten candidates). The candidate chips are the leaderboard, and they say which weight each candidate used.
+The Advanced section has the same levers the command line has: **fast polish**, **self-consistent** samples and **sweep** (the timing model x weight grid, ten candidates). The self-consistent switch is ticked by default, like the command line's, and unticking it is `--no-self-consistent`. The candidate chips are the leaderboard, and they say which weight each candidate used.
 
 When a validation fails, the studio shows **where**: a row per path segment with the reachability envelope, the local limit and the drift, the failing segment marked in red on the field, and the reason the gate gave. Under the table it names the lever that might fix it - the other timing model, a smaller accuracy weight, or the sweep - and each one is a button that re-solves. The robot itself is editable in the studio — mass, wheel and track size, motor limits, friction and the uncertainty ranges — so the last JSON file you need to open by hand is gone.
 

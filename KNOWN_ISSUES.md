@@ -4,7 +4,7 @@ Last reviewed: 2026-10-19
 
 Scope: whole repository, reviewed as a single-user, offline desktop tool for one FLL robot. This is not a multi-user or server-scale review.
 
-Status: KI-001 through KI-003, KI-005 through KI-019, KI-021 through KI-031, KI-033 through KI-044, KI-045, KI-046, and KI-047 through KI-050 are **fixed**. KI-032 is **mitigated** (test cache). KI-004 is **repaired as seed provider**. Open: KI-020 (hardware calibration & digital twin validation).
+Status: KI-001 through KI-003, KI-005 through KI-019, KI-021 through KI-031, KI-033 through KI-044, KI-045, KI-046, KI-047 through KI-051 are **fixed**. KI-032 is **mitigated** (test cache). KI-004 is **repaired as seed provider**. Open: KI-020 (hardware calibration & digital twin validation), KI-052 (the CLI and the library plan different trajectories for the same mission).
 
 How to use this list: refer to an item by its ID, for example “fix KI-003”.
 
@@ -62,6 +62,8 @@ How to use this list: refer to an item by its ID, for example “fix KI-003”.
 | KI-048 | P1 | Solver / output | ~~The solver gives up on a path instead of trying another candidate~~ (fixed; a rescue round tries the other seeds when the run produces nothing) |
 | KI-049 | P1 | Validation | ~~The reachability envelope reported a 54 mm width that was the divergence guard's fingerprint, and the tube behind it was blown up by a dependency the interval arithmetic could not see~~ (fixed) |
 | KI-050 | P1 | Validation | ~~The closed-loop tick map could not run at all on the installed JAX: the controller unpacked the pose, and Immrax's natural inclusion has no rule for `unstack`~~ (fixed) |
+| KI-051 | P2 | CLI / solver | ~~`--self-consistent` is a no-op: the switch cannot change the plan and the trapezoidal collocation cannot be reached from the CLI~~ (fixed; switch is two-way `--self-consistent/--no-self-consistent` and default True) |
+| KI-052 | P2 | CLI / solver | The CLI and the library plan different trajectories for the same mission: the CLI is self-consistent by default, the library is not (open) |
 
 ## P0 — fix first
 
@@ -837,6 +839,35 @@ The tick map is uniformly tighter and much tighter on the curves (2.9x on the S-
 
 ---
 
+### KI-051 - `--self-consistent` was a no-op: the switch could not change the plan
+
+**Status:** Fixed. The flag is two-way now (`--self-consistent/--no-self-consistent`, default on) and the CLI passes the value to the solver explicitly, so the trapezoidal collocation is reachable again.
+
+**Files:** `main.py` (`--self-consistent/--no-self-consistent`), `optimizer.py` (`solve`), `research/harness.py` (`--self-consistent`), `viz/studio.html` (the switch), `viz/studio.js` (the switch), `docs/research/RQ-A_tracking_error.md` (F10)
+
+**Problem:** The self-consistent collocation (KI-026) was an opt-in, and the default was then flipped to `True` without the CLI being changed with it: `main.py` only ever set `solve_kwargs["self_consistent"] = True` and never `False`, so the switch could not change the plan and the trapezoidal rule could not be reached from the command line. `research/harness.py` had the same one-way switch.
+
+**Evidence:** Solving `examples/example_s_curve.json` with and without `--self-consistent` produced identical samples (21 samples, 3.725 s, every field of every sample equal); the only difference between the two files was the trajectory's `name`, which comes from the output file name.
+
+**Fix (implemented):** the flag is a pair, `--self-consistent/--no-self-consistent`, with the default on, and the CLI passes the value through explicitly. The two plans are measurably different: the S-curve is 3.725 s / 1.250 m self-consistent and 3.696 s / 1.233 m trapezoidal, with tracking errors of 0.55 cm and 1.31 cm. The Multi-Verse path uses the trapezoidal rule and refuses the flag when it is given explicitly.
+
+**What is left:** the CLI's default and the **library's** default still disagree - `TrajectoryOptimizer.solve` has `self_consistent=False`, so a library caller gets the trapezoidal plan for the same mission the CLI plans self-consistently. That is KI-052.
+
+### KI-052 - The CLI and the library plan different trajectories for the same mission
+
+**Status:** Open.
+
+**Files:** `optimizer.py` (`solve`), `main.py` (`--self-consistent/--no-self-consistent`), `research/harness.py` (`--self-consistent`), `docs/research/RQ-A_tracking_error.md` (F10), `docs/HEURISTICS_AND_VERIFICATION.md` (§9)
+
+**Problem:** The self-consistent collocation (KI-026) is the **command line's** default: `main.py` has `--self-consistent/--no-self-consistent` with the default on, and it passes the value to the solver explicitly. The **library's** default is the other way round: `TrajectoryOptimizer.solve` has `self_consistent=False`, so the same mission solved through the library is planned with the trapezoidal rule.
+
+So the same waypoints, the same robot and the same solver give two different plans depending on who asked. On `examples/example_s_curve.json` the two are 3.725 s / 1.250 m (self-consistent) and 3.696 s / 1.233 m (trapezoidal), and their tracking errors are 0.55 cm and 1.31 cm - more than a factor of two apart on the gate that decides the mission.
+
+**Why it matters:** the numbers in `docs/HEURISTICS_AND_VERIFICATION.md` §9 were measured with the trapezoidal rule, and the CLI now plans the other one by default. A reader who reproduces a table by hand from the command line gets different trajectories from the ones the table quotes, so the tables stop describing the shipped behaviour until they are re-measured. The tree's own rule - the source is the authority, and a number without the model that produced it cannot be read - applies here as well.
+
+**Workaround:** Pass `self_consistent=True` (or `False`) explicitly when the library is used, and say which collocation a number was measured with. `research/harness.py` follows the library, so its numbers are the trapezoidal ones unless it is told otherwise. **Making the two defaults the same would close it**; whichever way it goes, the flag's help text and the notes have to name the default they use.
+---
+
 ## P2 — cleanup
 
 ### KI-017 — Convergence flags do nothing
@@ -1030,7 +1061,7 @@ A real gear backlash is a *position* dead-band: it is taken up once at a directi
 
 ### KI-026 - The plan's samples were not on the path its own profile traces
 
-**Status:** Fixed in the working tree (uncommitted), behind `--self-consistent` (off by default, so the measured plans stay reproducible).
+**Status:** Fixed. The CLI plans a self-consistent trajectory by default (`--self-consistent/--no-self-consistent`, default on, KI-026), and `--no-self-consistent` restores the trapezoidal rule. The **library's** default is the other way round (`TrajectoryOptimizer.solve` has `self_consistent=False`), which is KI-052.
 
 **Files:** `optimizer.py` (`solve`, `_solve_once`, `_GAUSS_LEGENDRE_4`), `main.py` (`--self-consistent`), `tests/test_optimizer.py` (`TestSelfConsistentPlan`), `docs/research/RQ-A_tracking_error.md`
 
@@ -1042,7 +1073,7 @@ A real gear backlash is a *position* dead-band: it is taken up once at a directi
 
 **Also measured:** The change is not a free win, and it is not the whole fix. The S-curve still misses the 5 mm gate by 0.05 cm. The complex mission's passing candidate moves from 0.49 cm to 0.51 cm, so it now fails by 0.01 cm. The stops mission gets slower (6.2 s to 7.8 s) because a direction reversal is where a self-consistent plan is hardest (RQ-A OQ5). The first-four-waypoints mission is unchanged. These numbers are measured with RQ-A's F7, the coupled reference interpolation, already in the tree; before F7 landed the S-curve's self-consistent candidate measured 0.47 cm and passed, so the two changes interact and have to be tuned together.
 
-**Workaround:** The default is unchanged; the candidate set has to be re-tuned under the new formulation (the sweep and the seed conclusions), and the stops mission needs its own treatment before the flag can be the default. The tracking gate still measures a discretisation mismatch until the control tick is re-measured (RQ-A OQ1) — which KI-028 has now done, and the numbers above predate it.
+**Workaround:** The command line plans the collocation by default, so a run needs no switch; `--no-self-consistent` restores the trapezoidal rule. The candidate set, the sweep and the seed conclusions have to be re-measured under it, and the stops mission needs its own treatment. The tracking gate still measures a discretisation mismatch until the control tick is re-measured (RQ-A OQ1) - which KI-028 has now done, and the numbers above predate it. The **library** still defaults to the trapezoidal rule, so a library caller has to ask for the other one (KI-052).
 
 ### KI-028 — The validator modelled a controller that is not the one that runs
 
@@ -1072,8 +1103,10 @@ So there was no single behaviour for one validator to mirror: the plain compact 
 **What it does and does not change.** With the period the same on both sides, the remaining parity fixes are worth about 1 % (the rounding and the gain, which finding F7 measured as worth nothing), so the tracking numbers barely move: the legacy mirror and the deployed mirror now differ by 0.94-1.02x on every (mission, density) cell. What changes is that the model now says what the robot does, and that the two compact controllers can no longer drift apart. The gate is unchanged in its strictness relative to the 20 ms model the tree already used, and stricter than a 5 ms one would be.
 
 **Workaround:** None needed. The two gaps recorded in the RQ-A note are now resolved:
-1. `KinematicLimiter` no longer injects an artificial velocity boost on direction reversal; backlash is strictly treated as a position uncertainty in the reachable set (KI-025), and the limiter purely enforces physical torque and traction limits on commanded accelerations.
+1. `KinematicLimiter` no longer injects an artificial velocity boost on direction reversal; backlash is strictly treated as a position uncertainty in the reachable set (KI-025), and the limiter purely enforces physical torque and traction limits on commanded accelerations. It now also derates the **inner** wheel's traction with the lateral weight transfer - the same `nl = mg/2 - m*h*a_c/b` the host's `wheel_normal_forces` computes (KI-010) - and its fallback numbers are the robot's own (mass 1.5 kg, 19.4 rad/s, 0.138 Nm, `cof` 0.6, `h_cg` 0.05 m), so an empty config no longer plans a weaker robot than the one the host plans for.
 2. `pybricks_code/ramsete_fast.py` now recomputes the Ramsete gain from interpolated reference speed and turn rate (`math.sqrt(wr**2 + b*vr**2)`), passes unrounded float commands to `DriveBase.drive()`, and applies `KinematicLimiter` when `config` is provided, bringing all four firmware controllers in `pybricks_code/` into parity with the validator's unquantized command model.
+
+**One implementation, not four.** The duplication KI-028 described is now gone: `pybricks_code/ramsete.py` holds the odometry, the Ramsete maths, the limiter and the 20 ms loop, and the other modules are thin wrappers over it - `ramsete_fast.py` delegates to `ramsete.py`, and `ramsete_compact.py` delegates to `ramsete_compact_events.py` with the events off. A second copy of the controller can no longer drift away from the one that runs, which is what made the table above possible in the first place. `tests/test_firmware_events.py::TestFirmwareParity` pins the result: the two compact controllers must use the shared parts, the limiter's fallback numbers must be the robot's own, the limiter must apply the lateral weight transfer, and the wrapper must still drive a trajectory.
 
 ---
 

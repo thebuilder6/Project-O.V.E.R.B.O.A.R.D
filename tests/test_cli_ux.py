@@ -458,6 +458,108 @@ class TestValidationReport(unittest.TestCase):
                                    excess * 100.0, places=6)
 
 
+class TestVariableSampleLayout(unittest.TestCase):
+    """The gate follows the optimizer's own sample layout.
+
+    The optimizer splits the sample budget across the waypoint segments in
+    proportion to their length, so the waypoints are not k *
+    samples_per_segment apart. A consumer that assumes they are applies a
+    waypoint's envelope threshold to the wrong samples, and groups the
+    per-segment report wrongly.
+    """
+
+    def setUp(self):
+        import main
+        self.main = main
+        self.runner = CliRunner()
+        self.repo = REPO_ROOT
+
+    # Three segments with four, two and three samples: ten samples in all.
+    COUNTS = [4, 2, 3]
+
+    class _Optimizer:
+        def __init__(self, config):
+            pass
+
+        def solve(self, *args, **kwargs):
+            n = sum(TestVariableSampleLayout.COUNTS) + 1
+            samples = [{
+                "t": i * 0.1, "x": 0.01 * i, "y": 0.0, "heading": 0.0,
+                "vl": 0.1, "vr": 0.1, "omega": 0.0,
+                "al": 0.0, "ar": 0.0, "fl": 0.0, "fr": 0.0,
+            } for i in range(n)]
+            return samples, {"converged": True, "final_cost": 1.0,
+                             "segment_samples":
+                                 list(TestVariableSampleLayout.COUNTS)}
+
+    class _Immrax:
+        """A narrow envelope, except on the second segment's samples."""
+
+        def __init__(self, config, digital_twin=None, **kwargs):
+            pass
+
+        def validate_trajectory(self, samples, *ranges, **kwargs):
+            envelope = []
+            for i, s in enumerate(samples):
+                # Samples 4 and 5 are the second segment's.
+                half = 0.05 if i in (4, 5) else 0.001
+                envelope.append({
+                    "x_min": s["x"] - half, "x_max": s["x"] + half,
+                    "y_min": s["y"] - half, "y_max": s["y"] + half,
+                })
+            return {
+                "passed": True,
+                "max_motor_violation_N": 0.0,
+                "max_traction_violation_N": 0.0,
+                "max_slip_l_N": 0.0,
+                "max_slip_r_N": 0.0,
+                "max_tracking_error_m": 0.001,
+                "reachability": {"max_error_m": 0.07, "envelope": envelope,
+                                 "diverged": False},
+            }
+
+    def _run(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            wp = os.path.join(tmp, "wp.json")
+            out = os.path.join(tmp, "out.traj")
+            with open(wp, "w", encoding="utf-8") as handle:
+                json.dump([{"x": 0.0, "y": 0.0, "heading": 0.0},
+                           {"x": 0.1, "y": 0.0, "heading": 0.0},
+                           {"x": 0.2, "y": 0.0, "heading": 0.0},
+                           {"x": 0.3, "y": 0.0, "heading": 0.0}], handle)
+            with patch.object(self.main, "TrajectoryOptimizer", self._Optimizer), \
+                    patch.object(self.main, "ImmraxValidator", self._Immrax):
+                result = self.runner.invoke(self.main.main, [
+                    "-c", os.path.join(self.repo, "examples", "fll_choreo.json"),
+                    "-w", wp, "-o", out, "--simple", "--validate"])
+        marker = [line for line in result.output.splitlines()
+                   if line.startswith(self.main.VALIDATION_MARKER)]
+        self.assertEqual(len(marker), 1, result.output)
+        return json.loads(marker[0][len(self.main.VALIDATION_MARKER):])
+
+    def test_the_segments_follow_the_optimizers_layout(self):
+        """Each segment holds its own samples, not a tenth of the run."""
+        payload = self._run()
+        segments = payload["candidates"][0]["segments"]
+        self.assertEqual(len(segments), 3)
+        # The envelope of a segment is the widest of its own samples, and
+        # every sample's envelope is 1 mm wider than the last one's.
+        widths = [round(segment["envelope_m"], 6) for segment in segments]
+        self.assertEqual(widths, [0.002, 0.003, 0.005])
+
+    def test_a_tight_threshold_applies_to_its_own_waypoint(self):
+        """The failing segment is the one the tight threshold belongs to."""
+        payload = self._run()
+        candidate = payload["candidates"][0]
+        failing = [segment["from"] for segment in candidate["segments"]
+                   if not segment["ok"]]
+        # The wide envelope is on the second segment's samples, and that
+        # segment is the one a tight threshold on its waypoint applies to.
+        # With the uniform layout those samples would be read as the first
+        # segment's, and the first segment would be the one that failed.
+        self.assertEqual(failing, [1])
+
+
 class TestIterationHistory(unittest.TestCase):
     """--iteration-history writes how the trajectory converged."""
 

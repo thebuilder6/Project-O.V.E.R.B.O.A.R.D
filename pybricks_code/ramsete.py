@@ -32,7 +32,7 @@ def _fire_event(sample, event_map, debug=False, when=0.0):
     sample['event_fired'] = True
 
     if debug:
-        print(f"[{when:.2f}s] Event triggered: {name}")
+        print("[%.2fs] Event triggered: %s" % (when, name))
 
     # If a dictionary was passed and the event exists in it
     if event_map and name in event_map:
@@ -130,15 +130,16 @@ class KinematicLimiter:
     Limits the commands based on robot's physical capabilities.
     """
     def __init__(self, config, backlash_m=0.0004):
-        self.mass = config.get("mass", 0.8)
+        self.mass = config.get("mass", 1.5)
         self.inertia = config.get("inertia", 0.001)
         self.track_width = config.get("track_width", 0.0965)
         self.wheel_radius = config.get("wheel_radius", 0.028)
-        self.v_max_rad_s = config.get("v_max_rad_s", 15.7)
-        self.t_max_nm = config.get("t_max_nm", 0.04)
+        self.v_max_rad_s = config.get("v_max_rad_s", 19.4)
+        self.t_max_nm = config.get("t_max_nm", 0.138)
         self.gearing = config.get("gearing", 1.0)
-        self.cof = config.get("cof", 1.5)
+        self.cof = config.get("cof", 0.6)
         self.g = 9.81
+        self.h_cg = config.get("h_cg", 0.05)
         self.backlash_m = backlash_m
         
         self.last_vl = 0.0
@@ -184,11 +185,22 @@ class KinematicLimiter:
         Fl_ach *= scale
         Fr_ach *= scale
         
-        traction_max = self.cof * self.mass * self.g
-        if abs(Fl_ach) + abs(Fr_ach) > traction_max:
-            traction_scale = traction_max / (abs(Fl_ach) + abs(Fr_ach))
-            Fl_ach *= traction_scale
-            Fr_ach *= traction_scale
+        # Per-wheel traction limit with lateral weight transfer (KI-010)
+        centripetal_accel = current_v * current_omega
+        base_normal = (self.mass * self.g) / 2.0
+        lateral_transfer = centripetal_accel * (self.mass * self.h_cg) / L
+        nl = max(0.0, base_normal - lateral_transfer)
+        nr = max(0.0, base_normal + lateral_transfer)
+
+        tr_max_l = self.cof * nl
+        tr_max_r = self.cof * nr
+
+        scale_tr_l = tr_max_l / abs(Fl_ach) if abs(Fl_ach) > tr_max_l else 1.0
+        scale_tr_r = tr_max_r / abs(Fr_ach) if abs(Fr_ach) > tr_max_r else 1.0
+        scale_tr = min(1.0, scale_tr_l, scale_tr_r)
+
+        Fl_ach *= scale_tr
+        Fr_ach *= scale_tr
             
         F_total_ach = Fl_ach + Fr_ach
         M_total_ach = (Fr_ach - Fl_ach) * L / 2.0
@@ -227,7 +239,7 @@ async def follow_trajectory(drivebase, samples, config=None, b=2.0, zeta=0.7, de
         print("No samples provided.")
         return
     
-    print(f"Following {len(samples)} samples.")
+    print("Following %d samples." % len(samples))
     
     num_samples = len(samples)
     sample_idx = 0
@@ -341,7 +353,7 @@ async def follow_trajectory(drivebase, samples, config=None, b=2.0, zeta=0.7, de
         
         if debug:
             # Print telemetry for external plotting: LOG,time,x,y,ref_x,ref_y
-            print(f"LOG,{t:.3f},{odom.x:.4f},{odom.y:.4f},{xr:.4f},{yr:.4f}")
+            print("LOG,%.3f,%.4f,%.4f,%.4f,%.4f" % (t, odom.x, odom.y, xr, yr))
         
         # The 20 ms heartbeat, synced so the period is exact.
         #
@@ -367,11 +379,11 @@ async def follow_trajectory(drivebase, samples, config=None, b=2.0, zeta=0.7, de
         avg_calc = total_calc_time / loop_count
         avg_dt = (total_time * 1000.0) / loop_count
         print("--- Performance Metrics ---")
-        print(f"Total Loops: {loop_count}")
-        print(f"Avg Loop Time (dt): {avg_dt:.1f} ms ({1000.0/avg_dt:.1f} Hz)")
-        print(f"Max Loop Time (dt): {max_dt * 1000.0:.1f} ms")
-        print(f"Avg Math Calc Time: {avg_calc:.1f} ms")
-        print(f"Max Math Calc Time: {max_calc_time:.1f} ms")
+        print("Total Loops: %d" % loop_count)
+        print("Avg Loop Time (dt): %.1f ms (%.1f Hz)" % (avg_dt, 1000.0 / avg_dt if avg_dt > 0 else 0.0))
+        print("Max Loop Time (dt): %.1f ms" % (max_dt * 1000.0))
+        print("Avg Math Calc Time: %.1f ms" % avg_calc)
+        print("Max Math Calc Time: %.1f ms" % max_calc_time)
         print("---------------------------")
     drivebase.stop()
 

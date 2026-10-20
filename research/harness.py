@@ -422,7 +422,7 @@ def _initial_guess(spec: Dict[str, Any], mission: Dict[str, Any], robot_cfg):
 
 
 def _payloads(mission: Dict[str, Any], specs: List[Dict[str, Any]], robot_cfg,
-              self_consistent: bool = False) -> List[Any]:
+              self_consistent: bool = True) -> List[Any]:
     """The solve payloads for one mission on one robot."""
     waypoints = mission["waypoints"]
     stop_indices = mission["stop_indices"]
@@ -441,8 +441,7 @@ def _payloads(mission: Dict[str, Any], specs: List[Dict[str, Any]], robot_cfg,
         if engine == "simple":
             solve_kwargs["guess_style"] = spec["style"]
             solve_kwargs["per_segment_dt"] = spec["timing"] == "per-segment"
-            if self_consistent:
-                solve_kwargs["self_consistent"] = True
+            solve_kwargs["self_consistent"] = bool(self_consistent)
             guess = _initial_guess(spec, mission, robot_cfg)
             if guess is not None:
                 solve_kwargs["initial_guess"] = guess
@@ -453,7 +452,7 @@ def _payloads(mission: Dict[str, Any], specs: List[Dict[str, Any]], robot_cfg,
 
 def _score_jobs(jobs: List[Any], solved: List[Any], validator_cls,
                 robot_config_cls, spreads: Sequence[float] = (1.0,),
-                profiles: bool = False, self_consistent: bool = False,
+                profiles: bool = False, self_consistent: bool = True,
                 propagation: str = "plant"
                 ) -> List[Dict[str, Any]]:
     """Score a solved batch. One job per solved payload, in order.
@@ -500,7 +499,7 @@ def run_mission(mission: Dict[str, Any], specs: List[Dict[str, Any]], robot_cfg,
                 validator_cls, robot_config_cls, critic=None,
                 workers: int = 8, profiles: bool = False,
                 spreads: Sequence[float] = (1.0,),
-                self_consistent: bool = False,
+                self_consistent: bool = True,
                 propagation: str = "plant") -> List[Dict[str, Any]]:
     """Solve every spec for one mission and score each result."""
     payloads = _payloads(mission, specs, robot_cfg, self_consistent)
@@ -542,10 +541,12 @@ def main() -> None:
     parser.add_argument("--spreads", type=float, nargs="*", default=None,
                         help="Validate every candidate at these spread "
                              "factors. Overrides --spread.")
-    parser.add_argument("--self-consistent", action="store_true",
+    parser.add_argument("--self-consistent", dest="self_consistent", action="store_true", default=True,
                         help="Plan self-consistent trajectories (KI-026): the "
                              "samples lie on the path the plan's own profile "
-                             "traces.")
+                             "traces (default: True).")
+    parser.add_argument("--no-self-consistent", dest="self_consistent", action="store_false",
+                        help="Disable self-consistent trajectories (use trapezoidal collocation).")
     parser.add_argument("--robot-jitter", type=float, default=0.0,
                         help="Move the robot's constants away from the "
                              "declared values: 0 = the declared robot, 1 = the "

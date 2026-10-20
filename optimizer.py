@@ -1,4 +1,5 @@
 import math
+import time
 from typing import List, Dict, Tuple, Any, Optional, Union, Sequence
 import numpy as np
 import casadi as ca
@@ -43,7 +44,7 @@ class TrajectoryOptimizer:
         num_segments = len(waypoints) - 1
         if num_segments <= 0:
             return []
-        if isinstance(num_samples_per_segment, (list, tuple)):
+        if isinstance(num_samples_per_segment, (list, tuple, np.ndarray)):
             if len(num_samples_per_segment) != num_segments:
                 raise ValueError(
                     f"Sample counts list has {len(num_samples_per_segment)} entries; "
@@ -70,7 +71,6 @@ class TrajectoryOptimizer:
         if total_budget < num_segments * m:
             return [s_int] * num_segments
 
-        # Baseline allocation of m samples per segment
         rem_budget = total_budget - num_segments * m
         raw_alloc = [rem_budget * (l / total_length) for l in lengths]
         int_alloc = [int(np.floor(a)) for a in raw_alloc]
@@ -83,7 +83,26 @@ class TrajectoryOptimizer:
 
         return [m + int_alloc[i] for i in range(num_segments)]
 
-    def solve(self, waypoints: List[Tuple[float, float, Optional[float]]], num_samples_per_segment: int = 10, accuracy_weight: float = 0.0, stop_waypoint_indices: Optional[List[int]] = None, waypoint_events: Optional[Dict[int, str]] = None, apply_headroom: bool = True, verbose: bool = True, capture_iterations: bool = False, guess_style: str = "baseline", per_segment_dt: bool = False, initial_guess: Optional[np.ndarray] = None, fast_polish: bool = False, polish_iter_budget: int = 200, solver_options: Optional[Dict[str, Any]] = None, self_consistent: bool = True, proportional_samples: bool = True, split_at_boundaries: bool = True) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
+    def solve(
+        self,
+        waypoints: List[Tuple[float, float, Optional[float]]],
+        num_samples_per_segment: Union[int, Sequence[int]] = 10,
+        accuracy_weight: float = 0.0,
+        stop_waypoint_indices: Optional[List[int]] = None,
+        waypoint_events: Optional[Dict[int, str]] = None,
+        apply_headroom: bool = True,
+        verbose: bool = True,
+        capture_iterations: bool = False,
+        guess_style: str = "baseline",
+        per_segment_dt: bool = False,
+        initial_guess: Optional[np.ndarray] = None,
+        fast_polish: bool = False,
+        polish_iter_budget: int = 200,
+        solver_options: Optional[Dict[str, Any]] = None,
+        self_consistent: bool = True,
+        proportional_samples: bool = True,
+        split_at_boundaries: bool = True,
+    ) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
         """
         waypoints: list of (x, y, heading)
         heading is in radians. None means unconstrained.
@@ -102,41 +121,29 @@ class TrajectoryOptimizer:
         initial_guess: optional [dt..., states...] array (the layout
                         _build_initial_guess returns) to start IPOPT from.
                         None means build the guess from guess_style.
-        fast_polish: if True, use the fast solve path. The single pass asks
-                   IPOPT to treat the initial point as a previous iterate,
-                   which on a large mission makes it crawl through thousands
-                   of iterations for an answer a cold pass reaches in a
-                   fraction of the time. The fast path gives the warm pass an
-                   iteration budget, then finishes from that point with a
-                   cold pass. A mission that solves within the budget returns
-                   exactly the single-pass result, and a mission where the
-                   cold finish fails falls back to the unbudgeted pass, so
-                   the fast path never loses a mission that solves today.
-        polish_iter_budget: iteration budget for the warm pass in the fast
-                   path. Missions that need more iterations than this are
-                   finished with a cold pass instead.
+        fast_polish: if True, use the fast solve path.
+        polish_iter_budget: iteration budget for the warm pass in the fast path.
         solver_options: extra IPOPT options that override the defaults.
-        self_consistent: if True, place the samples on the path the
+        self_consistent: if True (default), place the samples on the path the
                     trajectory's own (v, omega) profile traces, by
-                    integrating that profile with a Gauss-Legendre rule
-                    instead of the trapezoid rule. The plan is then
-                    self-consistent by construction: the samples lie on the
-                    path and the headings are its tangents. On by default
-                    (KI-026).
-        proportional_samples: if True (default), allocate sample counts across
-                    segments proportional to segment arc length (KI-024).
+                    integrating that profile with a Gauss-Legendre rule.
+        proportional_samples: if True (default), allocate sample counts
+                    proportional to segment arc length (KI-024).
         split_at_boundaries: if True (default), split trajectories at waypoints
-                    where stop=True and heading is not None (boundary=True in
-                    merge_conditions), solve each sub-mission independently (with
-                    its own best seed and dt), and stitch before validation (KI-024, RQ-A OQ5).
+                    where stop=True and heading is not None (boundary stops)
+                    into independent sub-missions and stitch solutions.
         """
+        num_segments = len(waypoints) - 1
+
         if stop_waypoint_indices is None:
             stop_waypoint_indices = []
         if waypoint_events is None:
             waypoint_events = {}
 
+        # Split trajectories at boundary stops (stop=True and heading is pinned)
+        # into independent sub-missions and stitch (KI-024, RQ-A OQ5).
         conds = self.merge_conditions(waypoints, stop_waypoint_indices)
-        split_indices = [i for i in range(1, len(waypoints) - 1) if conds[i]["boundary"]]
+        split_indices = [c["index"] for c in conds if c["boundary"] and 0 < c["index"] < len(waypoints) - 1]
 
         if split_at_boundaries and split_indices and initial_guess is None:
             splits = [0] + split_indices + [len(waypoints) - 1]
@@ -153,22 +160,27 @@ class TrajectoryOptimizer:
                     elif m > 0 and start_i < idx <= end_i:
                         sub_events[idx - start_i] = ev
 
-                # Solve each sub-mission independently (with its own best seed and dt)
+                if isinstance(num_samples_per_segment, (list, tuple, np.ndarray)):
+                    sub_samples_alloc = list(num_samples_per_segment[start_i:end_i])
+                else:
+                    sub_samples_alloc = num_samples_per_segment
+
                 best_sub_samples = None
                 best_sub_stats = None
-                best_cost = float("inf")
+                best_sub_hist = []
                 styles_to_try = [guess_style] + [s for s in GUESS_STYLES if s != guess_style]
                 for style in styles_to_try:
                     try:
+                        self.iteration_history = []
                         s_samples, s_stats = self.solve(
                             sub_wps,
-                            num_samples_per_segment=num_samples_per_segment,
+                            num_samples_per_segment=sub_samples_alloc,
                             accuracy_weight=accuracy_weight,
                             stop_waypoint_indices=sub_stops,
                             waypoint_events=sub_events,
                             apply_headroom=apply_headroom,
-                            verbose=False,
-                            capture_iterations=False,
+                            verbose=verbose and (m == 0),
+                            capture_iterations=capture_iterations,
                             guess_style=style,
                             per_segment_dt=per_segment_dt,
                             fast_polish=fast_polish,
@@ -179,39 +191,25 @@ class TrajectoryOptimizer:
                             split_at_boundaries=False,
                         )
                         if s_stats.get("converged", False):
-                            cost = float(s_stats.get("final_cost", float("inf")))
-                            if cost < best_cost:
-                                best_cost = cost
-                                best_sub_samples = s_samples
-                                best_sub_stats = s_stats
-                    except Exception:
-                        pass
+                            best_sub_samples = s_samples
+                            best_sub_stats = s_stats
+                            best_sub_hist = list(self.iteration_history)
+                            break
+                        elif best_sub_samples is None:
+                            best_sub_samples = s_samples
+                            best_sub_stats = s_stats
+                            best_sub_hist = list(self.iteration_history)
+                    except Exception as e:
+                        if best_sub_samples is None and style == styles_to_try[-1]:
+                            raise e
 
-                if best_sub_samples is None:
-                    best_sub_samples, best_sub_stats = self.solve(
-                        sub_wps,
-                        num_samples_per_segment=num_samples_per_segment,
-                        accuracy_weight=accuracy_weight,
-                        stop_waypoint_indices=sub_stops,
-                        waypoint_events=sub_events,
-                        apply_headroom=apply_headroom,
-                        verbose=verbose,
-                        capture_iterations=capture_iterations,
-                        guess_style=guess_style,
-                        per_segment_dt=per_segment_dt,
-                        fast_polish=fast_polish,
-                        polish_iter_budget=polish_iter_budget,
-                        solver_options=solver_options,
-                        self_consistent=self_consistent,
-                        proportional_samples=proportional_samples,
-                        split_at_boundaries=False,
-                    )
-                sub_results.append((best_sub_samples, best_sub_stats))
+                sub_results.append((best_sub_samples, best_sub_stats, best_sub_hist))
 
             stitched_samples = []
             stitched_dts = []
+            stitched_samples_counts = []
             current_t = 0.0
-            for m, (sub_samples, sub_stats) in enumerate(sub_results):
+            for m, (sub_samples, sub_stats, _) in enumerate(sub_results):
                 if m == 0:
                     for s in sub_samples:
                         stitched_samples.append(dict(s))
@@ -223,17 +221,54 @@ class TrajectoryOptimizer:
                         stitched_samples.append(s_copy)
                     current_t = stitched_samples[-1]["t"]
                 stitched_dts.extend(sub_stats.get("segment_dt", []))
+                stitched_samples_counts.extend(sub_stats.get("segment_samples", []))
 
             stats = {
                 "total_time": current_t,
-                "initial_cost": sum(s.get("initial_cost", 0.0) for _, s in sub_results),
-                "final_cost": sum(s.get("final_cost", 0.0) for _, s in sub_results),
+                "initial_cost": sum(s.get("initial_cost", 0.0) for _, s, _ in sub_results),
+                "final_cost": sum(s.get("final_cost", 0.0) for _, s, _ in sub_results),
                 "segment_dt": stitched_dts,
-                "converged": all(s.get("converged", False) for _, s in sub_results),
+                "segment_samples": stitched_samples_counts,
+                "converged": all(s.get("converged", False) for _, s, _ in sub_results),
                 "sub_mission_count": len(splits) - 1,
             }
-            if any(s.get("fast_polish", False) for _, s in sub_results):
+            if any(s.get("fast_polish", False) for _, s, _ in sub_results):
                 stats["fast_polish"] = True
+                stats["stage_count"] = sum(s.get("stage_count", 1) for _, s, _ in sub_results)
+                stats["stage_times"] = [s.get("total_time", 0.0) for _, s, _ in sub_results]
+                stage_iters = []
+                for _, s, _ in sub_results:
+                    if "stage_iterations" in s and s["stage_iterations"]:
+                        stage_iters.extend(s["stage_iterations"])
+                    elif "iter_count" in s:
+                        stage_iters.append(s["iter_count"])
+                stats["stage_iterations"] = stage_iters
+
+            if capture_iterations and all(len(hist) >= 2 for _, _, hist in sub_results):
+                stitched_guess_traj = sub_results[0][2][0]["trajectory"]
+                stitched_final_traj = sub_results[0][2][-1]["trajectory"]
+                for _, _, hist in sub_results[1:]:
+                    stitched_guess_traj = np.vstack([stitched_guess_traj, hist[0]["trajectory"][1:]])
+                    stitched_final_traj = np.vstack([stitched_final_traj, hist[-1]["trajectory"][1:]])
+                self.iteration_history = [
+                    {
+                        "iteration": 0,
+                        "cost": stats["initial_cost"],
+                        "trajectory": stitched_guess_traj,
+                        "dt": stats["segment_dt"],
+                        "phase": "initial_guess",
+                    },
+                    {
+                        "iteration": 1,
+                        "cost": stats["final_cost"],
+                        "trajectory": stitched_final_traj,
+                        "dt": stats["segment_dt"],
+                        "phase": "final_solution",
+                    },
+                ]
+            else:
+                self.iteration_history = []
+
             return stitched_samples, stats
 
         common = dict(
@@ -255,22 +290,7 @@ class TrajectoryOptimizer:
                                     warm_start=True, stage_label=None,
                                     solver_options=solver_options, **common)
 
-        # Fast path.
-        #
-        # 1. The warm pass with an iteration budget. A mission that converges
-        #    inside the budget returns exactly what the single pass returns.
-        # 2. If the budget ran out, solve it cold instead. The cold pass
-        #    restarts from the original guess, not from the warm pass's
-        #    half-finished trajectory: a cold restart is only cheap from a
-        #    good point. On the complex mission a restart from the warm
-        #    pass's 200-iteration trajectory took 3112 IPOPT iterations and
-        #    12 s, against 508 iterations and 2.3 s from the original
-        #    guess - and against 669 iterations for the plain warm pass
-        #    (KI-047). The fast path exists because the warm pass can
-        #    crawl; the answer is the cold solve, not a restart from a
-        #    half-finished one.
-        # 3. If the cold finish does not converge, run the unbudgeted warm
-        #    pass, so a mission that solves today still solves.
+        # Fast path
         budget = max(1, int(polish_iter_budget))
         warm_options = dict(solver_options or {})
         warm_options["max_iter"] = budget
@@ -295,7 +315,6 @@ class TrajectoryOptimizer:
             samples, stats = stage_b_samples, stage_b_stats
             stage_stats = [stage_a_stats, stage_b_stats]
         else:
-            # The cold finish failed. Fall back to the unbudgeted warm pass.
             samples, stats = self._solve_once(
                 waypoints, initial_guess=initial_guess, warm_start=True,
                 stage_label=None, solver_options=solver_options, **common)
@@ -313,31 +332,6 @@ class TrajectoryOptimizer:
 
     @staticmethod
     def merge_conditions(waypoints, stop_waypoint_indices=None):
-        """Classify every waypoint by the conditions the pieces around it share.
-
-        The path is planned as one NLP over one shared variable set, so the
-        two pieces bounding a waypoint always agree on the state there:
-        position, heading and the wheel velocities are single variables that
-        both pieces see.  What the pieces must *additionally* guarantee is
-        that the wheel force profile runs through the point without a step.
-
-        The four cases:
-
-        * stop and pinned heading -- the state there is fully determined, so
-          the point is a legitimate timing boundary: the pieces on either
-          side need agree on nothing and the timing may be re-chosen.
-        * pinned heading, no stop -- the pieces must agree on the wheel
-          velocities there, and the force profile must be continuous.
-        * stop, no pinned heading -- the pieces must agree on the heading
-          there; the velocity is zero on both sides.
-        * neither -- the pieces must agree on both.
-
-        Returns one dict per waypoint with the keys ``index``, ``stop``,
-        ``heading_pinned``, ``boundary``, ``agree_velocity``,
-        ``agree_heading`` and ``continuous_force``.  ``continuous_force`` is
-        False at a stop: the wheel force has to reverse sign when the robot
-        comes to rest and goes again, so it cannot be continuous there.
-        """
         stops = set(stop_waypoint_indices or [])
         out = []
         for i, wp in enumerate(waypoints):
@@ -357,13 +351,7 @@ class TrajectoryOptimizer:
 
     @staticmethod
     def guess_from_samples(samples: List[Dict[str, Any]], num_segments: int,
-                           num_samples_per_segment: int) -> np.ndarray:
-        """Rebuild a [dt..., states...] guess array from formatted samples.
-
-        The layout matches _build_initial_guess: one sample interval per
-        segment, then the flattened (x, y, heading, vl, vr) states. Used to
-        restart IPOPT from a previous pass.
-        """
+                           num_samples_per_segment: Union[int, Sequence[int]]) -> np.ndarray:
         count = len(samples)
         if count == 0:
             raise ValueError("Cannot build a guess from an empty trajectory")
@@ -371,89 +359,78 @@ class TrajectoryOptimizer:
         states = np.array([[s["x"], s["y"], s["heading"], s["vl"], s["vr"]]
                            for s in samples], dtype=float)
         dts = np.zeros(num_segments, dtype=float)
+        if isinstance(num_samples_per_segment, (list, tuple, np.ndarray)):
+            seg_samples = [int(s) for s in num_samples_per_segment]
+            waypoint_sample_indices = [0] + list(np.cumsum(seg_samples))
+        else:
+            waypoint_sample_indices = [i * int(num_samples_per_segment) for i in range(num_segments + 1)]
+
         for i in range(num_segments):
-            k = min(i * num_samples_per_segment, count - 2)
+            k = min(waypoint_sample_indices[i], count - 2)
             dts[i] = max(times[k + 1] - times[k], 1e-3)
         return np.concatenate([dts, states.flatten()])
 
-    def _solve_once(self, waypoints: List[Tuple[float, float, Optional[float]]], num_samples_per_segment: int = 10, accuracy_weight: float = 0.0, stop_waypoint_indices: Optional[List[int]] = None, waypoint_events: Optional[Dict[int, str]] = None, apply_headroom: bool = True, verbose: bool = True, capture_iterations: bool = False, guess_style: str = "baseline", per_segment_dt: bool = False, initial_guess: Optional[np.ndarray] = None, warm_start: bool = True, stage_label: Optional[str] = None, solver_options: Optional[Dict[str, Any]] = None, self_consistent: bool = False) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
-        """Run one IPOPT pass over the trajectory NLP.
-
-        warm_start=True asks IPOPT to treat the initial point as a previous
-        iterate. warm_start=False is a plain cold start, which converges in far
-        fewer iterations when no earlier iterate exists.
-        """
+    def _solve_once(
+        self,
+        waypoints: List[Tuple[float, float, Optional[float]]],
+        num_samples_per_segment: Union[int, Sequence[int]] = 10,
+        accuracy_weight: float = 0.0,
+        stop_waypoint_indices: Optional[List[int]] = None,
+        waypoint_events: Optional[Dict[int, str]] = None,
+        apply_headroom: bool = True,
+        verbose: bool = True,
+        capture_iterations: bool = False,
+        guess_style: str = "baseline",
+        per_segment_dt: bool = False,
+        initial_guess: Optional[np.ndarray] = None,
+        warm_start: bool = True,
+        stage_label: Optional[str] = None,
+        solver_options: Optional[Dict[str, Any]] = None,
+        self_consistent: bool = True,
+        proportional_samples: bool = True,
+    ) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
         num_segments = len(waypoints) - 1
-        N = num_segments * num_samples_per_segment + 1
+        segment_samples = self.get_segment_sample_counts(
+            waypoints, num_samples_per_segment, proportional=proportional_samples)
+        N = sum(segment_samples) + 1
+        waypoint_sample_indices = [0] + list(np.cumsum(segment_samples))
+        sample_to_segment = np.repeat(np.arange(num_segments), segment_samples)
 
         if stop_waypoint_indices is None:
             stop_waypoint_indices = []
         if waypoint_events is None:
             waypoint_events = {}
 
-        import time
         start_time = time.time()
-
-        # Clear previous iteration history
         self.iteration_history = []
 
         opti = ca.Opti()
 
-        # Decision variables. With per-segment timing, dt[i] is the constant
-        # sample interval inside waypoint segment i; every segment has exactly
-        # num_samples_per_segment intervals, so time is s * sum(dt). The default
-        # keeps the original scalar dt so the validated solve is unchanged.
         if per_segment_dt:
             dt = opti.variable(num_segments)
-            time_cost = num_samples_per_segment * ca.sum1(dt)
+            time_cost = ca.dot(ca.DM(segment_samples), dt)
         else:
             dt = opti.variable()
             time_cost = dt * (N - 1)
-        X = opti.variable(N, 5)  # x, y, theta, vl, vr
+
+        X = opti.variable(N, 5)
 
         def interval_dt(k):
-            """Interval length for the interval starting at sample k."""
-            return dt[k // num_samples_per_segment] if per_segment_dt else dt
+            return dt[sample_to_segment[k]] if per_segment_dt else dt
 
-        # Unpack columns for readability
         x = X[:, 0]
         y = X[:, 1]
         theta = X[:, 2]
         vl = X[:, 3]
         vr = X[:, 4]
 
-        # Merge conditions at the waypoints.
-        #
-        # The pieces bounding a waypoint already agree on the state there:
-        # position, heading and the wheel velocities are single shared
-        # variables.  What the per-piece timing model can break is the
-        # *reading* of the motion profile.  The acceleration on the interval
-        # before waypoint j is (vl[k]-vl[k-1])/dt[j-1] and the one after it
-        # is (vl[k+1]-vl[k])/dt[j], with k = j*num_samples_per_segment.  When
-        # dt changes across the waypoint the same velocity ramp is read as
-        # two different accelerations, so the wheel force profile gets a step
-        # exactly at the point the path is supposed to run through smoothly.
-        # Requiring the two accelerations to match removes that step.
-        #
-        # A waypoint where the robot stops is exempt: the wheel force has to
-        # reverse sign when the robot comes to rest and goes again, so it
-        # cannot be continuous there.  A waypoint where the robot stops AND
-        # the heading is pinned is a full timing boundary (the state is
-        # determined), so nothing is required across it.
-        #
-        # The equal-duration model needs no counterpart: dt never changes
-        # there, so it re-reads the ramp the same way on both sides and the
-        # waypoint is not a special point in the force profile.
-        #
-        # The constraints are added further down, once the starting point is
-        # known, because they are scaled to acceleration units.
         merge_constraints = []
         if per_segment_dt:
             _conds = self.merge_conditions(waypoints, stop_waypoint_indices)
             for _j in range(1, num_segments):
                 if not _conds[_j]["continuous_force"]:
                     continue
-                _k = _j * num_samples_per_segment
+                _k = waypoint_sample_indices[_j]
                 merge_constraints.append((
                     (vl[_k] - vl[_k - 1]) * dt[_j]
                     - (vl[_k + 1] - vl[_k]) * dt[_j - 1],
@@ -461,31 +438,9 @@ class TrajectoryOptimizer:
                     - (vr[_k + 1] - vr[_k]) * dt[_j - 1],
                 ))
 
-        # Objective: minimize total time + smoothness penalty.
-        #
-        # The penalty is on the wheel jerk J = (a[k+1] - a[k]) / dt, where a
-        # is the interval-average acceleration, charged with a path-wide
-        # reference interval so every boundary costs the same per unit of
-        # physical jerk.
-        #
-        # Without that normalisation the raw acceleration jump (a[k+1]-a[k])
-        # is proportional to J*dt, so a segment with a short dt is charged
-        # dt^2 less per unit jerk and can buy violent wheel motion almost for
-        # free. That let the per-segment model reach 68.9 m/s^3 of wheel jerk
-        # where the uniform model reached 9.5 m/s^3 at the same weight
-        # (KI-022).
-        #
-        # The reference interval is the mean interval over the whole path, so
-        # when every dt is equal the scale is exactly 1 and the per-segment
-        # objective reduces to the uniform one. The per-segment model is then
-        # a strict generalisation of the uniform model, not a different
-        # objective. The uniform branch keeps its original expression so the
-        # validated uniform results stay bit-identical.
         smoothness_cost = 0
         if accuracy_weight > 0 and N > 2:
             if per_segment_dt:
-                # time_cost is samples_per_segment * sum(dt) over N-1
-                # intervals, so this is the mean interval over the path.
                 dt_ref = time_cost / (N - 1)
             for k in range(N - 2):
                 al_k = (vl[k + 1] - vl[k]) / interval_dt(k)
@@ -493,10 +448,6 @@ class TrajectoryOptimizer:
                 ar_k = (vr[k + 1] - vr[k]) / interval_dt(k)
                 ar_k1 = (vr[k + 2] - vr[k + 1]) / interval_dt(k + 1)
                 if per_segment_dt:
-                    # Time between the midpoints of the two intervals: the
-                    # acceleration jump happens over that span. Scaling by
-                    # (dt_ref/dt_span)^2 makes the term dt_ref^2 * J^2, so
-                    # every boundary pays the same per unit of physical jerk.
                     dt_span = 0.5 * (interval_dt(k) + interval_dt(k + 1))
                     scale = dt_ref / dt_span
                     smoothness_cost += ((al_k1 - al_k)**2
@@ -505,7 +456,6 @@ class TrajectoryOptimizer:
                     smoothness_cost += (al_k1 - al_k)**2 + (ar_k1 - ar_k)**2
         opti.minimize(time_cost + accuracy_weight * smoothness_cost)
 
-        # Bounds on the interval length(s)
         if per_segment_dt:
             for i in range(num_segments):
                 opti.subject_to(dt[i] >= 0.001)
@@ -514,7 +464,6 @@ class TrajectoryOptimizer:
             opti.subject_to(dt >= 0.001)
             opti.subject_to(dt <= 1.0)
 
-        # Bounds on states
         opti.subject_to(x >= -20)
         opti.subject_to(x <= 20)
         opti.subject_to(y >= -20)
@@ -522,16 +471,13 @@ class TrajectoryOptimizer:
         opti.subject_to(theta >= -100)
         opti.subject_to(theta <= 100)
 
-        # Wheel-speed bounds derived from motor no-load speed
         v_max = self.config.max_linear_speed(apply_headroom)
-        # Use 99 % of no-load speed to avoid the exact zero-force singularity
         v_bound = 0.99 * v_max
         opti.subject_to(vl >= -v_bound)
         opti.subject_to(vl <= v_bound)
         opti.subject_to(vr >= -v_bound)
         opti.subject_to(vr <= v_bound)
 
-        # Trapezoidal collocation & physical constraints
         for k in range(N - 1):
             dt_k = interval_dt(k)
             v1 = (vl[k] + vr[k]) / 2.0
@@ -539,15 +485,7 @@ class TrajectoryOptimizer:
             omega1 = (vr[k] - vl[k]) / self.config.track_width
             omega2 = (vr[k + 1] - vl[k + 1]) / self.config.track_width
 
-            # Kinematic integration
             if self_consistent:
-                # Place the samples on the path the trajectory's own
-                # (v, omega) profile traces, by integrating that profile
-                # instead of sampling only the two endpoints. The heading
-                # along the interval is the one the robot will hold: the
-                # turn rate integrated, theta_k + omega1*s + domega*s^2/2dt.
-                # With that, the samples lie on the path by construction and
-                # the heading samples are its tangents.
                 dx = 0.0
                 dy = 0.0
                 d_omega = omega2 - omega1
@@ -576,19 +514,11 @@ class TrajectoryOptimizer:
                 theta[k + 1] == theta[k] + 0.5 * (omega1 + omega2) * dt_k
             )
 
-            # Accelerations across interval [k, k + 1]
             al = (vl[k + 1] - vl[k]) / dt_k
             ar = (vr[k + 1] - vr[k]) / dt_k
 
-            # Worst-case wheel force over the declared inertia/track-width
-            # ranges. The optimizer must bound the same quantity Immrax will
-            # check, not the nominal value, or a trajectory can pass here and
-            # slip or over-torque there.
             f_bound = self.model.get_max_wheel_force_symbolic(al, ar, apply_headroom)
 
-            # Per-wheel torque-speed limits. With headroom enabled, use the
-            # declared worst case (KI-009/KI-010) so the optimizer and the
-            # Immrax validator agree on the force available at each wheel.
             if apply_headroom:
                 max_fl = self.config.get_max_force_symbolic_robust(vl[k])
                 max_fr = self.config.get_max_force_symbolic_robust(vr[k])
@@ -599,35 +529,28 @@ class TrajectoryOptimizer:
             opti.subject_to(f_bound <= max_fl)
             opti.subject_to(f_bound <= max_fr)
 
-            # Per-wheel traction limit with lateral weight transfer (KI-010),
-            # matching the validator's per-wheel slip check.
             f_traction_max = self.model.get_traction_limit_symbolic(vl[k], vr[k], apply_headroom)
             opti.subject_to(f_bound <= f_traction_max)
 
-        # Waypoint constraints
         for i, wp in enumerate(waypoints):
-            idx = i * num_samples_per_segment
+            idx = waypoint_sample_indices[i]
             opti.subject_to(x[idx] == wp[0])
             opti.subject_to(y[idx] == wp[1])
             if wp[2] is not None:
                 opti.subject_to(theta[idx] == wp[2])
 
-        # Start and end at rest
         opti.subject_to(vl[0] == 0)
         opti.subject_to(vr[0] == 0)
         opti.subject_to(vl[N - 1] == 0)
         opti.subject_to(vr[N - 1] == 0)
 
-        # Intermediate stop waypoints
         for stop_idx in stop_waypoint_indices:
             if stop_idx < 0 or stop_idx >= len(waypoints):
                 continue
-            sample_idx = stop_idx * num_samples_per_segment
+            sample_idx = waypoint_sample_indices[stop_idx]
             opti.subject_to(vl[sample_idx] == 0)
             opti.subject_to(vr[sample_idx] == 0)
 
-        # Initial guess (seeded by guess_style; baseline is the old linear/zero-speed guess).
-        # An explicit guess (e.g. a previous pass's solution) wins over the seed.
         if initial_guess is not None:
             guess = np.asarray(initial_guess, dtype=float)
             if guess.shape[0] != num_segments + N * 5:
@@ -638,22 +561,16 @@ class TrajectoryOptimizer:
                 )
         else:
             guess = self._build_initial_guess(
-                waypoints, num_samples_per_segment, N,
+                waypoints, segment_samples, N,
                 style=guess_style, stop_waypoint_indices=stop_waypoint_indices)
         guess_dt = guess[:num_segments]
         if per_segment_dt:
             opti.set_initial(dt, guess_dt)
         else:
-            opti.set_initial(dt, float(guess_dt[0]))
+            opti.set_initial(dt, float(np.mean(guess_dt)))
         guess_states = guess[num_segments:].reshape((N, 5))
         opti.set_initial(X, guess_states)
 
-        # The merge constraints are scaled to acceleration units so that
-        # IPOPT's absolute constraint tolerance means something physical.
-        # The raw residual (vl[k]-vl[k-1])*dt_next - (vl[k+1]-vl[k])*dt_prev
-        # is in metres, where a 1e-2 tolerance would be a centimetre of
-        # velocity ramp.  Dividing by the reference interval squared turns it
-        # into m/s^2, the same quantity the wheel force follows.
         if merge_constraints:
             dt_ref = float(np.mean(guess_dt)) or 0.1
             scale = 1.0 / (dt_ref * dt_ref)
@@ -661,9 +578,8 @@ class TrajectoryOptimizer:
                 opti.subject_to(_vl_res * scale == 0)
                 opti.subject_to(_vr_res * scale == 0)
         
-        # Capture initial guess for convergence visualization
         if capture_iterations:
-            initial_cost = self._compute_cost(guess, N, num_samples_per_segment, accuracy_weight, waypoints)
+            initial_cost = self._compute_cost(guess, N, segment_samples, accuracy_weight, waypoints)
             self.iteration_history.append({
                 'iteration': 0,
                 'cost': initial_cost,
@@ -672,9 +588,6 @@ class TrajectoryOptimizer:
                 'phase': 'initial_guess'
             })
 
-        # Solver setup
-        # print_time=False silences the IPOPT statistics table CasADi prints
-        # on every solve; it belongs with the solver internals.
         p_opts = {"expand": True, "print_time": bool(verbose)}
         s_opts = {
             "max_iter": 5000,
@@ -686,19 +599,15 @@ class TrajectoryOptimizer:
             "acceptable_iter": 5,
             "nlp_scaling_method": "gradient-based",
             "hessian_approximation": "limited-memory",
-            "sb": "yes",  # Suppress Ipopt banner
-            "mu_strategy": "adaptive",             # Massively speeds up Phase 2
+            "sb": "yes",
+            "mu_strategy": "adaptive",
         }
         if warm_start:
-            # Treat the initial point as a previous iterate. This is what a
-            # polish pass wants, but it is also what makes IPOPT crawl through
-            # thousands of iterations when there is no earlier iterate.
             s_opts["warm_start_init_point"] = "yes"
-            s_opts["warm_start_bound_push"] = 1e-6  # Prevent boundary sticking
+            s_opts["warm_start_bound_push"] = 1e-6
         else:
             s_opts["warm_start_init_point"] = "no"
         if solver_options:
-            # Caller overrides win over the defaults above.
             s_opts.update(solver_options)
         opti.solver("ipopt", p_opts, s_opts)
 
@@ -711,11 +620,10 @@ class TrajectoryOptimizer:
                 dt_val = np.full(num_segments, float(sol.value(dt)))
             X_val = np.array(sol.value(X))
             params = np.concatenate([dt_val, X_val.flatten()])
-            total_time = float(num_samples_per_segment * np.sum(dt_val))
+            total_time = float(np.sum(np.array(segment_samples) * dt_val))
             
-            # Capture final solution for convergence visualization
             if capture_iterations:
-                final_cost = self._compute_cost(params, N, num_samples_per_segment, accuracy_weight, waypoints)
+                final_cost = self._compute_cost(params, N, segment_samples, accuracy_weight, waypoints)
                 self.iteration_history.append({
                     'iteration': len(self.iteration_history),
                     'cost': final_cost,
@@ -729,30 +637,29 @@ class TrajectoryOptimizer:
             
             stats = sol.stats()
             stats["total_time"] = time.time() - start_time
-            stats["initial_cost"] = self._compute_cost(guess, N, num_samples_per_segment, accuracy_weight, waypoints)
+            stats["initial_cost"] = self._compute_cost(guess, N, segment_samples, accuracy_weight, waypoints)
             stats["final_cost"] = total_time
             stats["segment_dt"] = dt_val.tolist()
+            stats["segment_samples"] = [int(s) for s in segment_samples]
             stats["converged"] = True
             
-            return self.format_output(params, N, num_samples_per_segment, waypoint_events), stats
+            return self.format_output(params, N, segment_samples, waypoint_events), stats
         except Exception as e:
             if verbose:
                 if "Maximum_Iterations_Exceeded" in str(e):
                     print(f"{stage_prefix}Optimization stopped at the iteration budget.")
                 else:
                     print(f"{stage_prefix}Optimization failed or timed out:", e)
-            # Return best-effort from debug values
             if per_segment_dt:
                 dt_val = np.asarray(opti.debug.value(dt), dtype=float).reshape(-1)
             else:
                 dt_val = np.full(num_segments, float(opti.debug.value(dt)))
             X_val = np.array(opti.debug.value(X))
             params = np.concatenate([dt_val, X_val.flatten()])
-            total_time = float(num_samples_per_segment * np.sum(dt_val))
+            total_time = float(np.sum(np.array(segment_samples) * dt_val))
             
-            # Capture failed solution for convergence visualization
             if capture_iterations:
-                failed_cost = self._compute_cost(params, N, num_samples_per_segment, accuracy_weight, waypoints)
+                failed_cost = self._compute_cost(params, N, segment_samples, accuracy_weight, waypoints)
                 self.iteration_history.append({
                     'iteration': len(self.iteration_history),
                     'cost': failed_cost,
@@ -763,39 +670,43 @@ class TrajectoryOptimizer:
             
             stats = {
                 "total_time": time.time() - start_time,
-                "initial_cost": self._compute_cost(guess, N, num_samples_per_segment, accuracy_weight, waypoints),
+                "initial_cost": self._compute_cost(guess, N, segment_samples, accuracy_weight, waypoints),
                 "final_cost": total_time,
                 "segment_dt": dt_val.tolist(),
+                "segment_samples": [int(s) for s in segment_samples],
                 "converged": False,
                 "error": str(e)
             }
             if "Maximum_Iterations_Exceeded" in str(e):
-                # The pass ran out of iterations, so it used its whole
-                # budget. Say so: the fast path's report is the sum of the
-                # stages' iterations, and a stage that reports nothing
-                # looks like it did no work.
                 stats["iter_count"] = int(s_opts.get("max_iter", 0) or 0)
-            return self.format_output(params, N, num_samples_per_segment, waypoint_events), stats
+            return self.format_output(params, N, segment_samples, waypoint_events), stats
 
-    def _compute_cost(self, params: np.ndarray, N: int, num_samples_per_segment: int, accuracy_weight: float, waypoints: List[Tuple[float, float, Optional[float]]]) -> float:
-        """Compute cost function value for a given trajectory."""
-        num_segments = N // num_samples_per_segment
-        dt_values = np.asarray(params[:num_segments], dtype=float)
-        states = params[num_segments:].reshape((N, 5))
+    def _compute_cost(self, params: np.ndarray, N: int, num_samples_per_segment: Union[int, Sequence[int]], accuracy_weight: float, waypoints: List[Tuple[float, float, Optional[float]]]) -> float:
+        if len(params) == 1 + N * 5:
+            num_dt = 1
+            num_segments = len(waypoints) - 1
+            dt_values = np.asarray([params[0]] * num_segments, dtype=float)
+            states = params[1:].reshape((N, 5))
+        else:
+            num_dt = len(params) - N * 5
+            num_segments = num_dt
+            dt_values = np.asarray(params[:num_dt], dtype=float)
+            states = params[num_dt:].reshape((N, 5))
+
+        if isinstance(num_samples_per_segment, (list, tuple, np.ndarray)):
+            segment_samples = [int(s) for s in num_samples_per_segment]
+        else:
+            segment_samples = [int(num_samples_per_segment)] * num_segments
+        sample_to_segment = np.repeat(np.arange(num_segments), segment_samples)
         
-        # Time cost: every segment has exactly num_samples_per_segment intervals
-        time_cost = float(num_samples_per_segment * np.sum(dt_values))
+        time_cost = float(np.sum(np.array(segment_samples) * dt_values))
         
-        # Smoothness cost. Mirrors the solver's objective: the wheel jerk
-        # charged with a path-wide reference interval, so the per-segment
-        # model is held to the same jerk discipline as the uniform one
-        # (KI-022). With all dt equal the scale is exactly 1.
         smoothness_cost = 0
         if accuracy_weight > 0 and N > 2:
             dt_ref = time_cost / (N - 1)
             for k in range(N - 2):
-                dt_k = dt_values[k // num_samples_per_segment]
-                dt_k1 = dt_values[(k + 1) // num_samples_per_segment]
+                dt_k = dt_values[sample_to_segment[k]]
+                dt_k1 = dt_values[sample_to_segment[k + 1]]
                 al_k = (states[k + 1, 3] - states[k, 3]) / dt_k
                 al_k1 = (states[k + 2, 3] - states[k + 1, 3]) / dt_k1
                 ar_k = (states[k + 1, 4] - states[k, 4]) / dt_k
@@ -806,34 +717,42 @@ class TrajectoryOptimizer:
         
         return time_cost + accuracy_weight * smoothness_cost
 
-
-    def _build_initial_guess(self, waypoints: List[Tuple[float, float, Optional[float]]], num_samples_per_segment: int, N: int, style: str = "baseline", stop_waypoint_indices: Optional[List[int]] = None) -> np.ndarray:
-        """Build the IPOPT starting point for a given seed style.
-
-        baseline: the original linear/heading interpolation with zero wheel speeds.
-        rolling: baseline geometry, with wheel speeds implied by the sampled motion.
-        bow_left/bow_right: interior samples pushed to one side of each segment.
-        turn_first: rotate at the start of heading-change segments, then drive.
-
-        Every style keeps the waypoint samples on the waypoints, so the guess never
-        moves a constrained waypoint. The solver still enforces all constraints.
-        """
+    def _build_initial_guess(self, waypoints: List[Tuple[float, float, Optional[float]]], num_samples_per_segment: Union[int, Sequence[int]], N: int, style: str = "baseline", stop_waypoint_indices: Optional[List[int]] = None) -> np.ndarray:
         if style not in GUESS_STYLES:
             raise ValueError(f"Unknown guess_style {style!r}; expected one of {GUESS_STYLES}")
 
         num_segments = len(waypoints) - 1
-        initial_dt = 0.1
+        if isinstance(num_samples_per_segment, (list, tuple, np.ndarray)):
+            segment_samples = [int(s) for s in num_samples_per_segment]
+        else:
+            segment_samples = [int(num_samples_per_segment)] * num_segments
+
+        lengths = []
+        for i in range(num_segments):
+            p1 = waypoints[i]
+            p2 = waypoints[i + 1]
+            lengths.append(float(np.hypot(p2[0] - p1[0], p2[1] - p1[1])))
+        total_length = sum(lengths)
+
+        # Initial dt: length-proportional (Q2 / F9)
+        total_intervals = sum(segment_samples)
+        total_time_budget = 0.1 * total_intervals
+        initial_dts = np.zeros(num_segments, dtype=float)
+        if total_length > 1e-6:
+            for i in range(num_segments):
+                seg_time = total_time_budget * (lengths[i] / total_length)
+                initial_dts[i] = float(np.clip(seg_time / max(1, segment_samples[i]), 0.01, 1.0))
+        else:
+            initial_dts.fill(0.1)
+
         states = []
         for i in range(num_segments):
             p1 = waypoints[i]
             p2 = waypoints[i + 1]
-            count = (
-                num_samples_per_segment
-                if i < num_segments - 1
-                else num_samples_per_segment + 1
-            )
+            s_i = segment_samples[i]
+            count = s_i if i < num_segments - 1 else s_i + 1
             for j in range(count):
-                frac = j / num_samples_per_segment
+                frac = j / s_i
                 x, y, theta = self._guess_point(waypoints, i, p1, p2, frac)
                 states.append([x, y, theta, 0.0, 0.0])
 
@@ -842,67 +761,56 @@ class TrajectoryOptimizer:
             raise ValueError(f"Initial guess shape {states.shape} does not match {(N, 5)}")
 
         if style == "bow_left":
-            self._offset_segment_interiors(states, waypoints, num_samples_per_segment, left=True)
+            self._offset_segment_interiors(states, waypoints, segment_samples, left=True)
         elif style == "bow_right":
-            self._offset_segment_interiors(states, waypoints, num_samples_per_segment, left=False)
+            self._offset_segment_interiors(states, waypoints, segment_samples, left=False)
         elif style == "turn_first":
-            self._rotate_before_driving(states, waypoints, num_samples_per_segment)
+            self._rotate_before_driving(states, waypoints, segment_samples)
 
         if style != "baseline":
-            self._set_rolling_speeds(states, initial_dt, stop_waypoint_indices, num_samples_per_segment)
+            self._set_rolling_speeds(states, initial_dts, stop_waypoint_indices, segment_samples)
 
-        # One initial interval length per segment, then the flattened states.
         guess = np.concatenate([
-            np.full(num_segments, initial_dt, dtype=float),
+            initial_dts,
             states.flatten(),
         ])
         return guess
 
     @staticmethod
     def _guess_point(waypoints, i, p1, p2, frac):
-        """Position and heading for one sample of the baseline guess."""
         x = p1[0] + (p2[0] - p1[0]) * frac
         y = p1[1] + (p2[1] - p1[1]) * frac
 
-        # Compute heading based on local path direction
         if p1[2] is not None and p2[2] is not None:
-            # Both headings known: interpolate
             diff = (p2[2] - p1[2] + np.pi) % (2 * np.pi) - np.pi
             theta = p1[2] + diff * frac
         elif p1[2] is not None:
-            # Only start heading known: blend towards path direction
             path_dir = np.arctan2(p2[1] - p1[1], p2[0] - p1[0])
-            # Smoothly transition from constrained heading to path direction
             diff = (path_dir - p1[2] + np.pi) % (2 * np.pi) - np.pi
             theta = p1[2] + diff * frac
         elif p2[2] is not None:
-            # Only end heading known: blend from path direction
             path_dir = np.arctan2(p2[1] - p1[1], p2[0] - p1[0])
             diff = (p2[2] - path_dir + np.pi) % (2 * np.pi) - np.pi
             theta = path_dir + diff * frac
         else:
-            # No heading known: use local path direction
-            # Look ahead to next waypoint for better direction estimate
             if i + 2 < len(waypoints):
                 p3 = waypoints[i + 2]
-                # Blend direction to p2 with direction to p3
                 dir_to_p2 = np.arctan2(p2[1] - p1[1], p2[0] - p1[0])
                 dir_to_p3 = np.arctan2(p3[1] - p1[1], p3[0] - p1[0])
-                # Weight by progress through segment. The blend goes the
-                # short way round: averaging the two angles plainly gives
-                # a guess heading near zero for a path that turns through
-                # +/-180 degrees, which is the worst possible guess for
-                # exactly the missions that need another seed (KI-039).
                 delta = (dir_to_p3 - dir_to_p2 + np.pi) % (2 * np.pi) - np.pi
                 theta = dir_to_p2 + delta * frac
             else:
                 theta = np.arctan2(p2[1] - p1[1], p2[0] - p1[0])
         return float(x), float(y), float(theta)
 
-    def _offset_segment_interiors(self, states, waypoints, num_samples_per_segment, left=True):
-        """Push interior samples sideways so IPOPT starts in an arc-shaped basin."""
-        s = num_samples_per_segment
+    def _offset_segment_interiors(self, states, waypoints, num_samples_per_segment: Union[int, Sequence[int]], left=True):
         num_segments = len(waypoints) - 1
+        if isinstance(num_samples_per_segment, (list, tuple, np.ndarray)):
+            segment_samples = [int(s) for s in num_samples_per_segment]
+        else:
+            segment_samples = [int(num_samples_per_segment)] * num_segments
+
+        waypoint_sample_indices = [0] + list(np.cumsum(segment_samples))
         sign = 1.0 if left else -1.0
         for i in range(num_segments):
             p1, p2 = waypoints[i], waypoints[i + 1]
@@ -910,36 +818,60 @@ class TrajectoryOptimizer:
             length = float(np.hypot(dx, dy))
             if length < 1e-9:
                 continue
-            # Unit left normal and a bounded bow (10% of the segment, max 3 cm).
             nx, ny = -dy / length, dx / length
-            amplitude = min(0.10 * length, 0.03)
-            count = s if i < num_segments - 1 else s + 1
-            base = i * s
+            s_i = segment_samples[i]
+            base = waypoint_sample_indices[i]
+
+            theta_start = float(states[base, 2])
+            theta_end = float(states[base + s_i, 2])
+            delta = (theta_end - theta_start + np.pi) % (2 * np.pi) - np.pi
+            if abs(delta) > 1e-4:
+                sagitta = 0.5 * length * math.tan(abs(delta) / 4.0)
+                amplitude = min(sagitta, 0.35 * length)
+            else:
+                amplitude = min(0.10 * length, 0.03)
+
+            count = s_i if i < num_segments - 1 else s_i + 1
             for j in range(count):
-                frac = j / s
-                bump = 4.0 * frac * (1.0 - frac)  # zero at both waypoints
+                frac = j / s_i
+                bump = 4.0 * frac * (1.0 - frac)
                 states[base + j, 0] += sign * nx * amplitude * bump
                 states[base + j, 1] += sign * ny * amplitude * bump
 
-    def _rotate_before_driving(self, states, waypoints, num_samples_per_segment):
-        """Guess turn-in-place first, then a straight drive, for sharp turns."""
-        s = num_samples_per_segment
-        if s <= 1:
-            # One interval cannot hold both a spin and a drive; keep the
-            # baseline geometry rather than move a constrained waypoint.
-            return
+    def _rotate_before_driving(self, states, waypoints, num_samples_per_segment: Union[int, Sequence[int]]):
         num_segments = len(waypoints) - 1
-        spin_samples = max(1, int(round(0.30 * s)))
+        if isinstance(num_samples_per_segment, (list, tuple, np.ndarray)):
+            segment_samples = [int(s) for s in num_samples_per_segment]
+        else:
+            segment_samples = [int(num_samples_per_segment)] * num_segments
+
+        waypoint_sample_indices = [0] + list(np.cumsum(segment_samples))
+        r_min = getattr(self.config, "track_width", 0.14)
+
         for i in range(num_segments):
-            p1, p2 = waypoints[i], waypoints[i + 1]
-            base = i * s
-            theta_start = float(states[base, 2])
-            theta_end = float(states[base + s, 2])
-            delta = (theta_end - theta_start + np.pi) % (2 * np.pi) - np.pi
-            if abs(delta) < 0.4:
+            s_i = segment_samples[i]
+            if s_i <= 1:
                 continue
+            base = waypoint_sample_indices[i]
+            p1, p2 = waypoints[i], waypoints[i + 1]
             dx, dy = p2[0] - p1[0], p2[1] - p1[1]
-            count = s if i < num_segments - 1 else s + 1
+            length = float(np.hypot(dx, dy))
+
+            theta_start = float(states[base, 2])
+            theta_end = float(states[base + s_i, 2])
+            delta = (theta_end - theta_start + np.pi) % (2 * np.pi) - np.pi
+
+            ratio = length / (2.0 * max(1e-3, r_min))
+            if ratio < 1.0:
+                threshold = max(0.2, 2.0 * math.asin(ratio))
+            else:
+                threshold = 0.4
+
+            if abs(delta) < threshold:
+                continue
+
+            spin_samples = max(1, int(round(0.30 * s_i)))
+            count = s_i if i < num_segments - 1 else s_i + 1
             for j in range(count):
                 k = base + j
                 if j <= spin_samples:
@@ -948,23 +880,39 @@ class TrajectoryOptimizer:
                     states[k, 1] = p1[1]
                     states[k, 2] = theta_start + delta * f
                 else:
-                    f = (j - spin_samples) / (s - spin_samples)
+                    f = (j - spin_samples) / (s_i - spin_samples)
                     f = min(max(f, 0.0), 1.0)
                     states[k, 0] = p1[0] + dx * f
                     states[k, 1] = p1[1] + dy * f
                     states[k, 2] = theta_end
 
-    def _set_rolling_speeds(self, states, dt, stop_waypoint_indices, num_samples_per_segment):
-        """Infer wheel speeds from the guessed motion so IPOPT starts moving."""
+    def _set_rolling_speeds(self, states, dt, stop_waypoint_indices, num_samples_per_segment: Union[int, Sequence[int]]):
         n = len(states)
         v = np.zeros(n)
         omega = np.zeros(n)
+        
+        if isinstance(num_samples_per_segment, (list, tuple, np.ndarray)):
+            segment_samples = [int(s) for s in num_samples_per_segment]
+            num_segments = len(segment_samples)
+            sample_to_segment = np.repeat(np.arange(num_segments), segment_samples)
+            waypoint_sample_indices = [0] + list(np.cumsum(segment_samples))
+        else:
+            s_int = int(num_samples_per_segment)
+            num_segments = (n - 1) // s_int if s_int > 0 else 1
+            segment_samples = [s_int] * num_segments
+            sample_to_segment = np.repeat(np.arange(num_segments), segment_samples)
+            waypoint_sample_indices = [i * s_int for i in range(num_segments + 1)]
+
+        is_dt_array = isinstance(dt, (list, tuple, np.ndarray))
+
         for k in range(n - 1):
             dx = states[k + 1, 0] - states[k, 0]
             dy = states[k + 1, 1] - states[k, 1]
             dtheta = (states[k + 1, 2] - states[k, 2] + np.pi) % (2 * np.pi) - np.pi
-            v[k] = float(np.hypot(dx, dy) / dt)
-            omega[k] = float(dtheta / dt)
+            dt_k = float(dt[sample_to_segment[k]]) if is_dt_array else float(dt)
+            dt_k = max(dt_k, 1e-4)
+            v[k] = float(np.hypot(dx, dy) / dt_k)
+            omega[k] = float(dtheta / dt_k)
 
         half_track = self.config.track_width / 2.0
         cap = float(self.config.max_linear_speed(apply_headroom=True))
@@ -972,43 +920,64 @@ class TrajectoryOptimizer:
             states[k, 3] = float(np.clip(v[k] - omega[k] * half_track, -cap, cap))
             states[k, 4] = float(np.clip(v[k] + omega[k] * half_track, -cap, cap))
 
-        # The solver requires rest at the endpoints and at declared stops.
         states[0, 3] = states[0, 4] = 0.0
         states[-1, 3] = states[-1, 4] = 0.0
         for index in (stop_waypoint_indices or []):
-            k = int(index) * num_samples_per_segment
-            if 0 <= k < n:
-                states[k, 3] = states[k, 4] = 0.0
+            if 0 <= index < len(waypoint_sample_indices):
+                k = waypoint_sample_indices[index]
+                if 0 <= k < n:
+                    states[k, 3] = states[k, 4] = 0.0
 
     @staticmethod
-    def _sample_times(dt_values: np.ndarray, num_samples_per_segment: int, N: int) -> np.ndarray:
-        """Timestamps when each segment has a constant sample interval dt[i]."""
+    def _sample_times(dt_values: np.ndarray, num_samples_per_segment: Union[int, Sequence[int]], N: int) -> np.ndarray:
         dt_values = np.asarray(dt_values, dtype=float)
-        s = int(num_samples_per_segment)
-        # k // s is the segment; clamp the final sample to the last segment.
-        seg = np.minimum(np.arange(N) // s, len(dt_values) - 1)
-        starts = np.concatenate(([0.0], np.cumsum(dt_values * s)))
-        return starts[seg] + (np.arange(N) - seg * s) * dt_values[seg]
+        num_segments = len(dt_values)
+        if isinstance(num_samples_per_segment, (list, tuple, np.ndarray)):
+            seg_samples = [int(s) for s in num_samples_per_segment]
+        else:
+            seg_samples = [int(num_samples_per_segment)] * num_segments
+        
+        sample_to_segment = np.repeat(np.arange(num_segments), seg_samples)
+        segment_durations = [seg_samples[i] * dt_values[i] for i in range(num_segments)]
+        starts = np.concatenate(([0.0], np.cumsum(segment_durations)))
+        waypoint_sample_indices = [0] + list(np.cumsum(seg_samples))
+        
+        times = np.zeros(N)
+        for k in range(N - 1):
+            seg = sample_to_segment[k]
+            offset = k - waypoint_sample_indices[seg]
+            times[k] = starts[seg] + offset * dt_values[seg]
+        times[N - 1] = starts[-1]
+        return times
 
-    def format_output(self, params: np.ndarray, N: int, num_samples_per_segment: int = 10, waypoint_events: Optional[Dict[int, str]] = None) -> List[Dict[str, Any]]:
-        num_segments = N // num_samples_per_segment
+    def format_output(self, params: np.ndarray, N: int, num_samples_per_segment: Union[int, Sequence[int]] = 10, waypoint_events: Optional[Dict[int, str]] = None) -> List[Dict[str, Any]]:
+        if isinstance(num_samples_per_segment, (list, tuple, np.ndarray)):
+            segment_samples = [int(s) for s in num_samples_per_segment]
+            num_segments = len(segment_samples)
+        else:
+            num_segments = (N - 1) // int(num_samples_per_segment) if N > 1 else 1
+            segment_samples = [int(num_samples_per_segment)] * num_segments
+
         dt_values = np.asarray(params[:num_segments], dtype=float)
         states = params[num_segments:].reshape((N, 5))
-        times = self._sample_times(dt_values, num_samples_per_segment, N)
+        times = self._sample_times(dt_values, segment_samples, N)
         samples = []
-        
+        waypoint_sample_indices = [0] + list(np.cumsum(segment_samples))
+        sample_to_segment = np.repeat(np.arange(num_segments), segment_samples)
+
+        event_by_sample = {}
+        if waypoint_events:
+            for wp_idx, evt_name in waypoint_events.items():
+                if 0 <= wp_idx < len(waypoint_sample_indices):
+                    event_by_sample[waypoint_sample_indices[wp_idx]] = evt_name
+
         for k in range(N):
             s = states[k]
             vl, vr = s[3], s[4]
-            
-            # Check if this sample corresponds to a waypoint with an event
-            event = None
-            if waypoint_events and k % num_samples_per_segment == 0:
-                waypoint_idx = k // num_samples_per_segment
-                if waypoint_idx in waypoint_events:
-                    event = waypoint_events[waypoint_idx]
+            event = event_by_sample.get(k, None)
+
             if k < N - 1:
-                dt_k = dt_values[k // num_samples_per_segment]
+                dt_k = dt_values[sample_to_segment[k]]
                 vl_next, vr_next = states[k + 1][3], states[k + 1][4]
                 al, ar = (vl_next - vl) / dt_k, (vr_next - vr) / dt_k
             else:
@@ -1031,5 +1000,5 @@ class TrajectoryOptimizer:
             if event is not None:
                 sample_dict["event"] = event
             samples.append(sample_dict)
-        
+
         return samples

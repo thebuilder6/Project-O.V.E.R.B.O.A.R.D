@@ -193,13 +193,23 @@ The first term is trajectory duration. The optional second term penalizes wheel 
 - `dt` (or each `dt_i` with `--per-segment-dt`) in `[0.001, 1.0]` s.
 - Position bounds `|x|, |y| <= 20 m`; heading bounds `[-100, 100]` rad (unwrapped).
 - Wheel-speed bounds at 99 % of the headroom-limited no-load speed.
-- Trapezoidal kinematic integration:
+- Kinematic integration. The trapezoidal rule over the two endpoints of the interval:
 
 ```text
 x_{k+1} = x_k + 0.5*(v_k*cos(theta_k) + v_{k+1}*cos(theta_{k+1}))*dt
 y_{k+1} = y_k + 0.5*(v_k*sin(theta_k) + v_{k+1}*sin(theta_{k+1}))*dt
 theta_{k+1} = theta_k + 0.5*(omega_k + omega_{k+1})*dt
 ```
+
+  `--self-consistent` (KI-026) replaces the position rule with the interval's velocity integrated along the *integrated* heading; it is what the CLI plans by default, and `--no-self-consistent` restores the trapezoidal rule:
+
+```text
+theta(s)    = theta_k + omega_k*s + (omega_{k+1} - omega_k)*s^2/(2*dt)
+x_{k+1}     = x_k + integral_0^dt v(s)*cos(theta(s)) ds
+y_{k+1}     = y_k + integral_0^dt v(s)*sin(theta(s)) ds
+```
+
+  with `v(s)` linear in `s` and the integral taken with a four-node Gauss-Legendre rule, so the samples lie on the path the plan's own `(v, omega)` profile traces and the heading samples are its tangents.
 
 - Waypoint positions are equality constraints; heading is constrained only when supplied.
 - Start and end wheel speeds are zero; intermediate stops set both wheel speeds to zero at that sample.

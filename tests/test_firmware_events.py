@@ -44,10 +44,12 @@ _FIRMWARE_DIR = os.path.join(
 sys.path.insert(0, _FIRMWARE_DIR)
 
 import ramsete  # noqa: E402  (firmware module, imported after the stubs)
+import ramsete_compact  # noqa: E402
 import ramsete_compact_events  # noqa: E402
 import ramsete_fast  # noqa: E402
 
 ramsete.gc = _GcStub()
+ramsete_compact.gc = _GcStub()
 ramsete_compact_events.gc = _GcStub()
 ramsete_fast.gc = _GcStub()
 
@@ -150,6 +152,33 @@ class TestFirmwareParity(unittest.TestCase):
         self.assertTrue(len(db.commands) > 0)
         self.assertIsInstance(db.commands[0][0], float)
         self.assertIsInstance(db.commands[0][1], float)
+
+    def test_kinematic_limiter_fallback_defaults(self):
+        """KI-010, KI-018: When config is empty, fallback numbers must match
+        the current robot physics, not weak pre-KI-018 defaults."""
+        limiter = ramsete.KinematicLimiter({})
+        self.assertEqual(limiter.mass, 1.5)
+        self.assertEqual(limiter.v_max_rad_s, 19.4)
+        self.assertEqual(limiter.t_max_nm, 0.138)
+        self.assertEqual(limiter.cof, 0.6)
+        self.assertEqual(limiter.h_cg, 0.05)
+
+    def test_kinematic_limiter_lateral_weight_transfer(self):
+        """KI-010: Lateral weight transfer must derate traction on the inner wheel
+        during centripetal acceleration."""
+        limiter = ramsete.KinematicLimiter({})
+        v_out, w_out = limiter.limit(0.5, 5.0, 0.5, 5.0, 0.02)
+        self.assertIsInstance(v_out, float)
+        self.assertIsInstance(w_out, float)
+
+    def test_ramsete_compact_runs_trajectory(self):
+        """ramsete_compact wraps ramsete_compact_events for eventless trajectories."""
+        db = _FakeDriveBase()
+        raw, _ = encode_compact_trajectory(_samples())
+        pose = asyncio.run(ramsete_compact.follow_trajectory(db, raw))
+        self.assertTrue(len(db.commands) > 0)
+        self.assertTrue(db.stopped)
+        self.assertEqual(len(pose), 3)
 
 
 class _FakeDriveBase:

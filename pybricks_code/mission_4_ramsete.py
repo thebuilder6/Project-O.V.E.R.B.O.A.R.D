@@ -5,9 +5,13 @@ Runs the optimized path imported from complex_mission.py
 """
 
 from robot_config import *
-from ramsete_fast import follow_trajectory
 from complex_mission import samples as mission_samples
 from complex_mission import config as mission_config
+
+if isinstance(mission_samples, (bytes, bytearray)):
+    from ramsete_compact import follow_trajectory
+else:
+    from ramsete_fast import follow_trajectory
 
 async def main():
     print("Starting Ramsete Mission...")

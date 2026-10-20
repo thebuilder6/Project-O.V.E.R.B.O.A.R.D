@@ -5,9 +5,21 @@ Runs the optimized path imported from complete_mission.py with lambda functions 
 """
 
 from robot_config import *
-from ramsete import follow_trajectory
 from complete_mission import samples as mission_samples
 from complete_mission import config as mission_config
+try:
+    from complete_mission import events as mission_events_tuples
+except ImportError:
+    mission_events_tuples = None
+
+if isinstance(mission_samples, (bytes, bytearray)):
+    import ramsete_compact_events
+    async def follow_trajectory(drivebase, samples, config=None, debug=False, b=2.0, zeta=0.7, event_map=None):
+        return await ramsete_compact_events.follow_trajectory(
+            drivebase, samples, config=config, b=b, zeta=zeta, events=mission_events_tuples, event_map=event_map, debug=debug
+        )
+else:
+    from ramsete import follow_trajectory
 
 # Define the actions for the events specified in the trajectory
 mission_events = {

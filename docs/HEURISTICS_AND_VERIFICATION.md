@@ -203,7 +203,7 @@ This is the list a newcomer most needs, because it defines the whole research sp
 |---|---|
 | **Any geometric path family.** No splines, clothoids, béziers, quintics, Dubins or Elford paths. | The only path primitives are a straight line between waypoints (`optimizer.py:551` `_guess_point`) and Reeds-Shepp (`path_planning.py:28`). The Reeds-Shepp planner is only reachable from the Multi-Verse bootstrap, and only when both segment endpoints have a heading. |
 | **Obstacle or field geometry.** No walls, no mat boundaries, no zone constraints. | The robot is assumed to reach every waypoint in a straight line through space. |
-| **A geometric term in the objective.** The objective is duration plus an optional jerk penalty (`optimizer.py:214-...`). | The optimizer has no idea what the path *looks* like. It is pushed along by the trapezoidal integration constraints and the endpoint equalities. Two paths of the same length and the same smoothness are indistinguishable to it. This is the root cause of many entries in Part III. |
+| **A geometric term in the objective.** The objective is duration plus an optional jerk penalty (`optimizer.py:214-...`). | The optimizer has no idea what the path *looks* like. It is pushed along by the integration constraints and the endpoint equalities. Two paths of the same length and the same smoothness are indistinguishable to it. This is the root cause of many entries in Part III. |
 | **Topology search.** No search over forward/reverse/point-turn combinations per segment. | The reverse and point-turn topologies exist only inside the JAX candidate generator (`jax_optimizer.py:61-66`), which never reaches the solver. |
 | **Multi-start beyond five seeds.** | Five deterministic seeds, all from the same straight-line geometry. |
 | **A reachability term.** Reachability is computed *after* the solve. | The optimizer cannot know that a path it is about to find will fail the envelope gate. See [Section 14](#14-what-each-layer-proves-and-does-not-prove). |
@@ -303,7 +303,7 @@ Baseline geometry, then `_set_rolling_speeds` (`optimizer.py:641`) fills in whee
 - Clip to `±max_linear_speed(apply_headroom=True)`.
 - Force zero at the first sample, the last sample, and at every declared stop waypoint.
 
-**Intent:** IPOPT starts *moving*. A seed with zero wheel speeds sits at a point where the trapezoidal integration constraints and the "start and end at rest" equality constraints pull in opposite directions; a moving seed gives the solver a direction.
+**Intent:** IPOPT starts *moving*. A seed with zero wheel speeds sits at a point where the integration constraints and the "start and end at rest" equality constraints pull in opposite directions; a moving seed gives the solver a direction.
 
 **Cost:** one pass over the samples. Negligible.
 
@@ -442,6 +442,21 @@ The decomposition is worth writing down because it is the only way to make long 
 **What it costs.** The pieces are no longer optimised jointly, so the result is a local optimum of the decomposed problem, and the boundary state is fixed by the previous piece's solution rather than by the objective. The merge conditions are then a *correctness* requirement rather than a free consequence, and a mismatch at a join means the piece solutions have to be re-solved with the agreed state.
 
 **What to measure first.** The cheap question is whether the decomposition is needed at all: the joint solve's iteration count against the number of waypoints. If it grows faster than linearly, the decomposition has a case; if the missions that matter stay under ten waypoints, it does not. That measurement is not in this document.
+
+### 5.7 The collocation: where a sample is placed
+
+The timing model says *when* a sample is; the collocation says *where* it is. It is the other half of the discretisation, and it is the half RQ-A found to be wrong: the plan's samples were not on the path the plan's own `(v, omega)` profile traces, so the controller was told to be somewhere the plan never goes.
+
+Two rules are in the tree. The CLI plans the second one by default, and `--no-self-consistent` restores the first (KI-026):
+
+| rule | position rule | what it guarantees |
+|---|---|---|
+| trapezoid (the historical one) | the two endpoints of the interval only: `x_{k+1} = x_k + 0.5*(v_k*cos(theta_k) + v_{k+1}*cos(theta_{k+1}))*dt` | nothing: the samples are the ends of the chord, and the robot drives the chord |
+| **self-consistent** | the interval's velocity integrated along the *integrated* heading, with a four-node Gauss-Legendre rule | the samples lie on the path the `(v, omega)` profile traces, and the heading samples are its tangents |
+
+The self-consistent rule is worth roughly half the tracking error on a curved path: the S-curve goes from 1.47 cm to 0.88 cm, and the events mission's forward-integration error goes away. The heading rule is unchanged either way, so the headings are the tangents of the path the plan traces. The measurement is [RQ-A finding F10](research/RQ-A_tracking_error.md).
+
+**Which one you get depends on where you start (KI-052).** The CLI plans the self-consistent rule by default and `--no-self-consistent` restores the trapezoid; the studio's "Self-consistent samples" box is ticked by default, so it agrees with the CLI. The **library** is the other way round: `TrajectoryOptimizer.solve` has `self_consistent=False`, so a library caller gets the trapezoidal plan for the same mission unless it passes `self_consistent=True`. `research/harness.py` follows the library, so its numbers are the trapezoidal ones unless it is told otherwise.
 
 ## 6. Candidate set construction
 
@@ -587,7 +602,7 @@ Each candidate carries `style`, `timing`, `duration_s`, `envelope_cm`, `tracking
 
 The Reeds-Shepp planner is configured from `multiverse.bootstrap` (`multiverse_optimizer.py:117-123`): `turning_radius` (default `0.0`) and `resolution` (default `0.05`).
 
-> **The default configuration degenerates the bootstrap.** `examples/fll_choreo.json:46-49` sets `"turning_radius": 0.0`, and a zero turning radius makes the Reeds-Shepp path degenerate to a straight line. The configured "Reeds-Shepp bootstrap" therefore produces linear paths in the shipped example. The `resolution` is honoured.
+> **The shipped configuration now plans.** `examples/fll_choreo.json` sets `"turning_radius": 0.05` - the robot's own turning radius - so the Reeds-Shepp path is a real path. It used to be `0.0`, and a zero turning radius makes the path degenerate to a straight line (rsplan could not plan with it at all), so the configured "Reeds-Shepp bootstrap" produced linear paths in the shipped example. Measured on the example missions: **0 of 21** segments that have a heading at both ends plan at radius 0.0, and **21 of 21** at 0.05. The `resolution` is honoured either way.
 
 ### 8.2 Phase 2 — Kinematic profile
 
@@ -658,11 +673,14 @@ and `main.py --refine` puts the refined trajectory into the candidate set as a s
 
 **Measured 2026-10-20**, against the tree with KI-025 (the backlash), KI-026 (the self-consistent collocation), KI-027 (the turn rate as the derivative of the heading) and KI-028 (the validator modelling the controller that runs) in place. 60 candidate solves - 6 missions x 2 timing models x 5 seeds - plus the timing-mode x accuracy-weight grid. The raw logs are in `docs/measurements/2026-10-20-post-ki028/`, and the exact commands are in [Appendix A](#appendix-a--reproducing-every-table). The provenance (source hashes, environment, test state) is in [S0.4](#04-measurement-conventions).
 
+**Which collocation these numbers describe: the trapezoidal one.** They were measured when the self-consistent rule was opt-in, and the command line has since been switched the other way: `--self-consistent/--no-self-consistent` now defaults to **on** (KI-051), so a run from the command line plans the self-consistent rule and not the one these tables describe. `--no-self-consistent` still produces the trapezoidal plan, and the difference is measured in [RQ-A finding F10](research/RQ-A_tracking_error.md) (the S-curve's tracking error halves, 1.47 → 0.88 cm). **The tables have not been re-measured under the new default**, so read them as the trapezoidal plan's numbers and not as the command line's; the runner for that re-measurement is `docs/measurements/2026-10-20-variable-samples/run_sweep.py`, and it refuses to report a run whose tree changed underneath it.
+
 **The tables in this section are generated**, not typed in: `python docs/research/rq_a/sync_tables.py` rewrites them from the measurement JSON and `--check` verifies that every number still matches.
 
 ### 9.1 Method
 
 - Robot config `examples/fll_choreo.json`, `-n 10` samples per segment, `accuracy_weight = 0` unless stated.
+- **The trapezoidal collocation** (the command line's `--no-self-consistent`), because that is what these numbers were measured with.
 - Every candidate is solved, validated through the full gate chain, and scored independently.
 - "Gate" is the pass/fail of the whole chain. The failure reason is quoted from the `reasons` field of the machine-readable report.
 - Durations are the trajectory duration; the envelope is the maximum reachability radius over the path; tracking is the maximum closed-loop tracking error. The tracking gate is 0.50 cm, the transit envelope gate is 2 cm.
@@ -989,10 +1007,12 @@ The value of the reachability check is that it simulates roughly what the robot 
 |---|---|---|---|
 | Control period | 20 ms (`immrax_validator.py:42`) | 20 ms `drive()` tick | **yes** |
 | Plant integration | 4 × 5 ms substeps (`immrax_validator.py:43`) | — | mirrors the firmware's own substepping |
-| Reference | linear interpolation of `x, y, heading, v, omega` plus the precomputed Ramsete gain `sqrt(omega^2 + b*v^2)` (`immrax_validator.py:46`) | `ramsete_fast.py` | **yes** |
+| Reference | linear interpolation of `x, y, heading, v, omega` plus the precomputed Ramsete gain `sqrt(omega^2 + b*v^2)` (`immrax_validator.py:46`) | `ramsete.py` | **yes** |
 | Heading unwrapping | `unroll_trajectory_headings` (`immrax_validator.py:14`) | — | prevents the ±π wrap |
-| Controller | `RamseteController` (`immrax_validator.py:233`), `b = 2.0`, `zeta = 0.7` | `ramsete_fast.py` | **yes** |
+| Controller | `RamseteController` (`immrax_validator.py:233`), `b = 2.0`, `zeta = 0.7` | `ramsete.py` | **yes** |
 | Command quantisation | whole mm/s and deg/s when `quantize=True` (`immrax_validator.py:265`) | `DriveBase` rounding | **yes** (KI-021) |
+| Firmware's own copies | — | **one**: `ramsete.py` holds the odometry, the Ramsete maths, the limiter and the loop; `ramsete_fast.py` delegates to it and `ramsete_compact.py` delegates to `ramsete_compact_events.py` | **yes** - a second copy cannot drift (KI-028) |
+| Traction limit in the limiter | per wheel, with the lateral weight transfer (`robot_model.py:9` `wheel_normal_forces`) | per wheel, same formula (`pybricks_code/ramsete.py`, `KinematicLimiter`) | **yes** (KI-010) |
 | Plant, default | `RobotOpenLoop` (`immrax_validator.py:92`): commanded wheel speed → motion. The gear backlash is a **position** uncertainty carried in the reachable set, not a velocity offset (KI-025) | - | partial |
 | Plant, fitted | `DigitalTwinOpenLoop` (`immrax_validator.py:153`): 5-state `[x, y, heading, vl_actual, vr_actual]` with a first-order lag, `tau >= 0.01 s` | — | partial |
 
@@ -1876,6 +1896,8 @@ Every symbol this document mentions, with its location in the tree that was meas
 | KI-021 | Robot runtime | The DriveBase capped the acceleration the plan asked for | [Section 12](#12-controller-and-plant-parity) |
 | KI-022 | Solver / timing | The per-segment timing model was a jerk-penalty loophole | [5.3](#53-the-jerk-discipline-ki-022), [22.1](#221-the-per-segment-timing-model-was-a-jerk-penalty-loophole-ki-022) |
 | KI-024 | Solver / timing | The timing model had no rule for where the time allocation may change | [5.5](#55-where-the-time-allocation-may-change-ki-024) |
+| KI-051 | CLI / solver | ~~`--self-consistent` was a no-op: the switch could not change the plan and the trapezoidal collocation could not be reached from the CLI~~ (fixed; the flag is two-way now) | [5.7](#57-the-collocation-where-a-sample-is-placed) |
+| KI-052 | CLI / solver | The CLI and the library plan different trajectories for the same mission: the CLI is self-consistent by default, the library is not | [5.7](#57-the-collocation-where-a-sample-is-placed) |
 
 **Not referenced, and not relevant here:** KI-005, KI-006, KI-007, KI-008, KI-011, KI-012, KI-013, KI-016, KI-017, KI-023.
 

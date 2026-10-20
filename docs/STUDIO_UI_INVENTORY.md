@@ -170,7 +170,7 @@ The page carries **150 element ids**: **76 controls with an id** (36 buttons, 33
 | **Controller timestep** | The export's sample interval. |
 | **Validate before export** | The gate; needs JAX. |
 | **Fast polish** | The budgeted solve. |
-| **Self-consistent** | Samples on the path's own profile. |
+| **Self-consistent** | Samples on the path's own profile. Ticked by default, like the command line's; unticking it is `--no-self-consistent`. |
 | **Sweep** | The timing-model x weight grid; ten solves. |
 
 ## Field canvas

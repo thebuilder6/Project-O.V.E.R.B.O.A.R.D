@@ -370,7 +370,9 @@ def build_command(job_dir, config_path, waypoints_path, output_path, options):
     if options.get("sweep"):
         command.append("--sweep")
 
-    if options.get("self_consistent"):
+    if options.get("self_consistent") is False:
+        command.append("--no-self-consistent")
+    elif options.get("self_consistent"):
         command.append("--self-consistent")
 
     # The iteration history is always requested: the studio's convergence
@@ -439,7 +441,7 @@ def start_job(server, payload):
 
     command = build_command(job_dir, config_path, waypoints_path, output_path, options)
     job = Job(server.next_job_id(), name, job_dir)
-    job.result = {"limits": {}, "iterations": []}
+    job.result = {"trajectory": {}, "limits": {}, "iterations": [], "collisions": []}
     _register_job(server, job)
 
     def run():
@@ -482,6 +484,7 @@ def start_job(server, payload):
                     traj = artifact_path(job, "traj")
                     if traj and traj.is_file():
                         document = _read_json(traj) or {}
+                        job.result["trajectory"] = document.get("trajectory") or {}
                         samples = (document.get("trajectory") or {}).get("samples", [])
                 except Exception as exc:  # noqa: BLE001 - a plot is not worth a failure
                     job.log(f"Studio could not read the trajectory: {exc}")

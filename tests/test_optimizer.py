@@ -544,7 +544,8 @@ class TestTrajectoryOptimizer(unittest.TestCase):
 
         self.assertEqual(len(stats["segment_dt"]), 2)
         self.assertGreater(max(stats["segment_dt"]) / min(stats["segment_dt"]), 1.2)
-        self.assertAlmostEqual(samples[-1]["t"], 5 * sum(stats["segment_dt"]), places=6)
+        expected_t = sum(s * dt for s, dt in zip(stats["segment_samples"], stats["segment_dt"]))
+        self.assertAlmostEqual(samples[-1]["t"], expected_t, places=6)
 
     def test_uniform_dt_forces_every_segment_to_take_the_same_time(self):
         """KI-022: one shared dt also ties the SEGMENT DURATIONS together.
@@ -751,7 +752,7 @@ class TestMergeConditions(unittest.TestCase):
         # The per-segment model does re-time across the interior waypoint.
         self.assertGreater(max(stats["segment_dt"]) / min(stats["segment_dt"]), 1.2)
 
-        k = 5  # the interior waypoint sits on sample 5
+        k = stats["segment_samples"][0]  # the interior waypoint sits on sample k
         self.assertLessEqual(abs(samples[k]["al"] - samples[k - 1]["al"]), 1e-6)
         self.assertLessEqual(abs(samples[k]["ar"] - samples[k - 1]["ar"]), 1e-6)
 
@@ -803,7 +804,7 @@ class TestFastPolish(unittest.TestCase):
             per_segment_dt=True, fast_polish=True, verbose=False)
 
         self.assertTrue(stats["converged"])
-        k = 5  # the interior waypoint
+        k = stats["segment_samples"][0]  # the interior waypoint
         # The budgeted pass stops at IPOPT's tolerance, so the step is small
         # rather than exactly zero. The equal-duration model steps by m/s^2
         # here, so four orders of magnitude is the bar.
@@ -904,7 +905,8 @@ class TestSolverIterationBudget(unittest.TestCase):
         start = time.time()
         samples, stats = optimizer.solve(
             self.waypoints, num_samples_per_segment=10,
-            stop_waypoint_indices=self.stops, verbose=False, fast_polish=True)
+            stop_waypoint_indices=self.stops, verbose=False, fast_polish=True,
+            self_consistent=False, proportional_samples=False, split_at_boundaries=False)
         wall = time.time() - start
 
         self.assertTrue(stats["converged"])

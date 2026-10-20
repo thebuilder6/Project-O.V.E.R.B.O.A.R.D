@@ -500,14 +500,48 @@ def _segment_limit(thresholds, index, default=0.02):
     return float(default)
 
 
-def _segment_report(samples_data, samples_per_segment, thresholds, immrax_report, cpu_summary):
+def _waypoint_boundaries(segment_samples):
+    """The sample index of every waypoint.
+
+    The optimizer splits the sample budget across the waypoint segments in
+    proportion to their length, so the boundaries are NOT k *
+    samples_per_segment any more - they are the optimizer's own
+    waypoint_sample_indices table, which it reports as
+    stats["segment_samples"]. The gate and the segment report both have to
+    use it, or a waypoint's envelope threshold is applied to the wrong
+    samples and the segments are grouped wrongly.
+
+    An empty list means "no counts were reported", and the caller falls
+    back to the uniform layout.
+    """
+    counts = [int(c) for c in (segment_samples or [])]
+    if not counts:
+        return []
+    bounds = [0]
+    for c in counts:
+        bounds.append(bounds[-1] + c)
+    return bounds
+
+
+def _waypoint_of(bounds, index):
+    """The waypoint whose segment the sample ``index`` belongs to."""
+    if not bounds:
+        return 0
+    for waypoint in range(len(bounds) - 1):
+        if bounds[waypoint] <= index < bounds[waypoint + 1]:
+            return waypoint
+    return max(0, len(bounds) - 2)
+
+
+def _segment_report(samples_data, samples_per_segment, thresholds, immrax_report, cpu_summary,
+                    segment_samples=None):
     """Per-segment validation detail: envelope radius, local limit, violations.
 
-    The gate checks sample i against the threshold of waypoint i // samples, so
-    a segment is judged by the threshold of the waypoint it starts from. The
-    report says the same thing, per segment, instead of one reason string.
-    The drift is the forward-integration error inside the segment: it shows
-    where the path drifts away from the plan.
+    The gate checks sample i against the threshold of the waypoint whose
+    segment i is in, so a segment is judged by the threshold of the waypoint
+    it starts from. The report says the same thing, per segment, instead of
+    one reason string. The drift is the forward-integration error inside the
+    segment: it shows where the path drifts away from the plan.
     """
     segments = []
     count = len(samples_data)
@@ -535,10 +569,19 @@ def _segment_report(samples_data, samples_per_segment, thresholds, immrax_report
                 drift[i] = math.hypot(xs[j] - sample.get("x", xs[j]),
                                        ys[j] - sample.get("y", ys[j]))
 
-    n_segments = max(1, (count - 1) // samples_per_segment)
+    bounds = _waypoint_boundaries(segment_samples)
+    if len(bounds) > 1:
+        # The optimizer's own layout: the boundaries are the waypoints.
+        n_segments = len(bounds) - 1
+        starts = list(bounds[:-1])
+        stops = [min(stop, count) for stop in bounds[1:]]
+    else:
+        n_segments = max(1, (count - 1) // samples_per_segment)
+        starts = [index * samples_per_segment for index in range(n_segments)]
+        stops = [min(start + samples_per_segment, count) for start in starts]
     for index in range(n_segments):
-        start = index * samples_per_segment
-        stop = min(start + samples_per_segment, count)
+        start = starts[index]
+        stop = stops[index]
         limit = _segment_limit(thresholds, index)
         radius = 0.0
         for i in range(start, stop):
@@ -649,7 +692,7 @@ def _apply_preset(ctx, preset, values):
 
 def _studio_options(samples, accuracy_weight, candidates, dt_mode, validate,
                     export_format, controller_dt, fast_polish, sysid_fit=None,
-                    hub_conn=None, hub_name=None):
+                    hub_conn=None, hub_name=None, self_consistent=True):
     """The options the studio starts with, so --live reproduces this run."""
     return {
         "samples": samples,
@@ -663,6 +706,7 @@ def _studio_options(samples, accuracy_weight, candidates, dt_mode, validate,
         "sysid_fit": sysid_fit,
         "hub_conn": hub_conn,
         "hub_name": hub_name,
+        "self_consistent": self_consistent,
     }
 
 
@@ -959,10 +1003,10 @@ def _print_summary(output, samples_data, robot_cfg, validate, attempt_passed, tu
               help='Search the timing model and the accuracy weight for the fastest trajectory that '
                    'passes the gates (simple solver only). Adds candidates to the set instead of '
                    'replacing them, so it costs more solves and more validation passes.')
-@click.option('--self-consistent', is_flag=True,
+@click.option('--self-consistent/--no-self-consistent', default=True,
               help='Plan a self-consistent trajectory: the samples are placed on the path the '
                    'trajectory\'s own (v, omega) profile traces, so the headings are its tangents '
-                   '(simple solver only). Off by default; it changes every plan it is used on.')
+                   '(simple solver only). On by default (KI-026).')
 @click.option('--refine', is_flag=True,
               help='Add the Multi-Verse pipeline\'s refined trajectory as a candidate (simple '
                    'solver only, needs JAX). The pipeline is used as a seed provider: its '
@@ -1067,10 +1111,12 @@ def main(ctx, config, waypoints, output, gui, gui_port, doctor, multiverse, simp
         raise click.ClickException(
             "--sweep is only supported by the simple solver."
         )
-    if self_consistent and multiverse:
-        raise click.ClickException(
-            "--self-consistent is only supported by the simple solver."
-        )
+    if multiverse and self_consistent:
+        if ctx.get_parameter_source("self_consistent") == click.core.ParameterSource.COMMANDLINE:
+            raise click.ClickException(
+                "--self-consistent is only supported by the simple solver."
+            )
+        self_consistent = False
     if refine and multiverse:
         raise click.ClickException(
             "--refine is only supported by the simple solver."
@@ -1132,7 +1178,7 @@ def main(ctx, config, waypoints, output, gui, gui_port, doctor, multiverse, simp
                    options=_studio_options(samples, accuracy_weight, candidates,
                                            dt_mode, validate, export_format,
                                            controller_dt, fast_polish, sysid_fit,
-                                           hub_conn, hub_name))
+                                           hub_conn, hub_name, self_consistent))
         return
 
     config_data, robot_cfg = _load_config(config)
@@ -1329,8 +1375,7 @@ def main(ctx, config, waypoints, output, gui, gui_port, doctor, multiverse, simp
             if not multiverse:
                 solve_kwargs["guess_style"] = spec["guess_style"]
                 solve_kwargs["per_segment_dt"] = spec.get("per_segment_dt", False)
-                if self_consistent:
-                    solve_kwargs["self_consistent"] = True
+                solve_kwargs["self_consistent"] = bool(self_consistent)
             if fast_polish:
                 solve_kwargs["fast_polish"] = True
             payloads.append((robot_cfg, wps, spec, solve_kwargs, multiverse))
@@ -1378,6 +1423,14 @@ def main(ctx, config, waypoints, output, gui, gui_port, doctor, multiverse, simp
                                f"(guess_style={guess_style}, {timing} dt{weight})...")
 
             samples_data, stats = solve_result
+
+            # The sample layout the optimizer used: the sample budget is
+            # split across the waypoint segments in proportion to their
+            # length, so the waypoints are not k * samples_per_segment apart.
+            # The gate and the segment report have to use the optimizer's own
+            # table, or a waypoint's threshold is applied to the wrong
+            # samples.
+            waypoint_bounds = _waypoint_boundaries(stats.get("segment_samples"))
 
             # Track this candidate. A non-converged candidate is never eligible for export (KI-001).
             attempt_record = {
@@ -1456,8 +1509,15 @@ def main(ctx, config, waypoints, output, gui, gui_port, doctor, multiverse, simp
             for i in range(len(samples_data)):
                 # Determine local threshold. The segment's limit is the one of
                 # the waypoint the segment arrives at (see _segment_limit), so a
-                # precision waypoint is held to its tight limit on the approach.
-                wp_idx = i // samples
+                # precision waypoint is held to its tight limit on the
+                # approach. The sample's waypoint comes from the optimizer's
+                # own layout: the sample budget is split across the segments
+                # in proportion to their length, so the waypoints are not
+                # k * samples_per_segment apart.
+                if waypoint_bounds:
+                    wp_idx = _waypoint_of(waypoint_bounds, i)
+                else:
+                    wp_idx = i // samples
                 local_threshold = _segment_limit(waypoint_thresholds, wp_idx)
 
                 # Check envelope radius (max error)
@@ -1520,7 +1580,8 @@ def main(ctx, config, waypoints, output, gui, gui_port, doctor, multiverse, simp
 
             # Per-segment detail, so a failure can be pinned to a part of the path.
             attempt_record["segments"] = _segment_report(
-                samples_data, samples, waypoint_thresholds, immrax_report, cpu_summary)
+                samples_data, samples, waypoint_thresholds, immrax_report,
+                cpu_summary, segment_samples=stats.get("segment_samples"))
 
             if not quiet:
                 score = "envelope diverged" if attempt_record["diverged"] else f"envelope {attempt_record['tube']*100:.2f} cm"
