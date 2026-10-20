@@ -50,7 +50,7 @@ LOG_LINES = 800
 # How many finished jobs the studio keeps. Every job owns a temporary
 # folder with its trajectory, its controller and its stats, and nothing
 # removed either, so a season of solves filled the temp folder and left
-# every old trajectory downloadable by guessing an id (KI-036).
+# every old trajectory downloadable by guessing an id (KI-037).
 MAX_JOBS = 20
 # The machine-readable validation summary the CLI prints for a validated
 # run. The server reads it back, so the rule "only a validated trajectory
@@ -58,7 +58,7 @@ MAX_JOBS = 20
 VALIDATION_MARKER = "##OVERBOARD-VALIDATION## "
 # Unicode letters and digits are kept in a file name. Stripping them
 # turned every non-ASCII mission name into the same file name, so one
-# mission overwrote another without a word (KI-038).
+# mission overwrote another without a word (KI-039).
 SLUG_RE = re.compile(r"[^\w-]+", re.UNICODE)
 
 # The host-side push client. Patched in tests with a stand-in.
@@ -79,7 +79,7 @@ def slugify(name, fallback="mission"):
 
     Unicode letters and digits are kept. The old rule stripped everything
     outside ``[a-z0-9_-]``, so "任务" and "テスト" both became "mission"
-    and the second save overwrote the first one (KI-038).
+    and the second save overwrote the first one (KI-039).
     """
     slug = SLUG_RE.sub("-", str(name or "").strip().lower()).strip("-_")
     slug = slug[:60]
@@ -125,7 +125,7 @@ def _process_group_kwargs():
 
     The candidates are solved in worker processes, and killing only the
     parent left those workers running: they kept solving at full speed
-    after the studio said "Cancelled" (KI-036).
+    after the studio said "Cancelled" (KI-037).
     """
     if os.name == "nt":
         return {"creationflags": getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)}
@@ -319,7 +319,7 @@ class StudioServer(ThreadingHTTPServer):
         Every job owns a temporary folder with its trajectory, its
         controller and its stats. Nothing removed either, so a season of
         solves filled the temp folder and left every old trajectory
-        downloadable by guessing an id (KI-036). The running job is never
+        downloadable by guessing an id (KI-037). The running job is never
         evicted: it is the one the studio is working on.
         """
         finished = [job for job in self.jobs.values() if job.status != "running"]
@@ -1152,7 +1152,7 @@ def restore_mission(name, sha):
         raise ValueError("That version cannot be read.")
     path = MISSIONS_DIR / f"{name}.json"
     # Parse before writing: a blob that is not a mission must not reach the
-    # disk, or the mission silently disappears from the list (KI-038).
+    # disk, or the mission silently disappears from the list (KI-039).
     data = json.loads(content)
     with open(path, "w", encoding="utf-8") as handle:
         handle.write(content)
@@ -1295,7 +1295,7 @@ def start_push(server, payload):
 
     # Only a validated trajectory goes to the robot. The browser checked
     # this too, but the browser is not the gate: a direct POST to this
-    # endpoint would otherwise run an unchecked plan on the mat (KI-035).
+    # endpoint would otherwise run an unchecked plan on the mat (KI-036).
     verdict = _validation_verdict(source)
     if verdict is not True:
         raise ValueError(
@@ -1412,7 +1412,7 @@ class StudioHandler(BaseHTTPRequestHandler):
         # The port has to be the studio's own. Any other web app on this
         # machine sends a localhost Origin, so a hostname check alone let a
         # page the operator happened to have open drive the studio - and
-        # through it the robot (KI-035).
+        # through it the robot (KI-036).
         try:
             port = parsed.port
         except ValueError:
@@ -1696,7 +1696,7 @@ class StudioHandler(BaseHTTPRequestHandler):
         # Only the project folder and the calibration folder hold models.
         # Without this, any page on this machine could ask the studio to
         # read an arbitrary file and copy it into the calibration folder
-        # (KI-035).
+        # (KI-036).
         roots = (REPO_ROOT.resolve(), CALIBRATION_DIR.resolve())
         if not any(source == root or root in source.parents for root in roots):
             return self._error(400, "That path is outside the project folder.")
@@ -1795,7 +1795,7 @@ class StudioHandler(BaseHTTPRequestHandler):
         if job.status == "running":
             # Ask for the cancel and kill the whole tree: the candidates
             # are solved in worker processes, and killing only the parent
-            # left them running at full speed (KI-036).
+            # left them running at full speed (KI-037).
             #
             # The job stays "running" until the process is really gone, so
             # the studio does not accept a second solve while the first

@@ -345,7 +345,7 @@ class TestStudioPush(StudioTestCase):
         """The rule is the server's, not only the browser's.
 
         A page on this machine can post to the studio, so the endpoint
-        that drives the robot has to check the verdict itself (KI-035).
+        that drives the robot has to check the verdict itself (KI-036).
         """
         solve_job, solved = self._solve(validated=False)
         self.assertEqual(solved["status"], "ok")
@@ -548,7 +548,7 @@ class TestStudioModel(StudioTestCase):
 
     def test_a_fit_is_loaded_from_a_path(self):
         # The route only reads a file under the project folder or the
-        # calibration folder (KI-035), so the fit is written into the
+        # calibration folder (KI-036), so the fit is written into the
         # calibration folder the test already redirects.
         path = str(gui_server.calibration_paths("loaded")["fit"])
         with open(path, "w", encoding="utf-8") as handle:
@@ -959,6 +959,55 @@ class TestStudioHelpers(unittest.TestCase):
                 finally:
                     server.shutdown()
                     server.server_close()
+
+
+class TestValidationVerdict(unittest.TestCase):
+    """The server reads the validator's verdict back from the solve's output.
+
+    The rule "only a validated trajectory goes to the robot" must not live
+    only in the browser: the endpoint that drives the robot has to enforce
+    it (KI-036).
+    """
+
+    def _job(self, lines):
+        job = gui_server.Job("job1", "t", Path(tempfile.gettempdir()))
+        for line in lines:
+            job.log(line)
+        return job
+
+    def _report(self, selected, first_ok):
+        """A report with two candidates; the second is the opposite of the first."""
+        return gui_server.VALIDATION_MARKER + json.dumps({
+            "selected": selected,
+            "candidates": [{"ok": first_ok}, {"ok": not first_ok}],
+        })
+
+    def test_a_passing_run_reads_as_a_pass(self):
+        job = self._job([self._report(1, True)])
+        self.assertIs(gui_server._validation_verdict(job), True)
+
+    def test_a_failing_run_reads_as_a_fail(self):
+        job = self._job([self._report(1, False)])
+        self.assertIs(gui_server._validation_verdict(job), False)
+
+    def test_the_selected_candidate_is_the_one_that_counts(self):
+        # Candidate 1 failed and candidate 2 passed.
+        job = self._job([self._report(2, False)])
+        self.assertIs(gui_server._validation_verdict(job), True)
+        job = self._job([self._report(1, False)])
+        self.assertIs(gui_server._validation_verdict(job), False)
+
+    def test_an_unvalidated_run_has_no_verdict(self):
+        job = self._job(["Trajectory written to output.traj"])
+        self.assertIsNone(gui_server._validation_verdict(job))
+
+    def test_a_broken_report_has_no_verdict(self):
+        job = self._job([gui_server.VALIDATION_MARKER + "{not json"])
+        self.assertIsNone(gui_server._validation_verdict(job))
+
+    def test_the_last_report_wins(self):
+        job = self._job([self._report(1, False), self._report(1, True)])
+        self.assertIs(gui_server._validation_verdict(job), True)
 
 
 if __name__ == "__main__":

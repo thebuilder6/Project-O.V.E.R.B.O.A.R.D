@@ -14,6 +14,7 @@ JSON record per candidate so the questions can be answered from data.
 | File | What it does |
 |---|---|
 | `suite.py` | Generates the random mission suite (Q8). Stratified over four path profiles: `even`, `uneven`, `turny`, `mixed`. Deterministic from a seed. |
+| `robots.py` | Generates random robots: the same missions planned for machines whose constants differ (mass, inertia, wheel radius, track width, the motor's torque and top speed, the friction, the gear backlash). A declared range moves with its constant, so a drawn robot is still a robot the ranges describe. |
 | `seeds.py` | Two extra initial guesses, built outside the production tree and handed to the solver through the existing `initial_guess` argument: a cubic Bezier path family (Q1) and a length-proportional time allocation (Q2). |
 | `harness.py` | Runs the matrix. Reuses the production solver, the production Immrax validator and the production CPU audit, and writes one JSON record per candidate. |
 | `analyze.py` | Reads the JSONL and prints the answers. |
@@ -64,6 +65,7 @@ The campaign that produced the published numbers used 8 example missions and
 
 | `--specs` | Candidates per mission |
 |---|---|
+| `default` | the CLI's own default pair: the baseline seed on both timing models (2) |
 | `seeds` | 5 stock seeds x 2 timing models, at the base weight (10) |
 | `weights` | baseline x 2 timing models x the CLI sweep weights (10) |
 | `wide-weights` | baseline x 2 timing models x a 9-point weight ladder (18) |
@@ -79,6 +81,28 @@ The campaign that produced the published numbers used 8 example missions and
 their width. The declared ranges are test assumptions (KI-020), so this
 measures how much of a PASS depends on them.
 
+### The stress run: many paths, many robots
+
+`suite.py` varies the path and `robots.py` varies the machine, so the
+harness can plan a whole suite of random paths for random robots:
+
+```powershell
+python research/suite.py --count 200 --seed 20261020 --out $env:TEMP\overboard_stress\missions
+python research/harness.py --missions $env:TEMP\overboard_stress\missions `
+    --out research/results/stress.jsonl --specs default --robot-jitter 1 --robots 2
+```
+
+`--robot-jitter 1` moves every constant over the full range `robots.py`
+lists; `--robot-jitter 0` keeps the declared robot. `--robots N` draws N
+robots per mission, and the robot of a (mission, draw) pair is fixed by
+`--robot-seed`, so a run is reproducible. Every record carries the factors
+that were applied (`robot_factors`), so `analyze.py robots` can say whether
+the robot's own size decides whether a path is planned.
+
+`--specs default` is the CLI's own default pair, so a stress run over many
+missions and many robots stays affordable. `analyze.py errors` lists the
+solver's exceptions, which is what a stress run is for.
+
 ## The records
 
 One JSON object per line. The first line of a file is a `meta` record with the
@@ -92,6 +116,8 @@ Each candidate record carries the spec that produced it (`label`, `style`,
 outcome (`ok`, `tube_m`, `tracking_m`, `motor_violation_N`, `slip_l_N`,
 `slip_r_N`, `speed_violation_m_s`, `integrate_max_m`, `integrate_final_m`,
 `final_wp_pos_m`, `reasons`) and the critic's opinion (`critic_windows`).
+A record also carries the robot it was planned for (`robot`, `robot_factors`)
+and the solver's exception text (`error`), when there was one.
 
 ## A note on honesty
 

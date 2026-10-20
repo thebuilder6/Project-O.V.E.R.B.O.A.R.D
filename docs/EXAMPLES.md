@@ -431,7 +431,7 @@ python main.py -c examples/fll_choreo.json -w mission_waypoints.json -o mission.
 
 **Expected output:**
 
-- Solves are typically a few tenths of a second; the Multi-Verse path adds JAX overhead without changing the result (KI-004)
+- Solves are typically a few tenths of a second; the Multi-Verse path adds JAX overhead, and its refined trajectory can change the result (KI-004)
 - The solve may converge while `--validate` still rejects the path; under the current test ranges the S-curve, stops, and events examples fail, while the complex mission passes (KI-020)
 - If validation passes, the controller profile has one sample per 20 ms of trajectory
 
@@ -798,7 +798,7 @@ for wp_file in waypoint_files:
     print(f"Generated {output_file}")
 ```
 
-> **Note:** `MasterTrajectoryOptimizer.solve()` returns `(samples, stats)`, and the current refinement does not change the final trajectory (KI-004). For batch work, `TrajectoryOptimizer` (the default) is faster and predictable.
+> **Note:** `MasterTrajectoryOptimizer.solve()` returns `(samples, stats)`, and its refinement can change the final trajectory — the polish probes it, and `--refine` uses it as a seed (KI-004). For batch work, `TrajectoryOptimizer` (the default) is faster and predictable.
 
 ---
 

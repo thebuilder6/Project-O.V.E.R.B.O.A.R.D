@@ -5,7 +5,7 @@ A trajectory optimizer for LEGO differential-drive robots in FIRST LEGO League (
 **📖 Technical documentation:** [docs/WHITEPAPER.md](docs/WHITEPAPER.md)
 **🔬 Heuristics and verification:** [docs/HEURISTICS_AND_VERIFICATION.md](docs/HEURISTICS_AND_VERIFICATION.md) — every path-planning heuristic, the full verification chain, the failed-strategy ledger, and the research agenda.
 
-The current working tree contains uncommitted fixes for several audit items, including KI-001, KI-002, KI-003, KI-007 through KI-010, KI-013, KI-014, and KI-019 (see [KNOWN_ISSUES.md](KNOWN_ISSUES.md)). Multi-Verse refinement is still experimental: it runs, but the refined guess is discarded by the final polish (KI-004).
+The current working tree contains uncommitted fixes for several audit items, including KI-001 through KI-016, KI-018, KI-019 and KI-021 through KI-031 (see [KNOWN_ISSUES.md](KNOWN_ISSUES.md)). The Multi-Verse pipeline is experimental and is used as a **seed provider**: `main.py --refine` adds its refined trajectory to the candidate set, which is a cheaper way to reach the stock set's speed rather than a better one, so it stays opt-in (KI-004).
 
 ## Start here (first time)
 
@@ -68,7 +68,7 @@ explains the same steps in detail.
 - **Safety gate**: `--validate` blocks every output and returns exit 1 on failure
 - **Controller export**: Fixed-timestep JSON for the Pybricks controller; legacy or packed-compact Python export
 - **Event markers and stops**: Trigger robot actions and force rest at waypoints
-- **Experimental Multi-Verse pipeline**: Reeds-Shepp bootstrap, kinematic profile, critic, and JAX refinement (opt in with `--multiverse`; currently no final quality gain, KI-004)
+- **Experimental Multi-Verse pipeline**: Reeds-Shepp bootstrap, kinematic profile, critic, and JAX refinement (opt in with `--multiverse`; its refined trajectory is a **seed** for the simple solver via `--refine`, KI-004)
 
 ## Installation
 
@@ -204,7 +204,7 @@ Legacy Choreo files with a `config` object and `{ "val": ... }` entries, and fla
 - `heading`: Heading in radians (optional; `null` means unconstrained)
 - `stop`: Force the robot to rest at this waypoint (optional, default `false`)
 - `event`: Event name to export at this waypoint (optional, e.g. `"lower_arm"`)
-- `error_threshold`: Local reachability-envelope threshold in meters (optional)
+- `error_threshold`: Local reachability-envelope threshold in meters (optional). It governs the way *into* this waypoint: the segment that ends here is held to it.
 - `precision_mode`: Shortcut for a 0.005 m envelope threshold (optional)
 
 ### 3. Generate a trajectory
@@ -213,7 +213,7 @@ Legacy Choreo files with a `config` object and `{ "val": ... }` entries, and fla
 python main.py -w examples/example_straight.json -o output.traj --plot
 ```
 
-The simple CasADi solver is the default. Add `--multiverse` to run the experimental Multi-Verse pipeline instead; it requires JAX and currently does not change the final trajectory (KI-004).
+The simple CasADi solver is the default. Add `--multiverse` to run the experimental Multi-Verse pipeline as its own solver; it requires JAX. Add `--refine` instead to use the pipeline's refined trajectory as a **seed** for the simple solver (KI-004).
 
 ### 4. Validate and export for the controller
 
@@ -513,7 +513,7 @@ The experimental pipeline (opt in with `--multiverse`) is:
 4. **JAX refinement**: Generate candidates for flagged windows and refine them with JAX.
 5. **CasADi polish**: Re-solve the global problem with IPOPT.
 
-The refinement phase updates an intermediate trajectory. That trajectory is now used: the polish probes it with a bounded cold pass and keeps it when it beats the default starting point, so the refinement can change the result (KI-004). On the example mission the probe converges in 38 iterations to 8.1473 s, which is worse than the 6.0677 s the default starting point finds, so the default still wins and the pipeline is unchanged. `--workers` now controls the worker processes that solve the candidates in parallel; it does not change the result. A measured 3-waypoint pipeline benchmark produced the same 6.7614 s trajectory with simple and Multi-Verse, and 0.00 % cost improvement.
+The refinement phase updates an intermediate trajectory, and that trajectory is now used: the polish probes it with a bounded cold pass and keeps it when it beats the default starting point, so the refinement can change the result (KI-004). On the complex mission the probe converges to **4.617 s** against the **6.049 s** the default starting point finds, so the probe wins there. `main.py --refine` puts the refined trajectory into the candidate set of the simple solver, so the pipeline is a **seed provider**: on the complex mission that is 4.936 s where the default two-candidate set gives 6.068 s — but the full ten-candidate stock set gives 4.877 s there, and over 30 missions the refined seed rescues nothing. It is a cheaper way to reach the stock set's speed, not a better one, which is why it stays opt-in. `--workers` controls the worker processes that solve the candidates in parallel; it does not change the result.
 
 ## Common Usage Patterns
 
@@ -682,7 +682,7 @@ Measured on the current working tree with the example config:
 
 - 1 m straight, simple optimizer: about **0.06 s** solve wall time, **2.377 s** trajectory time, **0.000407 m** max forward-integration error.
 - 3-waypoint pipeline benchmark: simple **0.1076 s**, Multi-Verse **0.1224 s**, both with a **6.7614 s** trajectory and **0.00 %** improvement.
-- Multi-Verse refinement phase: about **0.0115 s**; the refined trajectory is now probed as a starting point for the polish, but it does not win on the example mission (KI-004).
+- Multi-Verse refinement phase: about **0.0115 s**; the refined trajectory is probed as a starting point for the polish and wins on the complex mission (4.617 s against 6.049 s), and `--refine` adds it to the candidate set (KI-004).
 - 10-waypoint complex mission, simple solver: about **26 s** for the IPOPT polish, which is **1557 iterations** for a 705-variable NLP. `--fast-polish` brings that to about **15 s** (**677 iterations**) for a trajectory that differs by **0.02 %** (6.0677 s → 6.0690 s). Every other example mission solves inside the iteration budget and returns a bit-identical trajectory.
 
 `python benchmark.py --mode solver --config examples/fll_choreo.json` prints that table for every example mission; add `--fast-polish` for the fast path.
@@ -715,8 +715,8 @@ See [docs/trajectory_tools_research.md](docs/trajectory_tools_research.md) for c
 - ✅ Phase 1: CasADi + IPOPT solver
 - ✅ Phase 2: Time vs. accuracy tradeoff
 - ✅ Phase 3: Validation and controller export (with a hard export gate)
-- 🟡 Phase 4: Multi-Verse pipeline implemented but refinement discarded (KI-004)
-- 🟡 Phase 5: Events and stops implemented; final-waypoint event bug remains (KI-012)
+- 🟡 Phase 4: Multi-Verse pipeline implemented and repaired; its refined trajectory is a seed (`--refine`), opt-in (KI-004)
+- ✅ Phase 5: Events and stops implemented; the final-waypoint event fires (KI-012)
 - ⚪ Phase 6: Field geometry/obstacle constraints (optional)
 - 🟡 Digital twin: parity, gate, and optional fitted actuator/odometry model implemented; motor/DriveBase/slip dynamics remain (KI-020)
 
@@ -763,11 +763,21 @@ python main.py -w mission.json --push-hub --hub-log session.csv
 ```
 
 Calibration works the same way. `sysid_collect.py` pushes the collector,
-captures the session, and fits it; the operator measures the end pose of the
-tests that need a tape and fills in a sheet.
+captures the session, and writes the measurement sheet; the operator measures
+the end pose of the tests that need a tape and fills the sheet in.
 
 ```bash
-python sysid_collect.py --conn ble --profile my_drivebase.json
+python sysid_collect.py --conn ble --profile my_drivebase.json \
+  --session session.csv --sheet calibration_sheet.csv
+```
+
+The sheet is written twice: as the CSV the fitter reads, and as a form in a
+browser (`calibration_sheet.html`) that you fill in with the numbers the
+tape says. The form downloads the CSV, so the fit takes it as it is:
+
+```bash
+python sysid_fit.py session.csv --sheet calibration_sheet.csv \
+  --profile my_drivebase.json --out sysid_fit.json
 ```
 
 The full human procedure is in

@@ -121,7 +121,7 @@ Recognized ranges:
 
 ## Multi-Verse parameters (`multiverse`)
 
-> **Current status:** the Multi-Verse pipeline runs, but its refined guess is not used by the final CasADi polish (KI-004). `--workers` and `--no-parallel` therefore do not change the final trajectory. The only `multiverse` block read by the current code is `bootstrap`.
+> **Current status:** the Multi-Verse pipeline runs and its refined guess now reaches the solver as a **seed** — the polish probes it, and `main.py --refine` adds it to the candidate set (KI-004). `--workers` and `--no-parallel` still do not change the final trajectory. The only `multiverse` block read by the current code is `bootstrap`.
 
 ### `bootstrap` (used)
 
@@ -158,7 +158,7 @@ Waypoints can be dictionaries or `[x, y, heading]` arrays:
 | `heading` | float or null | Heading in radians. Omit or use `null` for an unconstrained heading. |
 | `stop` | bool | Force both wheel speeds to zero at this waypoint. |
 | `event` | string | Event name exported with the waypoint sample. |
-| `error_threshold` | float | Local reachability-envelope threshold in meters for `--validate`. |
+| `error_threshold` | float | Local reachability-envelope threshold in meters for `--validate`. It governs the way *into* this waypoint: the segment that ends here is held to it. |
 | `precision_mode` | bool | Shortcut for a 0.005 m local envelope threshold. Ignored if `error_threshold` is also present. |
 
 `--stop-waypoints` and `--events` override or add to the JSON settings. Indices are zero-based.
@@ -221,4 +221,4 @@ python main.py --simple -c examples/fll_choreo.json -w examples/example_straight
 
 ## Installation note
 
-`pip install -r requirements.txt` covers the simple optimizer. The default Multi-Verse path and `--validate` need `jax`, `jaxopt`, and `immrax`; `sysid_solver.py` needs `pandas`. `--simple --live` can run without JAX, but live reachability envelopes require it. Those packages are not in `requirements.txt` yet (KI-006). JAX 0.6.2 was used for the current tests. `install.bat` and `install.sh` install both sets into a `.venv` and check the result.
+`pip install -r requirements.txt` covers the simple optimizer. `--validate`, `--multiverse` and `--refine` need `jax`, `jaxopt`, and `immrax`; `sysid_solver.py` needs `pandas`. A plain solve can run without JAX, but live reachability envelopes require it. The optional packages live in `requirements-optional.txt` (KI-006). JAX 0.6.2 was used for the current tests. `install.bat` and `install.sh` install both sets into a `.venv` and check the result, and `python main.py --doctor` reports what is missing and prints the install command.

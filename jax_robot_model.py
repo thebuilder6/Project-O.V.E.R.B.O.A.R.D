@@ -44,7 +44,7 @@ class JAXRobotConfig:
         no-load speed first. The motor turns ``gearing`` times per wheel
         revolution, so the wheel's no-load speed is the motor's divided by
         it, exactly as :meth:`robot_model.RobotConfig.max_linear_speed`
-        and the force model read it (KI-034).
+        and the force model read it (KI-035).
         """
         radius = min(self.wheel_radius_range)
         return self.v_max_rad_s * radius / max(self.gearing, 1e-9)

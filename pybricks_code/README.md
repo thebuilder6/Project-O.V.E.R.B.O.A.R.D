@@ -146,11 +146,13 @@ list-format modules and `ramsete_compact.py` for packed modules.
 
    ```bash
    python sysid_collect.py --conn ble \
-       --profile examples/drivebase_profile.example.json
+       --profile examples/drivebase_profile.example.json \
+       --session session.csv --sheet calibration_sheet.csv
    ```
 
    That pushes the collector, writes the session as it arrives, turns the
-   `POSE` lines into `poses.csv`, and fits the model. The operator still
+   `POSE` lines into `poses.csv`, writes the measurement sheet (the CSV and a
+   form in a browser next to it), and fits the model. The operator still
    presses the hub button when each test asks for it.
 
    **For the full human procedure, see
@@ -180,11 +182,18 @@ list-format modules and `ramsete_compact.py` for packed modules.
    in a sheet and let the host do the bookkeeping:
 
    ```bash
-   python sysid_fit.py session.csv --write-sheet calibration_sheet.csv
-   # the operator fills in x_mm, y_mm and turn_right_deg
-   python sysid_fit.py session.csv --from-sheet calibration_sheet.csv \
-       --out-poses poses.csv
+   python sysid_fit.py session.csv --write-form calibration_sheet.html
+   # the operator fills in x_mm, y_mm and turn_right_deg in the browser form
+   # and downloads the CSV
+   python sysid_fit.py session.csv --sheet calibration_sheet.csv \
+       --profile examples/drivebase_profile.example.json --out sysid_fit.json
    ```
+
+   `--write-form` writes the sheet as a form in a browser: one row per
+   measurement, the convention at the top, and a **Download CSV** button that
+   writes the file the fit reads. `--write-sheet` writes the same sheet as a
+   plain CSV, and `--from-sheet ... --out-poses poses.csv` writes the
+   measured poses as a file of their own.
 3. From the repository root, fit the model with a minimal drivebase profile:
 
    ```bash

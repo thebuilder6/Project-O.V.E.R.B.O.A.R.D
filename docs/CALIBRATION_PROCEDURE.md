@@ -101,12 +101,19 @@ The cost is that you measure more. Seven poses per repeat, three repeats,
 ## Step 1 — collect the session
 
 ```bash
-python sysid_collect.py --session session.csv
+python sysid_collect.py --conn ble --profile my_drivebase.json \
+  --session session.csv --sheet calibration_sheet.csv
 ```
 
 This pushes `pybricks_code/sysid_digital_twin.py` to the hub over Bluetooth
 and captures everything it prints. The session is written as it arrives, so a
 dropped link costs the last test and not the whole run.
+
+`--profile` is only needed for the fit, so the command also works without it
+(then the session is collected and the model is not fitted). `--sheet` writes
+the measurement sheet for the session: the CSV the fitter reads
+(`calibration_sheet.csv`) and a form in a browser next to it
+(`calibration_sheet.html`) that you fill in instead of editing a spreadsheet.
 
 **What happens on the hub:** the display lights yellow and the hub waits for
 the centre button. The terminal prints the name of the test and its setup
@@ -142,6 +149,12 @@ measure it each time:
 Only tests 11 to 15 need a tape measure. The rest are for the actuator model
 and the gyro bias, and you only have to watch them.
 
+The table lists the tests in the order they first appear. The repeats are
+interleaved: the forward and reverse step tests alternate, and the five
+measured tests run as one group of five per repeat, so the tape work is done
+in one go. The step order is reversed on every other repeat, so a battery
+that sags over the session cannot land on the step index.
+
 **Test 16, `wall_homing`, checks the distance scale against the wall.** The
 robot drives slowly forward from the start mark and stops when it is blocked,
 so the distance it covered is the distance to the wall. The wall does not
@@ -152,7 +165,7 @@ without a human. It needs the `wall` block in the drivebase profile.
 wall, which is why it runs straight after the homing run: the robot is
 already against it.
 
-**Test 17, `top_speed`, needs the robot off the ground.** With the wheels
+**Test 18, `top_speed`, needs the robot off the ground.** With the wheels
 lifted the motor pushes nothing, so it runs up to the speed at which it makes
 no torque. That speed is the other end of the motor's torque-speed line, and
 the robot config otherwise has to declare it. It runs last, after the
@@ -187,14 +200,16 @@ measurements it still needs.
 
 ---
 
-## Step 2 — write the measurement sheet
+## Step 2 — fill in the measurement sheet
+
+`sysid_collect.py --sheet` already wrote it. If you collected the session
+some other way, write it here:
 
 ```bash
 python sysid_fit.py session.csv --write-sheet calibration_sheet.csv
 ```
 
-This writes a sheet with one row per measurement the session needs, and
-nothing else:
+The sheet has one row per measurement the session needs, and nothing else:
 
 ```csv
 test,repeat,stop,x_mm,y_mm,turn_right_deg
@@ -222,36 +237,44 @@ measurement goes where. Fill in the three number columns from your paper.
 Leave a row empty if you did not measure it. The tool tells you which
 measurements are missing instead of guessing.
 
+**Fill it in the browser, not in a text editor.** The collect command wrote a
+form next to the sheet:
+
+```bash
+python sysid_fit.py session.csv --write-form calibration_sheet.html
+```
+
+Open `calibration_sheet.html` in a browser. It has one row per measurement,
+with the convention written at the top, and it counts what is still missing.
+Type the numbers, click **Download CSV**, and save the file in the folder you
+run the commands from. It is the same CSV as the sheet, so it drops straight
+into the next step. The form also takes a sheet you saved earlier, so a
+session you measured in two goes is not measured twice.
+
 ---
 
-## Step 3 — turn the sheet into measured poses
+## Step 3 — fit the model
+
+```bash
+python sysid_fit.py session.csv --sheet calibration_sheet.csv \
+  --profile my_drivebase.json --out sysid_fit.json
+```
+
+The sheet is keyed by test name and repeat, so it does not matter which
+order the tests ran in or which ones you skipped. The tool looks each
+measurement up in the session, converts millimetres to metres, flips the
+turn, and fits from that. There is no intermediate pose file.
+
+It warns about a row for a test that did not run, and about a measurement
+that is missing. A missing measurement is not fatal: the scales that need it
+stay uncalibrated, and the report says so.
+
+If you want the measured poses as a file of their own (to compare the plan
+against later, for instance), write them out:
 
 ```bash
 python sysid_fit.py session.csv --from-sheet calibration_sheet.csv \
   --out-poses poses.csv
-```
-
-The sheet is keyed by test name and repeat, so it does not matter which
-order the tests ran in or which ones you skipped. The tool looks each one up
-in the session, converts millimetres to metres, flips the turn, and writes the
-rows the fitter reads:
-
-```csv
-run_id,stop,x_m,y_m,heading_deg
-11,0,0.998,0.002,0.00
-...
-```
-
-It warns about a row for a test that did not run, and about a measurement
-that is missing.
-
----
-
-## Step 4 — fit the model
-
-```bash
-python sysid_fit.py session.csv --poses poses.csv \
-  --profile my_drivebase.json --out sysid_fit.json
 ```
 
 The fitter prints what it found:
@@ -348,7 +371,7 @@ found out which.
 
 ---
 
-## Step 5 — use the fit
+## Step 4 — use the fit
 
 Plan with it:
 
@@ -362,9 +385,12 @@ actuator response and the odometry scale, and it uses the **gain interval**
 as the band it plans against, so a robot that varies a lot produces a
 conservative plan.
 
-Check the plan against the robot you measured:
+Check the plan against the robot you measured. The comparator reads the
+measured poses, so write them out of the sheet first:
 
 ```bash
+python sysid_fit.py session.csv --from-sheet calibration_sheet.csv \
+  --out-poses poses.csv
 python sysid_compare.py output.traj poses.csv --run-id 11 \
   --profile my_drivebase.json
 ```
@@ -391,7 +417,7 @@ thresholds do not change.
   names a test the session does not contain. Check the spelling against the
   `META,test` line in `session.csv`, and the repeat against `META,repeat`.
 - **`'x' repeat 0 stop 0 was not measured`** — that measurement is missing,
-  so its scale will not be calibrated. Fill it in and re-run steps 3 and 4.
+  so its scale will not be calibrated. Fill it in and re-run step 3.
 - **The fit says "one run only, no interval".** The session has a single run
   of that test, so there is no spread to report. Collect a session with the
   repeats, or accept the point estimate with no interval.

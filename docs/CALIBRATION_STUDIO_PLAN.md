@@ -149,6 +149,8 @@ The studio shows them as a table: the first three columns are read-only keys, th
 
 The numbers go straight back into a sheet CSV, so the spreadsheet path and the GUI path produce the same file.
 
+The command line has the same form as a standalone file: `python sysid_fit.py session.csv --write-form calibration_sheet.html` writes the same rows as a self-contained page, and the page downloads the same sheet CSV. An operator who never opens the studio gets the same sheet, and the fit takes it either way (`--sheet`).
+
 ---
 
 ## Where the files live

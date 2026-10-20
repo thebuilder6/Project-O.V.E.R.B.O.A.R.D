@@ -2,7 +2,7 @@
 
 *Context: FLL differential-drive path optimizer. The current implementation uses CasADi and IPOPT with trapezoidal direct collocation; it no longer uses SLSQP or scipy.minimize.*
 
-> **Current status (2026-10-19):** time-optimal solving, the jerk/accuracy weight, CPU validation, Immrax reachability, stops/events, and controller export are implemented. Multi-Verse refinement is wired but its result is discarded by the final polish (KI-004). An optional fitted actuator/odometry plant (`sysid_digital_twin.py` + `sysid_fit.py` + `--sysid-fit`) exists, but the validator is not yet a full digital twin (KI-020). See `KNOWN_ISSUES.md` and `docs/WHITEPAPER.md` for the measured state.
+> **Current status (2026-10-20):** time-optimal solving, the jerk/accuracy weight, CPU validation, Immrax reachability, stops/events, and controller export are implemented. The Multi-Verse refinement is repaired and used as a **seed provider** — `main.py --refine` puts its refined trajectory into the candidate set (KI-004); it is a cheaper way to reach the stock set's speed, not a better one, so it stays opt-in. An optional fitted actuator/odometry plant (`sysid_digital_twin.py` + `sysid_fit.py` + `--sysid-fit`) exists, but the validator is not yet a full digital twin (KI-020). See `KNOWN_ISSUES.md` and `docs/WHITEPAPER.md` for the measured state.
 
 ---
 
@@ -99,9 +99,9 @@ The validation thresholds (5 mm tracking, 2 cm envelope) are model checks, not h
 ## Recommended Next Steps
 
 1. **Calibrate the digital twin (KI-020).** Record hardware logs with `pybricks_code/sysid_digital_twin.py`, measure the stop/final poses, fit with `sysid_fit.py`, and compare the fitted validator with those poses. Then add integrated odometry, DriveBase response, and slip models. Keep the current gate strict until then.
-2. **Connect or remove Multi-Verse (KI-004).** Add a way to pass a full refined trajectory into the simple solver (it already has `guess_style` seeds) and use it in the final polish, or delete the experimental path and worker flags.
-3. **Fix the install path (KI-006).** Add JAX/JAXOpt/Immrax/pandas as an optional extra, and make the simple mode the obvious quick start.
-4. **Finish export/runtime edge cases (KI-011, KI-012).** Unwrap headings across ±π and fire the final event.
+2. **Make the objective answer the gate.** The Multi-Verse seed provider is repaired (KI-004) but buys speed with tracking accuracy, because its cost is duration plus a jerk term. The same lever as reachability in the objective.
+3. **Fix the install path (KI-006).** Done: the optional packages live in `requirements-optional.txt`, `install.bat` / `install.sh` set up both, and `main.py --doctor` reports what is missing.
+4. **Finish export/runtime edge cases (KI-011, KI-012).** Done: the headings unwrap across ±π and the final event fires.
 5. **Make benchmarks trustworthy (KI-015).** Done: the pipeline mode checks convergence, the config is explicit, and the random suite generator solves every mission.
 
 ---

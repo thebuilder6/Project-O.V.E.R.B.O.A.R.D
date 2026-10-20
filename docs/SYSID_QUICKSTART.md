@@ -39,8 +39,14 @@ tests, and prints one or more `TEST_START` / `TEST_END` blocks.
 The host can push it and capture the session for you:
 
 ```bash
-python sysid_collect.py --session session.csv
+python sysid_collect.py --conn ble --profile my_drivebase.json \
+  --session session.csv --sheet calibration_sheet.csv
 ```
+
+`--profile` is only needed for the fit, so the collect works without it too
+(the session is written and the model is not fitted). `--sheet` writes the
+measurement sheet: the CSV the fitter reads, and a form in a browser next to
+it that you fill in instead of editing a spreadsheet.
 
 Measure the final pose of each run and write `poses.csv`:
 
@@ -57,8 +63,16 @@ To keep the measurements by test name and repeat instead of by run id, fill in
 a sheet and let the tool do the bookkeeping:
 
 ```bash
-python sysid_fit.py session.csv --write-sheet calibration_sheet.csv
-# the operator fills in x_mm, y_mm and turn_right_deg
+# the operator fills in x_mm, y_mm and turn_right_deg, in the browser form
+# or in the CSV
+python sysid_fit.py session.csv --sheet calibration_sheet.csv \
+  --profile my_drivebase.json --out sysid_fit.json
+```
+
+The sheet is fitted directly, so there is no intermediate `poses.csv`. To keep
+the measured poses as a file of their own:
+
+```bash
 python sysid_fit.py session.csv --from-sheet calibration_sheet.csv \
   --out-poses poses.csv
 ```

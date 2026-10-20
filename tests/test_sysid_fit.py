@@ -460,7 +460,7 @@ class TestDistanceScale(unittest.TestCase):
     """
 
     @staticmethod
-    def _homing_run(run_id, odometry_mm=1000.0, wall_distance_m=1.05):
+    def _homing_run(run_id, odometry_mm=1000.0):
         """A run that drove into a wall: the wall is the reference."""
         rows = [[0, 60.0, 0, 0, 60.0, 0, 0, 8000, 0, 0],
                 [1000, 60.0, 0, odometry_mm, 0.0, 0, 0, 8000, 0, 0],

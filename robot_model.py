@@ -174,7 +174,7 @@ class RobotConfig:
         Leaving the gearing out made the optimizer's wheel-speed bound and
         the CPU audit's speed limit larger than the motor's real top
         speed for a geared robot, so every plan for one was guaranteed to
-        fail the motor gate (KI-034).
+        fail the motor gate (KI-035).
         """
         speed = self.v_max_rad_s * self.wheel_radius / max(self.gearing, 1e-9)
         if apply_headroom:

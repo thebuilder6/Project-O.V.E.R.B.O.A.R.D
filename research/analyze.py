@@ -783,13 +783,66 @@ def report_drivebase(rows: Sequence[Row]) -> None:
               f"max {_fmt(max(passing), 2)} m/s^2")
 
 
+def report_errors(rows: Sequence[Row]) -> None:
+    """What broke, and how often."""
+    print("\n## Errors and crashes\n")
+    counter: Dict[str, int] = defaultdict(int)
+    first_seen: Dict[str, Row] = {}
+    for row in rows:
+        error = row.get("error")
+        if not error:
+            continue
+        key = str(error).strip().splitlines()[0][:160]
+        counter[key] += 1
+        first_seen.setdefault(key, row)
+    if not counter:
+        print(f"no solver error in {len(rows)} candidates")
+    else:
+        print("| count | mission | message |")
+        print("|---:|---|---|")
+        for key, count in sorted(counter.items(), key=lambda kv: -kv[1]):
+            print(f"| {count} | {first_seen[key].get('mission')} | {key} |")
+    empty = sum(1 for row in rows if "no samples" in (row.get("reasons") or []))
+    print(f"\ncandidates that produced no samples at all: {empty}/{len(rows)}")
+
+
+def report_robots(rows: Sequence[Row]) -> None:
+    """Does the robot's own size decide whether a path is planned?"""
+    print("\n## Pass rate by robot constant\n")
+    names = set()
+    for row in rows:
+        names.update((row.get("robot_factors") or {}).keys())
+    if not names:
+        print("this run used one robot for every mission")
+        return
+    for name in sorted(names):
+        buckets: Dict[float, List[Row]] = defaultdict(list)
+        for row in rows:
+            factor = (row.get("robot_factors") or {}).get(name)
+            if factor is None:
+                continue
+            buckets[round(float(factor), 1)].append(row)
+        print(f"\n### {name}\n")
+        print("| factor | n | pass | pass rate | median envelope cm | "
+              "median duration s |")
+        print("|---:|---:|---:|---:|---:|---:|")
+        for factor in sorted(buckets):
+            group = buckets[factor]
+            passing = sum(1 for r in group if r.get("ok"))
+            tubes = [_finite(r.get("tube_m")) for r in group]
+            print(f"| {factor:.1f} | {len(group)} | {passing} | "
+                  f"{100 * passing / len(group):.0f}% | "
+                  f"{_fmt((_median(tubes) or 0) * 100, 2)} | "
+                  f"{_fmt(_median([_finite(r.get('duration_s')) for r in group]))} |")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("command",
                         choices=("summary", "seeds", "gates", "weights", "select",
                                  "compare", "critic", "density", "envelope",
                                  "spread", "timing", "dtheta", "marginal",
-                                 "drivebase", "all"))
+                                 "drivebase", "errors", "robots", "all"))
     parser.add_argument("path")
     parser.add_argument("--a", default="spline", help="First label for compare.")
     parser.add_argument("--b", default="baseline", help="Second label for compare.")
@@ -829,6 +882,10 @@ def main() -> None:
             report_marginal(rows)
         if args.command in ("drivebase", "all"):
             report_drivebase(rows)
+        if args.command in ("errors", "all"):
+            report_errors(rows)
+        if args.command in ("robots", "all"):
+            report_robots(rows)
         if args.command == "density":
             report_density(rows)
         if args.command == "compare":

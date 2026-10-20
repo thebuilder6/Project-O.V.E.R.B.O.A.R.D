@@ -4,7 +4,7 @@ Last reviewed: 2026-10-19
 
 Scope: whole repository, reviewed as a single-user, offline desktop tool for one FLL robot. This is not a multi-user or server-scale review.
 
-Status: KI-001, KI-002, KI-003, KI-004, KI-005, KI-006, KI-007, KI-008, KI-009, KI-010, KI-011, KI-012, KI-013, KI-014, KI-015, KI-016, KI-018, KI-019, KI-021, KI-022, KI-023, KI-024, KI-025, KI-026, KI-027, KI-028, KI-029, KI-030, KI-031, and KI-033 are **fixed in the working tree** (uncommitted). KI-032 is **mitigated**: the test cache is on by default and its rules are in `testcache.py`. All other items are open; KI-017 is partially fixed. KI-020 records the remaining digital-twin and optimization work. The user-facing docs were reconciled with this tree on 2026-10-19; the code remains the authority if they diverge again.
+Status: KI-001, KI-002, KI-003, KI-004, KI-005, KI-006, KI-007, KI-008, KI-009, KI-010, KI-011, KI-012, KI-013, KI-014, KI-015, KI-016, KI-018, KI-019, KI-021, KI-022, KI-023, KI-024, KI-025, KI-026, KI-027, KI-028, KI-029, KI-030, KI-031, KI-033, KI-034, KI-035, KI-036, KI-037, KI-038, KI-039, and KI-040 are **fixed in the working tree** (uncommitted). KI-032 is **mitigated**: the test cache is on by default and its rules are in `testcache.py`. All other items are open; KI-017 is partially fixed. KI-020 records the remaining digital-twin and optimization work. The user-facing docs were reconciled with this tree on 2026-10-19; the code remains the authority if they diverge again.
 
 How to use this list: refer to an item by its ID, for example “fix KI-003”.
 
@@ -45,6 +45,15 @@ How to use this list: refer to an item by its ID, for example “fix KI-003”.
 | KI-031 | P1 | Install | ~~A new user could not install the project: the two requirement files contradicted each other, and the first run died with an ImportError~~ (fixed) |
 | KI-032 | P1 | Tests | A test cache can hide a regression (mitigated: the fingerprint is wide, only a passed test is skipped, and the summary says what was skipped) |
 | KI-033 | P1 | Robot runtime | ~~The host could not find the hub over Bluetooth, while the Pybricks IDE could~~ (fixed) |
+| KI-034 | P1 | Solver / validation | ~~The local envelope limit landed on the wrong segment, and the last waypoint's limit was never read~~ (fixed) |
+| KI-035 | P1 | Solver / safety model | ~~The wheel-speed limit ignored the gearing~~ (fixed) |
+| KI-036 | P1 | Studio / safety | ~~The studio pushed whatever trajectory it was given~~ (fixed) |
+| KI-037 | P1 | Studio | ~~The studio kept every job forever, and a cancel left the solver running~~ (fixed) |
+| KI-038 | P1 | Export | ~~An event name with a quote in it broke the exported Python file~~ (fixed) |
+| KI-039 | P2 | Studio / solver | ~~Two mission names became one file, a restore wrote before it parsed, and the guess averaged two headings the long way~~ (fixed) |
+| KI-040 | P1 | Robot runtime | ~~`--push-hub --hub-log` lost the whole hub log when the link dropped~~ (fixed) |
+| KI-044 | P1 | Studio | ~~The studio kept the last run's verdict, and a reload could not cancel a solve~~ (fixed) |
+| KI-045 | P2 | Cleanup | `sysid_solver.py` is a superseded prototype (open) |
 
 ## P0 — fix first
 
@@ -418,6 +427,150 @@ On the nine missions where both have a passing candidate, the refined family is 
 
 ---
 
+### KI-034 — The local envelope limit landed on the wrong segment
+
+**Status:** Fixed in the working tree (uncommitted).
+
+**Files:** `main.py` (`_segment_limit`, `_segment_report`, the gate loop), `tests/test_regressions.py`
+
+**Problem:** A waypoint's `error_threshold` (or `precision_mode`) was applied to the samples of the segment that **started** at that waypoint. So the tight limit was enforced on the way *out* of a precision waypoint, and the way *into* it was judged by the previous waypoint's limit, which is the default 2 cm.
+
+**Evidence:** The rule is `wp_idx = i // samples` and `waypoint_thresholds.get(wp_idx, 0.02)`. With four waypoints and thresholds on waypoint 0 (5 mm) and waypoint 3 (1 mm), the three segments got limits of 5 mm, 20 mm and 20 mm: the final waypoint's 1 mm was never read, because there is no segment after the last waypoint. The studio calls the switch "Precision (0.5 cm envelope)" at a waypoint, so the operator asked for the robot to be tight *there*, on the approach.
+
+**Fix (implemented):** One rule, in `main._segment_limit`, used by both the report and the gate: a waypoint's limit governs the segment that **ends** at it, and the segment's start waypoint's limit is the fallback. The last waypoint's limit now governs the last segment, and a precision waypoint is held to its tight limit on the approach. A waypoint with no limit of its own still gets the 2 cm default.
+
+**Workaround:** None needed. `tests/test_regressions.py::TestSegmentLimits` pins the rule, including that the last waypoint's limit is used rather than dropped.
+
+---
+
+### KI-035 — The wheel-speed limit ignored the gearing
+
+**Status:** Fixed in the working tree (uncommitted).
+
+**Files:** `robot_model.py` (`max_linear_speed`, `no_load_wheel_speed_worst_case`), `jax_robot_model.py`, `validator.py` (`audit_constraints`), `immrax_validator.py`, `tests/test_regressions.py`
+
+**Problem:** `gearing` is motor revolutions per wheel revolution, so the wheel's no-load speed is the motor's divided by it. `RobotConfig.max_linear_speed` did not divide: it returned `v_max_rad_s * wheel_radius`. That number is the optimizer's wheel-speed bound and the CPU audit's speed limit, so for a geared robot both were `gearing` times too large.
+
+**Evidence:** With `gearing: 2.0` the function returned 0.477 m/s where the real no-load wheel speed is 0.265 m/s. The force model in the same file reads it the other way (`omega = (v / r) * gearing`, compared with `v_max_rad_s`), and `drivetrain.py:401` already had the correct formula. The Immrax motor curve is gearing-aware too, so at the optimizer's own bound the motor torque is exactly zero: every plan for a geared robot was guaranteed to fail the motor gate, reported as "motor force over limit" rather than "wheel speed over limit".
+
+**Fix (implemented):** `max_linear_speed` divides by the gearing, and one new method, `no_load_wheel_speed_worst_case`, gives the validator's limit (the smallest declared wheel radius, the same number for the CPU audit and for Immrax). `JAXRobotConfig` carries the same method, so the two models cannot drift apart again. With `gearing: 1.0` every number is unchanged.
+
+**Workaround:** None needed. `tests/test_regressions.py::TestGearedSpeedLimit` pins the ratio and checks that a geared robot is not planned above its motor's real top speed.
+
+---
+
+### KI-036 — The studio pushed whatever trajectory it was given
+
+**Status:** Fixed in the working tree (uncommitted).
+
+**Files:** `gui_server.py` (`_validation_verdict`, `start_push`, `_origin_allowed`, `_load_model`), `tests/test_gui_server.py`
+
+**Problem:** The rule "only a validated trajectory goes to the robot" lived only in the browser. The server's `/api/push` checked that a `.traj` file existed, and `main.py` writes that file without `--validate` (the export gate only blocks a non-converged solve). So a direct POST pushed an unchecked plan onto the mat. Two things made that reachable: the cross-site guard compared the origin's **hostname** but not its **port**, so any other web app on this machine sent an acceptable `Origin`; and `/api/robot/model/load` read any path on the machine and copied it into `calibration/`.
+
+**Evidence:** `gui_server.py` checked `if traj is None or not traj.is_file()` and nothing else. The browser's own check (`viz/studio.js`) is not a gate: the endpoint that drives the robot has to enforce it.
+
+**Fix (implemented):**
+
+- `start_push` reads the validator's verdict back from the solve's own output (`##OVERBOARD-VALIDATION##`, the machine-readable line `main.py` already prints) and refuses unless the **selected** candidate passed. An unvalidated run has no verdict and is refused.
+- The origin check compares the port with the studio's own, so only the studio's own page may drive it.
+- `/api/robot/model/load` only reads a file under the project folder or the calibration folder.
+
+**Workaround:** None needed. `tests/test_gui_server.py::TestStudioPush` pins that an unvalidated solve is not pushable.
+
+---
+
+### KI-037 — The studio kept every job forever, and a cancel left the solver running
+
+**Status:** Fixed in the working tree (uncommitted).
+
+**Files:** `gui_server.py` (`MAX_JOBS`, `_evict_old_jobs`, `_cancel_job`, `_process_group_kwargs`, `_terminate_tree`), `tests/test_gui_server.py`
+
+**Problem:** Three things about the studio's job handling.
+
+1. Nothing ever removed a job or its temporary folder. Each solve left an `overboard_studio_*` folder with the config, the waypoints, the trajectory, the controller and the stats, and a job object in memory with up to 800 log lines. A season of solves filled the temp folder and left every old trajectory downloadable by guessing an id.
+2. `Cancel` called `proc.terminate()`, which kills only the `main.py` parent. The candidates are solved in `ProcessPoolExecutor` **worker processes**, and they survived: the studio said "Cancelled" while the orphan workers kept solving at full speed. The status was also set to "cancelled" immediately, so the studio accepted a second solve while the first was still running.
+3. The test suite committed into the operator's own mission history: `tests/test_gui_server.py` posted to `/api/missions` with the real `MISSIONS_DIR` and deleted the file afterwards, but not the commit.
+
+**Evidence:** `git -C missions log` carried `6f834ad Mission unit-test-mission` and `4e2c94e Mission unit-test-mission`, and the folder's status showed the deleted `unit-test-mission.json`.
+
+**Fix (implemented):**
+
+- The studio keeps the newest 20 finished jobs and removes the folder of each one it drops. The running job is never evicted.
+- The child runs in its own process group (`CREATE_NEW_PROCESS_GROUP` / `start_new_session`), a cancel kills the whole tree (`taskkill /T /F` / `killpg`), and the job stays "running" until the process is really gone, so the studio does not take a second solve on top of the first.
+- The test writes into a temporary folder now, like its sibling test already did.
+
+**Workaround:** None needed.
+
+---
+
+### KI-038 — The exported Python file broke on an event name with a quote in it
+
+**Status:** Fixed in the working tree (uncommitted).
+
+**Files:** `export.py` (`write_python_file`), `tests/test_regressions.py`
+
+**Problem:** `--export-format python` wrote the event name into the generated source with an f-string: `"event": "{s["event"]}"`. An event name is free text the operator typed.
+
+**Evidence:** An event named `raise_arm"` produced `"event": "raise_arm""`, a **SyntaxError** on the hub. A name like `x", "y": 1, "z": "` also injected extra keys into the sample dict. The compact export already did it correctly with `%r`.
+
+**Fix (implemented):** The name is written with `repr()`, so it is one Python string whatever it contains.
+
+**Workaround:** None needed. `tests/test_regressions.py::TestEventNameEscaping` pins that the generated file compiles and that the name stays one string.
+
+---
+
+### KI-039 — Two missions in another script became the same file
+
+**Status:** Fixed in the working tree (uncommitted).
+
+**Files:** `gui_server.py` (`slugify`, `restore_mission`), `optimizer.py` (`_guess_point`)
+
+**Problem:** Three small defects, all from the same kind of shortcut.
+
+1. `slugify` stripped everything outside `[a-z0-9_-]`, so "任务" and "テスト" both became `mission`. The second save overwrote the first, and the toast said "Saved missions/mission.json".
+2. `restore_mission` wrote the file and only then parsed it, so a blob that is not a mission reached the disk and the mission then disappeared from the list.
+3. The baseline initial guess averaged two headings plainly, so a path that turns through ±180° got a guess heading near zero in the middle - the worst possible guess for exactly the missions that need another seed.
+
+**Fix (implemented):** The slug keeps unicode letters and digits; the restore parses before it writes; the guess blends the two headings the short way round, like the rest of the file.
+
+**Workaround:** None needed.
+
+---
+
+### KI-040 — `--push-hub --hub-log` lost the whole hub log when the link dropped
+
+**Status:** Fixed in the working tree (uncommitted).
+
+**Files:** `main.py` (`_push_to_hub`), `hub_deploy.py` (unchanged; it already streamed)
+
+**Problem:** `main.py` called `push_trajectory` without the `log_path`, so nothing was written as the run arrived; the file was written only after the push returned, from the lines in memory. A dropped Bluetooth link raised `HubLinkError` before that, so the log file was never created and the measured `POSE` and `EVENT` lines were lost.
+
+**Evidence:** `hub_deploy.py --out` and `sysid_collect.py` both stream the console to disk as it arrives, so a dropped link costs the last test and not the session. The CLI's `--push-hub --hub-log` was the one that did not.
+
+**Fix (implemented):** The log path goes into `push_trajectory`, which streams it. A dropped link now leaves the output that arrived on disk, and the error says where it is. The file is rewritten in the text form the other two entry points write, so one reader serves all of them.
+
+**Workaround:** None needed.
+
+---
+
+### KI-044 — The studio kept the last run's verdict, and a reload could not cancel a solve
+
+**Status:** Fixed in the working tree (uncommitted).
+
+**Files:** `viz/studio.js`, `tests/test_studio_honesty.py`
+
+**Problem:** Three faults in what the studio shows and allows.
+
+1. A new solve did not clear the previous run's validation verdict. `solve()` reset the summary, the collisions and the trajectory, but not the validation report, and the report was only redrawn when a **new** one was parsed. A solve without validation prints no verdict, so nothing was redrawn: the old candidate chips ("failed"), the old per-segment table and the old red failing segment stayed on the field while the header said "not validated".
+2. The Push button did not know that the mission had moved on. It asked whether there was a trajectory and whether it had been validated, but not whether the mission on screen still matched, so a validated trajectory stayed pushable after a waypoint was dragged - and the push ran the **old** plan while the canvas showed the new mission.
+3. A reload during a solve had no way back. The studio asked `/api/jobs/current` only in the `--live` path, so after a reload in the ordinary studio there was no job id: the server refused the next solve with 409, the Cancel button was hidden, and Cancel was a no-op anyway.
+
+**Fix (implemented):** `renderValidationReport` is the one owner of the verdict and handles "no report" by clearing the table, the chips, the failing-segment set and the red marks on the field; `solve()` calls it with nothing, so a new run starts with no verdict. The Push button and the push itself both refuse a mission that has changed since the solve, and the reason is said plainly. `init()` always asks `/api/jobs/current` and adopts a running solve, so a reload attaches to it and Cancel works.
+
+**Workaround:** None needed. `tests/test_studio_honesty.py` pins the three rules.
+
+---
+
 ## P2 — cleanup
 
 ### KI-017 — Convergence flags do nothing
@@ -681,11 +834,27 @@ A tick that arrives late jumps the index over one or more samples, and the event
 
 ---
 
+### KI-045 — `sysid_solver.py` is a superseded prototype
+
+**Status:** Open. Nothing depends on it; it is kept only because it is documented.
+
+**Files:** `sysid_solver.py` (1141 lines), `requirements-optional.txt`
+
+**Problem:** The file is a standalone pandas/JAX fitter with the hub's telemetry pasted in as hard-coded CSV text and the robot's numbers hard-coded as constants. `sysid_fit.py` replaced it: it parses the real session format, writes the format the validator reads, and is what the collector and the studio use. Nothing in the tree imports `sysid_solver.py`; only the docs mention it. `docs/WHITEPAPER.md` calls it "a prototype, not the active SysId path".
+
+**Evidence:** It is the only user of pandas in the repository, so the dependency in `requirements-optional.txt` exists for it alone.
+
+**Fix (proposed):** Delete `sysid_solver.py` and drop `pandas` from `requirements-optional.txt`. That is about 1141 lines and one dependency. It is left in the tree because it is the author's prototype and the decision to throw it away is theirs, not the audit's.
+
+**Workaround:** Nothing depends on it, so there is nothing to work around.
+
+---
+
 
 
 1. KI-001, KI-002, KI-003, KI-005, KI-006, KI-007, KI-008, KI-009, KI-010, KI-011, KI-012, KI-013, KI-014, KI-015, KI-016, KI-019, KI-021, KI-022, KI-023, KI-024, KI-025, KI-026, KI-027, KI-028, and KI-029: done in the working tree; never save or ship a failed or unvalidated run, keep validation on the configured robot, use both uncertainty bounds, keep the reference tube aligned with the samples, keep the optimizer and Immrax on the same per-wheel force model, hold both timing models to the same wheel-jerk discipline, keep the wheel force profile continuous through every waypoint the robot does not stop at, keep the backlash in the reachable set rather than in the wheel speed, derive the turn rate from the interpolated heading in the firmware and the model together, place the plan's samples on the path its own profile traces, model the controller that actually runs, fire the event of every sample the robot has reached, never take a port from another program, and keep the firmware compilable for MicroPython.
 2. KI-020: controller split, log/fit tooling, and the optional `--sysid-fit` actuator/odometry path are done, and the log and pose capture now run over Bluetooth from the host; collect hardware data, compare fitted predictions with measured poses, add integrated odometry/slip, then use reachability in optimization.
-3. KI-004: either make Multi-Verse real or remove it.
+3. KI-004: done — the pipeline is repaired and used as a seed provider (`--refine`); the next lever is the objective, because the pipeline's cost buys speed with tracking accuracy and the 5 mm gate rejects the trade.
 4. KI-017: remove or repair the remaining dead code.
 
 ## Not checked

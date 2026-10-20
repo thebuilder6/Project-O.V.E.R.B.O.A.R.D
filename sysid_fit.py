@@ -18,6 +18,15 @@ existing full robot config, and ``--wheel-radius`` overrides either source.
     run_id,stop,x_m,y_m,heading_deg
 ``stop`` defaults to 0. For a single-pose run the pose is measured from the
 start origin. For ``multi_stop`` runs, include one pose per logged stop in order.
+
+The operator's measurement sheet can be fitted directly, with no intermediate
+``poses.csv``:
+
+    python sysid_fit.py session.csv --sheet calibration_sheet.csv \
+        --profile my_drivebase.json --out sysid_fit.json
+
+``--write-form`` writes the same sheet as a form in a browser, so the numbers
+go in as numbers instead of as text in a spreadsheet.
 """
 
 import argparse
@@ -29,6 +38,8 @@ import os
 import sys
 
 import numpy as np
+
+import sheet_form
 
 
 # ---------------------------------------------------------------------------
@@ -278,12 +289,23 @@ def session_tests(runs):
     return index
 
 
+def sheet_rows(runs):
+    """The rows of the measurement sheet: one per measurement the session needs.
+
+    Each row says which test, which repeat and which stop it is, so the
+    operator's numbers are keyed by what was measured and not by a run id
+    that changes when the session is re-collected.
+    """
+    rows = []
+    for (name, repeat), (_run_id, count) in sorted(session_tests(runs).items()):
+        for stop in range(count):
+            rows.append({"test": name, "repeat": repeat, "stop": stop})
+    return rows
+
+
 def write_sheet(runs, path):
     """Write a blank measurement sheet for the tests that need one."""
-    rows = []
-    for (name, repeat), (run_id, poses) in sorted(session_tests(runs).items()):
-        for stop in range(poses):
-            rows.append({"test": name, "repeat": repeat, "stop": stop})
+    rows = sheet_rows(runs)
     with open(path, "w", encoding="utf-8", newline="") as handle:
         writer = csv.DictWriter(handle, fieldnames=SHEET_FIELDS)
         writer.writeheader()
@@ -372,6 +394,31 @@ def sheet_to_poses(rows, runs):
     return poses, problems
 
 
+def poses_from_sheet_rows(rows, runs):
+    """The operator's sheet as the pose map the fitter takes.
+
+    ``sheet_to_poses`` gives the rows; this gives the dict ``fit_session``
+    reads, keyed by the run id and sorted by stop. The key is the run id as a
+    string, because that is how the fitter looks a run's poses up.
+
+    Returns (poses, problems). A problem is a line of plain text for the
+    operator: a row for a test that did not run, or a test that needs a
+    measurement and did not get one.
+    """
+    pose_rows, problems = sheet_to_poses(rows, runs)
+    poses = {}
+    for row in pose_rows:
+        poses.setdefault(str(row["run_id"]), []).append({
+            "stop": row["stop"],
+            "x_m": row["x_m"],
+            "y_m": row["y_m"],
+            "heading_deg": row["heading_deg"],
+        })
+    for entries in poses.values():
+        entries.sort(key=lambda entry: entry["stop"])
+    return poses, problems
+
+
 def write_poses_csv(rows, path):
     """Write measured-pose rows in the format load_poses() reads."""
     with open(path, "w", encoding="utf-8", newline="") as handle:
@@ -396,6 +443,37 @@ def _write_sheet(args, parser):
     print("Fill in x_mm, y_mm and turn_right_deg, then run:")
     print(f"  python sysid_fit.py {' '.join(args.logs)} --from-sheet "
           f"{args.write_sheet} --out-poses poses.csv")
+    print("Or fit it in one step, with no intermediate file:")
+    print(f"  python sysid_fit.py {' '.join(args.logs)} --sheet "
+          f"{args.write_sheet} --profile my_drivebase.json "
+          f"--out sysid_fit.json")
+    return 0
+
+
+def _write_form(args, parser):
+    """CLI mode: write the measurement sheet as a form in a browser."""
+    _files, runs = load_runs(args.logs)
+    if not runs:
+        print("No TEST_START blocks found.")
+        return 1
+    rows = sheet_rows(runs)
+    if not rows:
+        print("The session has no test that needs a measurement.")
+        return 1
+
+    csv_name = os.path.basename(args.write_form)
+    if not csv_name.lower().endswith(".csv"):
+        csv_name = sheet_form.DEFAULT_CSV_NAME
+    fit_command = (
+        f"python sysid_fit.py {' '.join(args.logs)} --sheet {csv_name} "
+        f"--profile my_drivebase.json --out sysid_fit.json")
+    sheet_form.write_form(rows, args.write_form, csv_name=csv_name,
+                          fit_command=fit_command)
+    print(f"Wrote a measurement form for {len(rows)} measurement(s) to "
+          f"{args.write_form}.")
+    print("Open it in a browser, type the numbers the tape says, and click "
+          "Download CSV.")
+    print(f"Then run: {fit_command}")
     return 0
 
 
@@ -1617,6 +1695,20 @@ def main(argv=None):
         help="write a blank measurement sheet for the tests in the session",
     )
     parser.add_argument(
+        "--write-form",
+        help=(
+            "write the measurement sheet as a form in a browser; the form "
+            "downloads the same CSV the fitter reads"
+        ),
+    )
+    parser.add_argument(
+        "--sheet",
+        help=(
+            "the operator's measurement sheet; it is fitted directly, so "
+            "there is no intermediate pose CSV"
+        ),
+    )
+    parser.add_argument(
         "--profile",
         help="minimal drivebase profile JSON (wheel_radius_m, track_width_m)",
     )
@@ -1639,8 +1731,14 @@ def main(argv=None):
     if args.write_sheet:
         return _write_sheet(args, parser)
 
+    if args.write_form:
+        return _write_form(args, parser)
+
     if args.from_sheet:
         return _convert_sheet(args, parser)
+
+    if args.poses and args.sheet:
+        parser.error("use either --poses or --sheet, not both")
 
     if args.profile and args.robot_config:
         parser.error("use either --profile or --robot-config, not both")
@@ -1668,6 +1766,19 @@ def main(argv=None):
         return 1
 
     poses = load_poses(args.poses) if args.poses else {}
+    if args.sheet:
+        try:
+            measured = read_sheet(args.sheet)
+        except OSError as exc:
+            print(f"error: cannot read {args.sheet}: {exc}")
+            return 1
+        poses, problems = poses_from_sheet_rows(measured, runs)
+        for problem in problems:
+            print(f"warning: {problem}.")
+        if not poses:
+            print(f"No measurements in {args.sheet}.")
+            return 1
+        print(f"Read {len(poses)} measured run(s) from {args.sheet}.")
     wall_distance = profile.get("wall_distance_m") if profile else None
     result = fit_session(runs, poses=poses, wheel_radius_m=wheel_radius,
                          wall_distance_m=wall_distance)

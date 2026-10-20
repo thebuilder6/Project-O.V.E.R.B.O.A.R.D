@@ -23,6 +23,7 @@ from contextlib import redirect_stdout
 from unittest.mock import patch
 
 from tests.firmware_stubs import install_firmware_stubs, GcStub
+from sysid_fit import sheet_rows, write_sheet
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PYBRICKS_CODE = os.path.join(REPO_ROOT, "pybricks_code")
@@ -266,44 +267,53 @@ class TestFittedScales(unittest.TestCase):
         self.assertAlmostEqual(fit.odometry_heading_scale(), 1.0, places=6)
 
 
+def _measurement_session(repeats=1):
+    """A session with the tests that need a tape measurement.
+
+    Each of the three measured tests runs once per repeat, and the multi-stop
+    test needs a pose at each of its three stops.
+    """
+    lines = [
+        "TEST_START static",
+        "META,run_id,1",
+        "META,test,static",
+        "META,repeat,0",
+        "META,poses,0",
+        "DATA",
+        "t_ms,gyro_z_deg_s",
+        "0,0.1",
+        "TEST_END,1",
+    ]
+    run_id = 2
+    for repeat in range(repeats):
+        for name, poses, rows in (
+            ("odometry_straight", 1, 2),
+            ("odometry_turn_cw", 1, 2),
+            ("multi_stop", 3, 3),
+        ):
+            lines += [
+                f"TEST_START {name}",
+                f"META,run_id,{run_id}",
+                f"META,test,{name}",
+                f"META,repeat,{repeat}",
+                f"META,poses,{poses}",
+                "DATA",
+                "t_ms,v_cmd_mm_s,w_cmd_deg_s,db_d_mm,db_v_mm_s,"
+                "db_a_deg,db_w_deg_s,batt_mv",
+            ]
+            for i in range(rows):
+                lines.append(f"{i * 1000},100,0,{i * 1000},0,0,0,8000")
+            lines.append(f"TEST_END,{rows}")
+            run_id += 1
+    return "\n".join(lines) + "\n"
+
+
 class TestMeasurementSheet(unittest.TestCase):
     """The operator's sheet: what they fill in, and what it turns into."""
 
     @staticmethod
     def _session(repeats=1):
-        lines = [
-            "TEST_START static",
-            "META,run_id,1",
-            "META,test,static",
-            "META,repeat,0",
-            "META,poses,0",
-            "DATA",
-            "t_ms,gyro_z_deg_s",
-            "0,0.1",
-            "TEST_END,1",
-        ]
-        run_id = 2
-        for repeat in range(repeats):
-            for name, poses, rows in (
-                ("odometry_straight", 1, 2),
-                ("odometry_turn_cw", 1, 2),
-                ("multi_stop", 3, 3),
-            ):
-                lines += [
-                    f"TEST_START {name}",
-                    f"META,run_id,{run_id}",
-                    f"META,test,{name}",
-                    f"META,repeat,{repeat}",
-                    f"META,poses,{poses}",
-                    "DATA",
-                    "t_ms,v_cmd_mm_s,w_cmd_deg_s,db_d_mm,db_v_mm_s,"
-                    "db_a_deg,db_w_deg_s,batt_mv",
-                ]
-                for i in range(rows):
-                    lines.append(f"{i * 1000},100,0,{i * 1000},0,0,0,8000")
-                lines.append(f"TEST_END,{rows}")
-                run_id += 1
-        return "\n".join(lines) + "\n"
+        return _measurement_session(repeats)
 
     def _runs(self, repeats=1):
         from sysid_fit import load_runs
@@ -835,6 +845,157 @@ class TestWallHoming(unittest.TestCase):
         self.assertAlmostEqual(profile["wall_distance_m"], 1.05)
 
 
+class TestSheetFormAndOneStepFit(unittest.TestCase):
+    """The sheet as a form, and the fit straight from the sheet.
+
+    The form is a browser page that downloads the CSV the fitter reads, so
+    the operator types numbers instead of editing a spreadsheet. The tests
+    here pin the contract between the two: the form holds every measurement
+    the sheet asks for, and it writes the file the fitter takes.
+    """
+
+    def _runs(self, repeats=1):
+        from sysid_fit import load_runs
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "session.csv")
+            with open(path, "w", encoding="utf-8") as handle:
+                handle.write(_measurement_session(repeats))
+            return load_runs([path])[1]
+
+    def test_the_form_holds_every_measurement(self):
+        from sheet_form import write_form
+
+        rows = sheet_rows(self._runs(repeats=2))
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "sheet.html")
+            write_form(rows, path, csv_name="calibration_sheet.csv",
+                       fit_command="python sysid_fit.py session.csv")
+            with open(path, encoding="utf-8") as handle:
+                text = handle.read()
+
+        # One row per measurement, keyed the way the sheet keys it.
+        self.assertEqual(text.count("<tr data-test="), len(rows))
+        self.assertIn(
+            'data-test="multi_stop" data-repeat="1" data-stop="2"', text)
+        # The header the fitter reads, and the file the form downloads.
+        self.assertIn("test,repeat,stop,x_mm,y_mm,turn_right_deg", text)
+        self.assertIn('var HEADER = "test,repeat,stop,x_mm,y_mm,'
+                      'turn_right_deg"', text)
+        self.assertIn("calibration_sheet.csv", text)
+
+    def test_the_form_and_the_sheet_agree_on_the_rows(self):
+        from sheet_form import write_form
+
+        runs = self._runs(repeats=2)
+        rows = sheet_rows(runs)
+        with tempfile.TemporaryDirectory() as tmp:
+            csv_path = os.path.join(tmp, "sheet.csv")
+            html_path = os.path.join(tmp, "sheet.html")
+            write_sheet(runs, csv_path)
+            write_form(rows, html_path)
+            with open(csv_path, encoding="utf-8") as handle:
+                csv_text = handle.read()
+            with open(html_path, encoding="utf-8") as handle:
+                html_text = handle.read()
+
+        for row in rows:
+            key = (row["test"], str(row["repeat"]), str(row["stop"]))
+            self.assertIn(",".join(key) + ",", csv_text)
+            self.assertIn(
+                'data-test="{0}" data-repeat="{1}" data-stop="{2}"'.format(*key),
+                html_text)
+
+    def test_a_sheet_fills_in_the_browser_is_read_by_the_fitter(self):
+        """The CSV the form downloads is the CSV the fitter takes.
+
+        The form writes the columns in the order the fitter reads them, so a
+        file that came out of the browser is fitted without being touched.
+        """
+        from sysid_fit import read_sheet
+
+        csv_text = ("test,repeat,stop,x_mm,y_mm,turn_right_deg\n"
+                    "odometry_straight,0,0,998,2,0\n"
+                    "multi_stop,0,1,499,0,0\n")
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "sheet.csv")
+            with open(path, "w", encoding="utf-8") as handle:
+                handle.write(csv_text)
+            rows = read_sheet(path)
+
+        self.assertEqual(len(rows), 2)
+        self.assertEqual(rows[0]["test"], "odometry_straight")
+        self.assertAlmostEqual(rows[0]["x_mm"], 998.0)
+        self.assertAlmostEqual(rows[1]["x_mm"], 499.0)
+
+    def test_the_fit_takes_the_sheet_directly(self):
+        """--sheet fits in one step: there is no intermediate pose CSV."""
+        from sysid_fit import main as fit_main
+
+        with tempfile.TemporaryDirectory() as tmp:
+            session = os.path.join(tmp, "session.csv")
+            sheet = os.path.join(tmp, "sheet.csv")
+            profile = os.path.join(tmp, "profile.json")
+            fit = os.path.join(tmp, "fit.json")
+            with open(session, "w", encoding="utf-8") as handle:
+                handle.write(_measurement_session())
+            with open(profile, "w", encoding="utf-8") as handle:
+                json.dump({"wheel_radius_m": 0.028}, handle)
+            with open(sheet, "w", encoding="utf-8") as handle:
+                handle.write("test,repeat,stop,x_mm,y_mm,turn_right_deg\n"
+                             "odometry_straight,0,0,998,2,0\n")
+
+            with redirect_stdout(io.StringIO()):
+                code = fit_main([session, "--sheet", sheet,
+                                 "--profile", profile, "--out", fit])
+            with open(fit, encoding="utf-8") as handle:
+                result = json.load(handle)
+
+        self.assertEqual(code, 0)
+        # The hub's odometry says 1000 mm, the operator measured 998 mm.
+        self.assertAlmostEqual(result["odometry"]["distance_scale"], 0.998,
+                               places=3)
+
+    def test_a_sheet_with_no_measurement_is_reported(self):
+        from sysid_fit import main as fit_main
+
+        with tempfile.TemporaryDirectory() as tmp:
+            session = os.path.join(tmp, "session.csv")
+            sheet = os.path.join(tmp, "sheet.csv")
+            profile = os.path.join(tmp, "profile.json")
+            with open(session, "w", encoding="utf-8") as handle:
+                handle.write(_measurement_session())
+            with open(profile, "w", encoding="utf-8") as handle:
+                json.dump({"wheel_radius_m": 0.028}, handle)
+            with open(sheet, "w", encoding="utf-8") as handle:
+                handle.write("test,repeat,stop,x_mm,y_mm,turn_right_deg\n")
+
+            with redirect_stdout(io.StringIO()):
+                code = fit_main([session, "--sheet", sheet,
+                                 "--profile", profile,
+                                 "--out", os.path.join(tmp, "fit.json")])
+
+        self.assertEqual(code, 1)
+
+    def test_the_cli_writes_the_form(self):
+        from sysid_fit import main as fit_main
+
+        with tempfile.TemporaryDirectory() as tmp:
+            session = os.path.join(tmp, "session.csv")
+            form = os.path.join(tmp, "sheet.html")
+            with open(session, "w", encoding="utf-8") as handle:
+                handle.write(_measurement_session(repeats=2))
+            with redirect_stdout(io.StringIO()):
+                code = fit_main([session, "--write-form", form])
+            self.assertTrue(os.path.exists(form))
+            with open(form, encoding="utf-8") as handle:
+                text = handle.read()
+
+        self.assertEqual(code, 0)
+        # The form names the CSV it downloads, and the command that fits it.
+        self.assertIn("sheet.csv", text)
+        self.assertIn("--sheet", text)
+
+
 class TestCollectCommand(unittest.TestCase):
 
     def _run(self, tmp, extra=None):
@@ -913,12 +1074,72 @@ class TestCollectCommand(unittest.TestCase):
         self.assertNotIn("--poses", argv)
         self.assertNotIn(poses, argv)
 
-    def test_a_missing_profile_is_reported(self):
+    def test_a_missing_profile_does_not_stop_the_collect(self):
+        """Only the fit needs the wheel radius; the collect does not.
+
+        The procedure documents the collect as its own step, so the command
+        it names has to work. The fit comes after the measurements, and it
+        gets the profile then.
+        """
         import sysid_collect
 
         with tempfile.TemporaryDirectory() as tmp:
-            with self.assertRaises(SystemExit):
-                sysid_collect.main(["--session", os.path.join(tmp, "s.csv")])
+            session = os.path.join(tmp, "session.csv")
+            poses = os.path.join(tmp, "poses.csv")
+            fit = os.path.join(tmp, "sysid_fit.json")
+
+            def fake_deploy(script, connection="ble", name=None, wait=True,
+                            print_output=True, stream_path=None):
+                with open(stream_path, "w", encoding="utf-8") as handle:
+                    handle.write(_session())
+                return _session().splitlines()
+
+            args = ["--session", session, "--poses", poses]
+            with patch.object(sysid_collect, "deploy", fake_deploy):
+                with redirect_stdout(io.StringIO()):
+                    status = sysid_collect.main(args)
+
+            self.assertEqual(status, 0)
+            self.assertTrue(os.path.exists(session))
+            # There is no wheel radius, so there is no fit yet.
+            self.assertFalse(os.path.exists(fit))
+
+    def test_the_sheet_and_the_form_are_written(self):
+        import sysid_collect
+
+        with tempfile.TemporaryDirectory() as tmp:
+            session = os.path.join(tmp, "session.csv")
+            poses = os.path.join(tmp, "poses.csv")
+            profile = os.path.join(tmp, "profile.json")
+            sheet = os.path.join(tmp, "calibration_sheet.csv")
+            with open(profile, "w", encoding="utf-8") as handle:
+                json.dump({"wheel_radius_m": 0.028}, handle)
+
+            def fake_deploy(script, connection="ble", name=None, wait=True,
+                            print_output=True, stream_path=None):
+                with open(stream_path, "w", encoding="utf-8") as handle:
+                    handle.write(_measurement_session())
+                return _measurement_session().splitlines()
+
+            args = ["--session", session, "--poses", poses,
+                    "--profile", profile, "--sheet", sheet]
+            with patch.object(sysid_collect, "deploy", fake_deploy):
+                with redirect_stdout(io.StringIO()):
+                    status = sysid_collect.main(args)
+
+            self.assertEqual(status, 0)
+            self.assertTrue(os.path.exists(sheet))
+            form = os.path.splitext(sheet)[0] + ".html"
+            self.assertTrue(os.path.exists(form))
+            with open(sheet, encoding="utf-8") as handle:
+                sheet_text = handle.read()
+            with open(form, encoding="utf-8") as handle:
+                form_text = handle.read()
+
+        self.assertIn("test,repeat,stop,x_mm,y_mm,turn_right_deg", sheet_text)
+        # The form and the sheet hold the same rows.
+        self.assertEqual(form_text.count("<tr data-test="),
+                         sheet_text.count("\n") - 1)
 
     def test_a_dropped_link_still_fits_what_arrived(self):
         """One flaky link must not throw away a ten minute session."""

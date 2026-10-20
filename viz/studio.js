@@ -358,6 +358,18 @@ function waypointToJson(point) {
     return out;
 }
 
+/* Two names for the same mission. The server slugs the name it is given
+   (lower case, and anything that is not a word character becomes a
+   dash), so the two are compared without their punctuation. */
+function sameMissionName(one, other) {
+    const plain = (text) => String(text || '').trim().toLowerCase()
+        .replace(/[^a-z0-9]+/g, '');
+    const left = plain(one);
+    const right = plain(other);
+    if (!left || !right) return true;
+    return left === right;
+}
+
 function currentWaypoint() {
     if (state.selected < 0 || state.selected >= state.waypoints.length) return null;
     return state.waypoints[state.selected];
@@ -4227,12 +4239,10 @@ async function init() {
             state.reportCandidate = null;
             /* The mission on the screen is the one the job is solving, as
                far as the studio can tell: the job carries the name of the
-               mission it was given. A job for another mission keeps its
-               own fingerprint, so its trajectory is not offered as the
-               answer to this one. */
-            const jobName = (running.name || '').trim();
-            const missionName = (el('mission-name').value || '').trim();
-            const sameMission = !jobName || !missionName || jobName === missionName;
+               mission it was given, and the server slugs that name. A job
+               for another mission keeps no fingerprint, so its trajectory
+               is not offered as the answer to this one. */
+            const sameMission = sameMissionName(running.name, el('mission-name').value);
             state.solvingFingerprint = sameMission ? missionFingerprint() : null;
             setBusy(true);
             el('result-status').textContent = 'Solving...';

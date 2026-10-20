@@ -193,7 +193,7 @@ waypoints
 
 The Multi-Verse path **does not use the five seeds** and **does not use the per-segment timing model**. It falls back to a legacy accuracy-weight ladder (`main.py:107`, `CANDIDATE_WEIGHT_STEP = 2.0`). The plumbing for seeds and timing exists only in `TrajectoryOptimizer`, which is why `main.py:147` says so explicitly.
 
-**Current status (KI-004):** the pipeline runs and its result is discarded. Phase 5 solves from the default baseline seed; the refined trajectory is probed as a second starting point and *never wins*. See [Section 20](#20-ledger-multi-verse-internals).
+**Current status (KI-004):** the pipeline runs and its result is **used**: phase 5 probes the refined trajectory as a second starting point, and the probe now wins where it used to lose. `main.py --refine` puts the refined trajectory into the candidate set of the simple solver, so the pipeline is a **seed provider** — a cheaper way to reach the stock set's speed rather than a better one. See [Section 8](#8-the-experimental-multi-verse-path) and [Section 20](#20-ledger-multi-verse-internals).
 
 ## 2. What is not in the tree
 
@@ -626,7 +626,7 @@ The local cost (`jax_optimizer.py:11`) is a time term, a dynamics-error term wei
 
 ### 8.5 Phase 5 — Polish and the refine probe
 
-`_global_solve` (`multiverse_optimizer.py:454`) solves with the plain `TrajectoryOptimizer` — **without passing the refined trajectory**. It then probes the refined trajectory as a *second* starting point (`multiverse_optimizer.py:487` `_probe_refined_guess`):
+`_global_solve` (`multiverse_optimizer.py:454`) solves with the plain `TrajectoryOptimizer` from the default baseline seed, and then probes the refined trajectory as a *second* starting point (`multiverse_optimizer.py:487` `_probe_refined_guess`):
 
 - Convert the refined samples to a guess array (`optimizer.py:128` `guess_from_samples`).
 - Run a **cold** bounded pass: `max_iter = 400` (`REFINE_PROBE_MAX_ITER`, `multiverse_optimizer.py:108`) and `warm_start_init_point = "no"`.
@@ -643,7 +643,7 @@ The probe used to converge, and then lose. On `examples/example_complex_mission.
 | Default baseline guess | 6.0677 s |
 | JAX-refined guess (probe) | 8.1473 s (converged in 38 iterations) |
 
-The probe never won, so the refined trajectory had no effect on the final result. **The residue was the quality of the guess, not the connection to the solver**: four separate defects had to be fixed first (the refinement moved the waypoint in the middle of the window it optimised, the JAX cost integrated from the left endpoint while IPOPT uses the trapezoidal rule, the intervals were hard-coded at 0.1 s whatever the segment's length, and the refined timing was thrown away when the guess was read back with the equal-duration model).
+The probe never won **then**, so the refined trajectory had no effect on the final result. **The residue was the quality of the guess, not the connection to the solver**: four separate defects had to be fixed first (the refinement moved the waypoint in the middle of the window it optimised, the JAX cost integrated from the left endpoint while IPOPT uses the trapezoidal rule, the intervals were hard-coded at 0.1 s whatever the segment's length, and the refined timing was thrown away when the guess was read back with the equal-duration model).
 
 With those fixed the probe **wins**:
 
@@ -898,13 +898,15 @@ is_physically_safe = (
 
 ### 10.5 G4 — The local envelope threshold
 
-Per sample, the envelope radius is compared to the local threshold (`main.py:1111-1125`). The thresholds come from the waypoint list (`main.py:527-535`):
+Per sample, the envelope radius is compared to the local threshold. The thresholds come from the waypoint list, and the rule for which segment a waypoint's limit governs is in `main._segment_limit`:
 
 | Waypoint kind | Threshold | Source |
 |---|---|---|
-| Transit (default) | 2 cm | `main.py:1114` |
-| `precision_mode: true` | 0.5 cm | `main.py:535` |
-| Explicit `error_threshold` | the user's value | `main.py:533` |
+| Transit (default) | 2 cm | `main.py:_segment_limit` |
+| `precision_mode: true` | 0.5 cm | `main.py:_load_waypoints` |
+| Explicit `error_threshold` | the user's value | `main.py:_load_waypoints` |
+
+**The limit belongs to the way *into* the waypoint.** A waypoint's limit governs the segment that ends at it - the approach - and the segment that starts there falls back to it when the next waypoint declares none. So a waypoint marked as a precision one is held to its tight limit on the way the robot arrives, which is what the operator asked for, and the final waypoint's limit governs the last segment instead of being dropped (KI-034).
 
 A sample whose envelope is marked `unknown` also fails — that is how a diverged tube is caught (see below).
 
@@ -934,8 +936,8 @@ Every number in the gate chain, in one place.
 | 4 | Wheel-speed violation | ≤ 1e-6 m/s | `immrax_validator.py:531` | commanded speed over the limit |
 | 5 | Envelope divergence radius | > 50 mm ⇒ diverged | `immrax_validator.py:764-765` | the interval tube has grown past the point where it means anything; the sample is marked `unknown` |
 | 6 | Transit envelope radius | ≤ 2 cm | `main.py:1114` | per-sample reachability half-diagonal |
-| 7 | `precision_mode` envelope radius | ≤ 0.5 cm | `main.py:535` | tight waypoints |
-| 8 | Explicit `error_threshold` | user value | `main.py:533` | per-waypoint override |
+| 7 | `precision_mode` envelope radius | ≤ 0.5 cm | `main.py:_load_waypoints` | tight waypoints, on the way in |
+| 8 | Explicit `error_threshold` | user value | `main.py:_load_waypoints` | per-waypoint override, on the way in |
 | 9 | Forward-integration position error | < 1 cm | `validator.py:333` | RK4 re-integration vs. the plan |
 | 10 | Forward-integration final error | < 1 cm | `validator.py:334` | same, at the end |
 | 11 | Violating samples | 0 | `validator.py:335` | motor/traction limit hits |
