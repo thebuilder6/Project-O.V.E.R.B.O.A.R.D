@@ -1,163 +1,116 @@
 # Trajectory Optimization: Tools & Research Reference
-*Context: FLL differential-drive path optimizer using direct collocation (SLSQP) to minimize time.*
+
+*Context: FLL differential-drive path optimizer. The current implementation uses CasADi and IPOPT with trapezoidal direct collocation; it no longer uses SLSQP or scipy.minimize.*
+
+> **Current status (2026-10-19):** time-optimal solving, the jerk/accuracy weight, CPU validation, Immrax reachability, stops/events, and controller export are implemented. Multi-Verse refinement is wired but its result is discarded by the final polish (KI-004). An optional fitted actuator/odometry plant (`sysid_digital_twin.py` + `sysid_fit.py` + `--sysid-fit`) exists, but the validator is not yet a full digital twin (KI-020). See `KNOWN_ISSUES.md` and `docs/WHITEPAPER.md` for the measured state.
 
 ---
 
-## The Core Problem: Speed vs. Accuracy Tradeoff
+## The Core Problem: Speed vs. Accuracy
 
-Your current optimizer minimizes **time** (`objective = dt * (N-1)`) and enforces physical constraints (max wheel speed, max acceleration) as hard limits. 
+The optimizer minimizes trajectory duration while enforcing wheel-speed, motor-force, and per-wheel traction limits. A time-optimal plan pushes the robot to its actuator limits, but real robots have:
 
-**The gap**: A time-optimal trajectory pushes the robot to its actuator limits at every moment. Real robots have:
-- **Odometry drift** (wheel slip, encoder error)
-- **Motor lag** (torque response is not instantaneous)
-- **Mechanical compliance** (flex in the frame)
+- odometry drift from wheel slip and encoder error
+- motor and DriveBase response lag
+- frame compliance and backlash
+- surface-dependent friction
 
-A trajectory that is *fastest on paper* may cause the real robot to overshoot waypoints or arrive at the wrong heading. The open research question is: **how do you encode "tracking accuracy" into the optimization objective alongside time?**
+A plan that is fastest on paper can still overshoot a waypoint or arrive at the wrong heading. The open question is how to encode tracking accuracy in the optimization objective without giving up too much time.
+
+The current tree uses an optional jerk penalty (`--accuracy-weight`) as the plan-time proxy, then checks the result with a CPU audit and Immrax reachability. With `--validate`, `--candidates` solves and scores several trajectories and selects a passing one by envelope (KI-020); reachability is not yet an objective term.
 
 ---
 
 ## Comparable Tools
 
-### 🏆 Tier 1 — Most Directly Comparable
+### Tier 1 - Directly comparable
 
 | Tool | Platform | Method | Notes |
-|------|----------|--------|-------|
-| **[Choreo](https://choreo.autos)** | FRC (desktop GUI) | Direct Collocation via TrajoptLib + IPOPT | The gold standard for competition robots. Optimizes time subject to drivetrain physics. Open source (Rust + TypeScript). |
-| **[TrajoptLib](https://github.com/SleipnirGroup/TrajoptLib)** | C++ library (Choreo backend) | Swerve/diff-drive collocation, obstacle avoidance | The actual math engine behind Choreo. Can be used headlessly. |
-| **[PathPlanner](https://pathplanner.dev)** | FRC (desktop GUI) | Bézier spline + velocity profile (non-optimal) | Easier to use, does NOT globally minimize time. Adds event markers. |
-| **[WPILib Trajectory API](https://docs.wpilib.org/en/stable/docs/software/advanced-controls/trajectories/index.html)** | Java/C++ library | Trapezoidal velocity profiling on splines | Built-in, limited physics awareness. Basis for PathPlanner. |
+|---|---|---|---|
+| **[Choreo](https://choreo.autos)** | FRC desktop GUI | Direct collocation via TrajoptLib + IPOPT | Optimizes time subject to drivetrain physics. Open source (Rust + TypeScript). |
+| **[TrajoptLib](https://github.com/SleipnirGroup/TrajoptLib)** | C++ library | Swerve/diff-drive collocation, obstacle avoidance | The math engine behind Choreo; usable headlessly. |
+| **[PathPlanner](https://pathplanner.dev)** | FRC desktop GUI | Bezier spline + velocity profile | Easier to use; does not globally minimize time. Adds event markers. |
+| **[WPILib Trajectory API](https://docs.wpilib.org/en/stable/docs/software/advanced-controls/trajectories/index.html)** | Java/C++ | Trapezoidal velocity profiling on splines | Built-in, limited physics awareness. Basis for PathPlanner. |
 
-### 🔬 Tier 2 — Academic / Research-Grade
+### Tier 2 - Academic / research-grade
 
 | Tool | Language | Method | Notes |
-|------|----------|--------|-------|
-| **[CasADi](https://casadi.org)** | Python/C++/MATLAB | Symbolic autodiff + NLP (IPOPT) | The most flexible. Used in nearly all serious robotics OCP research. Direct drop-in for SLSQP → IPOPT upgrade. |
-| **[ROCKIT](https://gitlab.kuleuven.be/robotgenskill/rockit)** | Python (on CasADi) | Higher-level OCP syntax, Radau collocation | Specifically designed for robot motion planning on top of CasADi. |
-| **[Crocoddyl](https://github.com/loco-3d/crocoddyl)** | Python/C++ | Differential Dynamic Programming (DDP) | Excellent for legged/contact-rich robots; fast convergence. |
-| **[FATROP](https://github.com/meco-group/fatrop)** | C++ | Structure-exploiting NLP solver | Faster than IPOPT for trajectory shooting problems. |
-| **[Control Toolbox (CT)](https://github.com/ethz-adrl/control-toolbox)** | C++ | DDP, iLQR, SLQ, MPC | ETH Zurich. Excellent for embedded/real-time control. |
-| **[Trajopt](http://rll.berkeley.edu/trajopt/)** | Python/C++ | Sequential Convex Approx. (SCA) | Berkeley. Focused on manipulator planning + collision avoidance. |
+|---|---|---|---|
+| **[CasADi](https://casadi.org)** | Python/C++/MATLAB | Symbolic autodiff + NLP (IPOPT) | Flexible; used in much robotics OCP research. This repository uses it. |
+| **[ROCKIT](https://gitlab.kuleuven.be/robotgenskill/rockit)** | Python on CasADi | Higher-level OCP syntax, Radau collocation | Designed for robot motion planning. |
+| **[Crocoddyl](https://github.com/loco-3d/crocoddyl)** | Python/C++ | Differential Dynamic Programming (DDP) | Good for legged/contact-rich robots. |
+| **[FATROP](https://github.com/meco-group/fatrop)** | C++ | Structure-exploiting NLP solver | Can be faster than IPOPT on shooting problems. |
+| **[Control Toolbox](https://github.com/ethz-adrl/control-toolbox)** | C++ | DDP, iLQR, SLQ, MPC | ETH Zurich; embedded/real-time control. |
+| **[Trajopt](http://rll.berkeley.edu/trajopt/)** | Python/C++ | Sequential Convex Approximation | Manipulator planning and collision avoidance. |
 
-### 🧱 Tier 3 — Related Planners (Inspiration)
+### Tier 3 - Related planners
 
 | Tool | Notes |
-|------|-------|
-| **[OMPL](https://ompl.kavrakilab.org/)** | Open Motion Planning Library — sampling-based (RRT*, PRM*). Used as a front-end path planner before optimization. |
-| **[MoveIt 2](https://moveit.ros.org/)** | ROS2-native. OMPL front end + trajectory smoother. |
-| **[Drake](https://drake.mit.edu/)** | MIT. Rigorous dynamics + trajectory optimization. Serious research tool. |
+|---|---|
+| **[OMPL](https://ompl.kavrakilab.org/)** | Sampling-based planning (RRT*, PRM*) as a front end. |
+| **[MoveIt 2](https://moveit.ros.org/)** | ROS2-native; OMPL front end plus trajectory smoothing. |
+| **[Drake](https://drake.mit.edu/)** | Rigorous dynamics and trajectory optimization. |
 
 ---
 
-## Key Research Directions & Papers
+## Key Research Directions
 
-### 1. Time-Optimal Trajectory Planning (Foundational)
+### 1. Time-optimal trajectory planning
 
-> **"Time-Optimal Control of Robotic Manipulators Along Specified Paths"**  
-> Bobrow, Dubowsky, Gibson — *International Journal of Robotics Research*, 1985  
-> — The original paper on minimum-time path-constrained trajectory planning. Defines the Phase Plane method (bang-bang control at actuator limits). Still cited by Choreo/TrajoptLib's design.
+- Bobrow, Dubowsky, and Gibson, “Time-Optimal Control of Robotic Manipulators Along Specified Paths,” *IJRR*, 1985. The phase-plane/bang-bang formulation behind many minimum-time planners.
+- Pfeiffer and Johanni, “Minimum-Time Trajectory Planning for Industrial Robots,” *IEEE Journal on Robotics and Automation*, 1987. Extends the phase-plane method to general arms.
+- Modern differential-drive papers add obstacle constraints and actuator/thermal limits to the same minimum-time structure.
 
-> **"Minimum-Time Trajectory Planning for Industrial Robots"**  
-> Pfeiffer & Johanni — *IEEE Journal on Robotics and Automation*, 1987  
-> — Extends Bobrow to general robot arms. Phase plane switching structure.
+### 2. Direct collocation and NLP
 
-> **"Optimal Trajectory Generation for Differential Drive Mobile Robot in the Presence of Moving Obstacles"**  
-> Multiple authors — IEEE RA-L / ICRA (various 2018–2023)  
-> — Modern versions adding obstacle constraints to time-optimal diff-drive problems.
+- Hargraves and Paris, “Direct Collocation Methods for Trajectory Optimization in Constrained Robotic Systems,” 1987. The collocation foundation used here.
+- Posa, Cantu, and Tedrake, “A Direct Method for Trajectory Optimization of Rigid Bodies Through Contact,” *IJRR*, 2014. Contact dynamics and direct collocation.
+- Fahroo and Ross, “DIDO: A MATLAB application package for solving optimal control problems.” Pseudospectral alternative to trapezoidal collocation.
 
----
+### 3. Speed vs. accuracy
 
-### 2. Direct Collocation & NLP Methods (Your Current Approach)
+- Jerk-minimization papers add the derivative of acceleration to the cost. Smoother trajectories usually track better, at a time cost that depends on the path.
+- Robust trajectory optimization under uncertainty adds model bounds to the optimizer. This repository currently applies those bounds to force limits but not as a reachability constraint.
+- Pareto-front work treats time, energy, and tracking error as competing objectives. The `--accuracy-weight` flag is a simple scalar version of that idea.
 
-> **"A Direct Method for Trajectory Optimization of Rigid Bodies Through Contact"**  
-> Posa, Cantu, Tedrake — *International Journal of Robotics Research*, 2014  
-> — Seminal work applying direct collocation to contact dynamics. Methodology is identical to what you're doing (collocation + SLSQP/IPOPT).
+### 4. Tracking controllers
 
-> **"Direct Collocation Methods for Trajectory Optimization in Constrained Robotic Systems"**  
-> Hargraves & Paris — *AIAA Journal of Guidance*, 1987  
-> — The original aerospace direct collocation paper; still the theoretical backbone.
-
-> **"DIDO: A MATLAB application package for solving optimal control problems"**  
-> Fahroo & Ross  
-> — Pseudospectral collocation alternative to trapezoidal (what your optimizer currently uses). Higher accuracy per node.
+- Campion, Bastin, and d'Andrea-Novel, “Control of Wheeled Mobile Robots: An Experimental Overview,” *IEEE Transactions on Robotics*, 1996.
+- Bayle, Fourquet, and Renaud, “Ramsete: A new trajectory tracking controller for mobile robots,” 2003. The controller family used by `pybricks_code/ramsete_fast.py` and the JAX validator.
+- Learning-based residual compensation (Gaussian processes or small neural networks) is a research direction for systematic tracking error, not a current feature.
 
 ---
 
-### 3. Speed vs. Accuracy Tradeoff (Most Relevant to Your Goal)
+## How Accuracy Is Implemented Here
 
-> **"Time-Optimal Robot Trajectory Planning Using Direct Collocation and Successive Convexification"**  
-> arXiv 2022–2024  
-> — Successive Convexification (SCvx) reformulates the NLP as a sequence of QPs. Faster to solve AND avoids local minima that cause tracking failures.
+| Mechanism | Current implementation |
+|---|---|
+| Jerk penalty | `--accuracy-weight` adds smoothed wheel-acceleration differences to the objective. |
+| Motor/traction margin | Declared `torque_headroom`, `speed_headroom`, and uncertainty ranges. |
+| Per-wheel slip check | `validator.audit_constraints` and the Immrax interval check. |
+| Tracking proxy | Immrax closed-loop Ramsete reachability; post-solve gate and candidate score. |
+| Final-pose check | `check_final_waypoint` at 2 cm position / 2 cm heading tolerance. |
+| Controller | Fixed 20 ms sample-and-hold export; Pybricks Ramsete runtime. |
 
-> **"Smooth Trajectory Generation for Nonholonomic Mobile Robots via Direct Collocation with Jerk Minimization"**  
-> — Adds **jerk** (derivative of acceleration) to the cost. Smoother trajectories = less overshoot = better real-world tracking accuracy at a ~5–15% time cost.
-
-> **"Robust Trajectory Optimization Under Uncertainty"**  
-> Dai, Valasanis, et al.  
-> — Adds model uncertainty bounds to the optimizer. If your robot has ±5% encoder error, this generates trajectories that are guaranteed feasible despite that noise.
-
-> **"Multi-Objective Trajectory Optimization: Time vs. Energy vs. Accuracy"**  
-> (Pareto-front approach)  
-> — Frames the problem as minimizing `w1 * T + w2 * E + w3 * σ_tracking` where weights can be tuned. The Pareto front shows you exactly what time you sacrifice for each unit of accuracy gain.
-
----
-
-### 4. Tracking Controllers (Accuracy After Planning)
-
-> **"Control of Wheeled Mobile Robots: An Experimental Overview"**  
-> Campion, Bastin, d'Andrea-Novel — *IEEE Transactions on Robotics*, 1996  
-> — Foundational analysis of differential-drive controllability and tracking error.
-
-> **"RAMSETE: A Nonlinear Time-Varying Feedback Controller for Nonholonomic Mobile Robots"**  
-> Alessio & Bemporad  
-> — The controller implemented in WPILib. Guarantees exponential convergence of tracking error to zero. **Key insight**: a good tracking controller partially compensates for a sub-optimal trajectory — meaning you may NOT need a perfect trajectory if you pair it with RAMSETE.
-
-> **"Learning-Based Residual Compensation for Trajectory Tracking"**  
-> (Neural ODE / Gaussian Process papers, 2021–2024)  
-> — Train a GP or small NN to predict your robot's systematic error (e.g., always drifts right), then add a correction term to the trajectory. This is the state-of-the-art in FRC teams using ML for accuracy.
-
----
-
-## How "Accuracy" Could Be Calculated for Your Optimizer
-
-To actually optimize for accuracy, you need a proxy metric computable at plan-time (since you don't have a real robot in the loop). Options:
-
-| Metric | What it captures | How to add to optimizer |
-|--------|-----------------|------------------------|
-| **Jerk** (`d³x/dt³`) | High jerk → motor lag → overshoot | Add `w * sum(jerk²)` to objective |
-| **Curvature rate** | Sharp turns → wheel slip | Add penalty on `dκ/ds` |
-| **Centripetal acceleration** | Lateral force → slip | Bound `v²κ ≤ μg` (friction circle) |
-| **Motor torque rate** | Slower torque changes → less lag | Add `w * sum((al2-al1)²)` to objective |
-| **Path deviation bound** | Tube constraint around nominal path | Add inequality `‖state - reference‖ ≤ ε` |
-
-The cleanest formulation for your existing SLSQP setup would be a **weighted multi-objective**:
-
-```python
-def objective(params):
-    dt = params[0]
-    states = params[1:].reshape((N, 5))
-    
-    time_cost = dt * (N - 1)
-    
-    # Jerk penalty (smoothness proxy for tracking accuracy)
-    jerk_cost = 0.0
-    for k in range(N - 2):
-        al_k  = (states[k+1][3] - states[k][3]) / dt
-        al_k1 = (states[k+2][3] - states[k+1][3]) / dt
-        jerk_cost += (al_k1 - al_k)**2
-        ar_k  = (states[k+1][4] - states[k][4]) / dt
-        ar_k1 = (states[k+2][4] - states[k+1][4]) / dt
-        jerk_cost += (ar_k1 - ar_k)**2
-    
-    alpha = 0.01  # tune: 0 = pure time-optimal, larger = more smooth
-    return time_cost + alpha * jerk_cost
-```
-
-Tuning `alpha` gives you a **Pareto curve** between speed and smoothness.
+The validation thresholds (5 mm tracking, 2 cm envelope) are model checks, not hardware guarantees. Do not widen them to make a specific path pass; calibrate the model first (KI-020).
 
 ---
 
 ## Recommended Next Steps
 
-1. **Short term**: Add the jerk penalty above to `optimizer.py` as an optional `--accuracy-weight` CLI flag.
-2. **Medium term**: Swap the solver from `scipy.minimize` (SLSQP) to **CasADi + IPOPT** — IPOPT handles large sparse NLPs 10–100× faster and with better convergence guarantees.
-3. **Long term**: Run the robot on several trajectories, record actual vs. planned position, and build a simple correction model (even linear regression on `heading_error = f(speed, curvature)`) to add a physics-based accuracy term to the objective.
+1. **Calibrate the digital twin (KI-020).** Record hardware logs with `pybricks_code/sysid_digital_twin.py`, measure the stop/final poses, fit with `sysid_fit.py`, and compare the fitted validator with those poses. Then add integrated odometry, DriveBase response, and slip models. Keep the current gate strict until then.
+2. **Connect or remove Multi-Verse (KI-004).** Add a way to pass a full refined trajectory into the simple solver (it already has `guess_style` seeds) and use it in the final polish, or delete the experimental path and worker flags.
+3. **Fix the install path (KI-006).** Add JAX/JAXOpt/Immrax/pandas as an optional extra, and make the simple mode the obvious quick start.
+4. **Finish export/runtime edge cases (KI-011, KI-012).** Unwrap headings across ±π and fire the final event.
+5. **Make benchmarks trustworthy (KI-015).** Check convergence, pass an explicit config, and repair the random suite generator.
+
+---
+
+## References
+
+1. Reeds and Shepp, “Optimal paths for a car that goes both forwards and backwards,” *Pacific Journal of Mathematics*, 1990.
+2. Bayle, Fourquet, and Renaud, “Ramsete: A new trajectory tracking controller for mobile robots,” 2003.
+3. Andersson et al., “CasADi: a software framework for nonlinear optimization and optimal control,” *Mathematical Programming Computation*, 2019.
+4. Wächter and Biegler, “On the implementation of an interior-point filter line-search algorithm for large-scale nonlinear programming,” *Mathematical Programming*, 2006.
+5. Immrax documentation: interval analysis and mixed-monotone reachability in JAX.
+6. Choreo documentation: https://choreo.autos

@@ -1,1322 +1,628 @@
 # FLL Trajectory Optimizer: Technical Whitepaper
 
-**Version:** 1.3  
-**Date:** May 15, 2026  
-**Authors:** Johnathan Pollard
+**Version:** 2.0<br>
+**Date:** October 19, 2026<br>
+**Author:** Johnathan Pollard
 
-This whitepaper describes the design, implementation, and performance of a high-performance trajectory optimizer for LEGO differential-drive robots in FIRST LEGO League (FLL). The system utilizes a **Hybrid Multi-Verse** architecture that combines Reeds-Shepp bootstrapping, direct collocation optimization (CasADi/IPOPT), and a parallelized refinement pipeline (TEB/STOMP). By leveraging multi-level threading and non-overlapping window batching, the optimizer achieves stable, time-optimal solutions for complex missions in under 15 seconds, while respecting physical actuator limits and traction constraints.
+This document describes the current implementation in the working tree. It replaces the earlier version, which mixed implemented code with aspirational designs and unreproducible performance numbers. The code, `KNOWN_ISSUES.md`, and the test suite are the authority if this document drifts again.
 
-## Table of Contents
-
-1. [Introduction](#introduction)
-2. [Problem Statement](#problem-statement)
-3. [Algorithm Selection](#algorithm-selection)
-4. [Mathematical Formulation](#mathematical-formulation)
-5. [Implementation Architecture](#implementation-architecture)
-6. [Ramsete Trajectory Following](#ramsete-trajectory-following)
-7. [Multi-Verse Refinement Pipeline](#multi-verse-refinement-pipeline)
-8. [Results and Performance](#results-and-performance)
-9. [Comparison with Alternatives](#comparison-with-alternatives)
-10. [Future Work](#future-work)
-11. [Conclusion](#conclusion)
+> **Scope and safety status:** this is an offline desktop tool for one FLL differential-drive robot. The simple optimizer and safety gate work. The validation model is not yet a full digital twin, some representative curved paths still fail the Immrax gate (KI-020), and Multi-Verse refinement does not change the final trajectory (KI-004). Only output that has passed `--validate` should be treated as safety-checked.
 
 ---
 
 ## 1. Introduction
 
-Trajectory optimization is a critical component of autonomous robot navigation, particularly in constrained environments like FIRST LEGO League (FLL) competitions. FLL robots must navigate precise paths to complete missions while respecting physical limitations of LEGO motors, wheels, and the robot's mass. Traditional approaches often rely on simple geometric paths or heuristic controllers that fail to account for dynamics, leading to suboptimal performance or constraint violations.
+The optimizer generates time-optimal trajectories for a LEGO/FLL differential-drive robot and exports them for a Pybricks Ramsete controller. The core is a CasADi/IPOPT direct-collocation solve with per-wheel motor, normal-force, and traction constraints. A CPU validator and an Immrax interval-reachability validator run before output is written.
 
-This document presents a comprehensive trajectory optimization system specifically designed for FLL differential-drive robots. The system combines state-of-the-art numerical optimization techniques with domain-specific adaptations for LEGO robotics, resulting in a tool that generates time-optimal trajectories while guaranteeing physical feasibility.
+The current tree contains uncommitted fixes for several safety and correctness issues found in an earlier audit, including KI-001, KI-002, KI-003, KI-007 through KI-010, KI-013, KI-014, and KI-019. The most important behavioral changes are:
 
-### Key Contributions
+- A failed solve is never exported (KI-001).
+- `--validate` blocks every output and returns a non-zero exit code (KI-002).
+- Immrax uses both lower and upper uncertainty bounds (KI-003).
+- The optimizer and validator share one per-wheel force model (KI-010).
+- The JAX Ramsete path uses a proper `sinc` approximation and sample-and-hold timing (KI-014, KI-019).
 
-- **Direct collocation formulation** for efficient trajectory optimization using CasADi and IPOPT
-- **Physics-aware constraints** including velocity-dependent motor torque curves and traction limits
-- **Accuracy-speed tradeoff** through configurable smoothness penalties
-- **Multi-Verse refinement pipeline** combining TEB topology exploration and STOMP stochastic perturbation
-- **Research-grounded quality metrics** including jerk, curvature, and centripetal acceleration costs
-- **Real-world safety margins** (torque and speed headroom) for robust tracking
-- **Wheel slip detection** for comprehensive validation and safety verification
-- **Convergence visualization** for debugging and analysis of optimization progress
-- **Sub-second solve times** enabling rapid iteration during mission development
+What is still incomplete:
 
----
-
-## 2. Problem Statement
-
-### 2.1 Formal Problem Definition
-
-Given:
-
-- A differential-drive robot with known physical parameters (mass, inertia, wheel radius, track width, motor specifications)
-- A sequence of waypoints with optional heading constraints
-- Physical constraints:
-  - Motor torque limits (velocity-dependent)
-  - Wheel speed limits (no-load speed)
-  - Traction limits (coefficient of friction)
-  - Start and end at rest
-  - Optional intermediate stop constraints
-
-Find:
-
-- A time-optimal trajectory (position, heading, wheel velocities) that:
-  - Passes through all waypoints
-  - Respects all physical constraints
-  - Minimizes total travel time
-  - Optionally maximizes smoothness for better real-world tracking
-
-### 2.2 Domain-Specific Challenges
-
-FLL robotics presents unique challenges that differentiate this problem from general trajectory optimization:
-
-1. **Limited computational resources**: FLL robots typically run on embedded systems (e.g., LEGO EV3, Spike Prime) with limited CPU and memory
-2. **High friction variability**: FLL field mats have varying friction coefficients that significantly affect traction
-3. **Motor non-idealities**: LEGO motors exhibit velocity-dependent torque characteristics that must be modeled accurately
-4. **Precision requirements**: FLL missions often require sub-centimeter positioning accuracy
-5. **Rapid iteration**: Teams need fast optimization times to iterate on mission designs during competition preparation
+- Multi-Verse refinement is discarded by the final polish (KI-004).
+- The validator is kinematic and has no motor, DriveBase, odometry, or slip dynamics (KI-020).
+- Under the narrowed test ranges in `examples/fll_choreo.json`, the straight and complex-mission examples pass; the S-curve, stops, and events examples still fail.
+- Live view, convergence flags, random benchmarks, and some export edge cases remain open (KI-005, KI-011, KI-012, KI-015, KI-016, KI-017).
 
 ---
 
-## 3. Algorithm Selection
+## 2. System architecture
 
-### 3.1 Direct Collocation
+### 2.1 Modules
 
-**Choice:** Direct collocation with trapezoidal discretization
+| Module | Responsibility |
+|---|---|
+| `main.py` | CLI, waypoint/config loading, candidate loop, safety gate, export |
+| `robot_model.py` | Config parsing, motor curve, per-wheel normal/traction model, CPU force checks |
+| `optimizer.py` | CasADi/IPOPT trajectory optimizer (`TrajectoryOptimizer`) |
+| `multiverse_optimizer.py` | Experimental bootstrap/critic/JAX-refinement pipeline (`MasterTrajectoryOptimizer`) |
+| `validator.py` | CPU forward integration, constraint audit, metrics, final-waypoint and sample gates |
+| `immrax_validator.py` | Interval reachability with the deployed Ramsete structure, plus optional fitted plant |
+| `digital_twin.py` | Loader/validation for `sysid_fit.json` actuator and odometry fits |
+| `jax_robot_model.py` | JAX configuration and force model |
+| `jax_ramsete.py` | JAX Ramsete parity and interval-friendly controller |
+| `jax_optimizer.py` | JAX candidate generation and per-window refinement |
+| `sysid_fit.py` | Host-side fitter for digital-twin logs |
+| `sysid_compare.py` | Planned-vs-measured stop/final pose report |
+| `export.py` | Fixed-timestep controller JSON, legacy Python, and packed-compact Python export |
+| `live_visualizer.py`, `viz/` | WebSocket live view |
+| `convergence_plotter.py`, `plotter.py`, `animated_plotter.py` | Visualization |
+| `pybricks_code/` | Robot-side firmware, fast/reference/compact controllers, missions, digital-twin log collector |
 
-**Rationale:**
+### 2.2 CLI flow
 
-Direct collocation was selected over shooting methods and indirect methods for several reasons:
+1. Parse the robot config and waypoints.
+2. Select `TrajectoryOptimizer` (`--simple`) or `MasterTrajectoryOptimizer` (default).
+3. Solve the first candidate.
+4. With `--validate` or `--live`, run Immrax reachability on that candidate and score its envelope.
+5. With `--validate`, repeat for the remaining `--candidates` trajectories (default 2, max 5). With `--simple` these are distinct initial-guess seeds at the same accuracy weight (`baseline`, `rolling`, `bow_left`, `bow_right`, `turn_first`); the Multi-Verse path uses accuracy-weight steps of 2.0. Select a passing converged candidate with the smallest envelope (shortest breaks ties); otherwise keep the converged one closest to passing for reporting.
+6. Check the final waypoint, and with `--validate`, run the CPU `validate_samples` gate.
+7. Write the trajectory, then optional stats/controller/legacy-Python/compact-Python exports, then plots or live view.
 
-1. **Computational efficiency**: Collocation transcribes the optimal control problem into a nonlinear program (NLP) that can be solved efficiently with mature NLP solvers like IPOPT. This avoids the computational expense of solving two-point boundary value problems required by shooting methods.
+A failed solve and a failed validation both exit non-zero without writing the trajectory, controller, Python file, or stats.
 
-2. **Robustness to initial guesses**: Collocation methods are generally more robust to poor initial guesses compared to shooting methods, which can suffer from numerical instability when integrating forward from initial conditions.
+### 2.3 Installation modes
 
-3. **Constraint handling**: Collocation naturally handles state and control constraints at each discretization point, making it straightforward to enforce motor limits, traction limits, and waypoint constraints.
-
-4. **Sparsity exploitation**: The Jacobian of collocation constraints is highly structured and sparse, allowing IPOPT to exploit sparsity for efficient computation.
-
-**Why trapezoidal over Hermite-Simpson:**
-
-Trapezoidal collocation was chosen over higher-order methods like Hermite-Simpson because:
-
-- Simpler implementation with fewer collocation points per interval
-- Sufficient accuracy for FLL trajectory timescales (typically 1-10 seconds)
-- Better numerical stability for stiff dynamics (motor torque limits create rapid force changes)
-
-### 3.2 CasADi + IPOPT
-
-**Choice:** CasADi for symbolic computation, IPOPT for NLP solving
-
-**Rationale:**
-
-**CasADi:**
-
-- Provides automatic differentiation, eliminating manual derivative calculations
-- Generates efficient C code for constraint evaluations
-- Seamless integration with multiple NLP solvers
-- Python interface enables rapid prototyping and debugging
-
-**IPOPT (Interior Point OPTimizer):**
-
-- State-of-the-art interior-point method for large-scale nonlinear optimization
-- Handles inequality constraints naturally through barrier functions
-- Exploits sparsity in constraint Jacobians for efficiency
-- Proven reliability in trajectory optimization applications
-- Open-source and well-maintained
-
-**Alternative considered but rejected:**
-
-- **SNOPT**: Commercial solver with licensing restrictions
-- **scipy.optimize**: Lacks sparsity exploitation and constraint handling sophistication
-- **Custom gradient descent**: Too slow for real-time use, difficult to handle constraints
-
-### 3.3 Motor Torque Model
-
-**Choice:** Linear torque-velocity relationship with zero braking above no-load speed
-
-**Rationale:**
-
-The motor model assumes:
-
-- Maximum stall torque at zero velocity
-- Linear decrease to zero torque at no-load speed
-- No braking capability above no-load speed (torque clamped at zero)
-
-This model was chosen because:
-
-- Matches empirical measurements of LEGO motors
-- Simpler than full quadratic models while maintaining accuracy
-- Conservative assumption (no braking) ensures safety
-- Computationally efficient (single linear evaluation per constraint)
-
-**Alternative considered but rejected:**
-
-- **Quadratic torque-velocity model**: More accurate but requires additional parameters not readily available for LEGO motors
-- **Constant torque model**: Too inaccurate, fails to capture velocity-dependent force limits
-
-### 3.4 Traction Model
-
-**Choice:** Coulomb friction model with friction circle
-
-**Rationale:**
-
-The traction model assumes:
-
-- Maximum traction force = coefficient of friction × normal force
-- Traction limit applies to sum of absolute wheel forces (friction circle)
-- No dependence on velocity (static friction approximation)
-
-This model was chosen because:
-
-- Simple and well-understood
-- Conservative for typical FLL mat materials
-- Computationally efficient (single scalar constraint per timestep)
-- Matches empirical observations of wheel slip in FLL robots
-
-**Alternative considered but rejected:**
-
-- **Velocity-dependent friction**: More complex, limited empirical data for FLL mats
-- **Individual wheel traction**: Overly conservative, doesn't allow differential force distribution
+`requirements.txt` covers the simple path: numpy, CasADi, Plotly, Click, Matplotlib, rsplan, and websockets. The default optimizer and `--validate` also need JAX, JAXOpt, and Immrax; `--simple --live` can run without JAX, though live reachability envelopes need it. `sysid_solver.py` needs pandas. Those packages are not in `requirements.txt` yet (KI-006). JAX 0.6.2 was used for the current test run.
 
 ---
 
-## 4. Mathematical Formulation
+## 3. Robot model and configuration
 
-### 4.1 State Variables
+### 3.1 Config formats
 
-The trajectory is discretized into N time steps with state variables at each step:
+`RobotConfig` normalizes three formats:
 
-```
-X_k = [x_k, y_k, θ_k, vl_k, vr_k]  for k = 0, 1, ..., N-1
-```
+- canonical: `{ "robot": { ... } }`
+- legacy Choreo: `{ "config": { "mass": { "val": ... }, ... } }`
+- flat: robot fields at the top level
 
-Where:
+Canonical and legacy key names are accepted (`track_width`/`differentialTrackWidth`, `wheel_radius`/`radius`, `v_max_rad_s`/`vmax`, `t_max_nm`/`tmax`, `torque_headroom`/`torqueHeadroom`, `speed_headroom`/`speedHeadroom`). `JAXRobotConfig` delegates parsing to `RobotConfig`, so the optimizer and validator see the same robot (KI-008).
 
-- `x_k, y_k`: Position (meters)
-- `θ_k`: Heading (radians)
-- `vl_k, vr_k`: Left and right wheel velocities (m/s)
+### 3.2 Defaults
 
-Additional decision variable:
+| Parameter | Default | Unit |
+|---|---:|---|
+| `mass` | 0.723 | kg |
+| `inertia` | 0.0024 | kg·m² |
+| `track_width` | 0.0965 | m |
+| `wheel_radius` | 0.028 | m |
+| `v_max_rad_s` | 15.7 | rad/s |
+| `t_max_nm` | 0.04 | N·m |
+| `gearing` | 1.0 | — |
+| `cof` | 0.45 | — |
+| `gravity` | 9.81 | m/s² |
+| `torque_headroom` | 0.85 | — |
+| `speed_headroom` | 0.90 | — |
 
-- `dt`: Timestep duration (seconds)
+### 3.3 Motor force
 
-Total trajectory time: `T = dt × (N - 1)`
+For wheel speed `v`, the nominal available force is
 
-### 4.2 Kinematic Constraints
-
-Trapezoidal collocation enforces kinematic constraints between consecutive timesteps:
-
-```
-v1_k = (vl_k + vr_k) / 2
-v2_k = (vl_{k+1} + vr_{k+1}) / 2
-ω1_k = (vr_k - vl_k) / track_width
-ω2_k = (vr_{k+1} - vl_{k+1}) / track_width
-
-x_{k+1} = x_k + 0.5 × (v1_k × cos(θ_k) + v2_k × cos(θ_{k+1})) × dt
-y_{k+1} = y_k + 0.5 × (v1_k × sin(θ_k) + v2_k × sin(θ_{k+1})) × dt
-θ_{k+1} = θ_k + 0.5 × (ω1_k + ω2_k) × dt
-```
-
-This formulation provides second-order accuracy and ensures kinematic consistency.
-
-### 4.3 Dynamic Constraints
-
-Wheel accelerations are computed as:
-
-```
-al_k = (vl_{k+1} - vl_k) / dt
-ar_k = (vr_{k+1} - vr_k) / dt
+```text
+omega = (v / r) * gearing
+tau   = t_max * max(0, 1 - |omega| / v_max_rad_s)
+F     = (tau / r) * gearing
+F    *= torque_headroom        # when headroom is enabled
 ```
 
-Required wheel forces are computed from differential drive dynamics:
+The robust form uses the smallest declared wheel radius in the speed term, the largest radius in the force term, and the smallest declared torque headroom. This matches the lower force bound Immrax evaluates (KI-009, KI-010).
 
-```
-a_k = (al_k + ar_k) / 2  (linear acceleration)
-α_k = (ar_k - al_k) / track_width  (angular acceleration)
+### 3.4 Normal force and traction
 
-f_total_k = mass × a_k
-m_total_k = inertia × α_k
+A two-wheel differential robot has no front/rear axle. Longitudinal acceleration therefore does not shift load between the left and right wheels. The shared model includes only lateral transfer from centripetal acceleration `v*omega`:
 
-fr_k = (f_total_k + 2 × m_total_k / track_width) / 2
-fl_k = f_total_k - fr_k
+```text
+nl = m*g/2 - m*h_cg*(v*omega)/b
+nr = m*g/2 + m*h_cg*(v*omega)/b
 ```
 
-### 4.4 Motor Torque Constraints
+with `h_cg = CG_HEIGHT_M = 0.05 m` and track width `b`. The optimizer, CPU audit, JAX model, and Immrax all use this function.
 
-Maximum available force at each wheel depends on velocity:
+Each wheel is limited separately:
 
-```
-ω_wheel = v_wheel / wheel_radius × gearing
-torque_max = t_max × (1 - |ω_wheel| / v_max_rad_s)
-torque_max = max(0, torque_max)  # No braking above no-load speed
-force_max = torque_max / wheel_radius × gearing
+```text
+|fl| <= mu * nl
+|fr| <= mu * nr
 ```
 
-With safety headroom applied:
+The robust optimizer uses the minimum declared cof and track width, and the worst-case inertia/track-width split, so it does not satisfy a nominal check while failing the interval check. The old total `mu*m*g` friction-circle check remains in `check_constraints` as a legacy diagnostic only.
 
-```
-force_max_effective = force_max × torque_headroom
-```
+### 3.5 Uncertainty ranges
 
-Constraint:
+The `uncertainties` block is normalized once and consumed by the optimizer and Immrax:
 
-```
-|fl_k| ≤ force_max_effective(vl_k)
-|fr_k| ≤ force_max_effective(vr_k)
-```
+| Key | Fallback |
+|---|---|
+| `cof` | `[0.8*cof, 1.2*cof]` |
+| `torque_headroom` | `[0.8, 1.0]` |
+| `gear_backlash_m` | `[0.0001, 0.0006]` |
+| `track_width_range` | `[0.99*b, 1.01*b]` |
+| `wheel_radius_range` | `[0.99*r, 1.01*r]` |
+| `inertia_kg_m2` | `[0.90*I, 1.10*I]` |
 
-### 4.5 Traction Constraints
-
-Total force must not exceed friction limit:
-
-```
-f_traction_max = cof × mass × g
-|fl_k| + |fr_k| ≤ f_traction_max
-```
-
-### 4.6 Waypoint Constraints
-
-For each waypoint i at index `idx = i × num_samples_per_segment`:
-
-```
-x_idx = waypoint_i.x
-y_idx = waypoint_i.y
-if waypoint_i.heading is not None:
-    θ_idx = waypoint_i.heading
-```
-
-### 4.7 Boundary Conditions
-
-Start and end at rest:
-
-```
-vl_0 = 0, vr_0 = 0
-vl_{N-1} = 0, vr_{N-1} = 0
-```
-
-Optional intermediate stops:
-
-```
-For each stop waypoint i:
-    vl_{i×num_samples_per_segment} = 0
-    vr_{i×num_samples_per_segment} = 0
-```
-
-### 4.8 Objective Function
-
-Primary objective: minimize total time
-
-```
-minimize: dt × (N - 1)
-```
-
-Optional smoothness penalty (jerk minimization):
-
-```
-smoothness_cost = Σ_{k=0}^{N-3} [(al_{k+1} - al_k)² + (ar_{k+1} - ar_k)²]
-minimize: dt × (N - 1) + accuracy_weight × smoothness_cost
-```
-
-The smoothness penalty reduces rapid acceleration changes (jerk) at the cost of increased travel time. This improves real-world tracking accuracy by reducing overshoot and oscillations.
-
-### 4.9 Variable Bounds
-
-```
-0.001 ≤ dt ≤ 1.0  (seconds)
--20 ≤ x_k ≤ 20  (meters)
--20 ≤ y_k ≤ 20  (meters)
--100 ≤ θ_k ≤ 100  (radians)
--v_bound ≤ vl_k, vr_k ≤ v_bound
-```
-
-Where `v_bound = 0.99 × v_max × speed_headroom` (99% of no-load speed to avoid singularity).
+`t_max_range` is parsed and stored, but the current optimizer, CPU validator, and Immrax path use `t_max_nm` plus `torque_headroom`; the JAX interval helper's `use_intervals` branch is not called. Ranges are model inputs, not measured guarantees; the repository has no hardware calibration log yet (KI-020).
 
 ---
 
-## 5. Implementation Architecture
+## 4. Optimization formulation
 
-### 5.1 System Overview
+### 4.1 Decision variables
 
-The system is organized into modular components:
+For `N = segments * samples_per_segment + 1` samples, the optimizer chooses:
 
-```
-main.py (CLI entry point)
-├── robot_model.py (Robot configuration and dynamics)
-├── optimizer.py (Basic direct collocation optimizer)
-├── multiverse_optimizer.py (Advanced Multi-Verse pipeline)
-│   ├── PathBootstrapper (Reeds-Shepp initial guesses)
-│   ├── TrajectoryCritic (Quality evaluation with research-grounded metrics)
-│   ├── LocalSegmentOptimizer (Local window optimization)
-│   └── MultiVerseRefiner (TEB/STOMP parallel refinement)
-├── validator.py (Forward integration validation with wheel slip detection)
-├── export.py (Controller export)
-├── plotter.py (Trajectory visualization)
-├── live_visualizer.py (WebSocket server for live browser streaming)
-├── convergence_plotter.py (Optimization convergence visualization)
-└── benchmark.py (Performance benchmarking with validation)
+- one timestep `dt` (the default), or one interval length `dt_i` per waypoint segment with `--per-segment-dt`
+- for each sample `k`: `x_k, y_k, theta_k, vl_k, vr_k`
+
+Every segment has exactly `samples_per_segment` intervals. The default keeps all segments on the same `dt`, which preserves the validated timing behavior. The opt-in per-segment variant uses `dt_i` inside segment `i`; total time is `samples_per_segment * sum_i(dt_i)`, and the interval starting at sample `k` uses `dt[k // samples_per_segment]`.
+
+### 4.2 Objective
+
+```text
+J = dt * (N - 1) + accuracy_weight * sum_k [
+        ((al_{k+1} - al_k))^2 + ((ar_{k+1} - ar_k))^2
+    ]
 ```
 
-### 5.2 Robot Configuration
+The first term is trajectory duration. The optional second term penalizes jerk-like changes in wheel acceleration. `accuracy_weight = 0` is pure time-optimal. With `--per-segment-dt`, the duration term becomes `samples_per_segment * sum_i(dt_i)` and each acceleration difference uses the interval length of its own segment.
 
-The `RobotConfig` class parses robot parameters from JSON files in two formats:
+### 4.3 Constraints
 
-1. **Choreo format** (legacy compatibility):
+- `dt` (or each `dt_i` with `--per-segment-dt`) in `[0.001, 1.0]` s.
+- Position bounds `|x|, |y| <= 20 m`; heading bounds `[-100, 100]` rad (unwrapped).
+- Wheel-speed bounds at 99 % of the headroom-limited no-load speed.
+- Trapezoidal kinematic integration:
+
+```text
+x_{k+1} = x_k + 0.5*(v_k*cos(theta_k) + v_{k+1}*cos(theta_{k+1}))*dt
+y_{k+1} = y_k + 0.5*(v_k*sin(theta_k) + v_{k+1}*sin(theta_{k+1}))*dt
+theta_{k+1} = theta_k + 0.5*(omega_k + omega_{k+1})*dt
+```
+
+- Waypoint positions are equality constraints; heading is constrained only when supplied.
+- Start and end wheel speeds are zero; intermediate stops set both wheel speeds to zero at that sample.
+- Per-wheel motor limits and per-wheel traction, using the worst-case force bound described above.
+- The force split between wheels is bounded over the declared inertia and track-width ranges.
+
+### 4.4 Solver
+
+IPOPT is configured with `max_iter=5000`, `tol=1e-2`, `constr_viol_tol=1e-2`, adaptive barrier strategy, limited-memory Hessian, and warm-start options. These tolerances are deliberately loose enough for interactive use; the validator is the final authority.
+
+On failure, `TrajectoryOptimizer.solve` still returns a best-effort sample list from `opti.debug`, but sets `stats["converged"] = False`. `main.py` excludes that solve from export (KI-001).
+
+### 4.5 Limitations
+
+- `TrajectoryOptimizer.solve` now exposes deterministic `guess_style` seeds, but there is no path to pass a full refined sample matrix from Multi-Verse. The final polish therefore starts from the baseline seed (KI-004).
+- There are no obstacle or field-geometry constraints.
+- The solver is local; a bad waypoint/heading combination can converge to a poor local solution or fail.
+- The model is kinematic at the trajectory level. Motor lag, DriveBase response, odometry, and slip are handled only by the validation approximation, not the optimizer; the optional `--sysid-fit` plant adds fitted actuator/odometry response, but not full dynamics (KI-020).
+
+---
+
+## 5. Validation
+
+Validation has three layers.
+
+### 5.1 CPU audit and forward integration
+
+`validator.validate_samples` runs:
+
+- `compute_metrics`
+- `audit_constraints`
+- `forward_integrate` at 1 ms
+
+`audit_constraints` checks per-wheel motor force, per-wheel slip, legacy total traction, and wheel speed. `forward_integrate` rejects empty/non-monotone time vectors and returns `inf` errors instead of crashing. The sample gate requires:
+
+- max position error `< 1 cm`
+- final position error `< 1 cm`
+- zero motor/traction violating samples
+- zero slip points
+- `speed_violation_m_s < 1e-6`
+
+`main.py` also calls `check_final_waypoint` with a 2 cm position tolerance and 2 cm heading tolerance. The final pose check runs even without `--validate`.
+
+### 5.2 Immrax reachability
+
+`ImmraxValidator.validate_trajectory` runs a closed-loop reachability check with the same controller structure as the deployed follower:
+
+- **Reference:** linear interpolation of `x, y, heading, v, omega`, plus the precomputed Ramsete gain `sqrt(omega^2 + b*v^2)`. Headings are unrolled before interpolation.
+- **Controller:** `JAXRamseteController`; the nominal feedback path normalizes heading error to `[-π, π]`. The interval path uses unrolled headings and an interval-friendly polynomial because Immrax's natural inclusion does not support `abs`, `where`, `mod`, `sinc`, or `atan2`.
+- **Timing:** 20 ms control ticks; the command is held for the tick and the plant is integrated in four 5 ms substeps.
+- **Plant:** kinematic differential drive with a smooth backlash model. There is no motor time constant, current limit, DriveBase PID, encoder/gyro odometry, or slip dynamics in the default model.
+- **Optional measured model:** `--sysid-fit sysid_fit.json` switches to a five-state plant (pose plus actual wheel speeds). It applies the fitted straight-line actuator gain interval, first-order time constant, command delay, and odometry scale to feedback. Braking slip is loaded and reported but not applied yet because the plant has no braking state. The default kinematic path is unchanged when the flag is omitted.
+- **Uncertainty:** cof, torque headroom, backlash, track width, wheel radius, inertia, and the optional straight-line actuator gain are intervals. Both bounds matter (KI-003). Feedback uses the midpoint of the interval state in the default `nominal` mode; the more conservative `interval` mode is available but diverges on long fast paths.
+- **Outputs:** max motor/slip/speed violation, tracking error, envelope radius, and a pass flag.
+
+The envelope is the axis-aligned bounding box of the reachable set. The planner checks its radius against a local threshold: 2 cm for transit samples by default, 0.5 cm for `precision_mode` waypoints, or an explicit `error_threshold`. Tracking error is checked separately at 0.5 cm.
+
+The gate is a post-solve check. With `--validate`, `main.py` solves `--candidates` trajectories (default 2, max 5), validates each one, and selects the passing candidate with the smallest envelope; the shortest trajectory breaks ties. With `--simple`, the candidates are initial-guess seeds (`baseline`, `rolling`, `bow_left`, `bow_right`, `turn_first`); the Multi-Verse path uses increasing accuracy weights. If none pass, it selects the closest candidate for reporting but still blocks export. Reachability is not a term or constraint in the optimizer (KI-020).
+
+`--per-segment-dt` (with `--simple`) is opt-in, not the default. Measured on 2026-10-19: an uneven 1.0 m + 0.2 m path passes at 2.710 s with envelope 0.32 cm, versus 4.463 s / 0.35 cm for the uniform formulation. On the complex mission at `accuracy_weight=0`, per-segment timing is faster (5.447 s, envelope 1.18 cm) but tracking is 0.86 cm, so the 0.5 cm tracking gate rejects it; at `accuracy_weight=0.02` it passes at 7.312 s / 1.61 cm / 0.49 cm, which is slower and wider than the 6.068 s / 1.22 cm / 0.49 cm uniform baseline. The default therefore stays uniform.
+
+### 5.3 Measured current behavior
+
+These are model predictions from the current tree, not hardware measurements.
+
+| Example | Trajectory time | Gate result |
+|---|---:|---|
+| Straight | 2.3770 s | **PASS**; max integration error 0.000407 m; envelope 0.28 cm; zero motor/slip violations |
+| S-curve | 3.6965 s | FAIL; envelope 0.77 cm, tracking 1.32 cm (candidate 2 rolling: 3.7879 s, 0.75 cm / 1.47 cm) |
+| Stops | 6.246 s | FAIL; envelope 0.95 cm, tracking 0.52 cm (candidate 1 baseline: 6.246 s, 0.93 cm / 0.60 cm) |
+| Events | 4.6362 s | FAIL; envelope 0.97 cm, tracking 0.53 cm (candidate 1 baseline: 4.6366 s, 0.97 cm / 0.54 cm) |
+| Complex mission | 6.0677 s | **PASS**; envelope 1.22 cm, tracking 0.49 cm (candidate 2 rolling: 8.3775 s, 1.69 cm / 0.53 cm) |
+| Uneven test path (1.0 + 0.2 m), `--per-segment-dt` | 2.710 s | **PASS**; envelope 0.32 cm, tracking 0.36 cm (uniform: 4.463 s, 0.35 cm / 0.36 cm) |
+
+Under the narrowed test assumptions in `examples/fll_choreo.json`, the straight and complex-mission examples pass; the S-curve, stops, and events examples fail and write no output. This is the gate working on an uncalibrated model, not a solver crash. The narrowed ranges are test assumptions, not measured hardware guarantees.
+
+### 5.4 What the validator does not prove
+
+It does not prove that the physical robot will track the path. It does not model:
+
+- motor electrical/mechanical time constants
+- DriveBase command acceleration limits or PID response
+- encoder/gyro odometry error
+- wheel slip dynamics
+- interaction forces from mission models
+- battery sag beyond the declared torque-headroom interval
+
+Those are KI-020. The current threshold should not be relaxed to make a path pass; the model needs calibration from hardware logs first.
+
+---
+
+## 6. Ramsete controller and runtime
+
+### 6.1 Deployed controller
+
+`pybricks_code/ramsete_fast.py` is the deployed controller. Its loop runs every 20 ms. For each tick it:
+
+1. Finds the current reference segment and linearly interpolates `x, y, heading, v, omega, kr`.
+2. Reads `DriveBase.state()` and integrates odometry using the midpoint heading.
+3. Computes the reference errors in the robot frame:
+
+```text
+ex =  cos(h)*(xr - x) + sin(h)*(yr - y)
+ey = -sin(h)*(xr - x) + cos(h)*(yr - y)
+et = wrap(thetar - h)
+```
+
+4. Computes the Ramsete commands:
+
+```text
+sinc = sin(et)/et                 (1 at et = 0)
+kg   = 2*zeta*kr
+v    = vr*cos(et) + kg*ex
+w    = wr + b*vr*sinc*ey + kg*et
+```
+
+5. Sends `v` in mm/s and `-w` in deg/s to `DriveBase.drive`.
+6. Waits for the next 20 ms slot and runs a micro-GC pass.
+
+Pathing missions call `ramsete_fast` with its defaults, `b = 2.0`, `zeta = 0.7`; `robot_config.py` is hardware-only. The event mission imports `ramsete.py` and keeps its explicit `b = 3.0`, `zeta = 0.8` gains. The validator mirrors the pathing defaults (KI-020).
+
+`ramsete_compact.py` and `ramsete_compact_events.py` are packed-trajectory counterparts for `--export-format python-compact`. They decode the bytes blob directly and do not expand it into a list of dicts; the plain version has no event handling, while the event version imports `Odometry`, `RamseteController`, and `KinematicLimiter` from `ramsete.py`. They are available for generated missions but are not wired into the existing `robot.py` menu or `mission_4_ramsete.py`/`mission_5_lambdas.py`.
+
+### 6.2 JAX parity
+
+`jax_ramsete.py` mirrors the deployed math, including the precomputed gain and shortest-angle heading error. The interval path cannot use `abs`, `where`, `mod`, `sinc`, or `atan2`, so it uses unrolled headings and a degree-6 Chebyshev polynomial for `sinc` with maximum error below `2.5e-9` on `[-π, π]`. A randomized parity test compares the JAX command with a direct transcription of `ramsete_fast.py`, including ±π crossings (KI-014).
+
+The hardware calibration path is implemented but has not been validated on hardware. `pybricks_code/sysid_digital_twin.py` collects raw encoder/IMU, step, chirp, odometry, stopping, and held-out replay logs without changing `ramsete_fast.py`; `sysid_fit.py` fits first-order actuator response, odometry scale, static gyro bias, and a bounded braking-slip estimate; `--sysid-fit` feeds the measured actuator/odometry fit to Immrax. The 5 mm tracking and 2 cm envelope thresholds stay unchanged until measured logs are available (KI-020).
+
+### 6.3 Export and runtime edge cases
+
+- `export.resample_to_fixed_dt` interpolates heading as a raw number. A path crossing ±π can interpolate the long way around (KI-011).
+- Events are attached to the nearest 20 ms controller sample. The deployed loop breaks before the last sample, so an event on the final waypoint does not fire (KI-012). Trigger that action after `follow_trajectory` returns.
+- `ramsete.py` is the event-capable reference controller; `ramsete_fast.py` is the production path and has no event handling. The compact controllers consume the packed module from `--export-format python-compact`; `ramsete_compact_events.py` still stops at `total_time`, so a final-sample event does not fire (KI-012).
+
+---
+
+## 7. Multi-Verse pipeline as implemented
+
+`MasterTrajectoryOptimizer.solve` runs five phases and returns `(final_traj, stats)`.
+
+### 7.1 Phase 1: Bootstrap
+
+`PathBootstrapper` uses `ReedsSheppPath` with the `multiverse.bootstrap` settings (`turning_radius`, `resolution`) to produce a geometric guess.
+
+### 7.2 Phase 2: Kinematic profile
+
+`_profile_kinematics` converts the geometry to a time series without calling CasADi. It estimates a conservative nominal speed (40 % of the headroom-limited max), assigns `dt`, computes central-difference velocities, forces stops, and computes accelerations and wheel forces.
+
+### 7.3 Phase 3: Critic
+
+`TrajectoryCritic` flags windows using six metrics:
+
+- tortuosity
+- yaw excess
+- velocity chattering (wheel zero-crossings)
+- jerk cost
+- curvature cost
+- centripetal cost
+
+The thresholds are module-level constants (`TORTUOSITY_THRESHOLD = 1.2`, `YAW_BUFFER_RAD = 0.3`, `VELOCITY_CHATTERING_THRESHOLD = 2`, `JERK_COST_THRESHOLD = 5.0`, `CURVATURE_COST_THRESHOLD = 2.0`, `CENTRIPETAL_COST_THRESHOLD = 0.8`). The `critic_thresholds` config block is not read.
+
+### 7.4 Phase 4: JAX refinement
+
+For each bad window:
+
+- resample the window to 10 states
+- generate 50 candidate trajectories with `generate_candidates_jax`
+- keep the 10 lowest initial costs
+- refine them for up to 100 JAX iterations
+- resample the best refined window back to the original sample count
+- update the intermediate `global_traj`
+
+This phase updates `global_traj`. The `stomp_variants`, `stomp_noise`, and `teb_weights` config blocks are not read; the variant count and noise are module constants.
+
+### 7.5 Phase 5: Global polish
+
+`_global_solve` converts `initial_samples` into a `new_guess` array, but it does not pass that array to `TrajectoryOptimizer.solve`. The solver now exposes `guess_style` seeds, but the Multi-Verse path does not pass the refined samples or select a seed, so the polish starts from the default baseline guess (KI-004). `enable_parallel`, `num_workers`, `--workers`, and `--no-parallel` are also not used to produce the final result.
+
+### 7.6 Measured effect
+
+A 3-waypoint pipeline benchmark (`python benchmark.py --mode pipeline --config examples/fll_choreo.json`) produced:
+
+```text
+Simple CasADi     solve = 0.1076 s   trajectory = 6.7614 s
+JAX Multi-Verse   solve = 0.1224 s   trajectory = 6.7614 s
+Cost improvement: 0.00 %
+JAX refine phase: 0.0115 s
+```
+
+This is the expected consequence of KI-004. Use `--simple` for predictable behavior until the initial-guess path is wired.
+
+---
+
+## 8. System identification and the digital twin
+
+### 8.1 Robot-side logger
+
+`pybricks_code/sysid_digital_twin.py` is the current robot-side collector. It runs raw encoder/IMU, step, chirp, odometry, stopping, and held-out replay tests, and logs outside `ramsete_fast.py` so the controller keeps its memory and timing profile. `pybricks_code/sysid_data_logger.py` is the older logger and covers a narrower set of tests.
+
+### 8.2 PC-side fitter and optional plant
+
+`sysid_fit.py` parses the `TEST_START`/`TEST_END` blocks from a console capture, fits first-order actuator response, odometry scale, static gyro bias, and a bounded braking-slip estimate, then writes `sysid_fit.json`. It accepts a minimal drivebase profile (`wheel_radius_m`, optional `track_width_m`, with Pybricks-style `wheel_diameter_mm`/`axle_track_mm` aliases) or a full robot config, so the host workflow is not tied to one drivebase. `digital_twin.py` validates that file, and `main.py --sysid-fit sysid_fit.json --validate` switches Immrax to the fitted five-state plant. The default kinematic model is unchanged when the flag is omitted. `sysid_compare.py` prints the planned-vs-measured pose error for the measured stops and says whether each measured pose is inside the trajectory's reachability envelope. It can also read a plain predicted-pose CSV and accepts `--profile` for geometry checks, so it does not depend on the optimizer's `.traj` format.
+
+`sysid_solver.py` is an older standalone pandas/JAX script with hardcoded sample CSV paths. It is not wired into the CLI and does not emit the current fit format. Treat it as a prototype, not the active SysId path.
+
+### 8.3 Interaction forces
+
+The config schema reserves an `interactions` object, but the optimizer does not read it. Push/pull force profiles are a design goal, not a current capability.
+
+### 8.4 What would make it a digital twin
+
+To close KI-020:
+
+1. Collect hardware logs from `ramsete_fast.py` with `sysid_digital_twin.py`, measure the stop/final poses, and fit them with `sysid_fit.py`.
+2. Compare the planned trajectory and fitted validator with the measured poses using `sysid_compare.py`, then add integrated odometry and the remaining motor/DriveBase/slip dynamics.
+3. Decide whether to promote the existing reachability candidate score to a hard constraint or a differentiable proxy in the optimizer.
+4. Add interaction-force windows to the dynamics only after the force profiles are measured.
+
+Do not tune the 5 mm tracking or 2 cm envelope thresholds to one path. The straight example is a parity smoke test, not proof for curved/high-speed paths.
+
+---
+
+## 9. Tooling
+
+### 9.1 CLI
+
+The full option list is in `README.md` and `docs/CONFIGURATION.md`. Current truth:
+
+- `--simple` selects the CasADi optimizer.
+- `--validate` requires JAX/Immrax and gates output. `--candidates N` (default 2, max 5) selects among initial-guess seeds with `--simple`, or accuracy-weight variants on the Multi-Verse path.
+- `--sysid-fit sysid_fit.json` opts into the fitted five-state plant; it requires `--validate` or `--live`.
+- `--export-format controller|python|python-compact` writes optional outputs after the gate.
+- `--per-segment-dt` gives each waypoint segment its own interval and is only valid with `--simple`.
+- `--benchmark` writes `<output>_stats.json` after the gate.
+- `--plot`, `--animate`, and `--live` are blocking.
+- `--workers` and `--no-parallel` do not affect the final result (KI-004).
+- `--convergence-animate` and `--convergence-output` are parsed but unused (KI-017).
+
+### 9.2 Live visualization
+
+`live_visualizer.py` starts a WebSocket server on `127.0.0.1:8765`. Current issues:
+
+- It kills whatever owns port 8765 before binding (KI-005).
+- It broadcasts config/waypoints before a client connects, so the first client misses them (KI-016).
+- `on_regenerate` is never assigned and `send_candidates`/`send_status` are unused; the regenerate controls are dead.
+
+The final trajectory is broadcast, so the view is still useful for inspecting the result. Do not rely on it for live config or topology debugging.
+
+### 9.3 Convergence
+
+The simple optimizer records `iteration_history` when `--show-convergence` is set. `MasterTrajectoryOptimizer` declares the field but never fills it, so `--show-convergence` does nothing in default mode. The animate/output flags are unused in all modes (KI-017).
+
+### 9.4 Benchmarks
+
+- `benchmark.py --mode pipeline` works and produced the comparison above, but it does not check `stats["converged"]`; a failed solve can still be summarized as a normal result.
+- `--mode random` validates against a written `config_used.json` after the partial KI-015 fix, but the random suite generator still reads a missing `robot_config.json` and treats `solve()` as returning samples instead of `(samples, stats)`.
+- The benchmark default config is `robot_config.json`, which is not in the repository. Pass `--config examples/fll_choreo.json`.
+
+### 9.5 Export
+
+- Controller JSON: fixed 20 ms samples with `t, x, y, heading, vl, vr, v, omega`, plus `event` when assigned.
+- Python: a `config` dictionary and `samples` list parsed through `RobotConfig`; canonical, legacy, and flat trajectory configs produce the same values (KI-013).
+- Compact Python: a `config` dictionary, a packed `samples` bytes object (4-byte header plus 24 bytes per sample), and an `events` tuple. The blob stores `t, x, y, heading, v, omega` as little-endian float32 and is consumed by `ramsete_compact.py`/`ramsete_compact_events.py`; it is not accepted by the legacy controllers.
+- Heading interpolation across ±π is still wrong (KI-011).
+
+---
+
+## 10. Measured examples and test status
+
+### 10.1 Test suite
+
+`python run_tests.py` with JAX installed:
+
+```text
+Ran 151 tests
+Successes: 151
+Failures: 0
+Errors: 0
+Skipped: 0
+```
+
+The JAX-dependent modules are imported in a `try`; if JAX is missing, they are skipped rather than silently hidden behind a stale import (KI-007).
+
+### 10.2 Straight example
+
+```bash
+python main.py --simple -c examples/fll_choreo.json \
+  -w examples/example_straight.json -o straight.traj --validate
+```
+
+- The default command solves two initial-guess seeds (`baseline`, `rolling`) at accuracy weight 0.0. Both passed with a 0.28 cm envelope; candidate 2 was selected. A separate five-seed run showed all five converge to the same optimum.
+- Selected trajectory time: 2.3767 s
+- Selected-candidate solve wall time: about 0.060 s
+- Max forward-integration error: 0.000407 m
+- Reachability envelope: 0.28 cm (tracking check passed)
+- Motor/slip/speed violations: 0
+- Final-waypoint error: 0.000003 m
+- Result: PASS
+
+### 10.3 Curved and mission examples
+
+The S-curve, stops, and events examples converge but fail the Immrax gate and produce no output with `--validate`. The complex mission passes under the current narrowed test ranges. All values below use the default two-seed run:
+
+| Example | Selected time | Result |
+|---|---:|---|
+| S-curve | 3.696 s | FAIL; envelope 0.77 cm, tracking 1.32 cm (rolling: 3.788 s, 0.75 cm / 1.47 cm) |
+| Stops | 6.246 s | FAIL; envelope 0.95 cm, tracking 0.52 cm (baseline: 0.93 cm / 0.60 cm) |
+| Events | 4.636 s | FAIL; envelope 0.97 cm, tracking 0.53 cm (baseline: 0.97 cm / 0.54 cm) |
+| Complex mission | 6.068 s | **PASS**; envelope 1.22 cm, tracking 0.49 cm (rolling: 8.377 s, 1.69 cm / 0.53 cm) |
+
+These are model predictions. There is no hardware tracking log in the repository; the collector and fitter have only been exercised with synthetic data.
+
+### 10.4 Multi-Verse comparison
+
+The pipeline benchmark in §7.6 produced identical final costs for simple and Multi-Verse, with 0.00 % improvement. This is the current measured state, not a claim that the pipeline architecture is useless; the refinement is simply not connected to the final solve.
+
+---
+
+## 11. Known limitations
+
+| ID | State | Impact |
+|---|---|---|
+| KI-004 | Open | Multi-Verse refinement and worker flags do not change the final trajectory |
+| KI-005 | Open | `--live` kills whatever owns port 8765 |
+| KI-006 | Open | Fresh `requirements.txt` install cannot run the default or validation paths |
+| KI-011 | Open | Controller heading interpolation can cross ±π the long way |
+| KI-012 | Open | Final-waypoint events do not fire in the deployed runtime |
+| KI-015 | Partial | Pipeline benchmark works; random suite generator still broken |
+| KI-016 | Open | First live-view client misses config/waypoints |
+| KI-017 | Open | Convergence animate/output flags do nothing; Multi-Verse has no history |
+| KI-018 | Open | Generated mission copies, unused diagnostic API, dead UI state |
+| KI-020 | Partial | Validator is not a full digital twin; reachability is a post-solve candidate score, not an optimizer term |
+
+Fixed in the working tree: KI-001, KI-002, KI-003, KI-007, KI-008, KI-009, KI-010, KI-013, KI-014, KI-019. See `KNOWN_ISSUES.md` for evidence and fixes.
+
+---
+
+## 12. Future work
+
+Priority order:
+
+1. **KI-020:** collect and fit hardware logs, compare the fitted model with measured poses, add integrated odometry and the remaining motor/DriveBase/slip dynamics, then use reachability in optimization. Keep the current gate strict until then.
+2. **KI-004:** add a way to pass the Multi-Verse refined sample matrix into `TrajectoryOptimizer.solve` (the existing `guess_style` parameter only selects deterministic seeds), or remove the Multi-Verse path and its flags.
+3. **KI-006:** add JAX/JAXOpt/Immrax/pandas to the install path, or make `--simple` the default and document the optional stack.
+4. **KI-005/KI-016:** stop killing the port and replay config/waypoints to new clients.
+5. **KI-011/KI-012:** unwrap headings on export and fire the final event.
+6. **KI-015:** make random benchmarks use an explicit config and check convergence.
+7. **KI-017/KI-018:** wire or remove convergence flags, dead UI state, and generated duplicates.
+
+---
+
+## 13. References
+
+1. Reeds, J. A., and Shepp, L. A. “Optimal paths for a car that goes both forwards and backwards.” *Pacific Journal of Mathematics*, 1990.
+2. Bayle, B., Fourquet, J.-Y., and Renaud, M. “Ramsete: A new trajectory tracking controller for mobile robots.” 2003.
+3. Andersson, J. A. E., et al. “CasADi: a software framework for nonlinear optimization and optimal control.” *Mathematical Programming Computation*, 2019.
+4. Wächter, A., and Biegler, L. T. “On the implementation of an interior-point filter line-search algorithm for large-scale nonlinear programming.” *Mathematical Programming*, 2006.
+5. Immrax documentation: interval analysis and mixed-monotone reachability in JAX.
+6. Choreo trajectory generation documentation: https://choreo.autos
+
+---
+
+## Appendix A: Canonical configuration
 
 ```json
 {
-  "config": {
-    "mass": {"val": 0.8},
-    "inertia": {"val": 0.000001},
-    "differentialTrackWidth": {"val": 0.0965},
-    ...
-  }
-}
-```
-
-2. **Simplified JSON format**:
-
-```json
-{
+  "name": "fll_choreo",
+  "version": 4,
+  "type": "Differential",
   "robot": {
-    "mass": 0.8,
-    "inertia": 0.000001,
+    "mass": 0.723,
+    "inertia": 0.001,
     "track_width": 0.0965,
-    ...
+    "wheel_radius": 0.028,
+    "v_max_rad_s": 18.94,
+    "t_max_nm": 0.138,
+    "gearing": 1.0,
+    "cof": 1.37,
+    "gravity": 9.81,
+    "torque_headroom": 0.85,
+    "speed_headroom": 0.90,
+    "uncertainties": {
+      "cof": [1.24, 1.51],
+      "torque_headroom": [0.75, 0.90],
+      "gear_backlash_m": [0.0002, 0.0007],
+      "inertia_kg_m2": [0.0008, 0.0011],
+      "track_width_range": [0.096, 0.097],
+      "wheel_radius_range": [0.0275, 0.0285]
+    }
+  },
+  "multiverse": {
+    "bootstrap": {
+      "turning_radius": 0.0,
+      "resolution": 0.05
+    }
   }
 }
 ```
 
-Key parameters:
-
-- `mass`: Robot mass (kg)
-- `inertia`: Rotational inertia (kg·m²)
-- `track_width`: Distance between wheel centers (m)
-- `wheel_radius`: Wheel radius (m)
-- `v_max_rad_s`: Motor no-load speed (rad/s)
-- `t_max_nm`: Motor stall torque (N·m)
-- `gearing`: Gear ratio
-- `cof`: Coefficient of friction
-- `torque_headroom`: Safety margin for torque (default: 0.85)
-- `speed_headroom`: Safety margin for speed (default: 0.90)
-
-### 5.3 Basic Optimizer (optimizer.py)
-
-The `TrajectoryOptimizer` class implements the direct collocation formulation:
-
-**Key methods:**
-
-- `solve()`: Main optimization routine
-- `_dynamics_symbolic()`: CasADi symbolic dynamics computation
-- `_max_force_symbolic()`: CasADi symbolic motor force limit
-- `_build_initial_guess()`: Linear interpolation with heading blending
-- `format_output()`: Convert solution to trajectory samples
-
-**Solver configuration:**
-
-```python
-p_opts = {"expand": True}
-s_opts = {
-    "max_iter": 5000,
-    "print_level": 0,
-    "tol": 1e-2,
-    "constr_viol_tol": 1e-2,
-    "acceptable_tol": 1e-1,
-    "acceptable_constr_viol_tol": 1e-1,
-    "acceptable_iter": 5,
-    "nlp_scaling_method": "gradient-based",
-    "hessian_approximation": "limited-memory",
-}
-```
-
-The solver uses limited-memory BFGS Hessian approximation for efficiency and relaxed tolerances for fast convergence.
-
-### 5.4 Initial Guess Strategy
-
-The initial guess is constructed using linear interpolation between waypoints with intelligent heading estimation:
-
-**Heading interpolation logic:**
-
-1. If both start and end headings known: interpolate with angle wrapping
-2. If only start heading known: blend from constrained heading toward path direction
-3. If only end heading known: blend from path direction toward constrained heading
-4. If neither known: use local path direction, looking ahead to next waypoint for better estimates
-
-This strategy provides kinematically reasonable initial guesses that help IPOPT converge quickly.
-
----
-
-## 6. Ramsete Trajectory Following
-
-Once the optimizer generates a time-optimal trajectory, the robot must accurately follow it on the physical robot. This system implements the Ramsete controller, a nonlinear trajectory tracking controller designed for differential-drive robots. The controller provides global exponential stability and handles the coupling between position and heading errors naturally.
-
-### 6.1 Mathematical Formulation
-
-The Ramsete controller generates velocity commands that drive the robot from its current pose to a reference point on the trajectory.
-
-**Error Definition:**
-
-Given current pose `(x, y, θ)` and reference pose `(x_r, y_r, θ_r)`:
+## Appendix B: CLI summary
 
 ```text
-e_x = x_r - x
-e_y = y_r - y
+-c, --config PATH              robot configuration
+-w, --waypoints PATH           waypoint JSON
+-o, --output TEXT              output .traj
+-n, --samples INTEGER          samples per segment
+-a, --accuracy-weight FLOAT    smoothness/jerk weight
+--candidates INTEGER RANGE     candidates to solve and compare with --validate
+                              (default 2, max 5; seeds with --simple,
+                              accuracy-weight variants otherwise)
+--stop-waypoints TEXT          comma-separated stop indices
+--events TEXT                  comma-separated index:event pairs
+--simple                       CasADi-only optimizer
+--per-segment-dt               per-segment interval; --simple only
+--no-parallel                  Multi-Verse flag; no current result effect
+--workers INTEGER              Multi-Verse flag; no current result effect
+--validate                     CPU + Immrax gate; requires JAX
+--sysid-fit PATH               optional fitted actuator/odometry model
+                              (requires --validate or --live)
+--export-format                none | controller | python | python-compact
+--controller-dt FLOAT          controller timestep
+--benchmark                    write <output>_stats.json
+--plot / --animate             blocking visualization
+--live                         blocking WebSocket view
+--show-convergence             simple-optimizer convergence plot
+--convergence-mode             parallel | best | layered
+--convergence-animate          parsed, unused
+--convergence-output TEXT      parsed, unused
+-q, --quiet                    suppress progress output
 ```
 
-Rotate error to robot's local frame:
-
-```text
-e_x_local = cos(θ) × e_x + sin(θ) × e_y
-e_y_local = -sin(θ) × e_x + cos(θ) × e_y
-e_θ = θ_r - θ (normalized to [-π, π])
-```
-
-**Control Law:**
-
-```text
-k = 2 × ζ × sqrt(ω_r² + b × v_r²)
-
-v_cmd = v_r × cos(e_θ) + k × e_x_local
-ω_cmd = ω_r + v_r × (b × sin(e_θ)/e_θ × e_y_local + k × e_θ)
-```
-
-Where:
-
-- `v_r, ω_r`: Reference linear and angular velocities from trajectory
-- `b`: Tuning parameter for convergence rate (typically 2.0)
-- `ζ`: Damping ratio (typically 0.7 for critical damping)
-- `k`: Time-varying gain that increases with reference speed
-
-The controller naturally handles the coupling between lateral position error and heading error, providing smooth convergence even at high speeds.
-
-### 6.2 Odometry Implementation
-
-The system includes an `Odometry` class that tracks the robot's global position using Pybricks DriveBase sensors.
-
-**State Estimation:**
-
-The odometry integrates distance and angle changes from the DriveBase:
-
-```text
-d_dist = current_distance - last_distance
-d_angle = current_angle - last_angle
-
-avg_heading = heading + d_angle / 2
-
-x += d_dist × cos(avg_heading)
-y += d_dist × sin(avg_heading)
-heading += d_angle
-```
-
-Key implementation details:
-
-- **Average heading integration**: Uses the average heading during the motion interval for better accuracy than simple Euler integration
-- **Angle normalization**: All angles normalized to [-π, π] to prevent numerical drift
-- **Coordinate system**: Pybricks uses clockwise-positive angles; the system inverts to standard CCW-positive math convention
-
-### 6.3 Kinematic Limiter
-
-The `KinematicLimiter` class ensures that commanded velocities respect the robot's physical capabilities, preventing wheel slip and motor stalling.
-
-**Motor Torque Limits:**
-
-Maximum available force at each wheel depends on velocity:
-
-```text
-ω_wheel = |v_wheel| / wheel_radius × gearing
-torque_max = t_max × max(0, 1 - ω_wheel / ω_max)
-force_max = torque_max / wheel_radius × gearing
-```
-
-This models the velocity-dependent torque characteristic of LEGO motors, where torque decreases linearly to zero at no-load speed.
-
-**Traction Limits:**
-
-Total force must not exceed friction limit:
-
-```text
-F_traction_max = μ × mass × g
-|F_left| + |F_right| ≤ F_traction_max
-```
-
-**Limiting Algorithm:**
-
-1. Convert commanded `(v, ω)` to wheel velocities and required accelerations
-2. Compute required wheel forces from dynamics
-3. Scale forces if they exceed motor torque limits
-4. Scale forces if total force exceeds traction limit
-5. Convert achievable forces back to `(v, ω)` commands
-
-**Backlash Compensation:**
-
-The limiter includes backlash compensation to address gear train slack:
-
-```python
-When wheel velocity changes sign:
-    backlash_deficit += backlash_distance × sign(new_velocity)
-
-Apply boost to compensate for accumulated deficit:
-    boost = min(max_boost, backlash_deficit / dt)
-```
-
-This reduces tracking errors during direction reversals, which are common in point-turn maneuvers.
-
-### 6.4 Implementation Variants
-
-The system provides two implementations optimized for different use cases:
-
-**ramsete.py - Full-Featured Implementation:**
-
-- **Classes**: Modular design with `Odometry`, `RamseteController`, and `KinematicLimiter` classes
-- **Features**:
-  - Full kinematic limiting with motor torque and traction constraints
-  - Backlash compensation for gear train slack
-  - Event handling for triggering robot actions at waypoints
-  - Debug logging with `LOG` format for external plotting
-  - Performance metrics (loop time, calculation time, frequency)
-- **Timing**: Uses `await wait(5)` for 5ms fixed delay, yielding to multitask
-- **Use case**: Development, debugging, missions requiring event triggers
-
-**ramsete_fast.py - Optimized Implementation:**
-
-- **Optimizations**:
-  - Flat list pre-processing to minimize object overhead
-  - Compiled constants for frequently used values (π, 2π, rad/deg conversions)
-  - Local variable caching to bypass attribute lookups
-  - Pre-calculated Ramsete gains in trajectory preprocessing
-  - Precision timing with 20ms window and slack compensation
-- **Trade-offs**:
-  - No kinematic limiting (commands sent directly to hardware)
-  - No event handling
-  - No debug output
-  - Hardcoded zeta parameter (though now functional)
-- **Timing**: Maintains true 50Hz rate with micro-GC in slack time
-- **Use case**: Production missions where maximum tracking performance is required
-
-**Performance Comparison:**
-
-| Metric                | ramsete.py               | ramsete_fast.py       |
-| --------------------- | ------------------------ | --------------------- |
-| Loop rate             | ~50-100 Hz (variable)    | Exactly 50 Hz (fixed) |
-| Math calculation time | ~1-2 ms                  | ~0.5-1 ms             |
-| Memory overhead       | Higher (object-based)    | Lower (flat lists)    |
-| Safety features       | Full (kinematic limiter) | None                  |
-| Debug capability      | Full                     | None                  |
-
-### 6.5 Event System
-
-The full implementation includes an event system for triggering robot actions at specific waypoints:
-
-**Event Format:**
-
-```python
-event_map = {
-    "lower_arm": lambda: arm_motor.run_angle(-500, 90),
-    "release_object": lambda: gripper_motor.run(-500)
-}
-```
-
-**Event Firing Logic:**
-
-Events fire when the robot reaches the waypoint with the matching event name. The system ensures each event fires only once by setting an `event_fired` flag on the sample.
-
-**Integration with Trajectory:**
-
-The optimizer exports event markers in the trajectory JSON:
+## Appendix C: Output schema
 
 ```json
 {
-  "t": 1.5,
-  "x": 0.5,
-  "y": 0.3,
-  "heading": 0.5,
-  "event": "lower_arm"
-}
-```
-
-This enables precise coordination of robot actions with trajectory execution, critical for complex FLL missions.
-
-### 6.6 Performance Characteristics
-
-**Tracking Accuracy:**
-
-With Ramsete controller and kinematic limiting:
-
-| Scenario        | Max Tracking Error | RMS Tracking Error |
-| --------------- | ------------------ | ------------------ |
-| Straight line   | 8 mm               | 3 mm               |
-| S-curve         | 15 mm              | 7 mm               |
-| Complex mission | 22 mm              | 11 mm              |
-| Sharp turn      | 18 mm              | 9 mm               |
-
-**Controller Tuning:**
-
-- **b (convergence rate)**: Higher values increase convergence speed but may cause oscillation. Typical range: 1.5-3.0
-- **ζ (damping ratio)**: 0.7 provides critical damping. Lower values cause overshoot; higher values cause sluggish response
-
-**Real-World Considerations:**
-
-- **Battery voltage**: Motor torque decreases as battery drains; the torque headroom parameter accounts for this
-- **Surface friction**: The coefficient of friction should be measured for the specific FLL mat material
-- **Gear backlash**: The backlash compensation parameter (default 0.4mm) may need adjustment based on gear train condition
-
----
-
-## 7. Multi-Verse Refinement Pipeline
-
-### 7.1 Motivation
-
-The basic optimizer works well for simple paths but can struggle with complex trajectories that have:
-
-- Sharp turns requiring non-obvious topologies
-- Local minima in the optimization landscape
-- Chattering (rapid velocity sign changes) in wheel velocities
-
-The Multi-Verse refinement pipeline addresses these issues through a multi-stage approach that combines:
-
-1. Kinematically-aware bootstrapping
-2. Quality-aware criticism
-3. Parallel topology exploration
-4. Stochastic perturbation
-
-### 7.2 Pipeline Overview
-
-```text
-Phase 1: Bootstrap with Reeds-Shepp paths
-    ↓
-Phase 2: Fast global optimization
-    ↓
-Phase 3: Trajectory quality evaluation (Critic)
-    ↓
-Phase 4: Parallel refinement of problematic segments
-    ↓
-Phase 5: Final global polish
-```
-
-### 7.3 Phase 1: Reeds-Shepp Bootstrapping
-
-The `PathBootstrapper` generates kinematically valid initial guesses using Reeds-Shepp curves, providing a significantly higher-quality starting point than linear interpolation for complex maneuvers.
-
-**Reeds-Shepp Advantage:**
-
-- **Kinematic Validity**: Unlike linear blends, RS-paths respect the robot's turning radius from the start.
-- **Topology Awareness**: RS-paths natively support forward, reverse, and point-turn combinations (e.g., LRL, RSR, S-curves).
-- **Reduced Solver Iterations**: Starting closer to the feasible region reduces Phase 2 solve times by up to 40%.
-
-**Fallback Mechanism:**
-If a valid Reeds-Shepp path cannot be found (e.g., due to extreme constraints or invalid geometry), the system gracefully falls back to a kinematically-blended linear interpolation with angle wrapping.
-
-### 7.4 Phase 2: Fast Global Optimization
-
-A global optimization solve using the basic optimizer with relaxed tolerances for speed. This establishes a baseline trajectory that respects all constraints.
-
-### 7.5 Phase 3: Trajectory Criticism
-
-The `TrajectoryCritic` evaluates trajectory quality and identifies problematic segments using six metrics:
-
-**Original Metrics:**
-
-**1. Tortuosity:**
-
-```text
-tortuosity = path_length / straight_line_distance
-```
-
-High tortuosity indicates unnecessarily winding paths.
-
-**2. Yaw excess:**
-
-```text
-yaw_excess = total_yaw_change - expected_yaw_change
-```
-
-Excess yaw indicates unnecessary rotation.
-
-**3. Velocity chattering:**
-
-```text
-chattering = count of wheel velocity zero-crossings
-```
-
-High chattering indicates unstable control behavior.
-
-**Research-Grounded Metrics:**
-
-**4. Jerk cost:**
-
-```text
-jerk_cost = Σ_{k} [(al_{k+1} - al_k)² + (ar_{k+1} - ar_k)²]
-```
-
-Jerk measures the rate of acceleration change. High jerk indicates rapid acceleration changes that lead to tracking errors and mechanical stress. This metric is grounded in smoothness optimization literature and directly correlates with real-world tracking performance.
-
-**5. Curvature cost:**
-
-```text
-curvature_cost = Σ_{k} (|dθ_k| / ds_k)²
-```
-
-Curvature measures the sharpness of turns. High curvature indicates sharp turns that may cause wheel slip and tracking difficulties. This metric is grounded in vehicle trajectory planning research.
-
-**6. Centripetal acceleration cost:**
-
-```text
-centripetal_cost = Σ_{k} (v_k × ω_k / a_max)²  (for a_centripetal > 0.8 × a_max)
-```
-
-Centripetal acceleration penalizes trajectories approaching friction limits, indicating wheel slip risk. This metric is grounded in vehicle dynamics and provides early warning of potential constraint violations.
-
-Segments exceeding thresholds are flagged for refinement. The research-grounded metrics provide additional sensitivity to trajectory quality issues that may not be captured by the original geometric metrics alone.
-
-### 7.6 Phase 4: Parallel Refinement
-
-The `MultiVerseRefiner` applies two heuristic approaches in parallel:
-
-**TEB (Timed Elastic Band) heuristics:**
-
-- **Forward bias**: Penalize negative velocities to encourage forward motion
-- **Reverse bias**: Penalize positive velocities to encourage reverse motion
-- **Point-turn bias**: Force vl = -vr at midpoint to encourage in-place turning
-- **Wide sweep bias**: Add sinusoidal lateral offset to encourage wider turns
-- **Point-Turn Override**: A specialized heuristic that ignores Reeds-Shepp and injects a pure point-turn followed by a straight line, critical for fixing "Spiral Death Loops".
-
-**STOMP (Stochastic Trajectory Optimization for Motion Planning) heuristics:**
-
-- Generate multiple noisy variants by adding Gaussian perturbations to positions and headings
-- **180° Flip Variant**: Specifically tests if approaching a waypoint "backwards" is globally faster by flipping unconstrained headings.
-- Default: 5 variants with position std=0.05m, heading std=0.1rad
-
-**Multi-Level Parallelization Strategy:**
-The refinement phase leverages a hybrid parallelization architecture to maximize throughput on modern multi-core systems:
-
-1. **Window-Level Batching**: The system identifies disjoint sets of "bad windows" that do not share segments. These sets are processed in parallel batches.
-2. **Heuristic-Level Concurrency**: Within each window, all 11+ heuristic variants are evaluated concurrently.
-
-**Implementation Details:**
-
-- **ThreadPoolExecutor**: Switched from `ProcessPoolExecutor` to `ThreadPoolExecutor` for Windows compatibility. Since CasADi releases the Python Global Interpreter Lock (GIL) during heavy C-level solver operations, threads provide near-linear speedups without the overhead of process spawning.
-- **Safety Mechanism**: Nested parallelism is automatically managed to prevent thread oversubscription and resource exhaustion.
-
-Each heuristic is optimized independently using the `LocalSegmentOptimizer`, which solves a constrained local optimization problem with pinned boundary states. The best result (lowest cost) is selected and stitched back into the global trajectory.
-
-### 7.7 Phase 5: Final Polish
-
-A final global optimization with tight tolerances using the refined trajectory as initial guess. This ensures global consistency while preserving local improvements.
-
-### 7.8 Local Segment Optimizer
-
-The `LocalSegmentOptimizer` solves a miniature optimization problem for a local window:
-
-**Key differences from global optimizer:**
-
-- Pinned boundary states (start and end fixed)
-- Fewer samples (local window only)
-- Faster solver settings (max_iter: 500)
-- No waypoint constraints (boundaries handle constraints)
-
-This enables rapid exploration of local trajectory variations.
-
-### 7.9 Live Visualization (live_visualizer.py)
-
-To facilitate real-time monitoring and debugging of the optimization process, the system includes a WebSocket-based live visualization engine.
-
-**Architecture:**
-
-- **Server**: A lightweight asynchronous WebSocket server (`live_visualizer.py`) runs in a separate daemon thread.
-- **Protocol**: JSON-encoded messages transmit trajectory samples and solver state (iteration, phase).
-- **Frontend**: A standalone HTML5/JavaScript application (`viz/index.html`) connects to the server and renders the trajectory using Canvas/SVG.
-
-**Capabilities:**
-
-1. **Real-time Streaming**: The optimizer emits current trajectory estimates at each major phase or iteration, including rich telemetry such as wheel velocities and forces.
-2. **Phase Tracking**: The UI distinguishes between bootstrapping, global solve, and refinement phases, providing clear visual feedback on the current optimization status.
-3. **Interactive Control**: Users can select segments on the path to view detailed metrics and alternative "rejected" candidates from the Multi-Verse refinement.
-4. **On-Demand Regeneration**: The UI allows triggering manual segment regeneration, which re-runs the refinement pipeline for a specific window in the background and updates the main trajectory.
-5. **Playback Animation**: An integrated playback engine with a scrubbing slider allows for visualizing the robot's physical motion along the optimized path.
-
-This decoupling of solver and visualizer ensures that visualization overhead does not impact optimization performance while providing a responsive user experience.
-
-### 7.10 Convergence Visualization
-
-The system includes convergence visualization capabilities to analyze optimization progress:
-
-**Iteration History Capture:**
-
-- Captures intermediate states at each phase (bootstrap, global solve, refinement, final polish)
-- Records cost, trajectory, and timestep for each iteration
-- Supports both basic optimizer and Multi-Verse pipeline
-
-**Visualization Modes:**
-
-- **Parallel mode**: Shows all iterations side-by-side for comparison
-- **Best mode**: Shows only the best trajectory at each phase
-- **Layered mode**: Overlays trajectories to show evolution
-
-**Animation Support:**
-
-- Static plots for quick analysis
-- Animated convergence for detailed debugging
-- Shows trajectory evolution through optimization phases
-
-**CLI Integration:**
-
-- `--show-convergence` flag enables convergence visualization
-- `--convergence-mode` selects visualization mode
-- `--animate-convergence` enables animation instead of static plot
-
-This feature enables researchers and developers to understand optimization behavior, diagnose convergence issues, and validate algorithm correctness.
-
----
-
-## 8. Results and Performance
-
-### 8.1 Benchmark Setup
-
-**Test robot configuration:**
-
-- Mass: 0.723 kg
-- Inertia: 0.0024 kg·m²
-- Track width: 0.0965 m
-- Wheel radius: 0.028 m
-- Motor no-load speed: 15.7 rad/s (150 RPM)
-- Motor stall torque: 0.04 N·m
-- Coefficient of friction: 0.45
-- Torque headroom: 0.85
-- Speed headroom: 0.90
-
-**Test scenarios:**
-
-1. Straight line (2 waypoints, 1m distance)
-2. S-curve (3 waypoints, 1m × 0.3m)
-3. Complex mission (10 waypoints, multiple turns)
-4. Sharp turn (3 waypoints, 90° turn)
-
-### 8.2 Optimization Performance & Scaling
-
-Performance scales with trajectory resolution (samples per segment) and the complexity of the waypoint sequence.
-
-| Mode              | Resolution (-n) | Accuracy (-a) | Complex Mission Time | Phase 4 (Parallel) |
-| :---------------- | :-------------- | :------------ | :------------------- | :----------------- |
-| **Standard**      | 10              | 0.0           | **9.8s**             | 4.2s               |
-| **Balanced**      | 10              | 1.0           | **14.4s**            | 11.9s              |
-| **High Accuracy** | 15              | 2.0           | **69.6s**            | 18.7s              |
-
-**Scaling Observations:**
-
-- **Phase 4 Efficiency**: The multi-level parallelization engine ensures that Phase 4 (Refinement) remains a predictable fraction of the solve time, even as resolution increases.
-- **Accuracy Tradeoff**: Increasing the smoothness penalty (`-a`) significantly increases the complexity of the Hessian calculation in Phase 2 and 5, leading to longer global solve times.
-- **Thread Utilization**: On an 8-core system, the `ThreadPoolExecutor` architecture achieves ~85-90% CPU utilization during the refinement phase without the process-spawn overhead of `ProcessPool`.
-
-### 8.3 Trajectory Quality
-
-**Metric: Path tortuosity (lower is better)**
-
-| Scenario        | Basic Optimizer | Multi-Verse | Improvement |
-| --------------- | --------------- | ----------- | ----------- |
-| Straight line   | 1.00            | 1.00        | 0%          |
-| S-curve         | 1.23            | 1.15        | 6.5%        |
-| Complex mission | 1.45            | 1.28        | 11.7%       |
-| Sharp turn      | 1.67            | 1.42        | 15.0%       |
-
-**Metric: Velocity chattering (lower is better)**
-
-| Scenario        | Basic Optimizer | Multi-Verse | Improvement |
-| --------------- | --------------- | ----------- | ----------- |
-| Straight line   | 0               | 0           | 0%          |
-| S-curve         | 4               | 1           | 75%         |
-| Complex mission | 12              | 3           | 75%         |
-| Sharp turn      | 8               | 2           | 75%         |
-
-**Observations:**
-
-- Multi-Verse significantly reduces chattering for complex paths
-- Tortuosity improvements are most pronounced for sharp turns
-- Simple paths see little benefit (as expected)
-
-### 8.4 Trajectory Visualizations
-
-The following visualizations demonstrate the optimizer's performance on various trajectory types from the randomized benchmark suite:
-
-**Complex Mission Trajectory:**
-
-![Complex mission trajectory](../random_suite/run_000/plot.png)
-
-This trajectory shows a complex 10-waypoint mission with multiple turns, demonstrating the Multi-Verse refinement pipeline's ability to handle challenging path topologies.
-
-**S-Curve Trajectory:**
-
-![S-curve trajectory](../random_suite/run_001/plot.png)
-
-A smooth S-curve trajectory showing the optimizer's ability to generate natural-looking paths through curved waypoints.
-
-**Sharp Turn Trajectory:**
-
-![Sharp turn trajectory](../random_suite/run_005/plot.png)
-
-A trajectory featuring a sharp 90° turn, demonstrating the system's handling of high-curvature segments while respecting physical constraints.
-
-These visualizations are generated from the benchmark suite and represent typical optimization results on FLL-scale trajectories.
-
-### 8.5 Accuracy-Speed Tradeoff
-
-**Metric: Total time vs. accuracy weight**
-
-| Accuracy Weight | Time (s) | Max Jerk (m/s³) | Time Cost | Jerk Reduction |
-| --------------- | -------- | --------------- | --------- | -------------- |
-| 0.0             | 2.345    | 12.5            | baseline  | baseline       |
-| 0.5             | 2.412    | 8.3             | +2.9%     | -33.6%         |
-| 1.0             | 2.478    | 6.2             | +5.7%     | -50.4%         |
-| 2.0             | 2.623    | 4.8             | +11.8%    | -61.6%         |
-| 5.0             | 2.987    | 3.5             | +27.4%    | -72.0%         |
-
-**Observations:**
-
-- Accuracy weight of 1.0 provides good balance: ~6% time cost for ~50% jerk reduction
-- Higher weights provide diminishing returns
-- Weight of 0.5-1.0 recommended for typical FLL applications
-
-### 8.6 Validation Results
-
-**Forward integration validation (RK4, 1ms steps):**
-
-| Scenario        | Max Position Error | Final Position Error | Constraint Violations | Wheel Slip Points |
-| --------------- | ------------------ | -------------------- | --------------------- | ----------------- |
-| Straight line   | 0.0012 m           | 0.0008 m             | 0                     | 0                 |
-| S-curve         | 0.0034 m           | 0.0021 m             | 0                     | 0                 |
-| Complex mission | 0.0052 m           | 0.0034 m             | 0                     | 1                 |
-| Sharp turn      | 0.0048 m           | 0.0029 m             | 0                     | 2                 |
-
-**Wheel Slip Detection:**
-
-The validator now includes wheel slip detection that identifies points where the required wheel force exceeds the friction limit. This provides early warning of potential tracking issues on real robots. The slip detection computes:
-
-- Left wheel slip force (excess over friction limit)
-- Right wheel slip force (excess over friction limit)
-- Normal forces on each wheel
-- Slip point locations and times
-
-**Observations:**
-
-- All trajectories pass validation with < 6mm max position error
-- No constraint violations in any scenario
-- Wheel slip detection identifies potential issues in complex trajectories
-- Errors are within acceptable range for FLL missions (< 10mm)
-
-### 8.7 Real-World Tracking
-
-**Test setup:**
-
-- Physical robot with calibrated parameters
-- Ramsete controller for trajectory following
-- 20ms control loop
-- Measured position error using odometry
-
-**Results (accuracy weight = 1.0):**
-
-| Scenario        | Max Tracking Error | RMS Tracking Error |
-| --------------- | ------------------ | ------------------ |
-| Straight line   | 8 mm               | 3 mm               |
-| S-curve         | 15 mm              | 7 mm               |
-| Complex mission | 22 mm              | 11 mm              |
-| Sharp turn      | 18 mm              | 9 mm               |
-
-**Observations:**
-
-- Tracking errors are within acceptable range for FLL
-- Smooth trajectories (accuracy weight > 0) track better than time-optimal
-- Errors correlate with trajectory complexity (as expected)
-
-### 8.8 Comprehensive Benchmarking & Telemetry
-
-The system includes an `OptimizationStats` telemetry engine that captures high-resolution timing and efficacy data for every phase of the optimization.
-
-**Telemetry Features:**
-
-- **Per-Phase Timing**: Tracks Bootstrap, Global Solve, Critic, Refinement, and Polish phases independently.
-- **Heuristic Win Logging**: Records exactly which heuristic (e.g., `Point_Turn_Override`) improved upon the global solver and by what percentage.
-- **Bad Segment Density**: Monitors the number of problematic regions identified by the Critic.
-- **Cost Improvement**: Measures initial vs. final trajectory time costs.
-
-### 8.9 Empirical Results (Parallelized Randomized Suite)
-
-Results from a 100-run randomized stress-test suite using the new parallel refinement architecture:
-
-| Metric                         | Simple Optimizer | Multi-Verse (Parallel) | Improvement            |
-| :----------------------------- | :--------------- | :--------------------- | :--------------------- |
-| **Success Rate (Convergence)** | 84%              | 99.5%                  | +15.5%                 |
-| **Avg. Solve Time (Complex)**  | 1.2s             | 14.4s                  | N/A (Quality Tradeoff) |
-| **Heuristic Win Rate**         | N/A              | 45% of segments        |                        |
-| **Avg. Time Improvement**      | 0.0%             | 18.2%                  | +18.2%                 |
-
-**Heuristic Efficacy Analysis:**
-
-| Heuristic                   | Win Frequency | Avg. Cost Reduction | Primary Use Case                 |
-| :-------------------------- | :------------ | :------------------ | :------------------------------- |
-| **Point-Turn Override**     | 38%           | 48.2%               | Spiral loops / Sharp headings    |
-| **STOMP 180° Flip**         | 22%           | 31.5%               | Reversal optimization            |
-| **Bounded Forward/Reverse** | 25%           | 12.8%               | Velocity chattering fix          |
-| **Wide Sweep**              | 15%           | 14.1%               | High-curvature obstacle clearing |
-
-**Key Observations:**
-
-1. **Robustness**: The Multi-Verse pipeline converged on 99.5% of random waypoints, including "impossible" stress tests.
-2. **Quality**: Even when the simple optimizer converged, the Multi-Verse refinement frequently reduced position error by ~45% by eliminating "chattering" and suboptimal topologies.
-3. **Refinement Cost**: Multi-level parallelization ensures that even with 11+ heuristics per window, total solve times remain well within the acceptable range for complex mission planning.
-
----
-
-## 9. Comparison with Alternatives
-
-### 9.1 Choreo
-
-**Choreo** is a popular trajectory optimization tool for FRC (FIRST Robotics Competition) robots.
-
-**Similarities:**
-
-- Both use direct collocation with IPOPT
-- Both support differential drive kinematics
-- Both export to controller-ready formats
-
-**Differences:**
-
-- **Target platform**: Choreo targets FRC (larger robots, more powerful motors), this system targets FLL (smaller robots, LEGO motors)
-- **Motor model**: Choreo uses constant torque, this system uses velocity-dependent torque
-- **Safety margins**: This system includes configurable torque/speed headroom for real-world tracking
-- **Multi-Verse refinement**: This system includes advanced refinement pipeline not present in Choreo
-- **Computational efficiency**: This system optimized for sub-second solve times on consumer hardware
-
-**Performance comparison:**
-
-- Choreo: ~1-2 seconds for typical FRC trajectories
-- This system: ~0.1-0.5 seconds for typical FLL trajectories
-- Difference due to smaller problem scale (FLL robots are smaller/slower)
-
-### 9.2 PathPlanner
-
-**PathPlanner** is another trajectory optimization tool for FRC.
-
-**Similarities:**
-
-- Both use numerical optimization
-- Both support waypoint constraints
-
-**Differences:**
-
-- **Algorithm**: PathPlanner uses shooting methods, this system uses collocation
-- **Constraints**: PathPlanner has simpler motor model, this system includes velocity-dependent torque and traction
-- **Output**: PathPlanner outputs continuous-time trajectories, this system outputs discrete samples
-- **Validation**: This system includes forward integration validation
-
-### 9.3 Pure Pursuit
-
-**Pure Pursuit** is a geometric path-following algorithm commonly used in FLL.
-
-**Similarities:**
-
-- Both can follow waypoints
-- Both work with differential drive
-
-**Differences:**
-
-- **Optimization**: Pure Pursuit is a controller (not an optimizer), this system generates optimal trajectories
-- **Dynamics**: Pure Pursuit ignores dynamics, this system respects motor limits and traction
-- **Optimality**: Pure Pursuit follows geometric paths, this system generates time-optimal paths
-- **Constraints**: Pure Pursuit cannot enforce stop constraints or event timing
-
-**When to use each:**
-
-- **This system**: When you need time-optimal trajectories with constraint guarantees
-- **Pure Pursuit**: When you need simple path following without optimization
-
-### 9.4 Manual Tuning
-
-**Manual tuning** involves manually setting velocities and accelerations for each segment.
-
-**Similarities:**
-
-- Both can produce valid trajectories
-
-**Differences:**
-
-- **Automation**: This system automates optimization, manual tuning requires expert knowledge
-- **Optimality**: This system guarantees time-optimality, manual tuning is suboptimal
-- **Iteration**: This system enables rapid iteration, manual tuning is time-consuming
-- **Constraints**: This system automatically enforces constraints, manual tuning requires manual verification
-
----
-
-## 10. Future Work
-
-### 10.1 Short-term Improvements
-
-1. **Interactive Refinement**: Enable manual segment override in the web visualizer to force specific heuristics on "stubborn" windows.
-2. **Adaptive Discretization**: Automatically increase sample density (`-n`) in high-curvature segments while keeping straight lines sparse to save computation.
-3. **Obstacle Avoidance**: Integrate static field geometry (e.g., competition field boundaries) into the NLP constraints.
-
-### 10.2 Medium-term Enhancements
-
-1. **Multi-Robot Coordination**: Optimize trajectories for multiple robots to avoid collisions in shared mission spaces.
-2. **Trajectory Stitching**: Support "rolling" optimization for extremely long missions (30+ waypoints) to manage memory usage.
-3. **Hardware-in-the-Loop (HIL)**: Real-time telemetry feedback to adjust robot parameters (e.g., mass, COF) during a competition run.
-
-### 10.3 Long-term Research Directions
-
-1. **Model predictive control**: Integrate trajectory optimization with MPC for closed-loop adaptation
-2. **Reinforcement learning**: Learn trajectory policies from simulation
-3. **Verification and validation**: Formal verification of constraint satisfaction
-4. **Hardware-in-the-loop**: Co-design of trajectories and robot hardware
-5. **Competition simulation**: Full competition simulation for strategy optimization
-
----
-
-## 11. Conclusion
-
-This whitepaper has presented a comprehensive trajectory optimization system for FLL differential-drive robots. The system combines direct collocation with CasADi and IPOPT for efficient optimization, augmented with a novel Multi-Verse refinement pipeline that improves trajectory quality for complex paths.
-
-**Key achievements:**
-
-- Sub-second solve times for typical FLL trajectories
-- Guaranteed constraint satisfaction through physics-aware modeling
-- Improved real-world tracking through configurable safety margins
-- Advanced refinement pipeline for complex paths
-- Comprehensive validation through forward integration
-
-**Algorithmic choices justified:**
-
-- Direct collocation for computational efficiency and robustness
-- CasADi + IPOPT for automatic differentiation and mature NLP solving
-- Velocity-dependent motor model for accuracy
-- Coulomb friction model for simplicity and conservatism
-
-**Empirical results demonstrate:**
-
-- Optimization times of 67-383ms for typical scenarios
-- Position errors < 6mm in validation
-- Tracking errors < 22mm on real robots
-- Significant quality improvements from Multi-Verse refinement
-
-The system provides FLL teams with a powerful tool for generating optimal trajectories while respecting physical constraints, enabling faster mission development and improved competition performance.
-
----
-
-## References
-
-1. **CasADi**: Andersson, J. A. E., et al. "CasADi: A software framework for nonlinear optimization and optimal control." Mathematical Programming Computation, 2019.
-
-2. **IPOPT**: Wächter, A., and Biegler, L. T. "On the implementation of an interior-point filter line-search algorithm for large-scale nonlinear programming." Mathematical Programming, 2006.
-
-3. **Direct Collocation**: Hargraves, C. R., and Paris, S. W. "Direct trajectory optimization using nonlinear programming and collocation." Journal of Guidance, Control, and Dynamics, 1987.
-
-4. **TEB**: Rösmann, C., et al. "Efficient trajectory optimization using a sparse model." European Conference on Mobile Robots, 2013.
-
-5. **STOMP**: Kalakrishnan, M., et al. "STOMP: Stochastic trajectory optimization for motion planning." International Conference on Robotics and Automation, 2011.
-
-6. **Reeds-Shepp**: Reeds, J. A., and Shepp, L. A. "Optimal paths for a car that goes both forwards and backwards." Pacific Journal of Mathematics, 1990.
-
-7. **Ramsete**: Østergaard, E. Z., et al. "Trajectory tracking and robot manipulator control using Lyapunov stable MPC with constraints." IFAC Proceedings Volumes, 2016.
-
-8. **immrax**: Harapanahalli, A., Jafarpour, S., and Coogan, S. "immrax: A Parallelizable and Differentiable Toolbox for Interval Analysis and Mixed Monotone Reachability in JAX." IFAC-PapersOnLine, vol. 58, no. 11, pp. 75-80, 2024. doi: [10.1016/j.ifacol.2024.07.428](https://doi.org/10.1016/j.ifacol.2024.07.428).
-
----
-
-## Appendix A: Configuration Parameters
-
-### A.1 Robot Parameters
-
-| Parameter               | Symbol | Typical Range | Unit  | Description                        |
-| ----------------------- | ------ | ------------- | ----- | ---------------------------------- |
-| Mass                    | m      | 0.5 - 1.5     | kg    | Total robot mass                   |
-| Inertia                 | I      | 1e-6 - 1e-4   | kg·m² | Rotational inertia                 |
-| Track width             | L      | 0.08 - 0.15   | m     | Distance between wheel centers     |
-| Wheel radius            | r      | 0.02 - 0.06   | m     | Wheel radius                       |
-| Motor no-load speed     | ω_max  | 10 - 20       | rad/s | Motor angular velocity at no load  |
-| Motor stall torque      | τ_max  | 0.02 - 0.06   | N·m   | Motor torque at zero speed         |
-| Gear ratio              | G      | 0.5 - 5.0     | -     | Motor-to-wheel gear ratio          |
-| Coefficient of friction | μ      | 0.3 - 1.5     | -     | Wheel-surface friction coefficient |
-
-### A.2 Safety Margins
-
-| Parameter       | Symbol | Typical Range | Unit | Description                |
-| --------------- | ------ | ------------- | ---- | -------------------------- |
-| Torque headroom | h_t    | 0.70 - 0.95   | -    | Motor torque safety margin |
-| Speed headroom  | h_s    | 0.80 - 0.95   | -    | Wheel speed safety margin  |
-
-### A.3 Optimization Parameters
-
-| Parameter           | Symbol | Typical Range | Unit | Description                    |
-| ------------------- | ------ | ------------- | ---- | ------------------------------ |
-| Samples per segment | N_s    | 5 - 20        | -    | Collocation points per segment |
-| Accuracy weight     | w_a    | 0.0 - 5.0     | -    | Smoothness penalty weight      |
-| Solver tolerance    | tol    | 1e-3 - 1e-1   | -    | IPOPT convergence tolerance    |
-
----
-
-## Appendix B: Solver Settings
-
-### B.1 IPOPT Configuration
-
-```python
-p_opts = {
-    "expand": True  # Expand symbolic expressions
-}
-
-s_opts = {
-    "max_iter": 5000,                    # Maximum iterations
-    "print_level": 0,                    # Suppress output
-    "tol": 1e-2,                        # Convergence tolerance
-    "constr_viol_tol": 1e-2,            # Constraint violation tolerance
-    "acceptable_tol": 1e-1,             # Acceptable tolerance
-    "acceptable_constr_viol_tol": 1e-1, # Acceptable constraint violation
-    "acceptable_iter": 5,                # Acceptable iterations
-    "nlp_scaling_method": "gradient-based",  # Scaling method
-    "hessian_approximation": "limited-memory",  # Hessian approximation
-}
-```
-
-### B.2 Multi-Verse Configuration
-
-```python
-# Critic thresholds (original metrics)
-tortuosity_threshold = 1.5
-yaw_buffer_rad = 0.5
-velocity_chattering_threshold = 3
-
-# Critic thresholds (research-grounded metrics)
-jerk_cost_threshold = 10.0  # Smoothness threshold
-curvature_cost_threshold = 5.0  # Turn sharpness threshold
-centripetal_cost_threshold = 1.0  # Friction limit approach threshold
-
-# STOMP noise
-stomp_variants = 5
-stomp_pos_std = 0.05  # meters
-stomp_heading_std = 0.1  # radians
-
-# TEB weights
-forward_bias = 10.0
-reverse_bias = 10.0
-point_turn_bias = 5.0
-wide_sweep_bias = 2.0
-
-# Parallel execution
-enable_parallel = True
-num_workers = 8  # Optimal for 8-16 core systems
-use_threadpool = True  # Migrated from ProcessPool for Windows GIL-free solves
-batch_windows = True  # Enable non-overlapping window parallelization
-```
-
----
-
-## Appendix C: Example Trajectory Output
-
-```json
-{
-  "name": "examples/example_trajectory",
+  "name": "output",
   "version": 3,
   "trajectory": {
-    "config": {
-      "mass": {"val": 0.723},
-      "inertia": {"val": 0.0024},
-      ...
-    },
+    "config": { "...": "canonical robot fields" },
     "samples": [
       {
         "t": 0.0,
@@ -1329,62 +635,27 @@ batch_windows = True  # Enable non-overlapping window parallelization
         "al": 0.0,
         "ar": 0.0,
         "fl": 0.0,
-        "fr": 0.0
-      },
-      {
-        "t": 0.1,
-        "x": 0.01,
-        "y": 0.0,
-        "heading": 0.0,
-        "vl": 0.15,
-        "vr": 0.15,
-        "omega": 0.0,
-        "al": 1.5,
-        "ar": 1.5,
-        "fl": 0.5,
-        "fr": 0.5
-      },
-      ...
+        "fr": 0.0,
+        "event": "optional"
+      }
     ]
   }
 }
 ```
 
----
+The controller exporter adds `v` and resamples to a fixed `dt`. `--validate` may attach `reachability_envelope` to samples for plotting.
 
----
+## Appendix D: Key APIs
 
-## Appendix D: Advanced CLI Usage
-
-To utilize the full power of the Multi-Verse pipeline—including multi-level parallelization, live browser visualization, benchmarking, and physical validation—use the following "all-in-one" command:
-
-```powershell
-python main.py `
-  -c examples/fll_choreo.json `
-  -w examples/example_complex_mission.json `
-  -o complex_mission_optimized.json `
-  -a 1.0 `
-  --workers 8 `
-  --live `
-  --benchmark `
-  --validate `
-  --export-format controller `
-  --show-convergence `
-  --convergence-animate
-```
-
-### Command Breakdown:
-
-- **`-a 1.0`**: Applies balanced smoothness (smoothness cost weight).
-- **`--workers 8`**: Sets the number of parallel threads for refinement.
-- **`--live`**: Starts the WebSocket server for real-time browser visualization.
-- **`--benchmark`**: Collects per-phase timing and heuristic efficacy data.
-- **`--validate`**: Automatically runs the RK4 forward-integration report.
-- **`--export-format controller`**: Generates a high-precision JSON for on-robot execution.
-- **`--show-convergence --convergence-animate`**: Generates an animated plot of the optimization progress.
-
----
-
-**Document Version:** 1.3  
-**Last Updated:** May 15, 2026  
-**Authors:** Johnathan Pollard
+| API | Purpose |
+|---|---|
+| `TrajectoryOptimizer.solve(...) -> (samples, stats)` | Simple CasADi/IPOPT solve |
+| `MasterTrajectoryOptimizer.solve(...) -> (samples, stats)` | Multi-Verse pipeline |
+| `RobotConfig(config_dict)` | Normalize canonical/legacy/flat config |
+| `DifferentialDriveModel.check_constraints(...) -> dict` | CPU force/slip audit |
+| `validator.forward_integrate(...) -> (integrated, errors)` | 1 ms RK4 verification |
+| `validator.validate_samples(...) -> dict` | In-memory CPU gate |
+| `validator.validate_trajectory(...) -> (metrics, audit, errors)` | Human-readable report |
+| `ImmraxValidator.validate_trajectory(...) -> dict` | Closed-loop interval reachability |
+| `export.write_controller_file(...)` | Fixed-timestep controller JSON |
+| `export.write_python_file(...)` | Python module with config + samples |

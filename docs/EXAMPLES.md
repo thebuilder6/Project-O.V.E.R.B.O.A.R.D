@@ -2,6 +2,8 @@
 
 This document provides practical examples for using the FLL Trajectory Optimizer.
 
+> **Optimizer choice:** most examples work with either solver. Use `--simple` for the CasADi-only path, especially if you installed only `requirements.txt`. The default Multi-Verse path needs JAX and currently produces the same final trajectory (KI-004). `--validate` always needs JAX/Immrax. With `--validate`, `--candidates N` (default 2, max 5) solves N candidates and exports the passing one with the smallest envelope; with `--simple` the candidates are distinct initial-guess seeds, otherwise accuracy-weight variants. Use `--candidates 1` for a single solve. Without `--validate`, only the first candidate is solved.
+
 ## Table of Contents
 
 - [Basic Examples](#basic-examples)
@@ -29,14 +31,14 @@ Generate a straight-line trajectory from (0, 0) to (1, 0):
 **Command:**
 
 ```bash
-python main.py -c examples/fll_choreo.json -w waypoints.json -o straight.traj --plot
+python main.py --simple -c examples/fll_choreo.json -w waypoints.json -o straight.traj --plot
 ```
 
 **Expected output:**
 
-- Optimization converges in ~67 ms
-- Robot accelerates from rest, cruises at max speed, decelerates to rest
-- Total time depends on robot max speed (typically 1-2 seconds for 1m)
+- With the example config, the simple solver takes about 0.06 s of solve wall time
+- Robot accelerates from rest, cruises, and decelerates to rest
+- Trajectory time is about 2.38 s for the 1 m straight example; it depends on the robot's speed limits
 
 ---
 
@@ -112,6 +114,9 @@ python main.py -c examples/fll_choreo.json -w examples/example_complete.json -o 
 
 # Complex mission
 python main.py -c examples/fll_choreo.json -w examples/example_complex_mission.json -o complex.traj --plot
+
+# First four waypoints of the complex mission (candidate-seed benchmark)
+python main.py --simple --validate -c examples/fll_choreo.json -w examples/example_mission_first4.json -o first4.traj --candidates 5
 ```
 
 ---
@@ -194,6 +199,8 @@ python main.py -c examples/fll_choreo.json -w waypoints_with_events.json -o even
 - Controller export preserves events at nearest timestep
 - Robot controller reads events and triggers actions (arm, intake, release)
 
+> **Runtime caveat:** an event on the final waypoint is exported but not fired by the deployed `ramsete_fast.py` loop (KI-012). Trigger the final action after the trajectory finishes.
+
 ---
 
 ### Example 8: Event Markers (CLI)
@@ -236,8 +243,10 @@ python main.py -c examples/fll_choreo.json -w waypoints.json -o very_smooth.traj
 **Comparison:**
 
 - `a=0.0`: Fastest time, highest jerk, may overshoot on real robot
-- `a=1.0`: ~3-5% time cost, ~35% less jerk, better tracking
+- `a=1.0`: Smoothness cost, better tracking
 - `a=5.0`: Significant time cost, very smooth, minimal overshoot
+
+The exact time/jerk tradeoff depends on the path and robot; measure it on your own trajectory. `--validate` can reject a curved path even when the solve succeeds (KI-020), so check the exit code before using the output.
 
 ---
 
@@ -284,9 +293,24 @@ python main.py -c examples/fll_choreo.json -w waypoints.json -o traj.traj \
   --export-format python
 ```
 
-**Output file:** `traj.py` with a `samples` list containing trajectory data.
+**Output file:** `traj.py` with a `config` dictionary and a `samples` list containing trajectory data (including events when present).
 
 **Use case:** Direct integration with Python-based robot controllers or analysis scripts.
+
+---
+
+### Example 11b: Compact Python Export
+
+Export the packed module used by the compact Pybricks controllers:
+
+```bash
+python main.py -c examples/fll_choreo.json -w waypoints.json -o traj.traj \
+  --export-format python-compact
+```
+
+**Output file:** `traj.py` with a `config` dictionary, a packed `samples` bytes object, and an `events` tuple. The blob uses a 4-byte header plus 24 bytes per sample.
+
+**Use case:** Import the module with `pybricks_code/ramsete_compact.py` for pathing or `pybricks_code/ramsete_compact_events.py` for events. The compact controllers are not wired into the existing `robot.py` menu or missions, and the final-event caveat still applies (KI-012).
 
 ---
 
@@ -318,42 +342,50 @@ python main.py -c examples/fll_choreo.json -w waypoints.json -o high_res.traj -n
 - `-n 10`: Good balance for most FLL paths
 - `-n 20`: Slower optimization, smoother curves, better for complex paths
 
+With `--simple`, `--per-segment-dt` lets each waypoint segment use its own sample interval instead of forcing one interval across the whole path:
+
+```bash
+python main.py --simple --per-segment-dt \
+  -c examples/fll_choreo.json -w waypoints.json -o per_segment.traj
+```
+
+This changes the optimization variables, not the waypoint constraints. It is not available on the Multi-Verse path.
+
 ---
 
-### Example 13: Multi-Verse Refinement
+### Example 13: Multi-Verse Refinement (experimental)
 
-Use the advanced Multi-Verse optimizer for complex paths:
+The default optimizer is the Multi-Verse pipeline. It requires JAX and runs:
+
+```text
+bootstrap -> kinematic profile -> critic -> JAX refinement -> CasADi polish
+```
+
+Example:
 
 ```bash
 python main.py -c examples/fll_choreo.json -w complex_waypoints.json -o complex.traj \
   -n 15 \
   -a 1.0 \
-  --validate \
   --plot
 ```
 
-The Multi-Verse optimizer:
-- Generates multiple candidate trajectories with different initial conditions
-- Refines the best candidates in parallel (default: 8 workers)
-- Produces higher-quality trajectories for challenging paths
+**Current behaviour:** the refinement phase updates an intermediate trajectory, but the final CasADi polish does not receive that refined guess (`multiverse_optimizer.py:_global_solve`, KI-004). The final trajectory is therefore the same as the simple solve, and `--workers`/`--no-parallel` do not change the result. A measured 3-waypoint pipeline benchmark produced 0.00 % cost improvement.
 
-**Disable parallel processing:**
+**Use the simple optimizer for predictable results:**
+
+```bash
+python main.py --simple -c examples/fll_choreo.json -w waypoints.json -o output.traj
+```
+
+**Flags kept for compatibility:**
 
 ```bash
 python main.py -c examples/fll_choreo.json -w waypoints.json -o output.traj --no-parallel
-```
-
-**Use simple optimizer (legacy mode):**
-
-```bash
-python main.py -c examples/fll_choreo.json -w waypoints.json -o output.traj --simple
-```
-
-**Adjust worker count:**
-
-```bash
 python main.py -c examples/fll_choreo.json -w waypoints.json -o output.traj --workers 16
 ```
+
+Do not expect these to improve quality or speed up the final solve until KI-004 is fixed.
 
 ---
 
@@ -376,7 +408,7 @@ Generate a trajectory for a typical FLL mission:
 **Command:**
 
 ```bash
-python main.py -c examples/fll_choreo.json -w mission_waypoints.json -o mission.traj \
+python main.py --simple -c examples/fll_choreo.json -w mission_waypoints.json -o mission.traj \
   -n 10 \
   -a 0.5 \
   --validate \
@@ -387,10 +419,11 @@ python main.py -c examples/fll_choreo.json -w mission_waypoints.json -o mission.
 
 **Expected output:**
 
-- Optimization time: ~300-500 ms
-- Constraint violations: 0
-- Forward integration error: < 0.01 m
-- Controller samples: ~200-400 at 20ms dt
+- With `--simple`, solves are typically a few tenths of a second; the default Multi-Verse path adds JAX overhead without changing the result (KI-004)
+- The solve may converge while `--validate` still rejects the path; under the current test ranges the S-curve, stops, and events examples fail, while the complex mission passes (KI-020)
+- If validation passes, the controller profile has one sample per 20 ms of trajectory
+
+Run with `--simple` and without `--validate` for exploratory output, or use a path that passes the gate before exporting to the robot.
 
 ---
 
@@ -417,8 +450,8 @@ waypoints = [
     (2.0, 1.0, 1.0)
 ]
 
-# Solve with accuracy weighting
-samples = optimizer.solve(
+# Solve with accuracy weighting. solve() returns (samples, stats).
+samples, stats = optimizer.solve(
     waypoints,
     num_samples_per_segment=10,
     accuracy_weight=1.0
@@ -426,6 +459,7 @@ samples = optimizer.solve(
 
 # Print results
 print(f"Total time: {samples[-1]['t']:.3f}s")
+print(f"Solve wall time: {stats['total_time']:.3f}s")
 print(f"Max speed: {max(s['vl'] + s['vr'] for s in samples) / 2:.3f} m/s")
 ```
 
@@ -458,11 +492,11 @@ waypoints = [
     (2.0, 0.0, 0.0)
 ]
 
-# Solve with stops and events
+# Solve with stops and events. solve() returns (samples, stats).
 stop_waypoint_indices = [0, 2, 4]
 waypoint_events = {1: "lower_arm", 3: "release"}
 
-samples = optimizer.solve(
+samples, stats = optimizer.solve(
     waypoints,
     num_samples_per_segment=15,
     accuracy_weight=1.0,
@@ -472,7 +506,10 @@ samples = optimizer.solve(
 
 print(f"Total time: {samples[-1]['t']:.3f}s")
 print(f"Number of samples: {len(samples)}")
+print(f"Refinement phase: {stats['phase_times']['refinement']:.4f}s")
 ```
+
+> **Current status:** the Multi-Verse `solve()` returns `(samples, stats)`, but the final polish ignores the refined guess (KI-004). For predictable output, use `TrajectoryOptimizer` and `--simple`.
 
 ---
 
@@ -499,13 +536,17 @@ print("\n=== Forward Integration Errors ===")
 print(f"Max position error: {errors['max_pos_error_m']:.6f} m")
 print(f"Final position error: {errors['final_pos_error_m']:.6f} m")
 
-# Check if trajectory is safe
+# Check if trajectory is safe. This mirrors validate_samples().
 is_safe = (
     errors['max_pos_error_m'] < 0.01 and
     errors['final_pos_error_m'] < 0.01 and
-    audit['num_violating_samples'] == 0
+    audit['num_violating_samples'] == 0 and
+    audit['num_slip_points'] == 0 and
+    audit['speed_violation_m_s'] < 1e-6
 )
 print(f"\nTrajectory is {'SAFE' if is_safe else 'UNSAFE'}")
+
+# The CLI also checks the final waypoint. Pass waypoints=... to include it here.
 ```
 
 ---
@@ -514,6 +555,7 @@ print(f"\nTrajectory is {'SAFE' if is_safe else 'UNSAFE'}")
 
 ```python
 from export import write_controller_file
+import json
 
 # Export with 20ms timestep
 write_controller_file(
@@ -561,22 +603,32 @@ print("Accuracy Weight | Time (s) | Max Accel (m/s²) | Max Jerk (m/s³)")
 print("-" * 65)
 
 for w in weights:
-    samples = optimizer.solve(waypoints, num_samples_per_segment=10, accuracy_weight=w)
-    metrics = compute_metrics(samples)
+    samples, stats = optimizer.solve(waypoints, num_samples_per_segment=10, accuracy_weight=w)
+    metrics = compute_metrics(samples, robot_cfg)
     print(f"{w:14.1f} | {metrics['total_time_s']:7.3f} | {metrics['max_accel_m_s2']:15.3f} | {metrics['max_jerk_m_s3']:13.3f}")
 ```
 
-**Typical output:**
+**Typical output:** exact values depend on the robot and path. The table is intentionally not hardcoded; record the output from your own run. Increasing the weight usually reduces jerk at the cost of a longer trajectory.
 
+### Example 19b: Comparing Initial-Guess Seeds
+
+With `--simple`, `--candidates N` solves the same waypoints from N deterministic initial guesses and validates each one:
+
+```bash
+python main.py --simple --validate -c examples/fll_choreo.json \
+  -w examples/example_mission_first4.json -o first4.traj --candidates 5
 ```
-Accuracy Weight | Time (s) | Max Accel (m/s²) | Max Jerk (m/s³)
------------------------------------------------------------------
-           0.0 |   2.345 |           1.850 |        12.500
-           0.5 |   2.412 |           1.420 |         8.300
-           1.0 |   2.478 |           1.100 |         6.200
-           2.0 |   2.623 |           0.850 |         4.800
-           5.0 |   2.987 |           0.620 |         3.500
+
+The seeds are `baseline`, `rolling`, `bow_left`, `bow_right`, and `turn_first`. The candidate table prints each seed's duration and envelope, and selection keeps the passing one with the smallest envelope (shortest breaks ties). On the first four waypoints of the complex mission all five pass; `baseline` wins at 2.176 s / 0.27 cm. On the full mission the baseline also wins (6.068 s / 1.22 cm); the other seeds converge to slower, wider paths, so they are rejected.
+
+From Python, pass `guess_style` to `solve`:
+
+```python
+for style in ("baseline", "rolling", "bow_left", "bow_right", "turn_first"):
+    samples, stats = optimizer.solve(waypoints, 10, 0.0, guess_style=style)
 ```
+
+The seeds only change the initial guess; every waypoint, stop, and force limit is still enforced by the solver.
 
 ---
 
@@ -616,15 +668,18 @@ python main.py -c examples/fll_choreo.json -w waypoints.json -o output.traj --va
 
 - `left_motor_force > 0`: Left wheel force exceeds motor capability
 - `right_motor_force > 0`: Right wheel force exceeds motor capability
-- `traction_total > 0`: Total force exceeds friction limit
+- `left_wheel_slip` / `right_wheel_slip > 0`: Per-wheel friction limit exceeded
+- `traction_total > 0`: Legacy total-force limit exceeded
+- `max_wheel_speed_m_s > wheel_speed_limit_m_s`: Commanded speed exceeds the no-load bound
 
 **Fixes:**
 
-- Reduce `vmax` or `tmax` in config
-- Increase `cof` (friction coefficient)
-- Add accuracy weight to smooth trajectory
+- Reduce `v_max_rad_s` or `t_max_nm` in the config
+- Measure and increase `cof` only if the surface really supports it
+- Add accuracy weight to smooth the trajectory
 - Increase sample density for better resolution
-- Adjust `torqueHeadroom` or `speedHeadroom` in config
+- Adjust `torque_headroom` or `speed_headroom`
+- For curved paths, expect the Immrax gate to reject the current model (KI-020) even when the CPU audit is clean
 
 ---
 
@@ -652,9 +707,9 @@ python main.py -c examples/fll_choreo.json -w waypoints.json -o smooth.traj -a 2
 3. **Add headroom:**
 ```json
 {
-  "config": {
-    "torqueHeadroom": {"val": 0.80},
-    "speedHeadroom": {"val": 0.85}
+  "robot": {
+    "torque_headroom": 0.80,
+    "speed_headroom": 0.85
   }
 }
 ```
@@ -695,14 +750,14 @@ for wp_file in waypoint_files:
 
     waypoints = [(w['x'], w['y'], w.get('heading')) for w in wp_data]
 
-    samples = optimizer.solve(waypoints, num_samples_per_segment=10, accuracy_weight=0.5)
+    samples, stats = optimizer.solve(waypoints, num_samples_per_segment=10, accuracy_weight=0.5)
 
     output_file = wp_file.replace('waypoints.json', 'traj.traj')
     result = {
         "name": os.path.basename(output_file).split('.')[0],
         "version": 3,
         "trajectory": {
-            "config": config_data.get("config", {}),
+            "config": config_data.get("robot", config_data.get("config", config_data)),
             "samples": samples
         }
     }
@@ -712,6 +767,8 @@ for wp_file in waypoint_files:
 
     print(f"Generated {output_file}")
 ```
+
+> **Note:** `MasterTrajectoryOptimizer.solve()` returns `(samples, stats)`, and the current refinement does not change the final trajectory (KI-004). For batch work, `TrajectoryOptimizer` with `--simple` is faster and predictable.
 
 ---
 
@@ -763,7 +820,7 @@ Generate a comprehensive trajectory using all available features: stops, events,
 **Command:**
 
 ```bash
-python main.py -c examples/fll_choreo.json -w complete_mission.json -o examples/complete_mission.traj \
+python main.py --simple -c examples/fll_choreo.json -w complete_mission.json -o examples/complete_mission.traj \
   -a 1.0 \
   -n 15 \
   --validate \
@@ -782,6 +839,17 @@ python main.py -c examples/fll_choreo.json -w complete_mission.json -o examples/
 - **Controller export**: `--export-format controller` resamples to 20ms timestep for robot
 - **Plotting**: `--plot` visualizes the trajectory with waypoints overlay
 
+> **Current status:** under the narrowed test ranges in `examples/fll_choreo.json`, the complex mission passes (about 6.068 s, 1.22 cm envelope, 0.49 cm tracking), while the S-curve, stops, and events examples still fail the Immrax gate. Always check the exit code: failed `--validate` runs exit 1 and write nothing. Run without `--validate` only for exploratory output, or use a path that passes the gate before exporting. This is KI-020, not a solver crash.
+
+> **Final event:** waypoint 7 is not the final waypoint here, but if an event were placed on the final waypoint it would not fire on the deployed controller (KI-012).
+
+**Output files:**
+
+- `examples/complete_mission.traj`: Full variable-timestep trajectory with events
+- `examples/complete_mission_controller.json`: Fixed 20ms timestep for robot controller with events
+
+**Use case:** Complete FLL mission with multiple segments, stops for precision, events for mechanism control, and validation for safety.
+
 ---
 
 ## Live Visualization
@@ -793,60 +861,21 @@ Monitor the optimization process in real-time using a web browser:
 **Command:**
 
 ```bash
-python main.py -c examples/fll_choreo.json -w waypoints.json --live
+python main.py --simple -c examples/fll_choreo.json -w waypoints.json --live
 ```
 
 **Steps:**
 
 1. Run the command with the `--live` flag.
-2. The terminal will print: `Live visualizer started. Open viz/index.html in your browser.`
+2. The terminal prints: `Live visualizer started. Open viz/index.html in your browser.`
 3. Open `viz/index.html` in your browser.
-4. You will see the trajectory being built and refined in real-time as the optimizer runs.
+4. The final trajectory is broadcast when the solve completes.
 
-**Use Case:** Debugging complex paths where you want to see how the optimizer is exploring different topologies or identify which segments are causing issues.
+**Current limitations:**
 
-**Expected output:**
+- The server kills whatever owns port 8765 before starting (KI-005). Do not use `--live` while another application needs that port.
+- The first browser client does not receive the robot config or waypoints because the initial broadcast happens before it connects (KI-016). The final trajectory still arrives.
+- The regenerate controls are dead code; `on_regenerate` is never assigned.
+- `--live` is blocking: the command waits for Enter before exiting.
 
-```
-Loading config from examples/fll_choreo.json...
-Loading waypoints from complete_mission.json...
-Optimizing trajectory through 10 waypoints (accuracy_weight=1.0)...
-Stop waypoints at indices: [0, 2, 6, 9]
-Optimization converged. Total time: 15.2341s
-Successfully saved trajectory to examples/complete_mission.traj
-
-=== Validation Report: examples/complete_mission.traj ===
-Samples: 136 | Config: examples/fll_choreo.json
-
--- Metrics --
-  total_time_s: 15.2341
-  path_length_m: 3.2456
-  max_linear_speed_m_s: 0.6523
-  max_wheel_speed_m_s: 0.7891
-  max_accel_m_s2: 0.8934
-  max_jerk_m_s3: 4.1234
-
--- Constraint Audit --
-  Violating samples: 0
-  Max left_motor_force violation: 0.000000 N
-  Max right_motor_force violation: 0.000000 N
-  Max traction_total violation: 0.000000 N
-
--- Forward Integration (1 ms RK4) --
-  max_pos_error_m: 0.005234
-  rms_pos_error_m: 0.002123
-  max_heading_error_rad: 0.003456
-  final_pos_error_m: 0.001234
-  final_heading_error_rad: 0.000000
-
-PASS — trajectory is safe to run.
-
-Exported 762 controller samples at dt=0.02s to complete_mission_controller.json
-```
-
-**Output files:**
-
-- `examples/complete_mission.traj`: Full variable-timestep trajectory with events
-- `complete_mission_controller.json`: Fixed 20ms timestep for robot controller with events
-
-**Use case:** Complete FLL mission with multiple segments, stops for precision, events for mechanism control, and validation for safety.
+**Use case:** Inspecting the final trajectory and any attached reachability envelopes. It is not currently a reliable live debugging tool for configuration or topology exploration.

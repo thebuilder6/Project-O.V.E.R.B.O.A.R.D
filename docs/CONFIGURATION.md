@@ -1,50 +1,47 @@
 # Configuration Guide
 
-This guide explains how to configure the robot parameters and Multiverse optimizer settings for the FLL Trajectory Optimizer.
+This guide describes the JSON configuration and waypoint files used by the FLL Trajectory Optimizer.
 
-## Configuration File Format
+## Accepted configuration formats
 
-The optimizer uses a JSON configuration file (e.g., `robot_config.json`). The file contains robot physical parameters and optimization settings grouped into nested objects.
+`RobotConfig` accepts three layouts and normalizes them to the same internal fields:
 
-### Full Example (`robot_config.json`)
+1. **Canonical** (recommended): `{ "robot": { ... } }`, as in `examples/fll_choreo.json`.
+2. **Legacy Choreo**: `{ "config": { "mass": { "val": 0.723 }, ... } }`.
+3. **Flat**: the robot fields at the top level.
+
+Canonical and legacy key names are both understood, for example `track_width`/`differentialTrackWidth`, `wheel_radius`/`radius`, `v_max_rad_s`/`vmax`, and `t_max_nm`/`tmax`. New files should use the canonical names.
+
+## Full example
 
 ```json
 {
   "name": "fll_choreo",
-  "version": 3,
+  "version": 4,
   "type": "Differential",
   "robot": {
     "mass": 0.723,
-    "inertia": 0.0024,
+    "inertia": 0.001,
     "track_width": 0.0965,
     "wheel_radius": 0.028,
-    "v_max_rad_s": 15.7,
-    "t_max_nm": 0.04,
+    "v_max_rad_s": 18.94,
+    "t_max_nm": 0.138,
     "gearing": 1.0,
-    "cof": 0.40,
+    "cof": 1.37,
     "gravity": 9.81,
     "torque_headroom": 0.85,
-    "speed_headroom": 0.90
+    "speed_headroom": 0.90,
+    "uncertainties": {
+      "cof": [1.24, 1.51],
+      "torque_headroom": [0.75, 0.90],
+      "gear_backlash_m": [0.0002, 0.0007],
+      "inertia_kg_m2": [0.0008, 0.0011],
+      "track_width_range": [0.096, 0.097],
+      "wheel_radius_range": [0.0275, 0.0285]
+    }
   },
+  "interactions": {},
   "multiverse": {
-    "enable_parallel": true,
-    "num_workers": 8,
-    "stomp_variants": 5,
-    "stomp_noise": {
-      "position_std": 0.05,
-      "heading_std": 0.1
-    },
-    "teb_weights": {
-      "forward_bias": 10.0,
-      "reverse_bias": 10.0,
-      "point_turn_bias": 5.0,
-      "wide_sweep_bias": 2.0
-    },
-    "critic_thresholds": {
-      "tortuosity": 1.5,
-      "yaw_buffer_rad": 0.5,
-      "velocity_chattering_threshold": 3
-    },
     "bootstrap": {
       "turning_radius": 0.0,
       "resolution": 0.05
@@ -53,162 +50,173 @@ The optimizer uses a JSON configuration file (e.g., `robot_config.json`). The fi
 }
 ```
 
----
+## Robot parameters (`robot`)
 
-## Robot Parameters (`robot` object)
+| Key | Unit | Default | Meaning |
+|---|---:|---:|---|
+| `mass` | kg | 0.723 | Robot mass. Affects acceleration and normal force. |
+| `inertia` | kg·m² | 0.0024 | Rotational inertia. Affects the force split between wheels during turns. |
+| `track_width` | m | 0.0965 | Distance between wheel centers. |
+| `wheel_radius` | m | 0.028 | Drive-wheel radius. |
+| `v_max_rad_s` | rad/s | 15.7 | Motor no-load speed. Convert RPM with `RPM * 2π / 60`. |
+| `t_max_nm` | N·m | 0.04 | Motor stall torque. |
+| `gearing` | — | 1.0 | Motor-to-wheel ratio. Values above 1 trade speed for torque. |
+| `cof` | — | 0.45 | Nominal wheel/field friction coefficient. Measure it; FLL mats are often around 1.0-1.5, but the value depends on wheels and surface. |
+| `gravity` | m/s² | 9.81 | Gravitational acceleration. |
+| `torque_headroom` | — | 0.85 | Fraction of the motor torque curve available to the planner. |
+| `speed_headroom` | — | 0.90 | Fraction of no-load wheel speed available to the planner. |
 
-These define the physical limitations and properties of your robot.
+### Force model
 
-### `mass`
-Robot mass in kilograms.
-- **Typical FLL robot:** 0.5 - 1.5 kg
-- **Impact:** Affects acceleration limits (heavier = slower acceleration) and traction limit calculation.
+For each wheel, the available force is
 
-### `inertia`
-Rotational moment of inertia in kg·m².
-- **Typical FLL robot:** 1e-6 to 1e-3 kg·m²
-- **Impact:** Affects how much torque is needed for rotation. Higher inertia = slower turns.
+```text
+omega = (v_wheel / wheel_radius) * gearing
+torque = t_max_nm * max(0, 1 - |omega| / v_max_rad_s)
+force = (torque / wheel_radius) * gearing * torque_headroom
+```
 
-### `track_width`
-Distance between the centers of the left and right wheels in meters.
-- **Typical FLL robot:** 0.08 - 0.15 m (80 - 150 mm)
-- **Impact:** Affects turning kinematics. Wider track width = slower angular velocity for the same wheel speed difference.
+The optimizer and validator use the same per-wheel normal-force model:
 
-### `wheel_radius`
-Radius of the drive wheels in meters.
-- **Typical LEGO wheel:** 0.028 - 0.056 m (28 - 56 mm)
-- **Impact:** Affects speed conversion between wheel RPM and linear velocity.
+```text
+nl = m*g/2 - m*h_cg*(v*omega)/track_width
+nr = m*g/2 + m*h_cg*(v*omega)/track_width
+```
 
-### `v_max_rad_s`
-Motor no-load angular velocity in radians/second.
-- **Example:** LEGO EV3 Large Motor is ~150 RPM. (150 * 2π / 60) ≈ 15.7 rad/s.
-- **Impact:** Maximum possible wheel speed, directly limiting the maximum robot speed.
+Only lateral (turning) weight transfer is modeled. A two-wheel differential robot has no front/rear axle, so longitudinal acceleration does not shift load between the left and right wheels (KI-010). `h_cg` is a shared constant (`CG_HEIGHT_M = 0.05 m`).
 
-### `t_max_nm`
-Motor stall torque in Newton-meters.
-- **Typical LEGO motors:** ~0.02 to ~0.05 N·m
-- **Impact:** Maximum force the motor can apply. Directly affects acceleration capability.
+### Uncertainties
 
-### `gearing`
-Gear ratio between motor and wheel.
-- **Direct drive:** 1.0
-- **Geared down (wheel turns slower):** > 1.0
-- **Geared up (wheel turns faster):** < 1.0
-- **Impact:** Multiplies torque and divides speed (or vice versa).
+The `uncertainties` block is used in two places:
 
-### `cof`
-Coefficient of friction between wheels and field surface.
-- **Typical FLL mat:** ~0.4 - 1.2
-- **Impact:** Maximum traction force before wheel slip.
+- The optimizer's per-wheel force and traction limits use the declared worst cases (minimum cof, minimum torque headroom, smallest wheel radius for the speed term, largest wheel radius for the force term, maximum inertia and minimum track width for the force split).
+- `--validate` passes the same ranges to Immrax.
 
-### `gravity`
-Acceleration due to gravity in m/s².
-- **Default:** 9.81
+The optional `--sysid-fit sysid_fit.json` model is separate from this file. It is produced by `sysid_fit.py` from robot logs and is not a `robot` config block. `sysid_fit.py --profile examples/drivebase_profile.example.json` can read the minimal wheel-radius/track-width profile instead of a full robot config. After a run, `sysid_compare.py` compares the planned trajectory with measured `poses.csv` rows.
 
-### `torque_headroom`
-Safety margin for motor torque limits (e.g., 0.85 = 15% headroom).
-- **Impact:** Ensures the Ramsete controller has reserve torque for path corrections against real-world factors like battery sag.
+A minimal drivebase profile is:
 
-### `speed_headroom`
-Safety margin for wheel speed limits (e.g., 0.90 = 10% headroom).
-- **Impact:** Ensures the Ramsete controller has reserve speed for path corrections.
+```json
+{
+  "name": "My differential drive",
+  "wheel_radius_m": 0.028,
+  "track_width_m": 0.0965
+}
+```
 
----
+`wheel_radius_m` is required for fitting; `track_width_m` is optional metadata. Pybricks-style `wheel_diameter_mm` and `axle_track_mm` are accepted, as are a full robot config (`robot.wheel_radius`, `robot.track_width`) and an existing `sysid_fit.json`. `sysid_compare.py --profile ...` prints the profile and warns when its geometry differs from the trajectory config. The comparator also accepts a plain predicted-pose CSV (`t,x,y,heading`, or `t_ms`/`heading_deg`) instead of a `.traj`.
 
-## Multiverse Parameters (`multiverse` object)
+Recognized ranges:
 
-Settings for the advanced Multi-Verse optimization pipeline.
+| Key | Default if omitted |
+|---|---|
+| `cof` | `[0.8 * cof, 1.2 * cof]` |
+| `torque_headroom` | `[0.8, 1.0]` |
+| `gear_backlash_m` | `[0.0001, 0.0006]` |
+| `track_width_range` | `[0.99 * track_width, 1.01 * track_width]` |
+| `wheel_radius_range` | `[0.99 * wheel_radius, 1.01 * wheel_radius]` |
+| `inertia_kg_m2` | `[0.90 * inertia, 1.10 * inertia]` |
 
-### General Settings
-- `enable_parallel` (bool): Run optimization heuristics in parallel.
-- `num_workers` (int): Number of parallel workers (threads/processes) to use.
+`examples/fll_choreo.json` currently narrows `track_width_range` and `gear_backlash_m` for repeatable tests; those values are test assumptions, not measured hardware ranges. The parser also accepts `t_max_range`, but the current optimizer, CPU validator, and Immrax path use `t_max_nm` plus `torque_headroom` rather than this range. Use measured values and keep the ranges honest; a narrow range makes the validator optimistic.
 
-### `stomp_variants` and `stomp_noise`
-Stochastic Trajectory Optimization for Motion Planning parameters.
-- `stomp_variants` (int): Number of noisy variants generated per problematic segment.
-- `position_std` (float): Standard deviation of Gaussian noise added to positional (x, y) coordinates.
-- `heading_std` (float): Standard deviation of Gaussian noise added to angular coordinates.
+## Multi-Verse parameters (`multiverse`)
 
-### `teb_weights`
-Timed Elastic Band topology biases.
-- `forward_bias`: Weight to encourage forward motion topologies.
-- `reverse_bias`: Weight to encourage reverse motion topologies.
-- `point_turn_bias`: Weight to encourage in-place turns.
-- `wide_sweep_bias`: Weight to encourage gentle, sweeping turns.
+> **Current status:** the Multi-Verse pipeline runs, but its refined guess is not used by the final CasADi polish (KI-004). `--workers` and `--no-parallel` therefore do not change the final trajectory. The only `multiverse` block read by the current code is `bootstrap`.
 
-### `critic_thresholds`
-Thresholds used by the Trajectory Critic to identify problematic path segments.
-- `tortuosity`: Ratio of path length to straight-line distance. Higher values (> 1.5) indicate wandering paths.
-- `yaw_buffer_rad`: Allowed excess yaw rotation beyond the expected turn.
-- `velocity_chattering_threshold`: Maximum number of wheel velocity zero-crossings allowed before a segment is flagged for refinement.
-- `jerk_cost_threshold`: Threshold for rate of acceleration change. High jerk leads to tracking errors.
-- `curvature_cost_threshold`: Threshold for turn sharpness. High curvature increases slip risk.
-- `centripetal_cost_threshold`: Threshold for centripetal acceleration relative to friction limits.
+### `bootstrap` (used)
 
-### `bootstrap`
-Initial guess generation settings using Reeds-Shepp paths.
-- `turning_radius`: Minimum turning radius for Reeds-Shepp paths.
-- `resolution`: Step size used when discretizing the paths.
+- `turning_radius` (m): Minimum Reeds-Shepp turning radius. `0.0` allows point turns.
+- `resolution` (m): Discretization step for the generated geometry.
 
----
+### Reserved / currently ignored
 
-## Waypoint File Format
+These keys may appear in older configs but are not read by the current pipeline:
 
-Waypoints are specified in a JSON file. Each waypoint can include position, heading, and an optional stop or event constraint.
+- `enable_parallel`, `num_workers`
+- `stomp_variants`, `stomp_noise.position_std`, `stomp_noise.heading_std`
+- `teb_weights` (`forward_bias`, `reverse_bias`, `point_turn_bias`, `wide_sweep_bias`)
+- `critic_thresholds` (the critic uses module-level constants in `multiverse_optimizer.py`)
 
-### Basic Format
+The JAX candidate generator currently uses a fixed 50 variants, fixed noise constants, and the critic's hardcoded thresholds. Treat these keys as reserved until the code reads them.
+
+## Waypoint file format
+
+Waypoints can be dictionaries or `[x, y, heading]` arrays:
 
 ```json
 [
   { "x": 0.0, "y": 0.0, "heading": 0.0 },
-  { "x": 1.0, "y": 0.5, "heading": 0.5 },
-  { "x": 2.0, "y": 1.0 }
+  { "x": 1.0, "y": 0.5, "heading": 0.5 }
 ]
 ```
 
 ### Fields
 
-- `x` (float, required): X position in meters
-- `y` (float, required): Y position in meters
-- `heading` (float, optional): Heading in radians. If omitted or `null`, the heading is unconstrained.
-- `stop` (boolean, optional): Whether the robot must come to complete rest at this waypoint (default: `false`).
-- `event` (string, optional): Event name to trigger at this waypoint (e.g., "lower_arm"). Used for triggering attachments.
+| Field | Type | Meaning |
+|---|---|---|
+| `x`, `y` | float, required | Position in meters. |
+| `heading` | float or null | Heading in radians. Omit or use `null` for an unconstrained heading. |
+| `stop` | bool | Force both wheel speeds to zero at this waypoint. |
+| `event` | string | Event name exported with the waypoint sample. |
+| `error_threshold` | float | Local reachability-envelope threshold in meters for `--validate`. |
+| `precision_mode` | bool | Shortcut for a 0.005 m local envelope threshold. Ignored if `error_threshold` is also present. |
 
-### Example with Stops and Events
+`--stop-waypoints` and `--events` override or add to the JSON settings. Indices are zero-based.
+
+### Example with stops and events
 
 ```json
 [
   { "x": 0.0, "y": 0.0, "heading": 0.0, "stop": true },
-  { "x": 0.5, "y": 0.3, "heading": 0.5, "event": "lower_arm", "stop": true },
-  { "x": 1.0, "y": 0.0, "heading": 0.0 }
+  { "x": 0.5, "y": 0.3, "heading": 0.5, "event": "lower_arm", "error_threshold": 0.01 },
+  { "x": 1.0, "y": 0.0, "heading": 0.0, "stop": true }
 ]
 ```
 
-*(Note: The CLI `--events` and `--stop-waypoints` flags can override JSON settings.)*
+> **Runtime caveat:** an event on the final waypoint is exported but not fired by the deployed Pybricks loop (KI-012).
 
----
+## Command line interface
 
-## Command Line Interface (CLI)
+Run from the repository root:
 
-The optimizer can be run from the command line using `main.py`.
+```bash
+python main.py --simple -c examples/fll_choreo.json -w examples/example_straight.json -o output.traj
+```
 
-### Common Options
-- `-c, --config`: Path to the robot configuration JSON file.
-- `-w, --waypoints`: Path to waypoints JSON file.
-- `-o, --output`: Output trajectory file path (default: `output.traj`).
-- `-n, --samples`: Samples per segment (default: 10).
-- `-a, --accuracy-weight`: Smoothness/accuracy weight (0 = pure time-optimal).
+### Input/output
 
-### Optimizer Strategy
-- `--simple`: Use simple optimizer instead of Multi-Verse refinement.
-- `--no-parallel`: Disable parallel processing for Multi-Verse refinement.
-- `--workers`: Number of parallel workers for Multi-Verse refinement (default: 8).
+- `-c, --config`: Robot configuration JSON.
+- `-w, --waypoints`: Waypoint JSON.
+- `-o, --output`: Output `.traj` path (default `output.traj`).
 
-### Analysis and Validation
-- `--validate`: Run validation report on the generated trajectory.
-- `--benchmark`: Collect comprehensive benchmarking data (timing, heuristics, and quality metrics) and save to `[output]_stats.json`.
-- `--show-convergence`: Show convergence visualization of the optimization process.
+### Solver
 
-### Exporting
-- `--export-format`: Export format for controller consumption (`none`, `controller`, `python`).
-- `--controller-dt`: Fixed timestep for controller export (seconds).
+- `-n, --samples`: Samples per segment (default 10).
+- `-a, --accuracy-weight`: Smoothness/jerk weight (0 = time-optimal).
+- `--candidates`: Candidates to solve and compare with `--validate` (default 2, max 5). With `--simple` these are distinct initial-guess seeds (`baseline`, `rolling`, `bow_left`, `bow_right`, `turn_first`) at the same accuracy weight; the Multi-Verse path keeps the `accuracy_weight` ladder. A passing candidate wins by smallest envelope, then shortest time; `1` disables the comparison.
+- `--stop-waypoints "0,2,4"`: Comma-separated stop indices.
+- `--events "1:lower_arm,3:release"`: Comma-separated event mappings.
+- `--simple`: CasADi-only optimizer (recommended).
+- `--per-segment-dt`: Give each waypoint segment its own sample interval (`--simple` only). The default is one shared interval.
+- `--no-parallel`, `--workers`: Multi-Verse options; currently no effect on the result (KI-004).
+
+### Validation and export
+
+- `--validate`: CPU audit + Immrax + final-waypoint gate. Requires JAX/Immrax. With `--candidates N` (default 2, max 5), solves N candidates (initial-guess seeds with `--simple`, accuracy-weight variants otherwise) and exports the passing one with the smallest envelope; on failure, exits 1 and writes nothing.
+- `--sysid-fit PATH`: Optional `sysid_fit.json` measured actuator/odometry model; requires `--validate` or `--live`. The default kinematic model is used when omitted. Slip is loaded/reported but not applied yet (KI-020).
+- `--export-format controller|python|python-compact`: Write a fixed-timestep controller JSON, a legacy list-of-dicts Python module, or a packed-compact Python module. The compact module is consumed by `pybricks_code/ramsete_compact.py` or `ramsete_compact_events.py`.
+- `--controller-dt`: Controller timestep in seconds (default 0.02).
+- `--benchmark`: Write `<output>_stats.json` after a successful export gate.
+
+### Visualization
+
+- `--plot`, `--animate`: Blocking Matplotlib views.
+- `--live`: Blocking WebSocket live view on port 8765. It kills the process that owns the port (KI-005), and the first client misses config/waypoints (KI-016).
+- `--show-convergence`: Works with the simple optimizer.
+- `--convergence-mode`: `parallel`, `best`, or `layered`.
+- `--convergence-animate`, `--convergence-output`: Parsed but currently unused (KI-017).
+- `-q, --quiet`: Suppress progress output.
+
+## Installation note
+
+`pip install -r requirements.txt` covers the simple optimizer. The default Multi-Verse path and `--validate` need `jax`, `jaxopt`, and `immrax`; `sysid_solver.py` needs `pandas`. `--simple --live` can run without JAX, but live reachability envelopes require it. Those packages are not in `requirements.txt` yet (KI-006). JAX 0.6.2 was used for the current tests.

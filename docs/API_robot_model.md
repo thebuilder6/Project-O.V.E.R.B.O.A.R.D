@@ -1,173 +1,203 @@
 # API Documentation: robot_model.py
 
-Defines robot configuration and differential-drive kinematics/dynamics for trajectory optimization.
+Robot configuration parsing, motor/traction limits, and differential-drive force calculations shared by the optimizer, CPU validator, JAX model, and Immrax.
 
-## Classes
+## Module constant
 
-### `RobotConfig`
+- `CG_HEIGHT_M = 0.05` (m): Center-of-mass height used by every weight-transfer calculation.
 
-Encapsulates physical robot parameters parsed from Choreo-style configuration files.
+## `wheel_normal_forces(mass, g, h_cg, track_width, centripetal_accel)`
 
-#### Constructor
+Returns `(nl, nr)`, the normal force on the left and right wheels:
+
+```text
+nl = m*g/2 - m*h_cg*(v*omega)/b
+nr = m*g/2 + m*h_cg*(v*omega)/b
+```
+
+Only lateral weight transfer is modeled. A two-wheel differential robot has no front/rear axle, so longitudinal acceleration is not split left/right (KI-010). The function accepts floats, CasADi expressions, JAX arrays, or Immrax intervals.
+
+## `RobotConfig`
+
+### Constructor
 
 ```python
 RobotConfig(config_dict: dict)
 ```
 
-**Parameters:**
+`config_dict` may be:
 
-- `config_dict` (dict): Configuration dictionary with a `"config"` key containing robot parameters
+- canonical: `{ "robot": { ... } }`
+- legacy Choreo: `{ "config": { "mass": { "val": 0.723 }, ... } }`
+- flat: `{ "mass": 0.723, ... }`
 
-**Extracted Parameters:**
+The canonical and legacy key names are normalized (`track_width`/`differentialTrackWidth`, `wheel_radius`/`radius`, `v_max_rad_s`/`vmax`, `t_max_nm`/`tmax`, `torque_headroom`/`torqueHeadroom`, `speed_headroom`/`speedHeadroom`). The `multiverse` block is stored as `multiverse_config`.
 
-- `mass` (float): Robot mass in kg (default: 0.723)
-- `inertia` (float): Rotational inertia in kg·m² (default: 0.0024)
-- `track_width` (float): Distance between wheel centers in m (default: 0.0965)
-- `wheel_radius` (float): Wheel radius in m (default: 0.028)
-- `v_max_rad_s` (float): Motor no-load speed in rad/s (default: 15.7)
-- `t_max_nm` (float): Motor stall torque in N·m (default: 0.04)
-- `gearing` (float): Gear ratio (default: 1.0)
-- `cof` (float): Coefficient of friction (default: 0.45)
-- `g` (float): Gravitational acceleration (9.81 m/s²)
-- `torque_headroom` (float): Safety margin for motor torque limits (default: 0.85)
-- `speed_headroom` (float): Safety margin for wheel speed limits (default: 0.90)
+### Fields and defaults
 
-#### Methods
+| Attribute | Default | Unit |
+|---|---:|---|
+| `mass` | 0.723 | kg |
+| `inertia` | 0.0024 | kg·m² |
+| `track_width` | 0.0965 | m |
+| `wheel_radius` | 0.028 | m |
+| `v_max_rad_s` | 15.7 | rad/s |
+| `t_max_nm` | 0.04 | N·m |
+| `gearing` | 1.0 | — |
+| `cof` | 0.45 | — |
+| `g` | 9.81 | m/s² |
+| `torque_headroom` | 0.85 | — |
+| `speed_headroom` | 0.90 | — |
+| `uncertainties` | see below | — |
+| `multiverse_config` | `{}` | — |
 
-##### `get_max_force_at_velocity(v_wheel: float, apply_headroom=True) -> float`
+### `uncertainties`
 
-Calculates the maximum force magnitude a motor can apply at a given wheel velocity.
+`RobotConfig` normalizes the declared ranges once. Missing entries fall back to these defaults:
 
-Uses a linear motor curve model where torque decreases linearly with speed until zero at no-load speed.
+| Key | Default |
+|---|---|
+| `cof` | `(0.8 * cof, 1.2 * cof)` |
+| `torque_headroom` | `(0.8, 1.0)` |
+| `gear_backlash_m` | `(0.0001, 0.0006)` |
+| `track_width_range` | `(0.99 * track_width, 1.01 * track_width)` |
+| `wheel_radius_range` | `(0.99 * wheel_radius, 1.01 * wheel_radius)` |
+| `inertia_kg_m2` | `(0.90 * inertia, 1.10 * inertia)` |
+| `t_max_range` | `(0.75 * t_max_nm, 0.95 * t_max_nm)` |
 
-**Parameters:**
+`t_max_range` is parsed and stored, but the current optimizer, CPU validator, and Immrax path use `t_max_nm` plus `torque_headroom`; the JAX interval helper has an unused `use_intervals` branch that would read it.
 
-- `v_wheel` (float): Wheel linear velocity in m/s
-- `apply_headroom` (bool): If True, applies safety margin for real-world tracking (default: True)
+### Force-limit methods
 
-**Returns:**
+#### `get_max_force_at_velocity(v_wheel, apply_headroom=True) -> float`
 
-- (float): Maximum force in Newtons
+Nominal linear motor curve:
 
-**Model:**
-
-```python
+```text
 omega = (v_wheel / wheel_radius) * gearing
-torque = t_max * (1 - |omega| / v_max_rad_s)
-torque = max(0, torque)  # No braking force above no-load speed
+torque = t_max_nm * max(0, 1 - |omega| / v_max_rad_s)
 force = (torque / wheel_radius) * gearing
 if apply_headroom:
     force *= torque_headroom
 ```
 
-##### `max_linear_speed(apply_headroom=True) -> float`
+#### `get_max_force_symbolic(v_wheel, apply_headroom=True) -> casadi.MX`
 
-Returns the no-load linear speed of the wheel in m/s.
+CasADi version. It uses `sqrt(omega**2 + 1e-8)` as a smooth absolute value and `fmax(0, torque)`.
 
-**Parameters:**
+#### `max_linear_speed(apply_headroom=True) -> float`
 
-- `apply_headroom` (bool): If True, applies safety margin for real-world tracking (default: True)
+`v_max_rad_s * wheel_radius * (speed_headroom if apply_headroom else 1.0)`.
 
-**Returns:**
+#### `get_robust_force_params() -> tuple[float, float, float]`
 
-- (float): `v_max_rad_s * wheel_radius * (speed_headroom if apply_headroom else 1.0)`
+Returns `(speed_radius, force_radius, torque_headroom)` from the declared uncertainty ranges: smallest radius for the speed term, largest radius for the force term, and smallest headroom.
 
----
+#### `get_max_force_at_velocity_robust(v_wheel) -> float`
 
-### `DifferentialDriveModel`
+Worst-case per-wheel force limit matching the lower bound used by Immrax.
 
-Implements differential-drive kinematics and dynamics for force calculations.
+#### `get_max_force_symbolic_robust(v_wheel) -> casadi.MX`
 
-#### Constructor
+CasADi version of the robust limit.
+
+## `DifferentialDriveModel`
+
+### Constructor
 
 ```python
 DifferentialDriveModel(config: RobotConfig)
 ```
 
-**Parameters:**
+### `get_dynamics(vl, vr, al, ar) -> tuple[float, float]`
 
-- `config` (RobotConfig): Robot configuration object
+Returns `(fl, fr)` from:
 
-#### Methods
-
-##### `get_dynamics(vl: float, vr: float, al: float, ar: float) -> tuple[float, float]`
-
-Computes the required wheel forces to achieve given velocities and accelerations.
-
-**Parameters:**
-
-- `vl` (float): Left wheel velocity in m/s
-- `vr` (float): Right wheel velocity in m/s
-- `al` (float): Left wheel acceleration in m/s²
-- `ar` (float): Right wheel acceleration in m/s²
-
-**Returns:**
-
-- (tuple): `(fl, fr)` - Left and right wheel forces in Newtons
-
-**Derivation:**
-
-```
-Linear acceleration: a = (al + ar) / 2
-Angular acceleration: alpha = (ar - al) / track_width
-
-Total force: F_total = mass * a
-Total moment: M_total = inertia * alpha
-
-Solve for wheel forces:
-  F_total = fl + fr
-  M_total = (fr - fl) * (track_width / 2)
-
-  fr = (F_total + 2 * M_total / track_width) / 2
-  fl = F_total - fr
+```text
+a = (al + ar) / 2
+alpha = (ar - al) / track_width
+F_total = mass * a
+M_total = inertia * alpha
+fr = (F_total + 2*M_total/track_width) / 2
+fl = F_total - fr
 ```
 
-##### `check_constraints(vl: float, vr: float, al: float, ar: float, apply_headroom=True) -> list[float]`
+### `get_dynamics_symbolic(vl, vr, al, ar) -> tuple[casadi.MX, casadi.MX]`
 
-Checks if a state/control is physically feasible.
+CasADi version of `get_dynamics`.
 
-**Parameters:**
+### `get_wheel_normal_forces(vl, vr, al, ar) -> tuple[float, float]`
 
-- `vl` (float): Left wheel velocity in m/s
-- `vr` (float): Right wheel velocity in m/s
-- `al` (float): Left wheel acceleration in m/s²
-- `ar` (float): Right wheel acceleration in m/s²
-- `apply_headroom` (bool): If True, applies safety margin for real-world tracking (default: True)
+Computes `v = (vl + vr)/2`, `omega = (vr - vl)/track_width`, and calls `wheel_normal_forces(mass, g, CG_HEIGHT_M, track_width, v*omega)`. The acceleration arguments are accepted for call-site compatibility but are not used (KI-010).
 
-**Returns:**
+### `get_max_wheel_force_symbolic(al, ar, apply_headroom=True) -> casadi.MX`
 
-- (list): Violation magnitudes (0 if OK, positive if violating)
-  - Index 0: Left motor force violation (N)
-  - Index 1: Right motor force violation (N)
-  - Index 2: Traction limit violation (N)
+Worst-case per-wheel force magnitude over the declared inertia and track-width ranges:
 
-**Constraints Checked:**
+```text
+f_total = mass * (al + ar) / 2
+split = max(inertia) * (ar - al) / min(track_width)^2
+|f| <= |f_total|/2 + |split|
+```
 
-1. Motor limits: `|fl| <= max_force_at_velocity(vl)`
-2. Motor limits: `|fr| <= max_force_at_velocity(vr)`
-3. Traction limit: `|fl| + |fr| <= cof * mass * g`
+The symbolic implementation uses `sqrt(x**2 + eps)` in place of `abs` for IPOPT.
 
-**Usage Example:**
+### `get_traction_limit_symbolic(vl, vr, apply_headroom=True) -> casadi.MX`
+
+Per-wheel traction limit matching the Immrax slip check. Both wheels are limited by the smaller normal force over the lateral transfer, using the minimum declared cof and track width when headroom is enabled.
+
+### `check_constraints(vl, vr, al, ar, apply_headroom=True) -> dict`
+
+Returns a dictionary, not a list:
+
+| Key | Meaning |
+|---|---|
+| `left_motor_violation` | N over the left motor force limit (0 if none) |
+| `right_motor_violation` | N over the right motor force limit (0 if none) |
+| `left_wheel_slip` | N over the left wheel's friction limit (0 if none) |
+| `right_wheel_slip` | N over the right wheel's friction limit (0 if none) |
+| `traction_violation` | Legacy total-traction violation in N |
+| `left_normal_force` | Left normal force in N |
+| `right_normal_force` | Right normal force in N |
+
+With `apply_headroom=True`, the motor limits use the declared worst-case ranges. With `apply_headroom=False`, they use the nominal curve. Slip checks always use the nominal cof and the lateral-transfer normal forces.
+
+## Usage example
 
 ```python
 from robot_model import RobotConfig, DifferentialDriveModel
 
-config_dict = {
-    "config": {
-        "mass": {"val": 0.8},
-        "inertia": {"val": 0.001},
-        "differentialTrackWidth": {"val": 0.0965},
-        # ... other parameters
+config = RobotConfig({
+    "robot": {
+        "mass": 0.723,
+        "inertia": 0.001,
+        "track_width": 0.0965,
+        "wheel_radius": 0.028,
+        "v_max_rad_s": 18.94,
+        "t_max_nm": 0.138,
+        "gearing": 1.0,
+        "cof": 1.37,
+        "torque_headroom": 0.85,
+        "speed_headroom": 0.90,
+        "uncertainties": {
+            "cof": [1.24, 1.51],
+            "torque_headroom": [0.75, 0.90],
+            "gear_backlash_m": [0.0002, 0.0007],
+            "track_width_range": [0.096, 0.097],
+            "wheel_radius_range": [0.0275, 0.0285],
+            "inertia_kg_m2": [0.0008, 0.0011]
+        }
     }
-}
+})
 
-config = RobotConfig(config_dict)
 model = DifferentialDriveModel(config)
+checks = model.check_constraints(vl=0.5, vr=0.6, al=1.0, ar=1.2)
 
-# Check if a state is feasible
-violations = model.check_constraints(vl=0.5, vr=0.6, al=1.0, ar=1.2)
-if all(v <= 0 for v in violations):
+if all(checks[k] <= 1e-6 for k in (
+    "left_motor_violation", "right_motor_violation",
+    "left_wheel_slip", "right_wheel_slip", "traction_violation"
+)):
     print("State is feasible")
 else:
-    print(f"Violations: {violations}")
+    print(checks)
 ```
