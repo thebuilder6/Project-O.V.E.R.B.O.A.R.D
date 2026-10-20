@@ -154,6 +154,30 @@ PROPAGATIONS = ("plant", "tick")
 TICK_INCLUSION = "mjac"
 TICK_INCLUSIONS = ("nat", "jac", "mjac")
 
+# How the robot's own pose estimate is carried in the tick map's state.
+#
+# "estimate" - the state holds the estimate itself.  The estimate and the
+# truth are perfectly correlated (the odometry reads the very wheel speeds
+# the plant carries), and an interval box cannot say so, so the estimate's
+# spread is ADDED to the truth's.
+#
+# "error" - the state holds the estimate's ERROR, and the estimate is the
+# truth plus that error.  The shared part is then carried once, and the
+# box adds only the error's own spread.
+#
+# The default is "estimate", and that is a measurement, not a preference.
+# The "error" form is the obvious way to stop the estimate's spread being
+# added to the truth's, and it was measured: it is *worse*, not better
+# (docs/research/rq_a/exp22_twin_propagation.py).  The error's update
+# differences two cosines of a heading interval that is itself wide, and
+# the difference of two over-approximations is worse than either - the
+# s-curve goes from 5.1 cm with the plant propagation to 42.7 cm with the
+# error form and the Jacobian, and to 9.5 cm with the mixed-Jacobian.  So
+# the estimate stays a state of its own, and the estimate's correlation
+# with the wheel speeds stays unsolved.
+BELIEF_MODES = ("estimate", "error")
+BELIEF_MODE = "estimate"
+
 
 def _plant_embedding(plant, kind: str):
     """Embed the plant with the requested inclusion function."""
@@ -562,7 +586,8 @@ class ClosedLoopTickMap(immrax.system.System):
                  substeps: int = PLANT_SUBSTEPS,
                  carry_belief: bool = False,
                  belief_scale=(1.0, 1.0), gyro_bias: float = 0.0,
-                 delay_ticks: int = 0, wheel_state: str = "wheels"):
+                 delay_ticks: int = 0, wheel_state: str = "wheels",
+                 belief_mode: str = "error"):
         self.evolution = "discrete"
         self.plant = plant
         self.controller = controller
@@ -574,6 +599,11 @@ class ClosedLoopTickMap(immrax.system.System):
         self.gyro_bias = float(gyro_bias)
         self.delay_ticks = int(delay_ticks)
         self.wheel_state = wheel_state
+        if belief_mode not in BELIEF_MODES:
+            raise ValueError(
+                f"belief_mode must be one of {BELIEF_MODES}, "
+                f"got {belief_mode!r}")
+        self.belief_mode = belief_mode
         self.n_plant = plant.xlen
         self.n_belief = 3 if carry_belief else 0
         self.n_cmds = 2 * self.delay_ticks
@@ -583,7 +613,28 @@ class ClosedLoopTickMap(immrax.system.System):
         dt = u_ref[6]
         n = self.n_plant
         plant_x = x[:n]
-        belief = x[n:n + 3] if self.carry_belief else plant_x[:3]
+        if not self.carry_belief:
+            belief = plant_x[:3]
+            error = None
+        elif self.belief_mode == "error":
+            # The state carries the ESTIMATE'S ERROR, not the estimate.
+            #
+            # The robot's estimate is the truth plus the odometry's error,
+            # and the odometry reads the very wheel speeds the plant
+            # carries, so the two are perfectly correlated. An interval box
+            # cannot say so: an estimate carried as a state of its own has
+            # its spread ADDED to the truth's, and the controller reacts to
+            # a belief that no robot ever had. That is the same lost
+            # correlation as the phantom turn rate, one level up.
+            #
+            # Carrying the error keeps the shared part once: the estimate
+            # is the truth plus a small error, and the box adds only the
+            # error's own spread.
+            error = x[n:n + 3]
+            belief = plant_x[:3] + error
+        else:
+            error = None
+            belief = x[n:n + 3]
 
         # normalize=False: the angle normalisation is a modulo, and immrax's
         # interval arithmetic has no inclusion rule for it.  The plan's
@@ -605,37 +656,76 @@ class ClosedLoopTickMap(immrax.system.System):
         h = dt / self.substeps
         plant_next = plant_x
         belief_next = belief
+        error_next = error
         for _ in range(self.substeps):
             if self.carry_belief:
-                # The belief moves with the same speeds and in the same order
-                # as the plant, so a perfect odometry keeps it on the truth.
-                belief_next = self._advance_belief(belief_next, plant_next, h)
+                if self.belief_mode == "error":
+                    # The error moves with the same speeds and in the same
+                    # order as the plant, so a perfect odometry keeps the
+                    # estimate on the truth.
+                    error_next = self._advance_error(error_next, plant_next, h)
+                else:
+                    belief_next = self._advance_belief(belief_next, plant_next,
+                                                       h)
             plant_next = plant_next + self.plant.f(
                 0.0, plant_next, u_applied, w) * h
 
         parts = [plant_next]
         if self.carry_belief:
-            parts.append(belief_next)
+            parts.append(error_next if self.belief_mode == "error"
+                         else belief_next)
         if self.delay_ticks:
             # The new command goes in front and the oldest one falls off.
             parts.append(jnp.concatenate(
                 [u_cmd, cmds[:2 * (self.delay_ticks - 1)]]))
         return jnp.concatenate(parts)
 
-    def _advance_belief(self, belief, plant_x, dt):
-        """The robot's own pose estimate, advanced from the wheel motion."""
+    def _wheel_motion(self, plant_x):
+        """The robot's forward speed and turn rate, from the plant's state."""
         v_mean = plant_x[3]
         v_diff = plant_x[4]
         if self.wheel_state == "mean_diff":
-            odo_v = v_mean
-            odo_w = v_diff / self.track_width
-        else:
-            vl, vr = v_mean, v_diff
-            odo_v = (vl + vr) / 2.0
-            odo_w = (vr - vl) / self.track_width
-        odo_v = odo_v * self.distance_scale
-        odo_w = odo_w * self.heading_scale + self.gyro_bias
-        x, y, heading = belief
+            return v_mean, v_diff / self.track_width
+        vl, vr = v_mean, v_diff
+        return (vl + vr) / 2.0, (vr - vl) / self.track_width
+
+    def _advance_error(self, error, plant_x, dt):
+        """The estimate's error, advanced by the odometry minus the truth.
+
+        The estimate's heading advances with the odometry's turn rate and
+        its position with the odometry's speed along its own heading; the
+        truth's advance with the true turn rate and the true speed along
+        the truth's heading. The difference between the two is the error.
+        """
+        v_true, omega_true = self._wheel_motion(plant_x)
+        odo_v = v_true * self.distance_scale
+        odo_w = omega_true * self.heading_scale + self.gyro_bias
+
+        truth_heading = plant_x[2]
+        e_heading = error[2]
+        # The estimate's heading after the step: its own heading, moved by
+        # the odometry's turn rate.
+        belief_heading = truth_heading + e_heading + odo_w * dt
+        e_heading = e_heading + (odo_w - omega_true) * dt
+
+        ex = error[0] + (odo_v * jnp.cos(belief_heading)
+                         - v_true * jnp.cos(truth_heading)) * dt
+        ey = error[1] + (odo_v * jnp.sin(belief_heading)
+                         - v_true * jnp.sin(truth_heading)) * dt
+        return jnp.array([ex, ey, e_heading])
+
+    def _advance_belief(self, belief, plant_x, dt):
+        """The robot's own pose estimate, advanced from the wheel motion."""
+        v_true, omega_true = self._wheel_motion(plant_x)
+        odo_v = v_true * self.distance_scale
+        odo_w = omega_true * self.heading_scale + self.gyro_bias
+        # Indexed, not unpacked.  Unpacking a traced array is the JAX
+        # "unstack" primitive, and Immrax's natural inclusion has no rule
+        # for it, so the tick map dies with "unstack not in
+        # inclusion_registry" (KI-050).
+        x = belief[0]
+        y = belief[1]
+        heading = belief[2]
         heading = heading + odo_w * dt
         x = x + odo_v * jnp.cos(heading) * dt
         y = y + odo_v * jnp.sin(heading) * dt
@@ -654,7 +744,8 @@ class ImmraxValidator:
                  controller_inclusion: Optional[str] = None,
                  wheel_state: Optional[str] = None,
                  propagation: Optional[str] = None,
-                 tick_inclusion: Optional[str] = None):
+                 tick_inclusion: Optional[str] = None,
+                 belief_mode: Optional[str] = None):
         self.cfg = config
         self.model = JAXDifferentialDriveModel(config)
         self.ramsete_b = float(ramsete_b)
@@ -704,6 +795,11 @@ class ImmraxValidator:
             raise ValueError(
                 f"tick_inclusion must be one of {TICK_INCLUSIONS}, "
                 f"got {self.tick_inclusion!r}")
+        self.belief_mode = belief_mode or BELIEF_MODE
+        if self.belief_mode not in BELIEF_MODES:
+            raise ValueError(
+                f"belief_mode must be one of {BELIEF_MODES}, "
+                f"got {self.belief_mode!r}")
 
         self.digital_twin_gain_range = (
             digital_twin.actuator_gain_range()
@@ -790,7 +886,8 @@ class ImmraxValidator:
                               self.digital_twin_heading_scale),
                 gyro_bias=self.digital_twin_gyro_bias_rad_s,
                 delay_ticks=self._tick_delay_ticks,
-                wheel_state=self.wheel_state)
+                wheel_state=self.wheel_state,
+                belief_mode=self.belief_mode)
             self.tick_emb_sys = _plant_embedding(self.tick_map,
                                                  self.tick_inclusion)
 
@@ -1050,10 +1147,22 @@ class ImmraxValidator:
         upper = jnp.concatenate([start_pose + 0.001,
                                  jnp.zeros(n_plant - 3)])
         if self._carry_belief:
-            # The robot's own estimate starts where the robot starts, and it
-            # is exact: it is a reading, not an uncertain quantity.
-            lower = jnp.concatenate([lower, start_pose])
-            upper = jnp.concatenate([upper, start_pose])
+            if self.belief_mode == "error":
+                # The estimate's ERROR starts as wide as the truth's own
+                # start uncertainty: the robot's estimate is anchored where
+                # the plan says and the truth may be a millimetre away, so
+                # the difference between them is a millimetre wide. The two
+                # are perfectly anti-correlated, which a box cannot say, so
+                # the error gets its own width - and the estimate is then
+                # the truth plus it.
+                lower = jnp.concatenate([lower, jnp.zeros(3) - 0.001])
+                upper = jnp.concatenate([upper, jnp.zeros(3) + 0.001])
+            else:
+                # The robot's own estimate starts where the robot starts,
+                # and it is exact: it is a reading, not an uncertain
+                # quantity.
+                lower = jnp.concatenate([lower, start_pose])
+                upper = jnp.concatenate([upper, start_pose])
         if self._tick_delay_ticks:
             # There was no command before the run started.
             zeros = jnp.zeros(2 * self._tick_delay_ticks)

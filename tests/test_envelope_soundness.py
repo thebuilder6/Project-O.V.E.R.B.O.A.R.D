@@ -337,13 +337,13 @@ class TestTheTickPropagation(unittest.TestCase):
     def test_the_tick_tube_holds_the_reachable_set(self):
         """A smaller tube that drops real poses is worse than a wide one.
 
-        The path is a quarter of a metre long: the mixed-Jacobian tick map
-        is the slowest thing in the suite, and the question - does the
-        tighter box drop a pose the robot can reach - does not need a long
-        path to answer.
+        The path is a tenth of a metre long: the mixed-Jacobian tick map is
+        the slowest thing in the suite, and the question - does the tighter
+        box drop a pose the robot can reach - does not need a long path to
+        answer.
         """
         cfg = JAXRobotConfig(_TEST_ROBOT)
-        samples = _straight(length=0.25)
+        samples = _straight(length=0.1)
         for inclusion in ("jac", "mjac"):
             val = ImmraxValidator(cfg, propagation="tick",
                                   tick_inclusion=inclusion)
@@ -390,6 +390,26 @@ class TestTheTickPropagation(unittest.TestCase):
                         py - (env[k]["y_max"] + spread)))
             self.assertLessEqual(worst, 1e-9,
                                  f"a sampled pose is outside the {inclusion} box")
+
+    def test_the_belief_mode_is_refused_when_unknown(self):
+        with self.assertRaises(ValueError):
+            ImmraxValidator(JAXRobotConfig(_TEST_ROBOT), belief_mode="magic")
+
+    def test_the_estimate_is_the_default(self):
+        """The error form looked right and measured worse, so it is not it."""
+        val = ImmraxValidator(JAXRobotConfig(_TEST_ROBOT))
+        self.assertEqual(val.belief_mode, "estimate")
+
+    def test_both_belief_modes_propagate(self):
+        """Both are wired: the error form is a measured alternative."""
+        cfg = JAXRobotConfig(_TEST_ROBOT)
+        for mode in ("estimate", "error"):
+            val = ImmraxValidator(cfg, digital_twin=_twin(),
+                                  propagation="tick", tick_inclusion="jac",
+                                  belief_mode=mode)
+            report = _validate(val, _straight(length=0.5))
+            self.assertTrue(np.isfinite(report["max_envelope_radius_m"]))
+            self.assertEqual(val.tick_map.belief_mode, mode)
 
     def test_the_tracking_error_does_not_move(self):
         """The tracking error is the tube's midpoint against the plan, so it

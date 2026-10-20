@@ -87,10 +87,12 @@ def load_samples(name):
     return doc["trajectory"]["samples"]
 
 
-def validate(samples, propagation, twin, inclusion=None):
+def validate(samples, propagation, twin, inclusion=None, belief_mode=None):
     kw = {}
     if inclusion is not None:
         kw["tick_inclusion"] = inclusion
+    if belief_mode is not None:
+        kw["belief_mode"] = belief_mode
     val = IV.ImmraxValidator(JAX_CFG, digital_twin=twin,
                               propagation=propagation, **kw)
     if twin is None:
@@ -175,6 +177,36 @@ def main():
         print("contains  - is the sampled set inside the reported box")
         print("over mm   - how far the sampled set sticks out of the box")
         print()
+
+    # The one idea that looked right and measured wrong: carrying the
+    # robot's pose estimate as its ERROR rather than as the estimate
+    # itself, so that the estimate's spread is not added to the truth's.
+    print("=" * 100)
+    print("The estimate's error instead of the estimate")
+    print("=" * 100)
+    print("The estimate and the truth are perfectly correlated - the odometry")
+    print("reads the very wheel speeds the plant carries - so an interval box")
+    print("adds the estimate's spread to the truth's. Carrying the error")
+    print("instead should stop that. It does not pay:")
+    print()
+    print(f"{'mission':>22} {'plant':>12} {'estimate/jac':>14} {'error/jac':>12} "
+          f"{'error/mjac':>12}")
+    for name, _ in MISSIONS:
+        samples = load_samples(name)
+        if samples is None:
+            continue
+        row = []
+        for prop, mode, incl in (("plant", None, None),
+                                 ("tick", "estimate", "jac"),
+                                 ("tick", "error", "jac"),
+                                 ("tick", "error", "mjac")):
+            rep, _, _ = validate(samples, prop, TWIN, incl, mode)
+            row.append(f"{rep['max_envelope_radius_m']*100:.2f}cm")
+        print(f"{name:>22} {row[0]:>12} {row[1]:>14} {row[2]:>12} {row[3]:>12}")
+    print()
+    print("The error's update differences two cosines of a heading interval")
+    print("that is itself wide, and the difference of two over-approximations")
+    print("is worse than either. The estimate stays a state of its own.")
 
 
 if __name__ == "__main__":
