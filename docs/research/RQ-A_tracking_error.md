@@ -742,7 +742,17 @@ Three things came out of that table.
 
 **The default inclusion function stayed on the natural extension**, because the measurement says that is now the better one: on the six example missions the Jacobian is 0.00-0.08 mm **wider** and 5-15 % slower, because the reformulation already removed the dependency it would have exploited. The Jacobian and the mixed-Jacobian are both implemented and both behind a switch (`PLANT_INCLUSION`, `CONTROLLER_INCLUSION`), and `tests/test_envelope_soundness.py` checks that the tighter box still contains the sampled set.
 
-**What is left of the calibrated-model problem is physics, not the model.** On a *curve* the turn rate is not zero, so a gain band makes it uncertain by the same 1 %, and the lateral spread that follows is larger than 50 mm on the example missions: the tube is cut off there, and that is the reachable set being genuinely wide. The lever for that is a narrower gain band (better calibration), not a tighter inclusion function.
+**What is left of the calibrated-model problem is not physics, and not the arithmetic either.** On a *curve* the tube still crosses the guard, so the mission still fails the envelope gate - but the reason is structural, and the measurement says so. On the S-curve with a ±1 % band (`rq_a/exp21_curve_geometry.py`):
+
+| | half-diagonal |
+|---|---:|
+| the box the gate sees | 48.44 mm (cut off) |
+| the sampled reachable set | **4.09 mm** |
+| the box with the gain band collapsed | 7.98 mm |
+
+So the reachable set on a curve is 4 mm wide, and the tube is more than ten times too wide. The reason is that the validator propagates the **plant** and evaluates the controller *outside* the propagation, at the tube's midpoint, so the feedback contraction is never in the tube: what it bounds is the reachable set of an open-loop plant driven by a pre-recorded command, not of the contracting closed loop the robot actually runs. That is the model gap KI-020 is about, and the lever is to embed the **closed-loop tick map** as a discrete map, so the Jacobian carries the feedback term `dF/dx = dPhi/dx + (dPhi/du)(dN/dx)` (`rq_a/exp20_closed_loop_tick.py`).
+
+There the Jacobian is not a refinement but the thing that makes the enclosure work at all: on a straight the tick map with the natural extension is 627 mm and diverges, with the Jacobian it is 6.31 mm and with the mixed-Jacobian 5.98 mm, against a 4.51 mm reachable set. **The Jacobian is the right tool for the closed loop and the wrong tool for the open-loop plant** - which is the opposite of what the plant embedding was assumed to need, and the reason the two are worth separating.
 
 ## What this changes in the research agenda
 In [`../HEURISTICS_AND_VERIFICATION.md`](../HEURISTICS_AND_VERIFICATION.md) Part IV:

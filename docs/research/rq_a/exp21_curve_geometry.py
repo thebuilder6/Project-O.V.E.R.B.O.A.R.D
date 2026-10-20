@@ -69,11 +69,18 @@ def twin_with_gain(gain_min, gain_max):
 
 
 def point_sim_with_heading(samples, ws, starts, plant, cfg, ramsete_b=2.0,
-                            control_dt=0.02, with_belief=False):
+                            control_dt=0.02, with_belief=False,
+                            open_loop=False):
     """Experiment 19's point simulation, but the heading is recorded too.
 
     The heading is the state the feedback is supposed to correct, so its
     spread is the thing that has to be measured.
+
+    With ``open_loop`` the controller is fed the **plan's own pose**, so its
+    correction term is zero and the robot follows the reference without
+    correcting. That is the same plant and the same uncertainty without the
+    feedback, and it is the control against the claim that the feedback is
+    what keeps the reachable set narrow.
     """
     ctrl = IV.RamseteController(ramsete_b, 0.7, track_width=cfg.track_width)
     plant_f = jax.vmap(plant.f, in_axes=(None, 0, 0, 0))
@@ -96,7 +103,11 @@ def point_sim_with_heading(samples, ws, starts, plant, cfg, ramsete_b=2.0,
             ref = IV._interpolated_reference(s, s_next, dt, cfg.track_width,
                                              frac, ramsete_b)
             u_ref = jnp.array(ref)
-            seen = belief if with_belief else x[:, :3]
+            if open_loop:
+                seen = jnp.broadcast_to(_plan_pose(s, s_next, frac)[None, :],
+                                        (starts.shape[0], 3))
+            else:
+                seen = belief if with_belief else x[:, :3]
             u_cmd = ctrl_f(0.0, seen, u_ref, ws)
             for _ in range(IV.PLANT_SUBSTEPS):
                 if with_belief:
@@ -110,7 +121,14 @@ def point_sim_with_heading(samples, ws, starts, plant, cfg, ramsete_b=2.0,
     return jnp.stack(out, axis=1)
 
 
-def cloud_with_heading(samples, plant, n_draws, seed):
+def _plan_pose(a, b, frac):
+    """The plan's own pose between two samples."""
+    return jnp.array([a['x'] + frac * (b['x'] - a['x']),
+                       a['y'] + frac * (b['y'] - a['y']),
+                       a['heading'] + frac * (b['heading'] - a['heading'])])
+
+
+def cloud_with_heading(samples, plant, n_draws, seed, open_loop=False):
     """The sampled reachable set, with the heading."""
     plan_start = jnp.array([samples[0]['x'], samples[0]['y'],
                              samples[0]['heading']])
@@ -118,7 +136,8 @@ def cloud_with_heading(samples, plant, n_draws, seed):
     for ws, starts in E.build_datasets(n_draws, seed):
         starts = starts + plan_start
         poses = np.asarray(point_sim_with_heading(samples, ws, starts, plant,
-                                                   JAX_CFG, with_belief=True))
+                                                   JAX_CFG, with_belief=True,
+                                                   open_loop=open_loop))
         for k in range(len(samples)):
             clouds[k].append(poses[:, k, :])
     return [np.concatenate(c, axis=0) for c in clouds]
@@ -182,6 +201,8 @@ def report(mission, draws, seed, inclusion):
     report_banded, val = box_envelope(samples, band[0], band[1], inclusion)
     report_narrow, _ = box_envelope(samples, 1.0, 1.0, inclusion)
     cloud = cloud_with_heading(samples, val.plant, draws, seed)
+    open_cloud = cloud_with_heading(samples, val.plant, draws, seed,
+                                    open_loop=True)
 
     env = report_banded["reachability"]["envelope"]
     env_narrow = report_narrow["reachability"]["envelope"]
@@ -235,6 +256,7 @@ def report(mission, draws, seed, inclusion):
     cloud_worst = 0.0
     cloud_path_worst = 0.0
     head_worst = 0.0
+    open_worst = 0.0
     for k in range(len(samples)):
         pts = cloud[k]
         cloud_worst = max(cloud_worst, math.hypot(half_width(pts, 0),
@@ -245,6 +267,9 @@ def report(mission, draws, seed, inclusion):
         cloud_path_worst = max(cloud_path_worst, math.hypot(c_long, c_lat))
         head_worst = max(head_worst, float(np.max(pts[:, 2])
                                             - np.min(pts[:, 2])))
+        op = open_cloud[k]
+        open_worst = max(open_worst, math.hypot(half_width(op, 0),
+                                                half_width(op, 1)))
 
     print()
     print(f"the box the gate sees (half diagonal)   "
@@ -254,6 +279,8 @@ def report(mission, draws, seed, inclusion):
           f"{cloud_worst*1000:>8.2f} mm")
     print(f"the sampled set in the path's frame      "
           f"{cloud_path_worst*1000:>8.2f} mm")
+    print(f"the same simulation with the feedback off "
+          f"{open_worst*1000:>8.2f} mm")
     print(f"the box with the gain band collapsed     "
           f"{worst_diag(report_narrow)*1000:>8.2f} mm")
     print(f"the sampled heading spread (worst)       "
@@ -263,6 +290,12 @@ def report(mission, draws, seed, inclusion):
     print("sampled set is what the robot can actually reach. The box with the")
     print("gain band collapsed says whether the band is the driver: the band")
     print("multiplies the turn rate, and on a curve the turn rate is real.")
+    print()
+    print("The line with the feedback off is the control: same plant, same")
+    print("uncertainty, same reference, but the controller is fed the plan's")
+    print("own pose so its correction term is zero. If the tube tracks that")
+    print("line, the tube is behaving like an open-loop robot and the")
+    print("feedback's contraction of the error is what the tube is missing.")
     print()
 
 
