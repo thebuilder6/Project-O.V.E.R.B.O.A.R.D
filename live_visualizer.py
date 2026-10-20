@@ -117,23 +117,6 @@ class LiveVisualizer:
             "samples": trajectory
         })
 
-    def send_candidates(self, window: str, candidates: List[Dict[str, Any]]):
-        """Send candidate paths from Multi-Verse."""
-        self.broadcast({
-            "type": "candidates",
-            "window": window,
-            "candidates": candidates
-        })
-
-    def send_status(self, phase: str, message: str, progress: float = 0):
-        """Send status update."""
-        self.broadcast({
-            "type": "status",
-            "phase": phase,
-            "message": message,
-            "progress": progress
-        })
-
     def send_config(self, robot_config: Dict[str, Any], waypoints: List[Any]):
         """Send initial configuration."""
         self.broadcast({
