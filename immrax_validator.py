@@ -234,7 +234,7 @@ def _interpolated_reference(s0: Dict[str, Any], s1: Dict[str, Any],
     ref_x = s0["x"] + (s1["x"] - s0["x"]) * s
     ref_y = s0["y"] + (s1["y"] - s0["y"]) * s
     ref_heading = s0["heading"] + dh * s
-    ref_v = v0 + (v1 - v0) * s
+    ref_v = 0.5 * (v0 + v1)
     # The turn rate is the derivative of the interpolated heading, so the
     # heading and the turn rate describe the same motion.
     ref_omega = dh / dt if dt > 0 else omega0

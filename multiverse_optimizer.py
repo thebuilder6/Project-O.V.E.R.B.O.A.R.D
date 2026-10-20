@@ -279,8 +279,9 @@ class MasterTrajectoryOptimizer:
         self.refine_probe = None
 
     def solve(self, waypoints: List[Tuple[float, float, Optional[float]]], num_samples_per_segment: int = 10, accuracy_weight: float = 0.0,
-              stop_waypoint_indices: Optional[List[int]] = None, waypoint_events: Optional[Dict[int, str]] = None, apply_headroom: bool = True, verbose: bool = True, capture_iterations: bool = False, fast_polish: bool = False) -> List[Dict[str, Any]]:
+              stop_waypoint_indices: Optional[List[int]] = None, waypoint_events: Optional[Dict[int, str]] = None, apply_headroom: bool = True, verbose: bool = True, capture_iterations: bool = False, fast_polish: bool = False, **kwargs) -> List[Dict[str, Any]]:
         self.stats = OptimizationStats()
+        self.iteration_history = []
         total_start_time = time.time()
         
         if stop_waypoint_indices is None: stop_waypoint_indices = []

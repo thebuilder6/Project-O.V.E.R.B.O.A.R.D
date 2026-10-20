@@ -299,7 +299,7 @@ async def follow_trajectory(drivebase, samples, config=None, b=2.0, zeta=0.7, de
         # v = (vl + vr) / 2
         v1 = (s1['vl'] + s1['vr']) / 2.0
         v2 = (s2['vl'] + s2['vr']) / 2.0
-        ref_v = v1 + alpha * (v2 - v1)
+        ref_v = 0.5 * (v1 + v2)
 
         # The turn rate is the derivative of the heading, not an independent
         # line: interpolating both separately makes them describe different

@@ -5,7 +5,7 @@ A trajectory optimizer for LEGO differential-drive robots in FIRST LEGO League (
 **📖 Technical documentation:** [docs/WHITEPAPER.md](docs/WHITEPAPER.md)
 **🔬 Heuristics and verification:** [docs/HEURISTICS_AND_VERIFICATION.md](docs/HEURISTICS_AND_VERIFICATION.md) — every path-planning heuristic, the full verification chain, the failed-strategy ledger, and the research agenda.
 
-The current working tree contains uncommitted fixes for several audit items, including KI-001 through KI-016, KI-018, KI-019 and KI-021 through KI-031 (see [KNOWN_ISSUES.md](KNOWN_ISSUES.md)). The Multi-Verse pipeline is experimental and is used as a **seed provider**: `main.py --refine` adds its refined trajectory to the candidate set, which is a cheaper way to reach the stock set's speed rather than a better one, so it stays opt-in (KI-004).
+The audit items from KI-001 through KI-050 are resolved in the codebase (see [KNOWN_ISSUES.md](KNOWN_ISSUES.md)). The Multi-Verse pipeline is experimental and is used as a **seed provider**: `main.py --refine` adds its refined trajectory to the candidate set, which is a cheaper way to reach the stock set's speed rather than a better one, so it stays opt-in (KI-004).
 
 ## Start here (first time)
 
@@ -102,7 +102,7 @@ python -m venv .venv
 
 ### Optional extras (validation, Multi-Verse, sysid fitting)
 
-`--validate`, `--multiverse` and `sysid_solver.py` also need JAX, JAXOpt, Immrax and pandas:
+`--validate` and `--multiverse` also need JAX, JAXOpt, and Immrax:
 
 ```bash
 pip install -r requirements-optional.txt

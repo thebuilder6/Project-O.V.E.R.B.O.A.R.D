@@ -450,6 +450,38 @@ class TestBadRows(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertIn("1 row", buffer.getvalue())
 
+    def test_truncated_session_reports_missing_rows(self):
+        """KI-046.3: TEST_END,<n> row count is verified against parsed rows
+        so truncated BLE captures warn explicitly."""
+        name, run_id, header, rows = _straight_run("straight_steps_fwd", 1)
+        # Keep only the first 30 rows but declare full count
+        truncated_rows = rows[:30]
+        text = _session([(name, run_id, header, truncated_rows)])
+        # Replace the TEST_END row count to declare len(rows) = 101
+        text = text.replace(f"TEST_END,{len(truncated_rows)}", f"TEST_END,{len(rows)}")
+        import warnings
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            parsed = parse_session(text)
+        self.assertEqual(len(parsed), 1)
+        self.assertEqual(parsed[0]["expected_rows"], len(rows))
+        self.assertEqual(parsed[0]["missing_rows"], len(rows) - 30)
+        self.assertTrue(any("truncated" in str(w.message) for w in caught))
+
+        with tempfile.TemporaryDirectory() as tmp:
+            session = os.path.join(tmp, "session.csv")
+            out = os.path.join(tmp, "fit.json")
+            with open(session, "w", encoding="utf-8") as handle:
+                handle.write(text)
+            buffer = io.StringIO()
+            with contextlib.redirect_stdout(buffer):
+                code = sysid_main([session, "--wheel-radius", "0.028", "--out", out])
+            self.assertEqual(code, 0)
+            self.assertIn("missing", buffer.getvalue())
+            with open(out, "r", encoding="utf-8") as handle:
+                fit_data = json.load(handle)
+            self.assertEqual(fit_data.get("missing_rows"), len(rows) - 30)
+
 
 class TestDistanceScale(unittest.TestCase):
     """The scale the validator plans against has to be one of the estimates.

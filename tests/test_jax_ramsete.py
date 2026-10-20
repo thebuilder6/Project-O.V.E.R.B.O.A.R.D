@@ -128,7 +128,7 @@ class TestJAXRamsete(unittest.TestCase):
             self.assertAlmostEqual(ref[0], s0["x"] + (s1["x"] - s0["x"]) * frac)
             self.assertAlmostEqual(ref[1], s0["y"] + (s1["y"] - s0["y"]) * frac)
             self.assertAlmostEqual(ref[2], s0["heading"] + dh * frac)
-            self.assertAlmostEqual(ref[3], v0 + (v1 - v0) * frac)
+            self.assertAlmostEqual(ref[3], 0.5 * (v0 + v1))
             self.assertAlmostEqual(ref[4], ref_omega)
             # The gain comes from the interpolated values, like the firmware.
             self.assertAlmostEqual(

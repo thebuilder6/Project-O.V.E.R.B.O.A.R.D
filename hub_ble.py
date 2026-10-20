@@ -155,10 +155,10 @@ async def find_hub(name=None, seconds=SCAN_SECONDS, probe=None, limit=4):
         ((_rank(device, advertisement, name), device, advertisement)
          for device, advertisement in seen),
         key=lambda row: row[0])
-    # The device the operator named is asked first, on its own, so the
-    # answer is not a guess when two hubs are around.
-    preferred = [row for row in ranked if row[0] <= 1]
-    others = [row for row in ranked if row[0] > 1]
+    # The device the operator named (including substring matches) is asked
+    # first, so an unnamed UUID match does not steal the connection (KI-046.2).
+    preferred = [row for row in ranked if row[0] <= 2]
+    others = [row for row in ranked if row[0] > 2]
 
     tried = []
     for _rank_value, device, advertisement in preferred:

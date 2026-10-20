@@ -91,7 +91,7 @@ async def follow_trajectory(drivebase, samples, config=None, b=2.0, zeta=0.7):
             yr = data[p1+2] + alpha * (data[p2+2] - data[p1+2])
             dh = (data[p2+3] - data[p1+3] + _PI) % _2PI - _PI
             tr = (data[p1+3] + alpha * dh + _PI) % _2PI - _PI
-            vr = data[p1+4] + alpha * (data[p2+4] - data[p1+4])
+            vr = 0.5 * (data[p1+4] + data[p2+4])
             # The turn rate is the derivative of the heading, not an
             # independent line: interpolating both separately makes them
             # describe different motions (KI-027).

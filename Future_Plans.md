@@ -164,3 +164,28 @@ Once the optimal nominal trajectory is computed, the validator checks the path a
     *   It checks the worst-case per-wheel motor force, wheel slip, wheel speed, tracking error, and envelope radius [1].
 4.  **Current feedback status:** the validator is a post-solve gate and candidate score. With `--validate`, `main.py` solves up to `--candidates` trajectories (default 2, max 5) and scores each by envelope. With `--simple` the candidates combine initial-guess seeds (`baseline`, `rolling`, `bow_left`, `bow_right`, `turn_first`) with uniform or per-segment timing; the Multi-Verse path uses increasing accuracy weights. It selects a passing one with the smallest envelope; it does not feed the violated segment back into the optimizer as a penalty. Reachability-driven optimization remains future work (KI-020).
     *   If validation passes, the trajectory is exported; if it fails, no output is written and the command exits non-zero.
+
+---
+
+# Part 4: Far Stretch Goal — 3D Simulator Mode & Interactive Mission Elements
+
+See [`docs/STUDIO_3D_SIMULATOR_PLAN.md`](docs/STUDIO_3D_SIMULATOR_PLAN.md) for the complete design specification.
+
+This stretch goal introduces a client-side 3D WebGL physics environment inside the browser studio (`viz/studio.html`), using Three.js for rendering and Rapier3D (WebAssembly) for 60 Hz rigid-body simulation.
+
+
+[Trajectory (.traj)] ┐> [Rapier3D Physics Sandbox] <┐ [Clustered CAD (.ldr / .io)]
+                                    │
+                                     ▼
+                     [Three.js 3D Field Viewport]
+                     (Interactive Levers, Clearances, Scoring)
+
+
+## 4.1 CAD Model Sources & Topological Clustering
+* **Official Season Mission Models:* Available as BrickLink Studio (`.io`) models from [Komurobo](https://komurobo.com/fll/3d-models/) or scripted LDraw (`.ldr`) files from [martijas/fll-sim](https://github.com/martijas/fll-sim).
+* **Topological Pin Clustering:* Solves physics stability by clustering static LEGO beams connected by friction pins (`2780`, `6558`) into compound rigid bodies, exposing only true kinematic degrees of freedom (axle rotations, slide rails).
+
+## 4.2 Interactable Mission Mechanisms
+Mission models implement an articulated `MissionElement` interface with revolute/prismatic joints and friction damping (e.g., M02 toggle riser, M03 Rock lever, loose game pieces). As the virtual robot drives over the mat and actuates mechanisms:
+1. **Tool & Arm Clearances:** 3D collision checks verify physical clearances around vertical obstacles that 2D polygonal footprints cannot capture.
+2. **Contact & Reaction Forces:** Simulates resistive force profiles ($F_{\text{push}}$) during mechanism actuation, bridging directly into interaction force profiles and digital twin verification.

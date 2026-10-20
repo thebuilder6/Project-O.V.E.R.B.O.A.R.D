@@ -505,6 +505,22 @@ class TestIterationHistory(unittest.TestCase):
         self.assertEqual(entries[1]["phase"], "final_solution")
         self.assertTrue(entries[0]["trajectory"])
 
+    def test_the_history_is_captured_under_multiverse(self):
+        """KI-017: --multiverse forwards iteration history when requested."""
+        import main
+        runner = CliRunner()
+        with tempfile.TemporaryDirectory() as tmp:
+            out = os.path.join(tmp, "out.traj")
+            history = os.path.join(tmp, "iterations.json")
+            result = runner.invoke(main.main, [
+                "-w", "examples/example_straight.json", "-o", out,
+                "--multiverse", "--iteration-history", history, "-q"])
+            self.assertEqual(result.exit_code, 0, result.output)
+            self.assertTrue(os.path.exists(history))
+            with open(history, "r", encoding="utf-8") as handle:
+                entries = json.load(handle)
+        self.assertGreaterEqual(len(entries), 1)
+
 
 class TestStudioEntryPoints(unittest.TestCase):
     """--gui and --live both open the studio; --live solves the mission."""

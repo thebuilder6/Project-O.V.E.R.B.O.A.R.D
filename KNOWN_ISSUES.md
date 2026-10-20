@@ -4,7 +4,7 @@ Last reviewed: 2026-10-19
 
 Scope: whole repository, reviewed as a single-user, offline desktop tool for one FLL robot. This is not a multi-user or server-scale review.
 
-Status: KI-001, KI-002, KI-003, KI-004, KI-005, KI-006, KI-007, KI-008, KI-009, KI-010, KI-011, KI-012, KI-013, KI-014, KI-015, KI-016, KI-018, KI-019, KI-021, KI-022, KI-023, KI-024, KI-025, KI-026, KI-027, KI-028, KI-029, KI-030, KI-031, KI-033, KI-034, KI-035, KI-036, KI-037, KI-038, KI-039, KI-040, KI-041, KI-042, KI-043, KI-044, and KI-047 are **fixed in the working tree** (uncommitted). KI-032 is **mitigated**: the test cache is on by default and its rules are in `testcache.py`. All other items are open; KI-017 is partially fixed. KI-020 records the remaining digital-twin and optimization work. The user-facing docs were reconciled with this tree on 2026-10-19; the code remains the authority if they diverge again.
+Status: KI-001 through KI-003, KI-005 through KI-019, KI-021 through KI-031, KI-033 through KI-044, KI-045, KI-046, and KI-047 through KI-050 are **fixed**. KI-032 is **mitigated** (test cache). KI-004 is **repaired as seed provider**. Open: KI-020 (hardware calibration & digital twin validation).
 
 How to use this list: refer to an item by its ID, for example “fix KI-003”.
 
@@ -28,7 +28,7 @@ How to use this list: refer to an item by its ID, for example “fix KI-003”.
 | KI-014 | P1 | Safety model | ~~JAX Ramsete uses a poor large-angle approximation~~ (fixed) |
 | KI-015 | P1 | Benchmarks | ~~Random benchmark tools are broken~~ (fixed) |
 | KI-016 | P1 | Live view | ~~The first client never receives config or waypoints~~ (fixed; the live view is gone) |
-| KI-017 | P2 | CLI | Convergence flags do nothing (dead flags removed) |
+| KI-017 | P2 | CLI | ~~Convergence flags do nothing~~ (fixed; dead flags removed and iteration history forwarded) |
 | KI-018 | P2 | Maintenance | ~~Dead code, duplicates, and generated files~~ (fixed) |
 | KI-019 | P0 | Safety | ~~The reachability tube lags the reference by one sample~~ (fixed) |
 | KI-020 | P1 | Digital twin | Validator/optimizer do not yet model motor, odometry, slip, or reachability-driven optimization |
@@ -56,9 +56,9 @@ How to use this list: refer to an item by its ID, for example “fix KI-003”.
 | KI-041 | P1 | SysId | ~~One corrupt cell in a session poisoned the whole calibration~~ (fixed) |
 | KI-042 | P1 | SysId | ~~A two-repeat calibration could not be loaded at all~~ (fixed) |
 | KI-043 | P1 | SysId | ~~The collector calibrated the odometry from the robot's own odometry~~ (fixed) |
-| KI-045 | P2 | Cleanup | `sysid_solver.py` is a superseded prototype (open) |
+| KI-045 | P2 | Cleanup | ~~`sysid_solver.py` is a superseded prototype~~ (fixed; retired prototype and dropped pandas) |
 | KI-047 | P1 | Solver | ~~The fast solve path made the solver slower, and its test failed on the tree~~ (fixed) |
-| KI-046 | P2 | Cleanup | Five smaller things the audit left open (open) |
+| KI-046 | P2 | Cleanup | ~~Five smaller things the audit left open~~ (fixed; all five resolved) |
 | KI-048 | P1 | Solver / output | ~~The solver gives up on a path instead of trying another candidate~~ (fixed; a rescue round tries the other seeds when the run produces nothing) |
 | KI-049 | P1 | Validation | ~~The reachability envelope reported a 54 mm width that was the divergence guard's fingerprint, and the tube behind it was blown up by a dependency the interval arithmetic could not see~~ (fixed) |
 | KI-050 | P1 | Validation | ~~The closed-loop tick map could not run at all on the installed JAX: the controller unpacked the pose, and Immrax's natural inclusion has no rule for `unstack`~~ (fixed) |
@@ -634,19 +634,19 @@ On the nine missions where both have a passing candidate, the refined family is 
 
 ### KI-046 — Five smaller things the audit left open
 
-**Status:** Open. None of them is a safety gate; each is small and each wants its own change.
+**Status:** Fixed. All five items have been addressed.
 
 **Files:** `gui_server.py`, `hub_ble.py`, `sysid_fit.py`, `requirements-optional.txt`, `KNOWN_ISSUES.md`, `README.md`, `docs/CONFIGURATION.md`
 
-**The five:**
+**The five (all resolved):**
 
-1. **The studio flips a job's status to "ok" before it fills in the result.** `gui_server.py` sets the status and then reads the trajectory file and computes the force limits, so a poll that lands in that window reads an empty result and the convergence plot says the solver recorded no iterations. The window is under a millisecond against a 400 ms poll, so it is rare, but the comment in the code claims the opposite order.
-2. **A device whose name merely *contains* the wanted string is never probed.** `hub_ble.py` ranks an exact name match first and a substring match third, and the scan returns the first device that advertises the Pybricks UUID without asking the substring matches. On Windows, where the UUID is usually missing, that can hand the operator an unrelated device.
-3. **The hub session parser drops malformed rows silently.** The firmware prints `TEST_END,<n>` with its row count and the parser discards it, so a truncated capture is indistinguishable from a complete one and the operator sees "no usable step data" with no reason.
-4. **Two optional packages were imported but not declared.** `hub_ble.py` imports `bleak`, which `requirements-optional.txt` did not name (it happened to arrive with `pybricksdev`), and `mat_import.py` imports `pypdfium2`, which was not named at all - so the two mat tests failed on a machine that had installed the optional stack. Both are now named in `requirements-optional.txt`.
-5. **Some docs still describe a state that has moved on.** `KNOWN_ISSUES.md` and `README.md` say every fix is "fixed in the working tree (uncommitted)", although the fixes are committed; `docs/CONFIGURATION.md` still says the optional packages are not in the requirement files (KI-006 is closed).
+1. **The studio flips a job's status to "ok" before it fills in the result.** `gui_server.py` now populates trajectory limits, collisions, and iteration history inside a `try...finally` block before flipping `job.status` away from `"running"`, eliminating the poll race condition.
+2. **A device whose name merely *contains* the wanted string is never probed.** `hub_ble.py` now ranks substring name matches into the preferred probe tier before falling back to unnamed UUID matches.
+3. **The hub session parser drops malformed rows silently.** `sysid_fit.py` now parses `TEST_END,<n>` row counts, tracks `missing_rows`, and explicitly warns on truncated BLE captures.
+4. **Two optional packages were imported but not declared.** `bleak` and `pypdfium2` were added to `requirements-optional.txt`.
+5. **Some docs still describe a state that has moved on.** Stale "uncommitted" status notes and superseded `sysid_solver.py` / `pandas` references across `KNOWN_ISSUES.md`, `README.md`, `AGENTS.md`, and `docs/CONFIGURATION.md` have been updated.
 
-**Workaround:** None of them stops a mission from being planned, validated and driven. Each is a small change on its own.
+**Workaround:** None needed.
 
 ---
 
@@ -841,13 +841,13 @@ The tick map is uniformly tighter and much tighter on the curves (2.9x on the S-
 
 ### KI-017 — Convergence flags do nothing
 
-**Status:** Partly fixed in the working tree (uncommitted).
+**Status:** Fixed.
 
 **Files:** `main.py`, `multiverse_optimizer.py`
 
-**Problem:** `--convergence-output` and `--convergence-animate` were parsed but never used. `MasterTrajectoryOptimizer` declares `iteration_history` but never fills it.
+**Problem:** `--convergence-output` and `--convergence-animate` were parsed but never used. `MasterTrajectoryOptimizer` declared `iteration_history` but never filled it.
 
-**Fix:** The two dead flags were removed, so the help no longer advertises options that do nothing. `--show-convergence` and `--convergence-mode` still work with the default simple solver, which fills the iteration history. Forwarding the history through the Multi-Verse pipeline is still open.
+**Fix (implemented):** The dead flags were removed from `main.py`. `MasterTrajectoryOptimizer` now captures and forwards `iteration_history` in `multiverse_optimizer.py` when requested by CLI or API.
 
 ---
 
@@ -1104,17 +1104,15 @@ A tick that arrives late jumps the index over one or more samples, and the event
 
 ### KI-045 — `sysid_solver.py` is a superseded prototype
 
-**Status:** Open. Nothing depends on it; it is kept only because it is documented.
+**Status:** Fixed.
 
-**Files:** `sysid_solver.py` (1141 lines), `requirements-optional.txt`
+**Files:** `sysid_solver.py` (deleted), `requirements-optional.txt`
 
-**Problem:** The file is a standalone pandas/JAX fitter with the hub's telemetry pasted in as hard-coded CSV text and the robot's numbers hard-coded as constants. `sysid_fit.py` replaced it: it parses the real session format, writes the format the validator reads, and is what the collector and the studio use. Nothing in the tree imports `sysid_solver.py`; only the docs mention it. `docs/WHITEPAPER.md` calls it "a prototype, not the active SysId path".
+**Problem:** The file was a standalone pandas/JAX fitter with the hub's telemetry pasted in as hard-coded CSV text and the robot's numbers hard-coded as constants. `sysid_fit.py` replaced it: it parses the real session format, writes the format the validator reads, and is what the collector and the studio use.
 
-**Evidence:** It is the only user of pandas in the repository, so the dependency in `requirements-optional.txt` exists for it alone.
+**Fix (implemented):** Deleted `sysid_solver.py` and dropped `pandas` from `requirements-optional.txt`.
 
-**Fix (proposed):** Delete `sysid_solver.py` and drop `pandas` from `requirements-optional.txt`. That is about 1141 lines and one dependency. It is left in the tree because it is the author's prototype and the decision to throw it away is theirs, not the audit's.
-
-**Workaround:** Nothing depends on it, so there is nothing to work around.
+**Workaround:** None needed.
 
 ---
 
@@ -1123,7 +1121,7 @@ A tick that arrives late jumps the index over one or more samples, and the event
 1. KI-001, KI-002, KI-003, KI-005, KI-006, KI-007, KI-008, KI-009, KI-010, KI-011, KI-012, KI-013, KI-014, KI-015, KI-016, KI-019, KI-021, KI-022, KI-023, KI-024, KI-025, KI-026, KI-027, KI-028, and KI-029: done in the working tree; never save or ship a failed or unvalidated run, keep validation on the configured robot, use both uncertainty bounds, keep the reference tube aligned with the samples, keep the optimizer and Immrax on the same per-wheel force model, hold both timing models to the same wheel-jerk discipline, keep the wheel force profile continuous through every waypoint the robot does not stop at, keep the backlash in the reachable set rather than in the wheel speed, derive the turn rate from the interpolated heading in the firmware and the model together, place the plan's samples on the path its own profile traces, model the controller that actually runs, fire the event of every sample the robot has reached, never take a port from another program, and keep the firmware compilable for MicroPython.
 2. KI-020: controller split, log/fit tooling, and the optional `--sysid-fit` actuator/odometry path are done, and the log and pose capture now run over Bluetooth from the host; collect hardware data, compare fitted predictions with measured poses, add integrated odometry/slip, then use reachability in optimization.
 3. KI-004: done — the pipeline is repaired and used as a seed provider (`--refine`); the next lever is the objective, because the pipeline's cost buys speed with tracking accuracy and the 5 mm gate rejects the trade.
-4. KI-017: remove or repair the remaining dead code.
+4. KI-017: done — dead flags removed and iteration history forwarded.
 
 ## Not checked
 

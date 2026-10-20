@@ -471,34 +471,41 @@ def start_job(server, payload):
             # a failure here must not leave the job "running", or the studio
             # would refuse every later job and the operator could not even
             # cancel it.
-            if job.status == "running":
-                if job.cancel_requested:
-                    job.status = "cancelled"
-                else:
-                    job.status = "ok" if job.exit_code == 0 else "failed"
-            if job.status == "failed" and not job.error:
-                job.error = job.lines[-1] if job.lines else "The solve failed."
-            samples = []
+            # Populate trajectory, limits, collisions, and iterations before
+            # flipping the status, so a poll that sees the job finished also
+            # sees the full result (KI-046.1). The post-processing is in a
+            # try...finally block: a failure here must not leave the job
+            # "running", or the studio would refuse every later job.
             try:
-                traj = artifact_path(job, "traj")
-                if traj and traj.is_file():
-                    document = _read_json(traj) or {}
-                    samples = (document.get("trajectory") or {}).get("samples", [])
-            except Exception as exc:  # noqa: BLE001 - a plot is not worth a failure
-                job.log(f"Studio could not read the trajectory: {exc}")
                 samples = []
-            try:
-                job.result["limits"] = trajectory_limits(config_path, samples)
-            except Exception:  # noqa: BLE001 - a plot is not worth a failure
-                job.result["limits"] = {}
-            try:
-                job.result["collisions"] = field_collisions(
-                    samples, config, options.get("field"))
-            except Exception:  # noqa: BLE001 - a mark is not worth a failure
-                job.result["collisions"] = []
-            history = job_dir / "iterations.json"
-            if history.is_file():
-                job.result["iterations"] = _read_json(history) or []
+                try:
+                    traj = artifact_path(job, "traj")
+                    if traj and traj.is_file():
+                        document = _read_json(traj) or {}
+                        samples = (document.get("trajectory") or {}).get("samples", [])
+                except Exception as exc:  # noqa: BLE001 - a plot is not worth a failure
+                    job.log(f"Studio could not read the trajectory: {exc}")
+                    samples = []
+                try:
+                    job.result["limits"] = trajectory_limits(config_path, samples)
+                except Exception:  # noqa: BLE001 - a plot is not worth a failure
+                    job.result["limits"] = {}
+                try:
+                    job.result["collisions"] = field_collisions(
+                        samples, config, options.get("field"))
+                except Exception:  # noqa: BLE001 - a mark is not worth a failure
+                    job.result["collisions"] = []
+                history = job_dir / "iterations.json"
+                if history.is_file():
+                    job.result["iterations"] = _read_json(history) or []
+            finally:
+                if job.status == "running":
+                    if job.cancel_requested:
+                        job.status = "cancelled"
+                    else:
+                        job.status = "ok" if job.exit_code == 0 else "failed"
+                if job.status == "failed" and not job.error:
+                    job.error = job.lines[-1] if job.lines else "The solve failed."
 
     thread = threading.Thread(target=run, daemon=True, name=f"Solve{job.id}")
     thread.start()
@@ -1022,28 +1029,28 @@ def start_collect(server, payload):
             job.exit_code = -1
         finally:
             job.finished = time.time()
-            if job.status == "running":
-                if job.cancel_requested:
-                    job.status = "cancelled"
-                else:
-                    job.status = "ok" if job.exit_code == 0 else "failed"
-            if job.status == "failed" and not job.error:
-                job.error = job.lines[-1] if job.lines else "The collection failed."
-            # The session is kept whenever it exists, not only when the
-            # collection succeeded: the collector writes the session as the
-            # output arrives, so a dropped link costs the last test and not
-            # the run. What arrived is still a measurement.
-            if session_path.is_file():
-                try:
-                    paths = calibration_paths(name)
-                    paths["session"].parent.mkdir(parents=True, exist_ok=True)
-                    shutil.copyfile(str(session_path), str(paths["session"]))
-                    job.result["session_path"] = str(paths["session"])
-                    if job.exit_code != 0:
-                        job.log("The link dropped; the session that arrived "
-                                "was kept.")
-                except OSError as exc:
-                    job.log(f"Could not save the session: {exc}")
+            # Populate session_path before flipping status, so a poll that sees
+            # the job finished also sees the result (KI-046.1).
+            try:
+                if session_path.is_file():
+                    try:
+                        paths = calibration_paths(name)
+                        paths["session"].parent.mkdir(parents=True, exist_ok=True)
+                        shutil.copyfile(str(session_path), str(paths["session"]))
+                        job.result["session_path"] = str(paths["session"])
+                        if job.exit_code != 0:
+                            job.log("The link dropped; the session that arrived "
+                                    "was kept.")
+                    except OSError as exc:
+                        job.log(f"Could not save the session: {exc}")
+            finally:
+                if job.status == "running":
+                    if job.cancel_requested:
+                        job.status = "cancelled"
+                    else:
+                        job.status = "ok" if job.exit_code == 0 else "failed"
+                if job.status == "failed" and not job.error:
+                    job.error = job.lines[-1] if job.lines else "The collection failed."
 
     thread = threading.Thread(target=run, daemon=True, name=f"Collect{job.id}")
     thread.start()
@@ -1341,39 +1348,35 @@ def start_push(server, payload):
             job.exit_code = -1
         finally:
             job.finished = time.time()
-            # The status is set first, so a failure in the post-processing
-            # below cannot leave the job "running" and block the studio.
-            if job.status == "running":
-                if job.cancel_requested:
-                    job.status = "cancelled"
-                else:
-                    job.status = "ok" if job.exit_code == 0 else "failed"
-            if job.status == "failed" and not job.error:
-                job.error = _error_headline(job.lines)
-            # The measured pose and the comparison are filled in after the
-            # status, so a poll that sees the job finished also sees the
-            # result.
-            #
-            # The session is read whenever it exists, not only when the push
-            # succeeded: the console is written as the output arrives, so a
-            # link that drops at the end still leaves what the robot
-            # reported.
-            if session_path.is_file():
-                try:
-                    poses, events = read_session_poses(session_path)
-                    job.result["poses"] = poses
-                    job.result["events"] = events
-                    job.result["report"] = compare_with_plan(traj, session_path)
-                except Exception as exc:  # noqa: BLE001 - a comparison is not worth a failure
-                    job.log(f"Could not compare the run with the plan: {exc}")
-                # The session belongs next to the mission it came from.
-                try:
-                    MISSIONS_DIR.mkdir(exist_ok=True)
-                    target = MISSIONS_DIR / f"{source.name}.session.csv"
-                    shutil.copyfile(str(session_path), str(target))
-                    job.result["session_path"] = str(target)
-                except OSError as exc:
-                    job.log(f"Could not save the session next to the mission: {exc}")
+            # The measured pose and comparison are populated before status flips,
+            # so a poll that sees the job finished also sees the result (KI-046.1).
+            # Wrapped in try...finally so a post-processing failure cannot leave
+            # the job "running" and block the studio.
+            try:
+                if session_path.is_file():
+                    try:
+                        poses, events = read_session_poses(session_path)
+                        job.result["poses"] = poses
+                        job.result["events"] = events
+                        job.result["report"] = compare_with_plan(traj, session_path)
+                    except Exception as exc:  # noqa: BLE001 - a comparison is not worth a failure
+                        job.log(f"Could not compare the run with the plan: {exc}")
+                    # The session belongs next to the mission it came from.
+                    try:
+                        MISSIONS_DIR.mkdir(exist_ok=True)
+                        target = MISSIONS_DIR / f"{source.name}.session.csv"
+                        shutil.copyfile(str(session_path), str(target))
+                        job.result["session_path"] = str(target)
+                    except OSError as exc:
+                        job.log(f"Could not save the session next to the mission: {exc}")
+            finally:
+                if job.status == "running":
+                    if job.cancel_requested:
+                        job.status = "cancelled"
+                    else:
+                        job.status = "ok" if job.exit_code == 0 else "failed"
+                if job.status == "failed" and not job.error:
+                    job.error = _error_headline(job.lines)
 
     thread = threading.Thread(target=run, daemon=True, name=f"Push{job.id}")
     thread.start()

@@ -1,4 +1,5 @@
-from typing import List, Dict, Tuple, Any, Optional
+import math
+from typing import List, Dict, Tuple, Any, Optional, Union, Sequence
 import numpy as np
 import casadi as ca
 from robot_model import RobotConfig, DifferentialDriveModel
@@ -25,7 +26,64 @@ class TrajectoryOptimizer:
         self.model = DifferentialDriveModel(config)
         self.iteration_history: List[Dict[str, Any]] = []  # Store convergence data
 
-    def solve(self, waypoints: List[Tuple[float, float, Optional[float]]], num_samples_per_segment: int = 10, accuracy_weight: float = 0.0, stop_waypoint_indices: Optional[List[int]] = None, waypoint_events: Optional[Dict[int, str]] = None, apply_headroom: bool = True, verbose: bool = True, capture_iterations: bool = False, guess_style: str = "baseline", per_segment_dt: bool = False, initial_guess: Optional[np.ndarray] = None, fast_polish: bool = False, polish_iter_budget: int = 200, solver_options: Optional[Dict[str, Any]] = None, self_consistent: bool = False) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
+    @staticmethod
+    def get_segment_sample_counts(
+        waypoints: Sequence[Sequence[Any]],
+        num_samples_per_segment: Union[int, Sequence[int]] = 10,
+        proportional: bool = True,
+        min_samples: int = 3,
+    ) -> List[int]:
+        """Allocate sample counts across segments proportional to arc length (KI-024).
+
+        When proportional=True and num_samples_per_segment is an integer, short
+        and long segments do not receive the same fixed count. Each segment receives
+        at least min_samples, while keeping the total sample budget (num_segments *
+        num_samples_per_segment).
+        """
+        num_segments = len(waypoints) - 1
+        if num_segments <= 0:
+            return []
+        if isinstance(num_samples_per_segment, (list, tuple)):
+            if len(num_samples_per_segment) != num_segments:
+                raise ValueError(
+                    f"Sample counts list has {len(num_samples_per_segment)} entries; "
+                    f"expected {num_segments}"
+                )
+            return [int(c) for c in num_samples_per_segment]
+
+        s_int = int(num_samples_per_segment)
+        if not proportional or num_segments == 1:
+            return [s_int] * num_segments
+
+        lengths = []
+        for i in range(num_segments):
+            p1 = waypoints[i]
+            p2 = waypoints[i + 1]
+            lengths.append(float(np.hypot(p2[0] - p1[0], p2[1] - p1[1])))
+
+        total_length = sum(lengths)
+        if total_length < 1e-6:
+            return [s_int] * num_segments
+
+        total_budget = num_segments * s_int
+        m = min(s_int, max(1, min_samples))
+        if total_budget < num_segments * m:
+            return [s_int] * num_segments
+
+        # Baseline allocation of m samples per segment
+        rem_budget = total_budget - num_segments * m
+        raw_alloc = [rem_budget * (l / total_length) for l in lengths]
+        int_alloc = [int(np.floor(a)) for a in raw_alloc]
+        leftover = rem_budget - sum(int_alloc)
+
+        remainders = [(raw_alloc[i] - int_alloc[i], i) for i in range(num_segments)]
+        remainders.sort(key=lambda x: x[0], reverse=True)
+        for _, idx in remainders[:leftover]:
+            int_alloc[idx] += 1
+
+        return [m + int_alloc[i] for i in range(num_segments)]
+
+    def solve(self, waypoints: List[Tuple[float, float, Optional[float]]], num_samples_per_segment: int = 10, accuracy_weight: float = 0.0, stop_waypoint_indices: Optional[List[int]] = None, waypoint_events: Optional[Dict[int, str]] = None, apply_headroom: bool = True, verbose: bool = True, capture_iterations: bool = False, guess_style: str = "baseline", per_segment_dt: bool = False, initial_guess: Optional[np.ndarray] = None, fast_polish: bool = False, polish_iter_budget: int = 200, solver_options: Optional[Dict[str, Any]] = None, self_consistent: bool = True, proportional_samples: bool = True, split_at_boundaries: bool = True) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
         """
         waypoints: list of (x, y, heading)
         heading is in radians. None means unconstrained.
@@ -63,16 +121,120 @@ class TrajectoryOptimizer:
                     integrating that profile with a Gauss-Legendre rule
                     instead of the trapezoid rule. The plan is then
                     self-consistent by construction: the samples lie on the
-                    path and the headings are its tangents. Off by default
-                    so the measured plans stay reproducible.
+                    path and the headings are its tangents. On by default
+                    (KI-026).
+        proportional_samples: if True (default), allocate sample counts across
+                    segments proportional to segment arc length (KI-024).
+        split_at_boundaries: if True (default), split trajectories at waypoints
+                    where stop=True and heading is not None (boundary=True in
+                    merge_conditions), solve each sub-mission independently (with
+                    its own best seed and dt), and stitch before validation (KI-024, RQ-A OQ5).
         """
-        num_segments = len(waypoints) - 1
-        N = num_segments * num_samples_per_segment + 1
-
         if stop_waypoint_indices is None:
             stop_waypoint_indices = []
         if waypoint_events is None:
             waypoint_events = {}
+
+        conds = self.merge_conditions(waypoints, stop_waypoint_indices)
+        split_indices = [i for i in range(1, len(waypoints) - 1) if conds[i]["boundary"]]
+
+        if split_at_boundaries and split_indices and initial_guess is None:
+            splits = [0] + split_indices + [len(waypoints) - 1]
+            sub_results = []
+            for m in range(len(splits) - 1):
+                start_i = splits[m]
+                end_i = splits[m + 1]
+                sub_wps = waypoints[start_i : end_i + 1]
+                sub_stops = [idx - start_i for idx in stop_waypoint_indices if start_i <= idx <= end_i]
+                sub_events = {}
+                for idx, ev in waypoint_events.items():
+                    if m == 0 and start_i <= idx <= end_i:
+                        sub_events[idx - start_i] = ev
+                    elif m > 0 and start_i < idx <= end_i:
+                        sub_events[idx - start_i] = ev
+
+                # Solve each sub-mission independently (with its own best seed and dt)
+                best_sub_samples = None
+                best_sub_stats = None
+                best_cost = float("inf")
+                styles_to_try = [guess_style] + [s for s in GUESS_STYLES if s != guess_style]
+                for style in styles_to_try:
+                    try:
+                        s_samples, s_stats = self.solve(
+                            sub_wps,
+                            num_samples_per_segment=num_samples_per_segment,
+                            accuracy_weight=accuracy_weight,
+                            stop_waypoint_indices=sub_stops,
+                            waypoint_events=sub_events,
+                            apply_headroom=apply_headroom,
+                            verbose=False,
+                            capture_iterations=False,
+                            guess_style=style,
+                            per_segment_dt=per_segment_dt,
+                            fast_polish=fast_polish,
+                            polish_iter_budget=polish_iter_budget,
+                            solver_options=solver_options,
+                            self_consistent=self_consistent,
+                            proportional_samples=proportional_samples,
+                            split_at_boundaries=False,
+                        )
+                        if s_stats.get("converged", False):
+                            cost = float(s_stats.get("final_cost", float("inf")))
+                            if cost < best_cost:
+                                best_cost = cost
+                                best_sub_samples = s_samples
+                                best_sub_stats = s_stats
+                    except Exception:
+                        pass
+
+                if best_sub_samples is None:
+                    best_sub_samples, best_sub_stats = self.solve(
+                        sub_wps,
+                        num_samples_per_segment=num_samples_per_segment,
+                        accuracy_weight=accuracy_weight,
+                        stop_waypoint_indices=sub_stops,
+                        waypoint_events=sub_events,
+                        apply_headroom=apply_headroom,
+                        verbose=verbose,
+                        capture_iterations=capture_iterations,
+                        guess_style=guess_style,
+                        per_segment_dt=per_segment_dt,
+                        fast_polish=fast_polish,
+                        polish_iter_budget=polish_iter_budget,
+                        solver_options=solver_options,
+                        self_consistent=self_consistent,
+                        proportional_samples=proportional_samples,
+                        split_at_boundaries=False,
+                    )
+                sub_results.append((best_sub_samples, best_sub_stats))
+
+            stitched_samples = []
+            stitched_dts = []
+            current_t = 0.0
+            for m, (sub_samples, sub_stats) in enumerate(sub_results):
+                if m == 0:
+                    for s in sub_samples:
+                        stitched_samples.append(dict(s))
+                    current_t = sub_samples[-1]["t"]
+                else:
+                    for s in sub_samples[1:]:
+                        s_copy = dict(s)
+                        s_copy["t"] = float(s["t"]) + current_t
+                        stitched_samples.append(s_copy)
+                    current_t = stitched_samples[-1]["t"]
+                stitched_dts.extend(sub_stats.get("segment_dt", []))
+
+            stats = {
+                "total_time": current_t,
+                "initial_cost": sum(s.get("initial_cost", 0.0) for _, s in sub_results),
+                "final_cost": sum(s.get("final_cost", 0.0) for _, s in sub_results),
+                "segment_dt": stitched_dts,
+                "converged": all(s.get("converged", False) for _, s in sub_results),
+                "sub_mission_count": len(splits) - 1,
+            }
+            if any(s.get("fast_polish", False) for _, s in sub_results):
+                stats["fast_polish"] = True
+            return stitched_samples, stats
 
         common = dict(
             num_samples_per_segment=num_samples_per_segment,
@@ -85,6 +247,7 @@ class TrajectoryOptimizer:
             guess_style=guess_style,
             per_segment_dt=per_segment_dt,
             self_consistent=self_consistent,
+            proportional_samples=proportional_samples,
         )
 
         if not fast_polish:

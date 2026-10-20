@@ -46,11 +46,27 @@ import sheet_form
 # Parsing
 # ---------------------------------------------------------------------------
 
-def _finish_run(run, header, rows, bad_rows=0):
+def _finish_run(run, header, rows, bad_rows=0, expected_rows=None, ended=False):
     if run is None or header is None:
         return
     run["columns"] = {name.strip(): i for i, name in enumerate(header)}
     run["bad_rows"] = int(bad_rows)
+    run["ended"] = bool(ended)
+    if expected_rows is not None:
+        run["expected_rows"] = int(expected_rows)
+        parsed_count = len(rows)
+        missing = expected_rows - (parsed_count + bad_rows)
+        run["missing_rows"] = max(0, missing)
+        if run["missing_rows"] > 0:
+            import warnings
+            warnings.warn(
+                f"Run '{run.get("name", "unnamed")}' is truncated: received {parsed_count} row(s) "
+                f"({bad_rows} bad, {run['missing_rows']} missing of {expected_rows} expected).",
+                UserWarning,
+                stacklevel=2,
+            )
+    else:
+        run["missing_rows"] = 0
     if rows:
         run["data"] = np.asarray(rows, dtype=float)
     else:
@@ -77,10 +93,10 @@ def parse_session(text):
             continue
 
         if line.startswith("TEST_START"):
-            _finish_run(current, header, rows, bad_rows)
+            _finish_run(current, header, rows, bad_rows, ended=False)
             name = line[len("TEST_START"):].strip()
             current = {"name": name, "meta": {}, "columns": {},
-                       "data": np.empty((0, 0)), "bad_rows": 0}
+                       "data": np.empty((0, 0)), "bad_rows": 0, "ended": False}
             runs.append(current)
             header = None
             rows = []
@@ -104,7 +120,16 @@ def parse_session(text):
             continue
 
         if line.startswith("TEST_END"):
-            _finish_run(current, header, rows, bad_rows)
+            expected = None
+            rest = line[len("TEST_END"):].strip()
+            if rest.startswith(","):
+                rest = rest[1:].strip()
+            if rest:
+                try:
+                    expected = int(rest.split()[0].split(",")[0])
+                except ValueError:
+                    expected = None
+            _finish_run(current, header, rows, bad_rows, expected_rows=expected, ended=True)
             header = None
             rows = []
             bad_rows = 0
@@ -1501,6 +1526,7 @@ def fit_session(runs, poses=None, wheel_radius_m=0.028, wall_distance_m=None):
     drivetrain = _fit_no_load_speed(runs, wheel_radius_m)
 
     bad_rows = sum(int(run.get("bad_rows", 0) or 0) for run in runs)
+    missing_rows = sum(int(run.get("missing_rows", 0) or 0) for run in runs)
 
     return {
         "wheel_radius_m": float(wheel_radius_m),
@@ -1508,6 +1534,7 @@ def fit_session(runs, poses=None, wheel_radius_m=0.028, wall_distance_m=None):
         # not data, so they are not in the fit; the count is here so the
         # operator learns that the session file is corrupt.
         "bad_rows": bad_rows,
+        "missing_rows": missing_rows,
         "actuator": {
             "straight": {
                 **straight_summary,
@@ -1535,7 +1562,9 @@ def fit_session(runs, poses=None, wheel_radius_m=0.028, wall_distance_m=None):
             run["name"]: {
                 "run_id": run["meta"].get("run_id"),
                 "rows": int(run["data"].shape[0]),
+                "expected_rows": run.get("expected_rows"),
                 "bad_rows": int(run.get("bad_rows", 0) or 0),
+                "missing_rows": int(run.get("missing_rows", 0) or 0),
             }
             for run in runs
         },
@@ -1828,6 +1857,12 @@ def main(argv=None):
             "Dropped {} row(s) with a non-finite value. They are not data, "
             "so they are not in the fit: the session file is corrupt.".format(
                 bad_rows)
+        )
+    missing_rows = int(result.get("missing_rows", 0) or 0)
+    if missing_rows:
+        print(
+            f"warning: session is missing {missing_rows} row(s) against TEST_END; "
+            f"capture may be truncated or dropped BLE packets."
         )
     if straight.get("calibrated"):
         print(

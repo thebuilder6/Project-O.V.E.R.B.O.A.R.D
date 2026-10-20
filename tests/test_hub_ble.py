@@ -88,6 +88,16 @@ class TestFindHub(unittest.TestCase):
                               hub_address="22:33:44:55:66:77")
         self.assertEqual(device.address, "22:33:44:55:66:77")
 
+    def test_substring_match_is_probed_before_unnamed_uuid_match(self):
+        """KI-046.2: A device whose name is a substring match of --hub-name
+        is probed before falling back to an unrelated UUID match."""
+        devices = [_device("11:22:33:44:55:66", name="Pybricks", advertises=True),
+                   _device("22:33:44:55:66:77", name="Team Robot 42", advertises=False)]
+        device, probed = self._run(devices, name="Robot",
+                                   hub_address="22:33:44:55:66:77")
+        self.assertEqual(device.address, "22:33:44:55:66:77")
+        self.assertIn("22:33:44:55:66:77", probed)
+
     def test_an_address_is_a_name_too(self):
         devices = [_device("11:22:33:44:55:66", name="Pybricks")]
         device, _ = self._run(devices, name="11:22:33:44:55:66",
