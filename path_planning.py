@@ -6,6 +6,7 @@ Provides Reeds-Shepp path generation for initial trajectory bootstrapping.
 from typing import List, Optional, Tuple
 import numpy as np
 from rsplan import path
+from robot_model import angle_diff
 
 
 class ReedsSheppPath:
@@ -110,7 +111,7 @@ def linear_interpolation_waypoints(start_pose: Tuple[float, float, Optional[floa
 
         # Interpolate heading with angle wrapping
         if start_pose[2] is not None and goal_pose[2] is not None:
-            diff = (goal_pose[2] - start_pose[2] + np.pi) % (2 * np.pi) - np.pi
+            diff = angle_diff(goal_pose[2], start_pose[2])
             heading = start_pose[2] + diff * t
         elif start_pose[2] is not None:
             heading = start_pose[2]

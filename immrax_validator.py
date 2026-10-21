@@ -1,3 +1,4 @@
+from reachability_engine import CompiledReachabilityEngine
 import jax
 import jax.numpy as jnp
 from jax import vmap
@@ -855,6 +856,7 @@ class ImmraxValidator:
         self._controller_if = _controller_inclusion(
             self._controller_command_interval, self.controller_inclusion)
         self._sampled_control = True
+        self.reachability_engine = CompiledReachabilityEngine(self)
 
         # The closed-loop tick map, for the "tick" propagation. The robot's
         # own pose estimate rides in the map's state when the plant has
@@ -1318,6 +1320,19 @@ class ImmraxValidator:
             # the feedback contracts the tube (see _reachability_tick).
             return self._reachability_tick(
                 samples, w_interval, 0.5 * float(w_upper[2]))
+
+        if getattr(self, "_sampled_control", False):
+            if not hasattr(self, "reachability_engine") or self.reachability_engine is None:
+                self.reachability_engine = CompiledReachabilityEngine(self)
+            return self.reachability_engine.compute_reachability_report(
+                samples,
+                backlash_range=backlash_range,
+                track_width_range=track_width_range,
+                wheel_radius_range=wheel_radius_range,
+                cof_range=cof_range,
+                torque_margin_range=torque_margin_range,
+                inertia_range=inertia_range,
+            )
 
         active_twin = getattr(self, "_digital_twin_active", False)
         state_len = self.plant.xlen if active_twin else 3

@@ -18,7 +18,16 @@ import math
 from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 import numpy as np
 
-from robot_model import RobotConfig, CG_HEIGHT_M, diff_drive_ik, angle_diff, kinematic_cornering_ceiling
+from robot_model import (
+    RobotConfig,
+    CG_HEIGHT_M,
+    diff_drive_ik,
+    angle_diff,
+    kinematic_cornering_ceiling,
+    asymmetric_late_apex_bump,
+)
+
+_asymmetric_late_apex_bump = asymmetric_late_apex_bump
 
 
 def compute_tangent_headings(
@@ -52,21 +61,6 @@ def compute_tangent_headings(
     return headings
 
 
-def _asymmetric_late_apex_bump(u: np.ndarray, u_peak: float = 0.68) -> np.ndarray:
-    """
-    Asymmetric bump function peaking at u = u_peak (e.g. 0.68 for late apex).
-    u in [0, 1]. Exactly 0.0 at endpoints u=0 and u=1.
-    """
-    bump = np.zeros_like(u, dtype=float)
-    mask = (u > 0.0) & (u < 1.0)
-    if not np.any(mask):
-        return bump
-    u_m = u[mask]
-    a = 2.0
-    b = a * (1.0 - u_peak) / u_peak
-    norm = (u_peak ** a) * ((1.0 - u_peak) ** b)
-    bump[mask] = ((u_m ** a) * ((1.0 - u_m) ** b)) / norm
-    return bump
 
 
 def generate_frontier_seed(

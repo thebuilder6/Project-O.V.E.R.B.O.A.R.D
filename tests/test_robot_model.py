@@ -660,3 +660,32 @@ class TestUnifiedMathPrimitives(unittest.TestCase):
         fl_iv, fr_iv = diff_drive_wheel_forces(Interval(0.5, 0.5), Interval(0.5, 0.5), 0.723, I_iv, L_iv)
         self.assertTrue(isinstance(fl_iv, Interval))
         self.assertTrue(isinstance(fr_iv, Interval))
+
+    def test_body_frame_error(self):
+        from robot_model import body_frame_error
+        # Pure forward displacement along x with 0 heading
+        ex, ey = body_frame_error(1.0, 0.0, 0.5, 0.0, 0.0)
+        self.assertAlmostEqual(ex, 0.5)
+        self.assertAlmostEqual(ey, 0.0)
+
+        # 90 deg rotation: x global displacement becomes -y in body frame
+        ex90, ey90 = body_frame_error(1.0, 0.0, 0.0, 0.0, np.pi / 2)
+        self.assertAlmostEqual(ex90, 0.0)
+        self.assertAlmostEqual(ey90, -1.0)
+
+    def test_asymmetric_late_apex_bump(self):
+        from robot_model import asymmetric_late_apex_bump
+        # Boundaries must evaluate to 0.0
+        self.assertEqual(asymmetric_late_apex_bump(0.0), 0.0)
+        self.assertEqual(asymmetric_late_apex_bump(1.0), 0.0)
+        # Peak at u_peak=0.68 must be exactly 1.0
+        self.assertAlmostEqual(asymmetric_late_apex_bump(0.68, u_peak=0.68), 1.0)
+        # Asymmetry check: bump at 0.5 < bump at 0.68
+        self.assertLess(asymmetric_late_apex_bump(0.5, u_peak=0.68), 1.0)
+
+    def test_ramsete_gain(self):
+        from robot_model import ramsete_gain
+        # k1 = 2 * zeta * sqrt(omega^2 + b * v^2)
+        k1 = ramsete_gain(v=0.5, omega=1.0, b=2.0, zeta=0.7)
+        expected = 2.0 * 0.7 * np.sqrt(1.0**2 + 2.0 * 0.5**2)
+        self.assertAlmostEqual(k1, expected)

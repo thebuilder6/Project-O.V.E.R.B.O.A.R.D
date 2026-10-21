@@ -299,3 +299,85 @@ def angle_diff(target: Any, source: Any) -> Any:
     Works with scalars, NumPy arrays, and JAX arrays.
     """
     return (target - source + math.pi) % (2.0 * math.pi) - math.pi
+
+
+def body_frame_error(
+    target_x: Any,
+    target_y: Any,
+    robot_x: Any,
+    robot_y: Any,
+    robot_heading: Any,
+) -> Tuple[Any, Any]:
+    """
+    Transforms global positional error (target - robot) into the robot's local body frame:
+        ex =  cos(theta) * (target_x - robot_x) + sin(theta) * (target_y - robot_y)
+        ey = -sin(theta) * (target_x - robot_x) + cos(theta) * (target_y - robot_y)
+
+    Works transparently with floats, NumPy arrays, JAX arrays, and CasADi MX.
+    """
+    dx = target_x - robot_x
+    dy = target_y - robot_y
+    if hasattr(robot_heading, "type_name"):
+        import casadi as ca
+        cos_th = ca.cos(robot_heading)
+        sin_th = ca.sin(robot_heading)
+    elif hasattr(robot_heading, "devices"):
+        import jax.numpy as jnp
+        cos_th = jnp.cos(robot_heading)
+        sin_th = jnp.sin(robot_heading)
+    elif hasattr(robot_heading, "ndim"):
+        import numpy as np
+        cos_th = np.cos(robot_heading)
+        sin_th = np.sin(robot_heading)
+    else:
+        cos_th = math.cos(robot_heading)
+        sin_th = math.sin(robot_heading)
+
+    ex = cos_th * dx + sin_th * dy
+    ey = (-sin_th) * dx + cos_th * dy
+    return ex, ey
+
+
+def asymmetric_late_apex_bump(u: Any, u_peak: float = 0.68, a: float = 2.0) -> Any:
+    """
+    Asymmetric power-law bump function peaking at u = u_peak (e.g. 0.68 for late apex).
+    Valid for u in [0, 1]. Smoothly drops to 0.0 at boundaries u <= 0 and u >= 1.
+    Supports both scalar floats and NumPy arrays.
+    """
+    if isinstance(u, (int, float)):
+        if 0.0 < u < 1.0:
+            b = a * (1.0 - u_peak) / u_peak
+            norm = (u_peak ** a) * ((1.0 - u_peak) ** b)
+            return float(((u ** a) * ((1.0 - u) ** b)) / norm)
+        return 0.0
+
+    import numpy as np
+    u_arr = np.asarray(u, dtype=float)
+    bump = np.zeros_like(u_arr)
+    mask = (u_arr > 0.0) & (u_arr < 1.0)
+    if not np.any(mask):
+        return bump
+    u_m = u_arr[mask]
+    b = a * (1.0 - u_peak) / u_peak
+    norm = (u_peak ** a) * ((1.0 - u_peak) ** b)
+    bump[mask] = ((u_m ** a) * ((1.0 - u_m) ** b)) / norm
+    return bump
+
+
+def ramsete_gain(v: Any, omega: Any, b: float = 2.0, zeta: float = 0.7) -> Any:
+    """
+    Computes time-varying Ramsete tracking gain:
+        k_1 = 2 * zeta * sqrt(omega^2 + b * v^2)
+    Works transparently with floats, NumPy arrays, JAX arrays, and CasADi MX.
+    """
+    if hasattr(v, "devices") or hasattr(omega, "devices"):
+        import jax.numpy as jnp
+        return 2.0 * zeta * jnp.sqrt(omega**2 + b * v**2)
+    elif hasattr(v, "type_name") or hasattr(omega, "type_name"):
+        import casadi as ca
+        return 2.0 * zeta * ca.sqrt(omega**2 + b * v**2 + 1e-12)
+    elif hasattr(v, "ndim") or hasattr(omega, "ndim"):
+        import numpy as np
+        return 2.0 * zeta * np.sqrt(omega**2 + b * v**2)
+    else:
+        return 2.0 * zeta * math.sqrt(omega**2 + b * v**2)

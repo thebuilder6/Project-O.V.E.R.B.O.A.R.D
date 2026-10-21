@@ -11,7 +11,7 @@ A hybrid trajectory generation architecture combining:
 from typing import List, Dict, Tuple, Any, Optional
 import numpy as np
 import casadi as ca
-from robot_model import RobotConfig, DifferentialDriveModel
+from robot_model import RobotConfig, DifferentialDriveModel, diff_drive_fk, diff_drive_ik, wrap_angle, angle_diff
 from path_planning import ReedsSheppPath, linear_interpolation_waypoints
 import sys
 import time
@@ -42,7 +42,7 @@ def resample_window_cpu(states_array, target_n=10):
     for i in range(states_array.shape[1]):
         if i == 2: # Heading: handle wrapping
             unwrapped = np.unwrap(states_array[:, i])
-            resampled[:, i] = (np.interp(target_xs, original_xs, unwrapped) + np.pi) % (2 * np.pi) - np.pi
+            resampled[:, i] = wrap_angle(np.interp(target_xs, original_xs, unwrapped))
         else:
             resampled[:, i] = np.interp(target_xs, original_xs, states_array[:, i])
 
@@ -162,7 +162,7 @@ class PathBootstrapper:
                     frac = (target_d - dists[j]) / (dists[j+1] - dists[j]) if dists[j+1] > dists[j] else 0.0
                     x = path[j][0] + frac * (path[j+1][0] - path[j][0])
                     y = path[j][1] + frac * (path[j+1][1] - path[j][1])
-                    dtheta = (path[j+1][2] - path[j][2] + np.pi) % (2 * np.pi) - np.pi
+                    dtheta = angle_diff(path[j+1][2], path[j][2])
                     theta = path[j][2] + frac * dtheta
                     resampled.append((x, y, theta))
                     break
@@ -170,7 +170,7 @@ class PathBootstrapper:
     
     def _interpolate_heading(self, p1, p2, frac):
         if p1[2] is not None and p2[2] is not None:
-            diff = (p2[2] - p1[2] + np.pi) % (2 * np.pi) - np.pi
+            diff = angle_diff(p2[2], p1[2])
             return p1[2] + diff * frac
         elif p1[2] is not None: return p1[2]
         elif p2[2] is not None: return p2[2]
@@ -212,7 +212,7 @@ class TrajectoryCritic:
     
     def _compute_yaw_excess(self, samples):
         total_yaw = sum(abs(samples[i]['omega']*(samples[i+1]['t']-samples[i]['t'])) for i in range(len(samples)-1))
-        expected = abs((samples[-1]['heading']-samples[0]['heading'] + np.pi)%(2*np.pi)-np.pi)
+        expected = abs(angle_diff(samples[-1]['heading'], samples[0]['heading']))
         return max(0, total_yaw - expected)
     
     def _compute_velocity_chattering(self, samples):
@@ -240,13 +240,13 @@ class TrajectoryCritic:
         cost = 0.0
         for k in range(len(samples)-1):
             ds = max(np.sqrt((samples[k+1]['x']-samples[k]['x'])**2 + (samples[k+1]['y']-samples[k]['y'])**2), 1e-6)
-            dtheta = (samples[k+1]['heading']-samples[k]['heading']+np.pi)%(2*np.pi)-np.pi
+            dtheta = angle_diff(samples[k+1]['heading'], samples[k]['heading'])
             cost += (abs(dtheta)/ds)**2
         return cost
     
     def _calculate_centripetal_cost(self, samples):
         a_max = self.config.cof * 9.81
-        return sum(((abs((s['vl']+s['vr'])/2.0 * s['omega'])/a_max)**2 for s in samples if abs((s['vl']+s['vr'])/2.0 * s['omega']) > 0.8*a_max), 0.0)
+        return sum(((abs(diff_drive_fk(s['vl'], s['vr'], self.config.track_width)[0] * s['omega'])/a_max)**2 for s in samples if abs(diff_drive_fk(s['vl'], s['vr'], self.config.track_width)[0] * s['omega']) > 0.8*a_max), 0.0)
 
 
 class MasterTrajectoryOptimizer:
@@ -442,8 +442,7 @@ class MasterTrajectoryOptimizer:
                 'heading': float(refined_states_orig[j, 2]),
                 'vl': float(refined_states_orig[j, 3]),
                 'vr': float(refined_states_orig[j, 4]),
-                'omega': float((refined_states_orig[j, 4] - refined_states_orig[j, 3])
-                               / self.config.track_width),
+                'omega': float(diff_drive_fk(refined_states_orig[j, 3], refined_states_orig[j, 4], self.config.track_width)[1]),
             })
         global_traj[start_idx].update(first)
         global_traj[end_idx].update(last)
@@ -518,7 +517,7 @@ class MasterTrajectoryOptimizer:
             else:
                 dx = states[i+1, 0] - states[i-1, 0]
                 dy = states[i+1, 1] - states[i-1, 1]
-                dth = (states[i+1, 2] - states[i-1, 2] + np.pi) % (2*np.pi) - np.pi
+                dth = angle_diff(states[i+1, 2], states[i-1, 2])
                 
                 v = np.hypot(dx, dy) / (2 * dt)
                 w = dth / (2 * dt)
@@ -533,8 +532,7 @@ class MasterTrajectoryOptimizer:
                 if wp_idx in stops:
                     v, w = 0.0, 0.0
                     
-            vl = v - w * self.config.track_width / 2.0
-            vr = v + w * self.config.track_width / 2.0
+            vl, vr = diff_drive_ik(v, w, self.config.track_width)
             
             event = events.get(i // num_samples_per_segment) if i % num_samples_per_segment == 0 else None
             

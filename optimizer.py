@@ -4,7 +4,7 @@ import time
 from typing import List, Dict, Tuple, Any, Optional, Union, Sequence
 import numpy as np
 import casadi as ca
-from robot_model import RobotConfig, DifferentialDriveModel, CG_HEIGHT_M, wheel_normal_forces, diff_drive_fk, diff_drive_ik, angle_diff, wrap_angle
+from robot_model import RobotConfig, DifferentialDriveModel, CG_HEIGHT_M, wheel_normal_forces, diff_drive_fk, diff_drive_ik, diff_drive_wheel_forces, angle_diff, wrap_angle, asymmetric_late_apex_bump
 
 # MUMPS inside CasADi/IPOPT is not re-entrant across OS threads on Windows;
 # serialize the C++ MUMPS call to guarantee thread-safe solves repository-wide.
@@ -67,7 +67,7 @@ class TrajectoryOptimizer:
             h2 = p2[2] if len(p2) > 2 else None
 
             if h1 is not None and h2 is not None:
-                dth = abs((float(h2) - float(h1) + np.pi) % (2.0 * np.pi) - np.pi)
+                dth = abs(angle_diff(float(h2), float(h1)))
             else:
                 v_curr = (p2[0] - p1[0], p2[1] - p1[1])
                 th_curr = math.atan2(v_curr[1], v_curr[0])
@@ -80,8 +80,8 @@ class TrajectoryOptimizer:
                     p3 = waypoints[i + 2]
                     th_next = math.atan2(p3[1] - p2[1], p3[0] - p2[0])
                 dth = max(
-                    abs((th_curr - th_prev + np.pi) % (2.0 * np.pi) - np.pi),
-                    abs((th_next - th_curr + np.pi) % (2.0 * np.pi) - np.pi),
+                    abs(angle_diff(th_curr, th_prev)),
+                    abs(angle_diff(th_next, th_curr)),
                 )
 
             # Curved apex segments (significant heading rotation or tight turn)
@@ -706,12 +706,7 @@ class TrajectoryOptimizer:
                 opti.subject_to(f_bound <= f_traction_max)
 
             if force_weight > 0:
-                a_lin = (al + ar) / 2.0
-                alpha_ang = (ar - al) / self.config.track_width
-                f_lin = 0.5 * self.config.mass * a_lin
-                f_ang = (self.config.inertia * alpha_ang) / self.config.track_width
-                fl_k = f_lin - f_ang
-                fr_k = f_lin + f_ang
+                fl_k, fr_k = diff_drive_wheel_forces(al, ar, self.config.mass, self.config.inertia, self.config.track_width)
                 f_trac_ref = ca.fmax(f_traction_max, 1e-6)
                 force_cost += (
                     0.5 * ((fl_k / f_stall_ref) ** 2 + (fr_k / f_stall_ref) ** 2)
@@ -951,12 +946,7 @@ class TrajectoryOptimizer:
                 vr_k = states[k, 4]
                 al_k = (states[k + 1, 3] - vl_k) / dt_k
                 ar_k = (states[k + 1, 4] - vr_k) / dt_k
-                a_lin = 0.5 * (al_k + ar_k)
-                alpha_ang = (ar_k - al_k) / self.config.track_width
-                f_lin = 0.5 * self.config.mass * a_lin
-                f_ang = (self.config.inertia * alpha_ang) / self.config.track_width
-                fl_k = f_lin - f_ang
-                fr_k = f_lin + f_ang
+                fl_k, fr_k = diff_drive_wheel_forces(al_k, ar_k, self.config.mass, self.config.inertia, self.config.track_width)
                 nl_k, nr_k = self.model.get_wheel_normal_forces(vl_k, vr_k, al_k, ar_k)
                 f_trac_ref = max(cof_min * min(nl_k, nr_k), 1e-6)
                 force_cost += (
@@ -1046,22 +1036,22 @@ class TrajectoryOptimizer:
         y = p1[1] + (p2[1] - p1[1]) * frac
 
         if p1[2] is not None and p2[2] is not None:
-            diff = (p2[2] - p1[2] + np.pi) % (2 * np.pi) - np.pi
+            diff = angle_diff(p2[2], p1[2])
             theta = p1[2] + diff * frac
         elif p1[2] is not None:
             path_dir = np.arctan2(p2[1] - p1[1], p2[0] - p1[0])
-            diff = (path_dir - p1[2] + np.pi) % (2 * np.pi) - np.pi
+            diff = angle_diff(path_dir, p1[2])
             theta = p1[2] + diff * frac
         elif p2[2] is not None:
             path_dir = np.arctan2(p2[1] - p1[1], p2[0] - p1[0])
-            diff = (p2[2] - path_dir + np.pi) % (2 * np.pi) - np.pi
+            diff = angle_diff(p2[2], path_dir)
             theta = path_dir + diff * frac
         else:
             if i + 2 < len(waypoints):
                 p3 = waypoints[i + 2]
                 dir_to_p2 = np.arctan2(p2[1] - p1[1], p2[0] - p1[0])
                 dir_to_p3 = np.arctan2(p3[1] - p1[1], p3[0] - p1[0])
-                delta = (dir_to_p3 - dir_to_p2 + np.pi) % (2 * np.pi) - np.pi
+                delta = angle_diff(dir_to_p3, dir_to_p2)
                 theta = dir_to_p2 + delta * frac
             else:
                 theta = np.arctan2(p2[1] - p1[1], p2[0] - p1[0])
@@ -1088,7 +1078,7 @@ class TrajectoryOptimizer:
 
             theta_start = float(states[base, 2])
             theta_end = float(states[base + s_i, 2])
-            delta = (theta_end - theta_start + np.pi) % (2 * np.pi) - np.pi
+            delta = angle_diff(theta_end, theta_start)
             if abs(delta) > 1e-4:
                 sagitta = 0.5 * length * math.tan(abs(delta) / 4.0)
                 amplitude = min(sagitta, 0.35 * length)
@@ -1100,11 +1090,7 @@ class TrajectoryOptimizer:
                 frac = j / s_i
                 if 0.0 < frac < 1.0:
                     # Principle 2: Late-Apex Dynamic Law (asymmetric bump peaking at f_apex = 0.68)
-                    u0 = 0.68
-                    a_exp = 2.0
-                    b_exp = a_exp * (1.0 - u0) / u0
-                    norm = (u0**a_exp) * ((1.0 - u0)**b_exp)
-                    bump = ((frac**a_exp) * ((1.0 - frac)**b_exp)) / norm
+                    bump = asymmetric_late_apex_bump(frac, u_peak=0.68)
                 else:
                     bump = 0.0
                 states[base + j, 0] += sign * nx * amplitude * bump
@@ -1131,7 +1117,7 @@ class TrajectoryOptimizer:
 
             theta_start = float(states[base, 2])
             theta_end = float(states[base + s_i, 2])
-            delta = (theta_end - theta_start + np.pi) % (2 * np.pi) - np.pi
+            delta = angle_diff(theta_end, theta_start)
 
             ratio = length / (2.0 * max(1e-3, r_min))
             if ratio < 1.0:

@@ -2,6 +2,7 @@ import jax
 import jax.numpy as jnp
 from jax import jit, vmap
 from typing import Optional, Tuple
+from robot_model import wrap_angle, body_frame_error, ramsete_gain
 
 def smooth_deadband(v_cmd, b, epsilon=1e-3):
     return v_cmd - (b / 2.0) * jnp.tanh(v_cmd / epsilon)
@@ -37,8 +38,8 @@ def _sinc_poly(x):
 
 
 def _normalize_angle(angle):
-    """Wrap an angle to [-pi, pi]."""
-    return (angle + jnp.pi) % (2.0 * jnp.pi) - jnp.pi
+    """Wrap an angle to [-pi, pi]. Delegates to canonical wrap_angle."""
+    return wrap_angle(angle)
 
 
 # The firmware rounds the arguments it hands to DriveBase.drive(), because
@@ -100,17 +101,14 @@ class JAXRamseteController:
         xr = ref_pose[0]
         yr = ref_pose[1]
         thetar = ref_pose[2]
-        ex_global = xr - x
-        ey_global = yr - y
-        ex = jnp.cos(theta) * ex_global + jnp.sin(theta) * ey_global
-        ey = -jnp.sin(theta) * ex_global + jnp.cos(theta) * ey_global
+        ex, ey = body_frame_error(xr, yr, x, y, theta)
 
         etheta = thetar - theta
         if normalize:
             etheta = _normalize_angle(etheta)
 
         if ref_k is None:
-            k1 = 2 * self.zeta * jnp.sqrt(ref_omega**2 + self.b * ref_v**2)
+            k1 = ramsete_gain(ref_v, ref_omega, self.b, self.zeta)
         else:
             k1 = 2 * self.zeta * ref_k
 
