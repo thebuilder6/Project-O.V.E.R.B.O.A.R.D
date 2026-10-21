@@ -131,6 +131,7 @@ from tests.test_firmware_events import (
 )
 from tests.test_cli_ux import (
     TestCliBasics,
+    TestUnifiedDefaults,
     TestFirstRun,
     TestStudioEntryPoints,
     TestDeprecatedCliFlags,
@@ -299,6 +300,7 @@ def test_classes():
         TestWallHoming,
         TestCollectCommand,
         TestCliBasics,
+        TestUnifiedDefaults,
         TestFirstRun,
         TestStudioEntryPoints,
         TestDeprecatedCliFlags,

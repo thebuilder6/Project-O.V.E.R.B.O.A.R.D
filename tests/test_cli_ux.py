@@ -249,6 +249,58 @@ class TestCliBasics(unittest.TestCase):
         self.assertEqual(result.stdout.strip(), "False")
 
 
+class TestUnifiedDefaults(unittest.TestCase):
+    """The unified engine is the default; explicit flags still win."""
+
+    def setUp(self):
+        self.runner = CliRunner()
+
+    def _invoke(self, extra):
+        _RecordingOptimizer.calls = []
+        with tempfile.TemporaryDirectory() as tmp:
+            out = os.path.join(tmp, "out.traj")
+            wp = os.path.join(tmp, "wp.json")
+            with open(wp, "w", encoding="utf-8") as handle:
+                json.dump([{"x": 0.0, "y": 0.0}, {"x": 0.1, "y": 0.0}], handle)
+            import main
+            with patch.object(main, "TrajectoryOptimizer", _RecordingOptimizer):
+                result = self.runner.invoke(
+                    main.main, ["-w", wp, "-o", out, "-q"] + extra)
+        self.assertEqual(result.exit_code, 0, result.output)
+        return list(_RecordingOptimizer.calls)
+
+    def test_unified_is_the_default(self):
+        call = self._invoke([])[0]
+        self.assertEqual(call["guess_style"], "frontier_sprint")
+        self.assertTrue(call["per_segment_dt"])
+        self.assertEqual(call["cost_metric"], "discretization")
+        self.assertTrue(call["epigraph_constraints"])
+
+    def test_no_unified_restores_the_stock_set(self):
+        call = self._invoke(["--no-unified"])[0]
+        self.assertEqual(call["guess_style"], "baseline")
+        self.assertFalse(call["per_segment_dt"])
+
+    def test_uniform_dt_steps_aside_from_unified(self):
+        call = self._invoke(["--uniform-dt"])[0]
+        self.assertEqual(call["guess_style"], "baseline")
+        self.assertFalse(call["per_segment_dt"])
+
+    def test_explicit_unified_beats_uniform_dt(self):
+        call = self._invoke(["--unified", "--uniform-dt"])[0]
+        self.assertEqual(call["guess_style"], "frontier_sprint")
+        self.assertTrue(call["per_segment_dt"])
+
+    def test_sweep_steps_aside_from_unified(self):
+        call = self._invoke(["--sweep"])[0]
+        self.assertEqual(call["guess_style"], "baseline")
+
+    def test_explicit_samples_and_weight_reach_the_unified_specs(self):
+        call = self._invoke(["-n", "12", "-a", "0.005"])[0]
+        self.assertEqual(call["num_samples_per_segment"], 12)
+        self.assertAlmostEqual(call["accuracy_weight"], 0.005)
+
+
 class TestFirstRun(unittest.TestCase):
     """A first-time user must get the install command, not a traceback."""
 
