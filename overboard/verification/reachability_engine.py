@@ -28,8 +28,6 @@ from overboard.models.robot_model import CG_HEIGHT_M, body_frame_error, angle_di
 
 JAX_COMPILE_LOCK = threading.RLock()
 
-STATIC_MAX_INTERVALS = 180
-STATIC_MAX_SEGMENTS = 16
 MAX_TICKS_PER_INTERVAL = 30
 GRAD_TICKS_PER_INTERVAL = 1
 # The reference Python loop in immrax_validator.py uses 4 substeps. The
@@ -381,40 +379,6 @@ class CompiledReachabilityEngine:
             elif num_ticks == GRAD_TICKS_PER_INTERVAL and num_substeps == 1:
                 self._uncompiled_grad_scan_fn = _rollout_scan
             return jitted_fn
-
-    def _pad_inputs(
-        self,
-        states: jnp.ndarray,
-        dts: jnp.ndarray,
-        sample_to_segment: Sequence[int],
-    ) -> Tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray, int, int, bool]:
-        """Pad inputs to static shape (STATIC_MAX_INTERVALS, STATIC_MAX_SEGMENTS) so XLA compiles once."""
-        n_states = int(states.shape[0])
-        n_intervals = n_states - 1
-        n_segs = int(dts.shape[0])
-        seg_idx_arr = jnp.asarray(sample_to_segment, dtype=jnp.int32)
-
-        if n_intervals <= STATIC_MAX_INTERVALS and n_segs <= STATIC_MAX_SEGMENTS:
-            pad_intervals = STATIC_MAX_INTERVALS - n_intervals
-            pad_segs = STATIC_MAX_SEGMENTS - n_segs
-            if pad_intervals > 0:
-                last_state = jnp.repeat(states[-1:, :], pad_intervals, axis=0)
-                p_states = jnp.concatenate([states, last_state], axis=0)
-                p_seg_idx = jnp.concatenate(
-                    [seg_idx_arr, jnp.zeros(pad_intervals, dtype=jnp.int32)], axis=0
-                )
-            else:
-                p_states = states
-                p_seg_idx = seg_idx_arr
-            if pad_segs > 0:
-                p_dts = jnp.concatenate([dts, jnp.zeros(pad_segs, dtype=jnp.float64)], axis=0)
-            else:
-                p_dts = dts
-            active_mask = jnp.arange(STATIC_MAX_INTERVALS) < n_intervals
-            return p_states, p_dts, p_seg_idx, active_mask, n_intervals, n_segs, True
-
-        active_mask = jnp.ones(n_intervals, dtype=bool)
-        return states, dts, seg_idx_arr, active_mask, n_intervals, n_segs, False
 
     def _get_grad_fn(
         self,
