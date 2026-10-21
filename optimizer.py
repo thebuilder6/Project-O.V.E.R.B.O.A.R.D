@@ -9,7 +9,11 @@ from robot_model import RobotConfig, DifferentialDriveModel, CG_HEIGHT_M, wheel_
 
 # The canonical guess styles live in the seed provider; re-export them here so
 # the optimizer and its callers keep one list.
-from frontier_seed import GUESS_STYLES
+from frontier_seed import (
+    GUESS_STYLES,
+    SUPPORTED_GUESS_STYLES,
+    LEGACY_GUESS_STYLE_MAP,
+)
 
 # MUMPS inside CasADi/IPOPT is not re-entrant across OS threads on Windows;
 # serialize the C++ MUMPS call to guarantee thread-safe solves repository-wide.
@@ -948,15 +952,17 @@ class TrajectoryOptimizer:
         return time_cost + accuracy_weight * smoothness_cost + force_weight * force_cost
 
     def _build_initial_guess(self, waypoints: List[Tuple[float, float, Optional[float]]], num_samples_per_segment: Union[int, Sequence[int]], N: int, style: str = "baseline", stop_waypoint_indices: Optional[List[int]] = None) -> np.ndarray:
-        if style not in GUESS_STYLES:
-            raise ValueError(f"Unknown guess_style {style!r}; expected one of {GUESS_STYLES}")
+        if style not in SUPPORTED_GUESS_STYLES:
+            raise ValueError(f"Unknown guess_style {style!r}; expected one of {SUPPORTED_GUESS_STYLES}")
 
-        if style in ("bow_left", "bow_right", "turn_first"):
+        if style in LEGACY_GUESS_STYLE_MAP:
+            target_style = LEGACY_GUESS_STYLE_MAP[style]
             warnings.warn(
-                f"guess_style '{style}' is deprecated; initial guesses are unified through frontier_seed.",
+                f"guess_style '{style}' is deprecated; mapped directly to analytical {target_style}.",
                 DeprecationWarning,
                 stacklevel=2,
             )
+            style = target_style
 
         from frontier_seed import generate_frontier_seed
         return generate_frontier_seed(
@@ -993,93 +999,6 @@ class TrajectoryOptimizer:
             else:
                 theta = np.arctan2(p2[1] - p1[1], p2[0] - p1[0])
         return float(x), float(y), float(theta)
-
-    def _offset_segment_interiors(self, states, waypoints, num_samples_per_segment: Union[int, Sequence[int]], left=True):
-        num_segments = len(waypoints) - 1
-        if isinstance(num_samples_per_segment, (list, tuple, np.ndarray)):
-            segment_samples = [int(s) for s in num_samples_per_segment]
-        else:
-            segment_samples = [int(num_samples_per_segment)] * num_segments
-
-        waypoint_sample_indices = [0] + list(np.cumsum(segment_samples))
-        sign = 1.0 if left else -1.0
-        for i in range(num_segments):
-            p1, p2 = waypoints[i], waypoints[i + 1]
-            dx, dy = p2[0] - p1[0], p2[1] - p1[1]
-            length = float(np.hypot(dx, dy))
-            if length < 1e-9:
-                continue
-            nx, ny = -dy / length, dx / length
-            s_i = segment_samples[i]
-            base = waypoint_sample_indices[i]
-
-            theta_start = float(states[base, 2])
-            theta_end = float(states[base + s_i, 2])
-            delta = angle_diff(theta_end, theta_start)
-            if abs(delta) > 1e-4:
-                sagitta = 0.5 * length * math.tan(abs(delta) / 4.0)
-                amplitude = min(sagitta, 0.35 * length)
-            else:
-                amplitude = min(0.10 * length, 0.03)
-
-            count = s_i if i < num_segments - 1 else s_i + 1
-            for j in range(count):
-                frac = j / s_i
-                if 0.0 < frac < 1.0:
-                    # Principle 2: Late-Apex Dynamic Law (asymmetric bump peaking at f_apex = 0.68)
-                    bump = asymmetric_late_apex_bump(frac, u_peak=0.68)
-                else:
-                    bump = 0.0
-                states[base + j, 0] += sign * nx * amplitude * bump
-                states[base + j, 1] += sign * ny * amplitude * bump
-
-    def _rotate_before_driving(self, states, waypoints, num_samples_per_segment: Union[int, Sequence[int]]):
-        num_segments = len(waypoints) - 1
-        if isinstance(num_samples_per_segment, (list, tuple, np.ndarray)):
-            segment_samples = [int(s) for s in num_samples_per_segment]
-        else:
-            segment_samples = [int(num_samples_per_segment)] * num_segments
-
-        waypoint_sample_indices = [0] + list(np.cumsum(segment_samples))
-        r_min = getattr(self.config, "track_width", 0.14)
-
-        for i in range(num_segments):
-            s_i = segment_samples[i]
-            if s_i <= 1:
-                continue
-            base = waypoint_sample_indices[i]
-            p1, p2 = waypoints[i], waypoints[i + 1]
-            dx, dy = p2[0] - p1[0], p2[1] - p1[1]
-            length = float(np.hypot(dx, dy))
-
-            theta_start = float(states[base, 2])
-            theta_end = float(states[base + s_i, 2])
-            delta = angle_diff(theta_end, theta_start)
-
-            ratio = length / (2.0 * max(1e-3, r_min))
-            if ratio < 1.0:
-                threshold = max(0.2, 2.0 * math.asin(ratio))
-            else:
-                threshold = 0.4
-
-            if abs(delta) < threshold:
-                continue
-
-            spin_samples = max(1, int(round(0.30 * s_i)))
-            count = s_i if i < num_segments - 1 else s_i + 1
-            for j in range(count):
-                k = base + j
-                if j <= spin_samples:
-                    f = j / spin_samples
-                    states[k, 0] = p1[0]
-                    states[k, 1] = p1[1]
-                    states[k, 2] = theta_start + delta * f
-                else:
-                    f = (j - spin_samples) / (s_i - spin_samples)
-                    f = min(max(f, 0.0), 1.0)
-                    states[k, 0] = p1[0] + dx * f
-                    states[k, 1] = p1[1] + dy * f
-                    states[k, 2] = theta_end
 
     def _set_rolling_speeds(self, states, dt, stop_waypoint_indices, num_samples_per_segment: Union[int, Sequence[int]]):
         n = len(states)

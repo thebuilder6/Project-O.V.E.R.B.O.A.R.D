@@ -30,13 +30,23 @@ from robot_model import (
 _asymmetric_late_apex_bump = asymmetric_late_apex_bump
 
 
-# Canonical initial-guess styles supported across both CasADi and Unified pipelines
+# Direct mapping of legacy heuristic styles to the analytical late-apex triad
+LEGACY_GUESS_STYLE_MAP = {
+    "bow_left": "frontier_sprint",
+    "bow_right": "frontier_sweeper",
+    "turn_first": "frontier_exploratory",
+}
+
+# The canonical five guess styles used for multi-candidate evaluation
 GUESS_STYLES = (
     "baseline",
     "rolling",
     "bow_left",
     "bow_right",
     "turn_first",
+)
+
+SUPPORTED_GUESS_STYLES = GUESS_STYLES + (
     "frontier_sprint",
     "frontier_sweeper",
     "frontier_exploratory",
@@ -117,6 +127,9 @@ def generate_frontier_seed(
     fixed_sign = 0.0
     turn_first_mode = False
     zero_velocity = False
+
+    if style in LEGACY_GUESS_STYLE_MAP:
+        style = LEGACY_GUESS_STYLE_MAP[style]
 
     clean_style = style
     if clean_style.startswith("frontier_"):
