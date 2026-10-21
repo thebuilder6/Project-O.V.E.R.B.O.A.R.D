@@ -315,6 +315,15 @@ class TestStudioPush(StudioTestCase):
         self._patch = patch.object(gui_server, "HUB_DEPLOY", Path(self.fake_deploy))
         self._patch.start()
         self.addCleanup(self._patch.stop)
+        # The push writes the hub session next to the mission. That is the
+        # operator's own missions folder in a real run, so the test must not
+        # leave a session in it (and a test that writes in the repository is
+        # never skipped by the cache).
+        self.missions = Path(self.tmp) / "missions"
+        self.missions.mkdir()
+        self._missions_patch = patch.object(gui_server, "MISSIONS_DIR", self.missions)
+        self._missions_patch.start()
+        self.addCleanup(self._missions_patch.stop)
         self.addCleanup(shutil.rmtree, self.tmp, True)
 
     def _solve(self, validated=True):

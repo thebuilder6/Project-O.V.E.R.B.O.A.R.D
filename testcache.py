@@ -75,6 +75,12 @@ def _rel(path):
         raw = os.fsdecode(path)
     except (TypeError, ValueError):
         return None
+    # A subprocess sent to os.devnull opens "nul" on Windows, and that name
+    # resolves against the working directory like any other relative path.
+    # The null device is not a file in the repository, so it must not make
+    # the test a writer - and an uncacheable one.
+    if raw.lower() == os.devnull.lower():
+        return None
     candidates = [Path(raw)]
     if not Path(raw).is_absolute():
         # A relative path is read from the working directory, which is the
