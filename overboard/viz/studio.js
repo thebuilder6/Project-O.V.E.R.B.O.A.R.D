@@ -532,6 +532,9 @@ function applyOptionsToForm(options) {
     if (options.envelope_limit !== undefined) {
         el('opt-envelope-limit').value = Number(options.envelope_limit) * 100;
     }
+    if (options.best_effort !== undefined) {
+        el('opt-best-effort').checked = Boolean(options.best_effort);
+    }
     if (options.fast_polish !== undefined) el('opt-fast-polish').checked = options.fast_polish;
     if (options.polish !== undefined) el('opt-polish').checked = Boolean(options.polish);
     if (options.export_format !== undefined) el('opt-export').value = options.export_format;
@@ -541,31 +544,22 @@ function applyOptionsToForm(options) {
     syncPresetRadio();
 }
 
-/* The solver options the named presets carry beyond the ones the command
-   line owns. The preset cards come from the server, which knows the solver
-   flags; the propagation and the polish are the studio's own levers, and
-   `safe` is the one that pays for both. */
-const PRESET_SOLVER = {
-    fast: { propagation: 'plant', polish: false },
-    balanced: { propagation: 'plant', polish: false },
-    safe: { propagation: 'tick', polish: true },
-};
-
-/* Show the preset that matches the current options, if there is one. */
+/* Show the preset that matches the current options, if there is one. The
+   preset cards come from the server, which owns every solver flag they set,
+   so a CLI preset and a studio preset are the same run. */
 function syncPresetRadio() {
     const current = collectOptions();
     const radios = Array.from(document.querySelectorAll('#presets input[type=radio]'));
     const match = radios.find((radio) => {
         const preset = state.presets[radio.value];
-        const solver = PRESET_SOLVER[radio.value] || {};
         return preset
             && Number(preset.samples) === Number(current.samples)
             && Number(preset.accuracy_weight) === Number(current.accuracy_weight)
             && Number(preset.candidates) === Number(current.candidates)
             && Boolean(preset.validate) === Boolean(current.validate)
             && preset.export_format === current.export_format
-            && (solver.propagation || 'plant') === current.propagation
-            && Boolean(solver.polish) === Boolean(current.polish);
+            && (preset.propagation || 'plant') === current.propagation
+            && Boolean(preset.polish) === Boolean(current.polish);
     });
     radios.forEach((radio) => { radio.checked = match ? radio.value === match.value : false; });
 }
@@ -618,14 +612,18 @@ const CANDIDATE_STYLES = {
     frontier_sweeper: { icon: '🌊', label: 'Sweeper', detail: 'peak 0.65' },
     frontier_exploratory: { icon: '🛡️', label: 'Exploratory', detail: '1.25x offset' },
 };
+/* The styles that are only ever rescue seeds. The current report also carries
+   a `rescue` flag, which is what marks a canonical frontier name; this list is
+   the fallback for reports written before that flag existed. */
 const RESCUE_STYLES = ['baseline', 'rolling', 'bow_left', 'bow_right', 'turn_first'];
 
 function isRescueCandidate(style) {
     return RESCUE_STYLES.indexOf(style) >= 0;
 }
 
-function candidateName(style) {
+function candidateName(style, rescue) {
     const known = CANDIDATE_STYLES[style];
+    if (rescue) return `🛟 Rescue: ${known ? known.label : (style || 'baseline')}`;
     if (known) return `${known.icon} ${known.label}`;
     if (isRescueCandidate(style)) return `🛟 Rescue: ${style}`;
     return style || 'baseline';
@@ -815,7 +813,7 @@ function renderValidationReport(report) {
            the frontier triad; a rescue seed is marked, because it is only in
            the list when the triad failed (KI-048). */
         const style = entry.style || 'baseline';
-        const rescue = isRescueCandidate(style);
+        const rescue = Boolean(entry.rescue) || isRescueCandidate(style);
         chip.className = `chip ${entry.ok ? 'ok' : 'bad'}${i === index ? ' active' : ''}`
             + (rescue ? ' is-rescue' : '');
         const timing = entry.timing === 'per-segment' ? 'per-seg' : 'equal-dur';
@@ -823,7 +821,7 @@ function renderValidationReport(report) {
             ? '' : ` ${entry.duration_s.toFixed(2)}s`;
         const weight = (entry.accuracy_weight !== null && entry.accuracy_weight !== undefined
             && entry.accuracy_weight > 0) ? ` @${entry.accuracy_weight}` : '';
-        chip.textContent = `${i + 1}. ${candidateName(style)} ${timing}${weight}${duration} `
+        chip.textContent = `${i + 1}. ${candidateName(style, rescue)} ${timing}${weight}${duration} `
             + `${entry.ok ? 'ok' : 'failed'}`;
         // One title: the candidate's identity and why it failed. The second
         // assignment used to overwrite the first, so the tooltip never
@@ -2326,14 +2324,15 @@ function renderPick(report, index) {
     row.innerHTML = '';
     const candidate = report.candidates[index];
     const exported = (report.selected || 1) - 1;
-    const pickable = candidate && candidate.ok && index !== exported
-        && !isRescueCandidate(candidate.style || 'baseline');
+    const rescue = Boolean(candidate && candidate.rescue)
+        || isRescueCandidate((candidate && candidate.style) || 'baseline');
+    const pickable = candidate && candidate.ok && index !== exported && !rescue;
     row.hidden = !pickable;
     if (!pickable) return;
     const button = document.createElement('button');
     button.type = 'button';
     button.className = 'btn small';
-    button.textContent = `Solve again and export: ${candidateName(candidate.style)}`;
+    button.textContent = `Solve again and export: ${candidateName(candidate.style, rescue)}`;
     button.title = 'The plan is solved again with this candidate pinned, and exported only '
         + 'if it still passes the validator.';
     button.addEventListener('click', () => {
@@ -2913,13 +2912,13 @@ function applyPreset(name) {
     const preset = state.presets[name];
     if (!preset) return;
     el('opt-samples').value = preset.samples;
+    el('opt-auto-mesh').checked = false;
     el('opt-accuracy').value = preset.accuracy_weight;
     el('opt-candidates').value = preset.candidates;
     el('opt-validate').checked = Boolean(preset.validate);
     el('opt-export').value = preset.export_format;
-    const solver = PRESET_SOLVER[name] || {};
-    el('opt-propagation').value = solver.propagation || 'plant';
-    el('opt-polish').checked = Boolean(solver.polish);
+    el('opt-propagation').value = preset.propagation === 'tick' ? 'tick' : 'plant';
+    el('opt-polish').checked = Boolean(preset.polish);
     document.querySelectorAll('#presets input[type=radio]').forEach((radio) => {
         radio.checked = radio.value === name;
     });
@@ -3097,6 +3096,14 @@ function pollJob() {
                 renderValidationReport(report);
             }
             if (job.status === 'running') {
+                /* A validated run writes each path as it is solved, before
+                   its check and before the rescue round: draw them so the
+                   field is not empty while the minutes pass. */
+                const paths = (job.result && job.result.candidates) || [];
+                if (paths.length !== state.candidatePaths.length) {
+                    state.candidatePaths = paths;
+                    draw();
+                }
                 setStatus(solveProgressText(job));
                 pollJob();
                 return;

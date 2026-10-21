@@ -450,6 +450,39 @@ class TestTheDownloadsBelongToTheirJob(unittest.TestCase):
         self.assertIn("renderDownloads(job.artifacts, job.id);", self.source)
 
 
+class TestTheCandidateLabelsComeFromTheReport(unittest.TestCase):
+    """A rescue seed now has a frontier name, so the report's flag decides.
+
+    The old names (`bow_left`, `bow_right`, `turn_first`) were aliases of the
+    frontier seeds. Matching on the name would label a rescue as a normal
+    candidate, which is the one thing the chip exists to prevent.
+    """
+
+    def setUp(self):
+        self.source = _read(VIZ / "studio.js")
+
+    def _function(self, name):
+        start = self.source.index(f"function {name}(")
+        end = self.source.find("\nfunction ", start + 1)
+        return self.source[start:end if end > 0 else len(self.source)]
+
+    def test_a_rescue_chip_reads_the_report_flag(self):
+        body = self._function("renderValidationReport")
+        self.assertIn("entry.rescue", body)
+        self.assertIn("candidateName(style, rescue)", body)
+
+    def test_a_rescue_on_the_pick_row_reads_the_flag(self):
+        body = self._function("renderPick")
+        self.assertIn("candidate.rescue", body)
+
+    def test_the_preset_comes_from_the_server(self):
+        body = self._function("applyPreset")
+        self.assertIn("preset.polish", body)
+        self.assertIn("preset.propagation", body)
+        self.assertIn("el('opt-auto-mesh').checked = false", body)
+        self.assertNotIn("PRESET_SOLVER", self.source)
+
+
 class TestTheEnvelopeNamesItsModel(unittest.TestCase):
     """An envelope is the width of a reachability tube.
 
