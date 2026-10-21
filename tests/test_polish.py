@@ -188,3 +188,75 @@ class TestGradientPolish(unittest.TestCase):
 
         self.assertEqual(polished, samples)
         self.assertEqual(polished_stats, stats)
+
+
+class TestCandidatePolish(unittest.TestCase):
+    """The engine's own entry point: the polish on a candidate result."""
+
+    @classmethod
+    def setUpClass(cls):
+        with open("examples/fll_choreo.json", "r", encoding="utf-8") as handle:
+            cls.config = RobotConfig(json.load(handle))
+        cls.planner = UnifiedPathEngine(cls.config)
+
+    def _candidate(self):
+        wps = [(0.0, 0.0, 0.0), (0.3, 0.10, 0.25), (0.6, 0.20, 0.0)]
+        seg_samples = [6, 6]
+        seed = self.planner.generate_seed(wps, seg_samples, "sprint")
+        candidate = self.planner.solve_candidate(
+            waypoints=wps, seg_samples=seg_samples, name="sprint",
+            guess=seed, stop_indices=[], accuracy_weight=0.002)
+        self.assertIsNotNone(candidate)
+        return wps, seg_samples, candidate
+
+    def test_the_polish_never_makes_the_candidate_slower(self):
+        wps, seg_samples, candidate = self._candidate()
+
+        polished = self.planner.polish_candidate_sensitivities(
+            candidate, wps, seg_samples, [])
+
+        self.assertLessEqual(polished.duration_s, candidate.duration_s + 1e-9)
+        if polished is not candidate:
+            self.assertLessEqual(polished.tracking_error_cm,
+                                 candidate.tracking_error_cm)
+            self.assertLessEqual(polished.envelope_radius_cm,
+                                 candidate.envelope_radius_cm)
+
+    def test_the_polish_keeps_the_candidate_when_it_cannot_help(self):
+        """A candidate that does not converge is left alone."""
+        wps, seg_samples, candidate = self._candidate()
+        candidate.stats = dict(candidate.stats, converged=False)
+
+        polished = self.planner.polish_candidate_sensitivities(
+            candidate, wps, seg_samples, [])
+
+        self.assertIs(polished, candidate)
+
+    def _plan_with_gate(self, tracking_gate_m):
+        """Run plan() and record whether it asked for a polish.
+
+        The polish itself is stubbed: this test is about *when* the engine
+        asks for it, and the real pass costs a compiled rollout and a solve.
+        """
+        wps = [(0.0, 0.0, 0.0), (0.3, 0.10, 0.25), (0.6, 0.20, 0.0)]
+        planner = UnifiedPathEngine(self.config, tracking_gate_m=tracking_gate_m)
+        calls = []
+
+        def spy(candidate, *args, **kwargs):
+            calls.append(candidate)
+            return candidate
+
+        planner.polish_candidate_sensitivities = spy
+        planner.plan(waypoints=wps, mesh_samples=[6, 6], verbose=False)
+        return calls
+
+    def test_a_champion_near_the_gate_is_polished(self):
+        """The engine self-heals a plan that rides close to the gate."""
+        # A tight gate puts the champion next to it, so the pass runs.
+        calls = self._plan_with_gate(tracking_gate_m=0.0005)
+        self.assertTrue(calls, "the champion near the gate was not polished")
+
+    def test_a_champion_inside_the_gate_is_left_alone(self):
+        """A plan with room to spare does not pay for a polish."""
+        calls = self._plan_with_gate(tracking_gate_m=0.5)
+        self.assertFalse(calls, "a plan inside the gate was polished anyway")

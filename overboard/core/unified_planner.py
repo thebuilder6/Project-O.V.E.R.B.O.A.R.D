@@ -302,12 +302,7 @@ class UnifiedPathEngine:
         if len(segment_samples) != num_segments:
             return samples, stats
 
-        from overboard.verification.reachability_engine import (
-            _extract_state_and_dt_arrays,
-        )
-
-        states, dts = _extract_state_and_dt_arrays(
-            samples, num_segments, segment_samples)
+        states, dts = self._states_and_dts(samples, num_segments, segment_samples)
         sample_to_segment = list(
             np.repeat(np.arange(num_segments), segment_samples))
         weights = np.ones(len(states) - 1, dtype=np.float64)
@@ -316,42 +311,15 @@ class UnifiedPathEngine:
         best_duration = self._duration(samples)
 
         for _ in range(max_rounds):
-            report, g_states, _ = engine.sample_sensitivities(
-                states, dts, sample_to_segment,
-                self.tracking_gate_m, self.envelope_gate_m)
-            # The samples the tube is widest at, and the samples that move it
-            # most, get the weight.
-            grad_norm = (np.linalg.norm(g_states[:-1], axis=1)
-                         + np.linalg.norm(g_states[1:], axis=1))
-            peak = float(np.max(grad_norm)) if grad_norm.size else 0.0
-            excess = np.maximum(
-                0.0,
-                np.asarray(report["tracking_errors"], dtype=np.float64)
-                / max(self.tracking_gate_m * 0.7, 1e-6) - 0.5)
-            weights = np.clip(
-                weights * (1.0 + 4.0 * (grad_norm / peak if peak > 1e-12 else 0.0)
-                           + 6.0 * excess ** 2), 1.0, 200.0)
-
-            guess = np.concatenate([np.asarray(dts, dtype=np.float64),
-                                    np.asarray(states, dtype=np.float64).flatten()])
-            polished, polished_stats = self.optimizer.solve(
-                waypoints,
-                num_samples_per_segment=segment_samples,
-                accuracy_weight=max(accuracy_weight, 0.005),
-                stop_waypoint_indices=stop_indices,
-                waypoint_events=waypoint_events,
-                initial_guess=guess,
-                sample_weights=weights,
-                per_segment_dt=True,
-                cost_metric="discretization",
-                epigraph_constraints=True,
-                self_consistent=self_consistent,
-                split_at_boundaries=False,
-                verbose=False,
-            )
+            weights = self._sensitivity_weights(
+                engine, states, dts, sample_to_segment, weights)
+            polished, polished_stats = self._replan(
+                waypoints, segment_samples, states, dts, weights,
+                accuracy_weight=accuracy_weight, stop_indices=stop_indices,
+                waypoint_events=waypoint_events, self_consistent=self_consistent)
             if not polished or not polished_stats.get("converged", False):
                 break
-            p_states, p_dts = _extract_state_and_dt_arrays(
+            p_states, p_dts = self._states_and_dts(
                 polished, num_segments, segment_samples)
             key = self._polish_key(engine, p_states, p_dts, sample_to_segment)
             # A polish that makes the plan slower is not a polish: the
@@ -366,6 +334,142 @@ class UnifiedPathEngine:
         best_stats = dict(best_stats)
         best_stats["polish"] = {"rounds": max_rounds, "engine": "gradient"}
         return best_samples, best_stats
+
+    def polish_candidate_sensitivities(
+        self,
+        candidate: PlannerCandidateResult,
+        waypoints: List[Tuple[float, float, Optional[float]]],
+        seg_samples: List[int],
+        stops: List[int],
+        accuracy_weight: float = 0.002,
+        force_weight: float = 0.0,
+    ) -> PlannerCandidateResult:
+        """The differentiable polish, on one candidate.
+
+        The rollout is differentiable, so the engine can be differentiated
+        through: the gradient says which sample states move the reachable set
+        most. The plan is re-solved, warm-started from the one that was
+        found, with those samples weighted.
+
+        The polished plan is kept only when it is **not slower** and not
+        worse in the reachability. The old rule compared the tracking error
+        alone, and that let a re-solve come back 5.365 s -> 12.912 s on the
+        complex mission and be accepted; a time-optimal planner may not
+        trade time for a smaller tube.
+        """
+        engine = self._ensure_validator()
+        if engine is None or not candidate.samples:
+            return candidate
+        num_segments = len(waypoints) - 1
+        seg_samples = [int(s) for s in seg_samples]
+        if len(seg_samples) != num_segments:
+            return candidate
+
+        states, dts = self._states_and_dts(
+            candidate.samples, num_segments, seg_samples)
+        sample_to_segment = list(
+            np.repeat(np.arange(num_segments), seg_samples))
+        weights = self._sensitivity_weights(
+            engine, states, dts, sample_to_segment,
+            np.ones(len(states) - 1, dtype=np.float64))
+        polished, polished_stats = self._replan(
+            waypoints, seg_samples, states, dts, weights,
+            accuracy_weight=accuracy_weight, stop_indices=stops,
+            waypoint_events=None, self_consistent=True, force_weight=force_weight)
+        if not polished or not polished_stats.get("converged", False):
+            return candidate
+
+        p_states, p_dts = self._states_and_dts(
+            polished, num_segments, seg_samples)
+        report = engine.evaluate_states(p_states, p_dts, sample_to_segment)
+        track_cm = float(report["max_tracking_error_m"]) * 100.0
+        tube_cm = float(report["max_envelope_radius_m"]) * 100.0
+        duration = self._duration(polished)
+        if duration > candidate.duration_s + 1e-9:
+            return candidate
+        if (track_cm, tube_cm) >= (candidate.tracking_error_cm,
+                                   candidate.envelope_radius_cm):
+            return candidate
+
+        passed = (track_cm <= self.tracking_gate_m * 100.0
+                  and tube_cm <= self.envelope_gate_m * 100.0)
+        score = (duration
+                 + 120.0 * max(0.0, track_cm / 100.0 - self.tracking_gate_m)
+                 + 60.0 * max(0.0, tube_cm / 100.0 - self.envelope_gate_m))
+        return PlannerCandidateResult(
+            name=f"{candidate.name}_polished",
+            samples=polished,
+            stats=polished_stats,
+            duration_s=duration,
+            tracking_error_cm=track_cm,
+            envelope_radius_cm=tube_cm,
+            passed_gates=passed,
+            iterations=candidate.iterations + int(polished_stats.get("iter_count", 0)),
+            wall_time_s=candidate.wall_time_s,
+            score=score,
+        )
+
+    def _sensitivity_weights(self, engine, states, dts, sample_to_segment,
+                              weights):
+        """The per-sample weights the reachability gradient asks for.
+
+        The samples that move the reachable set most, and the samples the
+        tracking error is worst at, get the weight.
+        """
+        report, g_states, _ = engine.sample_sensitivities(
+            states, dts, sample_to_segment,
+            self.tracking_gate_m, self.envelope_gate_m)
+        grad_norm = (np.linalg.norm(g_states[:-1], axis=1)
+                     + np.linalg.norm(g_states[1:], axis=1))
+        peak = float(np.max(grad_norm)) if grad_norm.size else 0.0
+        excess = np.maximum(
+            0.0,
+            np.asarray(report["tracking_errors"], dtype=np.float64)
+            / max(self.tracking_gate_m * 0.7, 1e-6) - 0.5)
+        return np.clip(
+            weights * (1.0 + 4.0 * (grad_norm / peak if peak > 1e-12 else 0.0)
+                       + 6.0 * excess ** 2), 1.0, 200.0)
+
+    def _replan(self, waypoints, segment_samples, states, dts, weights, *,
+                accuracy_weight, stop_indices, waypoint_events, self_consistent,
+                force_weight=0.0):
+        """The warm-started re-solve the weights ask for.
+
+        The accuracy weight is raised: a plan that rides close to the
+        tracking gate needs a smoother profile, not a faster one.
+        """
+        from overboard.verification.reachability_engine import (
+            _extract_state_and_dt_arrays,
+        )
+
+        guess = np.concatenate([np.asarray(dts, dtype=np.float64),
+                                np.asarray(states, dtype=np.float64).flatten()])
+        return self.optimizer.solve(
+            waypoints,
+            num_samples_per_segment=segment_samples,
+            accuracy_weight=min(max(accuracy_weight, 0.001) * 3.0, 0.10),
+            stop_waypoint_indices=stop_indices,
+            waypoint_events=waypoint_events,
+            initial_guess=guess,
+            sample_weights=weights,
+            per_segment_dt=True,
+            cost_metric="discretization",
+            epigraph_constraints=True,
+            self_consistent=self_consistent,
+            split_at_boundaries=False,
+            force_weight=max(force_weight, 0.002),
+            verbose=False,
+        )
+
+    @staticmethod
+    def _states_and_dts(samples, num_segments, segment_samples):
+        """The rollout state and the segment times of a plan."""
+        from overboard.verification.reachability_engine import (
+            _extract_state_and_dt_arrays,
+        )
+
+        return _extract_state_and_dt_arrays(samples, num_segments,
+                                            segment_samples)
 
     def _polish_key(self, engine, states, dts, sample_to_segment):
         """The pair the polish compares on: tracking error first, tube second."""
@@ -468,6 +572,29 @@ class UnifiedPathEngine:
         else:
             champion = None
             status = "FAILED"
+
+        # 5. Self-healing: a champion that rides close to the tracking gate
+        # gets one differentiable polish. The gradient says which samples
+        # move the reachable set, and the plan is re-solved with those
+        # samples weighted.
+        if (champion is not None
+                and champion.tracking_error_cm > self.tracking_gate_m * 100.0 * 0.90):
+            if verbose:
+                print(f"  Champion rides close to the tracking gate "
+                      f"({champion.tracking_error_cm:.2f} cm); polishing...")
+            polished = self.polish_candidate_sensitivities(
+                champion, waypoints, seg_samples, stops,
+                accuracy_weight, force_weight)
+            if polished is not champion:
+                candidates = [polished if c is champion else c
+                              for c in candidates]
+                champion = polished
+                status = "CERTIFIED" if champion.passed_gates \
+                    else "CONVERGED_UNCERTIFIED"
+                if verbose:
+                    print(f"  Polished: {champion.duration_s:.3f} s | "
+                          f"Track: {champion.tracking_error_cm:.2f} cm | "
+                          f"Tube: {champion.envelope_radius_cm:.2f} cm")
 
         if verbose:
             print("-" * 80)
