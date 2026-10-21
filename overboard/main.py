@@ -1749,10 +1749,20 @@ def main(ctx, config, waypoints, output, gui, gui_port, doctor, simple, preset,
                     )
                 )
                 if digital_twin.slip.calibrated:
-                    click.echo(
-                        "  Brake slip is loaded but not applied yet "
-                        "(no braking state in the plant)."
-                    )
+                    if digital_twin.actuator_tau_s() > 0.0:
+                        # The five-state plant is in use, and it is the only
+                        # plant that models the grip.
+                        click.echo(
+                            "  Brake slip is applied: the plant slows while braking."
+                        )
+                    else:
+                        # The slip is loaded, but the plant is the kinematic
+                        # one, which has no braking state to apply it to.
+                        click.echo(
+                            "  Brake slip is loaded but not applied: the fit has "
+                            "no actuator time constant, so the kinematic plant "
+                            "is in use."
+                        )
                 drivebase = digital_twin.drivebase
                 if drivebase:
                     label = drivebase.get("name") or "unnamed"

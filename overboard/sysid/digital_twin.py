@@ -11,11 +11,20 @@ After loading, the validator currently applies:
 * the straight-line steady-state wheel-speed gain range,
 * the straight-line first-order actuator time constant,
 * the straight-line command delay,
-* the measured odometry distance/heading scale in feedback.
+* the measured acceleration limit on the wheel speed,
+* the measured odometry distance/heading scale and gyro bias, in the robot's
+  own belief, which the controller reacts to instead of the true pose,
+* the braking shortfall: while braking, the wheels turn further than the
+  robot travels, so the plant scales the ground truth down with a smooth
+  factor of the commanded speed.
 
-The braking-slip block is loaded and reported, but is not applied yet: the
-plant has no braking state, so using it as a permanent speed scale would be a
-fake correction. It is kept for the next calibration/model step.
+Every mechanism is inert unless the fit provides its parameter, so a plan
+without a fit behaves exactly as it did before.
+
+The braking shortfall is the one that needs a partner: the grip is modelled
+by the five-state plant, and the plant is chosen for the actuator. A fit that
+carries the slip but no actuator time constant keeps the kinematic plant, so
+the slip is loaded and not applied.
 """
 
 from dataclasses import dataclass, field
