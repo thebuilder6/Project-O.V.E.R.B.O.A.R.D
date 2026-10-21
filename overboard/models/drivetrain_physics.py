@@ -27,6 +27,17 @@ def _duck_abs(x: Any, smooth: bool = False) -> Any:
     Duck-typed absolute value function.
     Supports float, np.ndarray, jnp.ndarray, ca.MX, and immrax.Interval.
     For CasADi expressions, supports smooth approximation: sqrt(x^2 + eps).
+
+    An Immrax interval is mapped to the exact image of itself under |x|:
+        lower = 0 if the interval straddles zero, else min(|lower|, |upper|)
+        upper = max(|lower|, |upper|)
+    Returning the interval unchanged would let a negative bound survive a
+    magnitude comparison, so a signed interval must not pass through here
+    untouched.
+
+    Note: no shipped caller passes an immrax.Interval to this branch today
+    (KI-020); this is a latent-correctness fix, not a change to the
+    validation gate.
     """
     # CasADi MX/SX
     if hasattr(x, "type_name"):
@@ -35,7 +46,13 @@ def _duck_abs(x: Any, smooth: bool = False) -> Any:
 
     # Immrax Interval
     if hasattr(x, "lower") and hasattr(x, "upper"):
-        return x
+        import jax.numpy as jnp
+        from immrax import Interval
+        lo, hi = x.lower, x.upper
+        straddles_zero = lo * hi <= 0.0
+        lower = jnp.where(straddles_zero, 0.0, jnp.minimum(jnp.abs(lo), jnp.abs(hi)))
+        upper = jnp.maximum(jnp.abs(lo), jnp.abs(hi))
+        return Interval(lower, upper)
 
     # Scalar, NumPy, JAX array
     return abs(x)
@@ -45,6 +62,9 @@ def _duck_clamp_zero(x: Any) -> Any:
     """
     Duck-typed max(0, x) clamping.
     Supports float, np.ndarray, jnp.ndarray, ca.MX, and immrax.Interval.
+
+    max(0, .) is monotone, so an interval maps to
+    [max(0, lower), max(0, upper)] - the exact image, not the input.
     """
     # CasADi MX/SX
     if hasattr(x, "type_name"):
@@ -53,7 +73,9 @@ def _duck_clamp_zero(x: Any) -> Any:
 
     # Immrax Interval
     if hasattr(x, "lower") and hasattr(x, "upper"):
-        return x
+        import jax.numpy as jnp
+        from immrax import Interval
+        return Interval(jnp.maximum(0.0, x.lower), jnp.maximum(0.0, x.upper))
 
     # NumPy array
     if hasattr(x, "ndim") and not hasattr(x, "devices"):

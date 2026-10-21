@@ -20,7 +20,6 @@ __all__ = [
     "asymmetric_late_apex_bump",
     "ramsete_gain",
     "RobotConfig",
-    "MotorConfig",
     "DifferentialDriveModel",
 ]
 
@@ -49,7 +48,7 @@ def __getattr__(name: str):
     ):
         from overboard.models import drivetrain_physics
         return getattr(drivetrain_physics, name)
-    if name in ("RobotConfig", "MotorConfig", "DifferentialDriveModel"):
+    if name in ("RobotConfig", "DifferentialDriveModel"):
         from overboard.models import robot_model
         return getattr(robot_model, name)
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

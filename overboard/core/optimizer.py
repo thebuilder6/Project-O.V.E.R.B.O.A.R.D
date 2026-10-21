@@ -479,6 +479,28 @@ class TrajectoryOptimizer:
         sample_weights: Optional[Sequence[float]] = None,
         h_adaptive: bool = False,
     ) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
+        """Build and solve the NLP for one candidate.
+
+        The method is long: it lays out the variables, writes the collocation
+        and the boundary conditions, prices the objective, sets the epigraph
+        bounds and hands the problem to IPOPT, in that order, and the order is
+        the point - the cost reads the constraints and the constraints read
+        the variables.
+
+        Splitting it into a variable builder, a collocation builder, an
+        epigraph builder and a boundary builder was considered and deferred.
+        The build is linear and the pieces share a dozen locals, so the split
+        would move the code rather than clarify it, and it would put the
+        solver's numerics at risk for no behaviour change: the plan would have
+        to be re-measured against `benchmark.py --mode solver`, which is the
+        reference table for a solver change. The iteration log is the one
+        part that already lives outside this method (it is on the instance,
+        and `solve` reads it after the call).
+
+        When it is done, do it as one extraction at a time, with the solver
+        benchmark before and after, and keep the objective last: it is the
+        piece that reads the most from the others.
+        """
         num_segments = len(waypoints) - 1
         segment_samples = self.get_segment_sample_counts(
             waypoints, num_samples_per_segment, proportional=proportional_samples, h_adaptive=h_adaptive)

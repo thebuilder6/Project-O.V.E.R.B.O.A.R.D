@@ -39,8 +39,7 @@ import json
 import math
 import os
 
-from pathlib import Path
-FIELDS_DIR = str(Path(__file__).resolve().parents[2] / "fields")
+from overboard.paths import FIELDS_DIR
 
 # The path between two samples is walked at half the robot's radius, so a
 # model that lies between two samples is not missed. The step is never finer

@@ -29,6 +29,7 @@ if __name__ == "__main__" and missing_core_packages():
 import click
 import numpy as np
 
+from overboard.paths import HUB_MISSION_MODULE, HUB_RUNNER
 from overboard.models.robot_model import RobotConfig
 from overboard.core.optimizer import TrajectoryOptimizer, GUESS_STYLES
 from overboard.verification.validator import (
@@ -40,16 +41,8 @@ from overboard.verification.validator import (
 )
 from overboard.deploy.export import write_controller_file, write_python_file
 
-REPO_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_CONFIG = "examples/fll_choreo.json"
 JAX_HINT = "Install the optional dependencies with: pip install -r requirements-optional.txt"
-
-# The hub side of a push lives here. The runner imports the trajectory from
-# hub_mission.py next to it, and pybricksdev bundles both plus the robot
-# config when it pushes.
-HUB_CODE_DIR = REPO_ROOT / "pybricks_code"
-HUB_MISSION_MODULE = HUB_CODE_DIR / "hub_mission.py"
-HUB_RUNNER = HUB_CODE_DIR / "hub_runner.py"
 
 # A machine-readable validation summary on one line. The browser studio reads
 # it to show which part of the path failed; a human never has to look at it.
@@ -1504,12 +1497,14 @@ def _render(output, samples_data, wps, optimizer, all_attempts, selected_index, 
               help='Soft wheel-force and traction-utilization penalty weight in the NLP '
                    'objective (simple solver only).')
 @click.option('--candidates', default=2, type=click.IntRange(min=1),
-              help='Candidates to solve and compare. Each candidate combines an initial-guess '
-                   'seed (baseline, rolling, bow_left, bow_right, turn_first) with the timing '
-                   'mode: by default candidate 1 is equal-duration baseline, candidate 2 is '
-                   'per-segment baseline, then the remaining seeds alternate. Validation picks '
-                   'the passing candidate with the best fitness, then the fastest. Without '
-                   '--validate only the first candidate is solved. Use 1 for a single solve.')
+              help='Candidates to solve and compare. On the default path the three frontier '
+                   'candidates are solved; on the stock set (--no-unified) each candidate '
+                   'combines an initial-guess seed (baseline, rolling, bow_left, bow_right, '
+                   'turn_first) with the timing mode: candidate 1 is equal-duration baseline, '
+                   'candidate 2 is per-segment baseline, then the remaining seeds alternate. '
+                   'Validation picks a passing candidate: the fastest one on the default path, '
+                   'the one with the best fitness on the stock set. Without --validate only the '
+                   'first candidate is solved. Use 1 for a single solve.')
 @click.option('--stop-waypoints', default=None, type=str,
               help='Comma-separated waypoint indices where robot must stop (e.g., "2,5,7").')
 @click.option('--events', default=None, type=str,

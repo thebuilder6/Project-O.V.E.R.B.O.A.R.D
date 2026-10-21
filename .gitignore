@@ -60,6 +60,8 @@ research/missions/
 # The mat pictures the studio fetches. FIRST's mat artwork is copyrighted,
 # so it is downloaded on request and kept out of the repository.
 mats/
+# What the archived research scripts write when they are run.
+overboard/legacy/artifacts/
 # Calibration session artifacts. The studio writes them per robot, as
 # calibration/<robot>.{session.csv,sheet.csv,poses.csv,sysid_fit.json}, so
 # the folder is ignored rather than the bare names.

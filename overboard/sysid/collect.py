@@ -39,15 +39,14 @@ import argparse
 import os
 import sys
 
-from pathlib import Path
+from overboard.paths import COLLECTOR_SCRIPT
 from overboard.sysid import sheet_form
 from overboard.deploy.hub_deploy import deploy, HubLinkError
 from overboard.sysid.fit import (load_runs, poses_from_hub_session, session_tests,
                         sheet_rows, write_poses_csv, write_sheet,
                         main as fit_main)
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_SCRIPT = str(REPO_ROOT / "pybricks_code" / "sysid_digital_twin.py")
+DEFAULT_SCRIPT = str(COLLECTOR_SCRIPT)
 SHEET_NAME = "calibration_sheet.csv"
 
 

@@ -21,7 +21,7 @@ _REPO_ROOT = str(Path(__file__).resolve().parent.parent)
 if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 
-REPO_ROOT = Path(__file__).resolve().parent.parent
+from overboard.paths import REPO_ROOT
 
 # (import name, pip name, required?)
 CORE_PACKAGES = [

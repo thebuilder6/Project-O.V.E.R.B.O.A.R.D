@@ -9,7 +9,11 @@ import unittest
 import numpy as np
 
 from overboard.models.robot_model import RobotConfig
-from overboard.core.frontier_seed import compute_tangent_headings, _asymmetric_late_apex_bump, generate_frontier_seed
+from overboard.core.frontier_seed import (
+    compute_tangent_headings,
+    _asymmetric_late_apex_bump,
+    generate_frontier_seed,
+)
 
 
 class TestFrontierSeed(unittest.TestCase):
@@ -147,6 +151,37 @@ class TestFrontierSeed(unittest.TestCase):
                 v_wheel_max + 1e-3,
                 f"Diamond violation at index {idx}: {diamond_norm} > {v_wheel_max}",
             )
+
+
+    def test_baseline_seed_is_the_straight_chord_at_rest(self):
+        """The baseline style is the chord with the wheels stopped."""
+        wps = [(0.0, 0.0, 0.0), (0.4, 0.2, None), (0.8, 0.0, 0.0)]
+        seg_samples = [10, 12]
+        seed = generate_frontier_seed(
+            wps,
+            segment_samples=seg_samples,
+            robot_config=self.config,
+            style="baseline",
+        )
+        num_segs = len(seg_samples)
+        dts = seed[:num_segs]
+        states = seed[num_segs:].reshape(-1, 5)
+        self.assertTrue(np.all(dts > 0.0))
+        # The wheel speeds are zero everywhere: the baseline says where the
+        # robot is, not how it gets there.
+        self.assertTrue(np.allclose(states[:, 3], 0.0))
+        self.assertTrue(np.allclose(states[:, 4], 0.0))
+        # Every sample lies on the chord of its segment.
+        for i in range(num_segs):
+            p1, p2 = np.array(wps[i][:2]), np.array(wps[i + 1][:2])
+            start = sum(seg_samples[:i])
+            seg = states[start:start + seg_samples[i], :2]
+            rel = seg - p1
+            direction = p2 - p1
+            length = np.linalg.norm(direction)
+            if length > 1e-9:
+                cross = np.abs(rel[:, 0] * direction[1] - rel[:, 1] * direction[0])
+                self.assertTrue(np.all(cross / length < 1e-9), f"sample off the chord in segment {i}")
 
 
 if __name__ == "__main__":

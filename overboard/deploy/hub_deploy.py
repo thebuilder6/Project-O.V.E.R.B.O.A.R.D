@@ -24,14 +24,10 @@ import argparse
 import asyncio
 import os
 import sys
-from pathlib import Path
 
 HUB_HINT = "Install the hub tooling with: pip install pybricksdev"
 
-# The hub side of a push: the runner travels with the packed mission.
-HUB_CODE_DIR = Path(__file__).resolve().parents[2] / "pybricks_code"
-HUB_MISSION_MODULE = HUB_CODE_DIR / "hub_mission.py"
-HUB_RUNNER = HUB_CODE_DIR / "hub_runner.py"
+from overboard.paths import HUB_MISSION_MODULE, HUB_RUNNER
 
 # The hub needs a moment to push its last console lines out before the
 # connection goes away.

@@ -35,15 +35,16 @@ _REPO_ROOT = str(Path(__file__).resolve().parent.parent)
 if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 
-REPO_ROOT = Path(__file__).resolve().parent.parent
-VIZ_DIR = Path(__file__).resolve().parent / "viz"
-EXAMPLES_DIR = REPO_ROOT / "examples"
-MISSIONS_DIR = REPO_ROOT / "missions"
-# The robot, measured once: the session, the sheet, the poses and the fit.
-CALIBRATION_DIR = REPO_ROOT / "calibration"
-# The mat pictures the operator fetches. They are not tracked: FIRST's mat
-# artwork is copyrighted, so it is downloaded on request and kept here.
-MATS_DIR = REPO_ROOT / "mats"
+from overboard.paths import (
+    REPO_ROOT,
+    VIZ_DIR,
+    EXAMPLES_DIR,
+    MISSIONS_DIR,
+    CALIBRATION_DIR,
+    MATS_DIR,
+    COLLECTOR_SCRIPT,
+    PYBRICKS_DIR,
+)
 
 MAX_BODY_BYTES = 2_000_000
 # The field guide is under a megabyte; anything larger is not it.
@@ -68,8 +69,6 @@ SLUG_RE = re.compile(r"[^\w-]+", re.UNICODE)
 
 # The host-side push client. Can be a command list or patched with a Path/str in tests.
 HUB_DEPLOY = [sys.executable, "-u", "-m", "overboard.deploy.hub_deploy"]
-# The collector the calibration pushes to the hub.
-COLLECTOR_SCRIPT = REPO_ROOT / "pybricks_code" / "sysid_digital_twin.py"
 
 
 def _deploy_command(*args):
@@ -1225,7 +1224,7 @@ def read_robot_files():
     geometry = {}
 
     try:
-        runner = (REPO_ROOT / "pybricks_code" / "hub_runner.py").read_text(
+        runner = (PYBRICKS_DIR / "hub_runner.py").read_text(
             encoding="utf-8", errors="replace")
     except OSError:
         runner = ""
@@ -1234,7 +1233,7 @@ def read_robot_files():
         events = re.findall(r"[\"']([^\"']+)[\"']\s*:", block.group(1))
 
     try:
-        config = (REPO_ROOT / "pybricks_code" / "robot_config.py").read_text(
+        config = (PYBRICKS_DIR / "robot_config.py").read_text(
             encoding="utf-8", errors="replace")
     except OSError:
         config = ""

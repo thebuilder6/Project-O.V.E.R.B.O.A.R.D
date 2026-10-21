@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Dict, Tuple, Any, Optional, Union
 import casadi as ca
 
+from overboard.paths import ROBOT_CONFIG_PY
 from overboard.models.drivetrain_physics import (
     CG_HEIGHT_M,
     diff_drive_fk,
@@ -297,8 +298,7 @@ class RobotConfig:
         attachment ports, sensor ports, and hub IMU axes match this config exactly.
         """
         if path is None:
-            repo_root = Path(__file__).resolve().parents[2]
-            path = repo_root / "pybricks_code" / "robot_config.py"
+            path = ROBOT_CONFIG_PY
         else:
             path = Path(path)
 

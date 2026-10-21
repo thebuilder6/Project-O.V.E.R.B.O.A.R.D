@@ -650,6 +650,58 @@ class TestUnifiedMathPrimitives(unittest.TestCase):
         self.assertTrue(isinstance(fl_iv, Interval))
         self.assertTrue(isinstance(fr_iv, Interval))
 
+    def test_drivetrain_physics_interval_magnitude(self):
+        """An interval must be mapped, not passed through, by abs and clamp.
+
+        A signed velocity interval carries a negative bound; the motor's force
+        is a magnitude, so the lower bound of the force interval may never be
+        negative. Returning the interval unchanged would smuggle a negative
+        bound into every magnitude comparison downstream.
+        """
+        import jax.numpy as jnp
+        from immrax import Interval
+        from overboard.models.drivetrain_physics import (
+            _duck_abs,
+            _duck_clamp_zero,
+            motor_force_at_velocity,
+        )
+
+        def bound(iv, which):
+            arr = np.asarray(getattr(iv, which)).ravel()
+            return float(arr[0])
+
+        # |x| over [-2, 3] is [0, 3]
+        abs_iv = _duck_abs(Interval(jnp.array([-2.0]), jnp.array([3.0])))
+        self.assertTrue(isinstance(abs_iv, Interval))
+        self.assertAlmostEqual(bound(abs_iv, "lower"), 0.0, places=6)
+        self.assertAlmostEqual(bound(abs_iv, "upper"), 3.0, places=6)
+
+        # |x| over [2, 3] is [2, 3]; over [-3, -2] it is [2, 3]
+        pos_iv = _duck_abs(Interval(jnp.array([2.0]), jnp.array([3.0])))
+        self.assertAlmostEqual(bound(pos_iv, "lower"), 2.0, places=6)
+        neg_iv = _duck_abs(Interval(jnp.array([-3.0]), jnp.array([-2.0])))
+        self.assertAlmostEqual(bound(neg_iv, "lower"), 2.0, places=6)
+        self.assertAlmostEqual(bound(neg_iv, "upper"), 3.0, places=6)
+
+        # max(0, x) over [-2, 3] is [0, 3]
+        clamp_iv = _duck_clamp_zero(Interval(jnp.array([-2.0]), jnp.array([3.0])))
+        self.assertTrue(isinstance(clamp_iv, Interval))
+        self.assertAlmostEqual(bound(clamp_iv, "lower"), 0.0, places=6)
+        self.assertAlmostEqual(bound(clamp_iv, "upper"), 3.0, places=6)
+
+        # The motor force is a magnitude: a signed velocity interval may not
+        # produce a negative lower force bound. The force falls with speed, so
+        # the upper bound is the stall force at rest and the lower bound the
+        # force at the fastest speed in the interval.
+        signed_v = Interval(jnp.array([-0.5]), jnp.array([0.5]))
+        f_iv = motor_force_at_velocity(signed_v, 0.028, 1.0, 0.04, 15.7, 0.85)
+        self.assertTrue(isinstance(f_iv, Interval))
+        self.assertGreaterEqual(bound(f_iv, "lower"), 0.0)
+        f_at_rest = motor_force_at_velocity(0.0, 0.028, 1.0, 0.04, 15.7, 0.85)
+        f_at_speed = motor_force_at_velocity(0.5, 0.028, 1.0, 0.04, 15.7, 0.85)
+        self.assertAlmostEqual(bound(f_iv, "upper"), float(f_at_rest), places=6)
+        self.assertAlmostEqual(bound(f_iv, "lower"), float(f_at_speed), places=6)
+
     def test_body_frame_error(self):
         from overboard.models.robot_model import body_frame_error
         # Pure forward displacement along x with 0 heading

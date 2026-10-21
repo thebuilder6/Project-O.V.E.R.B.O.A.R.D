@@ -87,7 +87,7 @@ from tests.test_validator_model import (
     TestHeadingMetric,
     TestUnifiedReachabilityAndDrivetrainParity,
 )
-from tests.test_legacy_boundary import TestLegacyBoundary
+from tests.test_paths import TestCanonicalPaths
 from tests.test_envelope_soundness import (
     TestNoPhantomTurnRate,
     TestTheBoxContainsTheReachableSet,
@@ -308,7 +308,7 @@ def test_classes():
         TestBacklashModel,
         TestHeadingMetric,
         TestUnifiedReachabilityAndDrivetrainParity,
-        TestLegacyBoundary,
+        TestCanonicalPaths,
         TestNoPhantomTurnRate,
         TestTheBoxContainsTheReachableSet,
         TestTheTickPropagation,
