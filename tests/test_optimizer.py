@@ -1297,6 +1297,282 @@ class TestPathFitnessScoring(unittest.TestCase):
         self.assertEqual(best["samples"], "B")
 
 
+
+# ---------------------------------------------------------------------------
+# The golden plan
+#
+# The numbers below are the plan the solver produced, sample by sample. They
+# are the reference the strategy ledger was measured against.
+#
+# They are here because a rewrite of the NLP can keep the same objective and
+# the same feasible set and still land in a different local optimum. The
+# `opti.bounded` encoding did exactly that: the complex mission went from
+# 4.96 s to 5.78 s and its trajectory by 118 mm, and every scalar check in
+# the tree still passed - the fast-path test's 1% band was not tight enough
+# to see it. A golden plan is checked against the whole trajectory, so a
+# change of encoding shows up as a millimetre.
+#
+# To re-base after a deliberate change:
+#   python -m tests.test_optimizer --rebase
+# and say in the commit why the plan moved.
+# ---------------------------------------------------------------------------
+
+GOLDEN_MISSIONS = (
+    "example_straight.json",        # pure longitudinal optimality
+    "example_s_curve.json",         # the inflections and the clothoid transitions
+    "example_complex_mission.json",  # the non-convex multi-waypoint case
+)
+
+# The unified path's first candidate: the settings the product plans with.
+GOLDEN_SOLVE = dict(
+    num_samples_per_segment=10,
+    per_segment_dt=True,
+    cost_metric="discretization",
+    epigraph_constraints=True,
+    accuracy_weight=0.001,
+    guess_style="frontier_sprint",
+)
+
+# GOLDEN-BEGIN
+GOLDEN_PLANS = {
+    "example_straight.json": {
+        "duration_s": 2.376607,
+        "n": 11,
+        "path_length_m": 1.000000,
+        "max_force_utilization": 0.801252,
+        "rms_wheel_force_n": 0.307282,
+        "max_jerk_m_s3": 8.365638,
+        "samples": [
+            (0.0000, -0.0000, 0.0000), (0.0561, 0.0000, 0.0000), (0.1684, 0.0000, 0.0000), (0.2807, 0.0000, 0.0000),
+            (0.3930, 0.0000, 0.0000), (0.5053, 0.0000, 0.0000), (0.6176, 0.0000, 0.0000), (0.7299, 0.0000, 0.0000),
+            (0.8422, 0.0000, -0.0000), (0.9492, 0.0000, -0.0000), (1.0000, -0.0000, 0.0000),
+        ],
+    },
+    "example_s_curve.json": {
+        "duration_s": 3.771355,
+        "n": 21,
+        "path_length_m": 1.188641,
+        "max_force_utilization": 0.798424,
+        "rms_wheel_force_n": 0.351310,
+        "max_jerk_m_s3": 25.494515,
+        "samples": [
+            (0.0000, 0.0000, -0.0000), (0.0327, 0.0033, 0.2036), (0.1002, 0.0292, 0.4730), (0.1715, 0.0698, 0.5411),
+            (0.2446, 0.1139, 0.5436), (0.3178, 0.1581, 0.5438), (0.3909, 0.2023, 0.5440), (0.4564, 0.2447, 0.6364),
+            (0.4939, 0.2834, 1.1129), (0.4966, 0.3008, 2.2999), (0.5000, 0.3000, 3.1400), (0.5071, 0.2978, 2.3195),
+            (0.5080, 0.2935, 0.6734), (0.5402, 0.2899, -0.3674), (0.6079, 0.2487, -0.6280), (0.6825, 0.1941, -0.6330),
+            (0.7573, 0.1393, -0.6330), (0.8321, 0.0844, -0.6328), (0.9051, 0.0337, -0.5543), (0.9705, 0.0035, -0.2380),
+            (1.0000, 0.0000, 0.0000),
+        ],
+    },
+    "example_complex_mission.json": {
+        "duration_s": 5.375203,
+        "n": 91,
+        "path_length_m": 1.409060,
+        "max_force_utilization": 0.805736,
+        "rms_wheel_force_n": 0.473536,
+        "max_jerk_m_s3": 102.024742,
+        "samples": [
+            (-0.0000, 0.0000, 0.0000), (0.0043, 0.0001, 0.0601), (0.0157, 0.0016, 0.1946), (0.0312, 0.0059, 0.3284),
+            (0.0481, 0.0127, 0.4306), (0.0658, 0.0216, 0.5012), (0.0844, 0.0324, 0.5420), (0.1037, 0.0443, 0.5570),
+            (0.1235, 0.0566, 0.5579), (0.1432, 0.0688, 0.5500), (0.1623, 0.0803, 0.5257), (0.1811, 0.0907, 0.4831),
+            (0.2000, 0.1000, 0.4337), (0.2182, 0.1080, 0.3899), (0.2366, 0.1152, 0.3612), (0.2542, 0.1218, 0.3707),
+            (0.2697, 0.1283, 0.4339), (0.2825, 0.1351, 0.5510), (0.2922, 0.1420, 0.7011), (0.2981, 0.1477, 0.8401),
+            (0.3000, 0.1500, 0.9000), (0.3000, 0.1500, 0.4587), (0.3048, 0.1498, -0.2635), (0.3223, 0.1395, -0.6719),
+            (0.3489, 0.1138, -0.8238), (0.3742, 0.0863, -0.8087), (0.3914, 0.0714, -0.5004), (0.3983, 0.0695, 0.2529),
+            (0.3988, 0.0698, 1.0945), (0.4000, 0.0800, 1.5700), (0.3996, 0.0899, 1.6266), (0.3989, 0.1030, 1.6219),
+            (0.3983, 0.1187, 1.5890), (0.3983, 0.1361, 1.5571), (0.3988, 0.1544, 1.5392), (0.3994, 0.1732, 1.5330),
+            (0.4002, 0.1923, 1.5320), (0.4009, 0.2114, 1.5332), (0.4016, 0.2303, 1.5395), (0.4020, 0.2487, 1.5562),
+            (0.4020, 0.2664, 1.5864), (0.4014, 0.2834, 1.6297), (0.4000, 0.3000, 1.6824), (0.3982, 0.3134, 1.7304),
+            (0.3957, 0.3266, 1.7803), (0.3926, 0.3397, 1.8279), (0.3888, 0.3530, 1.8702), (0.3844, 0.3664, 1.9051),
+            (0.3794, 0.3801, 1.9319), (0.3740, 0.3940, 1.9513), (0.3683, 0.4080, 1.9650), (0.3623, 0.4221, 1.9755),
+            (0.3562, 0.4362, 1.9860), (0.3500, 0.4500, 2.0000), (0.3391, 0.4727, 2.0360), (0.3278, 0.4939, 2.0960),
+            (0.3159, 0.5125, 2.1887), (0.3034, 0.5280, 2.3191), (0.2905, 0.5398, 2.4961), (0.2774, 0.5476, 2.7251),
+            (0.2651, 0.5513, 2.9957), (0.2556, 0.5514, 3.2743), (0.2509, 0.5504, 3.4829), (0.2500, 0.5500, 3.5560),
+            (0.2465, 0.5484, 3.5868), (0.2356, 0.5426, 3.6739), (0.2194, 0.5319, 3.7640), (0.2022, 0.5192, 3.7712),
+            (0.1863, 0.5087, 3.6522), (0.1719, 0.5024, 3.4352), (0.1597, 0.5002, 3.2141), (0.1500, 0.5000, 3.1400),
+            (0.1435, 0.4997, 3.2743), (0.1381, 0.4982, 3.5515), (0.1326, 0.4946, 3.8698), (0.1270, 0.4879, 4.1445),
+            (0.1219, 0.4775, 4.3441), (0.1174, 0.4628, 4.4711), (0.1135, 0.4439, 4.5411), (0.1101, 0.4215, 4.5720),
+            (0.1068, 0.3974, 4.5794), (0.1035, 0.3732, 4.5733), (0.1000, 0.3500, 4.5477), (0.0885, 0.3015, 4.3827),
+            (0.0713, 0.2660, 4.1191), (0.0557, 0.2505, 3.5248), (0.0501, 0.2502, 2.4730), (0.0501, 0.2501, 1.2719),
+            (0.0500, 0.2500, 0.0709), (0.0500, 0.2500, -1.0504), (0.0500, 0.2500, -1.5700),
+        ],
+    },
+}
+# GOLDEN-END
+
+
+def _golden_literal():
+    """The golden plans as source, for a re-base."""
+    import json
+    import os
+    from overboard.main import _load_waypoints
+    from overboard.verification.validator import compute_metrics
+
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    with open(os.path.join(root, "examples", "fll_choreo.json"), encoding="utf-8") as handle:
+        robot = RobotConfig(json.load(handle))
+
+    lines = ["GOLDEN_PLANS = {"]
+    for mission in GOLDEN_MISSIONS:
+        path = os.path.join(root, "examples", mission)
+        waypoints, events, thresholds, stops = _load_waypoints(path)
+        optimizer = TrajectoryOptimizer(robot)
+        samples, _ = optimizer.solve(
+            waypoints, stop_waypoint_indices=stops, waypoint_events=events,
+            verbose=False, **GOLDEN_SOLVE)
+        metrics = compute_metrics(samples, robot)
+        lines.append(f'    "{mission}": {{')
+        lines.append(f'        "duration_s": {samples[-1]["t"]:.6f},')
+        lines.append(f'        "n": {len(samples)},')
+        lines.append(f'        "path_length_m": {metrics["path_length_m"]:.6f},')
+        lines.append(f'        "max_force_utilization": {metrics["max_force_utilization"]:.6f},')
+        lines.append(f'        "rms_wheel_force_n": {metrics["rms_wheel_force_n"]:.6f},')
+        lines.append(f'        "max_jerk_m_s3": {metrics["max_jerk_m_s3"]:.6f},')
+        lines.append('        "samples": [')
+        row = []
+        for sample in samples:
+            row.append(f'({sample["x"]:.4f}, {sample["y"]:.4f}, {sample["heading"]:.4f})')
+            if len(row) == 3:
+                lines.append("            " + ", ".join(row) + ",")
+                row = []
+        if row:
+            lines.append("            " + ", ".join(row) + ",")
+        lines.append("        ],")
+        lines.append("    },")
+    lines.append("}")
+    return "\n".join(lines) + "\n"
+
+
+def _rebase_golden():
+    """Rewrite the golden block in this file from the current solver."""
+    import os
+    import re
+
+    here = os.path.abspath(__file__)
+    with open(here, encoding="utf-8") as handle:
+        text = handle.read()
+    new_block = _golden_literal()
+    pattern = re.compile(r"# GOLDEN-BEGIN\n.*?# GOLDEN-END\n", re.DOTALL)
+    if not pattern.search(text):
+        raise SystemExit("the GOLDEN-BEGIN/GOLDEN-END markers are not in the file")
+    text = pattern.sub(
+        "# GOLDEN-BEGIN\n" + new_block + "# GOLDEN-END\n", text, count=1)
+    with open(here, "w", encoding="utf-8") as handle:
+        handle.write(text)
+    print("golden plans re-based in", here)
+
+
+class TestGoldenPlan(unittest.TestCase):
+    """The plan the solver produces must not move on its own.
+
+    A rewrite of the NLP can keep the same objective and the same feasible set
+    and still land in a different local optimum: the `opti.bounded` encoding
+    moved the complex mission from 4.96 s to 5.78 s and its trajectory by
+    118 mm, and every scalar check in the tree still passed. These are the
+    shipped solver's plans, checked against the whole trajectory.
+    """
+
+    # 5 ms is a hundredth of the fast path's own 1% band, and the rewrite
+    # that this test was written for moved the complex mission by 1.4 ms.
+    DURATION_TOLERANCE_S = 0.005
+    # 1 mm on the path. The rewrite moved it by 0.2 mm; the bounded
+    # encoding moved it by 118 mm.
+    POSITION_TOLERANCE_M = 0.001
+    # 20 mrad is about 1 degree. The rewrite moved the complex mission's
+    # heading by 9 mrad; the bounded encoding moved it far more.
+    HEADING_TOLERANCE_RAD = 0.02
+    # One percent of the motor's limit, on the force-utilisation scale.
+    FORCE_UTILIZATION_TOLERANCE = 0.01
+
+    @classmethod
+    def setUpClass(cls):
+        import json
+        import os
+
+        from overboard.main import _load_waypoints
+
+        cls.root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        with open(os.path.join(cls.root, "examples", "fll_choreo.json"), encoding="utf-8") as handle:
+            cls.config = RobotConfig(json.load(handle))
+        cls._load_waypoints = staticmethod(_load_waypoints)
+
+    def _solve(self, mission):
+        path = os.path.join(self.root, "examples", mission)
+        waypoints, events, thresholds, stops = self._load_waypoints(path)
+        optimizer = TrajectoryOptimizer(self.config)
+        samples, stats = optimizer.solve(
+            waypoints, stop_waypoint_indices=stops, waypoint_events=events,
+            verbose=False, **GOLDEN_SOLVE)
+        self.assertTrue(stats.get("converged"), f"{mission} did not converge")
+        return samples
+
+    def test_the_plans_match_the_golden_ones(self):
+        """Duration, path and demand: the plan must not have moved."""
+        from overboard.verification.validator import compute_metrics
+
+        for mission in GOLDEN_MISSIONS:
+            with self.subTest(mission=mission):
+                golden = GOLDEN_PLANS[mission]
+                samples = self._solve(mission)
+
+                self.assertEqual(len(samples), golden["n"],
+                                 f"{mission} has {len(samples)} samples, "
+                                 f"the golden plan has {golden['n']}")
+
+                duration = samples[-1]["t"]
+                self.assertLessEqual(
+                    abs(duration - golden["duration_s"]), self.DURATION_TOLERANCE_S,
+                    f"{mission} takes {duration:.4f} s, the golden plan takes "
+                    f"{golden['duration_s']:.4f} s")
+
+                worst_position = 0.0
+                worst_heading = 0.0
+                for sample, (gx, gy, gth) in zip(samples, golden["samples"]):
+                    worst_position = max(
+                        worst_position, math.hypot(sample["x"] - gx, sample["y"] - gy))
+                    worst_heading = max(
+                        worst_heading, abs(sample["heading"] - gth))
+                self.assertLessEqual(
+                    worst_position, self.POSITION_TOLERANCE_M,
+                    f"{mission} is {worst_position * 1000:.3f} mm off the golden path")
+                self.assertLessEqual(
+                    worst_heading, self.HEADING_TOLERANCE_RAD,
+                    f"{mission} is {worst_heading * 1000:.2f} mrad off the golden heading")
+
+                metrics = compute_metrics(samples, self.config)
+                self.assertLessEqual(
+                    abs(metrics["max_force_utilization"] - golden["max_force_utilization"]),
+                    self.FORCE_UTILIZATION_TOLERANCE,
+                    f"{mission} peaks at {metrics['max_force_utilization']:.4f} of the "
+                    f"motor limit, the golden plan at {golden['max_force_utilization']:.4f}")
+                self.assertLessEqual(
+                    abs(metrics["rms_wheel_force_n"] - golden["rms_wheel_force_n"]),
+                    0.05,
+                    f"{mission} has an RMS wheel force of "
+                    f"{metrics['rms_wheel_force_n']:.4f} N, the golden plan "
+                    f"{golden['rms_wheel_force_n']:.4f} N")
+
+    def test_the_golden_plans_violate_nothing(self):
+        """A golden plan that breaks the drivebase is not a plan."""
+        from overboard.verification.validator import audit_constraints
+
+        for mission in GOLDEN_MISSIONS:
+            with self.subTest(mission=mission):
+                samples = self._solve(mission)
+                audit = audit_constraints(samples, self.config)
+                for key in ("left_motor_force", "right_motor_force",
+                            "left_wheel_slip", "right_wheel_slip",
+                            "traction_total", "speed_violation_m_s"):
+                    self.assertLessEqual(
+                        audit[key], 1e-9,
+                        f"{mission} violates {key}: {audit[key]}")
+                self.assertEqual(audit["num_violating_samples"], 0)
+
 if __name__ == "__main__":
-    unittest.main()
+    import sys
+
+    if "--rebase" in sys.argv:
+        _rebase_golden()
+    else:
+        unittest.main()
 

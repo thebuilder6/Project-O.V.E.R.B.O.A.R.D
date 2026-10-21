@@ -31,6 +31,7 @@ from tests.test_optimizer import (
     TestSelfConsistentPlan,
     TestSoftWheelForceCost,
     TestPathFitnessScoring,
+    TestGoldenPlan,
 )
 from tests.test_frontier_seed import TestFrontierSeed
 from tests.test_unified_planner import TestUnifiedPlanner
@@ -87,6 +88,7 @@ from tests.test_validator_model import (
     TestHeadingMetric,
     TestUnifiedReachabilityAndDrivetrainParity,
 )
+from tests.test_legacy_boundary import TestLegacyBoundary
 from tests.test_paths import TestCanonicalPaths
 from tests.test_polish import (
     TestPlannerCandidateSet,
@@ -310,6 +312,7 @@ def test_classes():
         TestHeadingMetric,
         TestUnifiedReachabilityAndDrivetrainParity,
         TestCanonicalPaths,
+        TestLegacyBoundary,
         TestPlannerCandidateSet,
         TestReachabilityEngine,
         TestGradientPolish,
@@ -328,6 +331,7 @@ def test_classes():
         TestSelfConsistentPlan,
         TestSoftWheelForceCost,
         TestPathFitnessScoring,
+        TestGoldenPlan,
         TestFrontierSeed,
         TestUnifiedPlanner,
         TestStudioRoutes,

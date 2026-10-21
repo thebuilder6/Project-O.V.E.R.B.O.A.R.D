@@ -4,7 +4,7 @@ Last reviewed: 2026-10-21
 
 Scope: whole repository, reviewed as a single-user, offline desktop tool for one FLL robot. This is not a multi-user or server-scale review.
 
-Status: KI-001 through KI-003, KI-005 through KI-019, KI-021 through KI-031, KI-033 through KI-044, KI-045, KI-046, KI-047 through KI-053 are **fixed**. KI-032 is **mitigated** (test cache). KI-004 is **deleted** (the Multi-Verse pipeline was removed; archived in git tag `archive/legacy-2026-10`). Open: KI-020 (hardware calibration & digital twin validation).
+Status: KI-001 through KI-003, KI-005 through KI-019, KI-021 through KI-031, KI-033 through KI-044, KI-045, KI-046, KI-047 through KI-054 are **fixed**. KI-032 is **mitigated** (test cache). KI-004 is **deleted** (the Multi-Verse pipeline was removed; archived in git tag `archive/legacy-2026-10`). Open: KI-020 (hardware calibration & digital twin validation).
 
 How to use this list: refer to an item by its ID, for example "fix KI-003". The **Quick triage** table is the index - read that, then open the entry you are working on. The entries are now short records: what was wrong, what changed, and which files carry the fix. The long narrative each entry used to carry is in the git history - this file before the 2026-10-21 pruning - so `git log -p KNOWN_ISSUES.md` reads any entry in full.
 
@@ -69,6 +69,7 @@ How to use this list: refer to an item by its ID, for example "fix KI-003". The 
 | KI-051 | P2 | CLI / solver | ~~`--self-consistent` is a no-op: the switch cannot change the plan and the trapezoidal collocation cannot be reached from the CLI~~ (fixed; switch is two-way `--self-consistent/--no-self-consistent` and default True) |
 | KI-052 | P2 | CLI / solver | ~~The CLI and the library plan different trajectories for the same mission: the CLI was self-consistent by default, the library was not~~ (fixed; both default to the self-consistent rule now) |
 | KI-053 | P2 | Physics / safety model | ~~The interval force model passed an interval through unchanged, so a signed velocity could produce a negative force bound~~ (fixed) |
+| KI-054 | P1 | Solver | ~~The solver could be rewritten without moving the plan, and nothing would have said~~ (fixed; the plan is pinned sample by sample) |
 
 ## Open
 
@@ -623,6 +624,22 @@ How to use this list: refer to an item by its ID, for example "fix KI-003". The 
 **Also fixed here:** `overboard.models` exported a `MotorConfig` that does not exist (an `AttributeError` on access); `overboard/core/frontier_seed.py` had a dead `baseline` branch behind an early return, an unreachable `zero_velocity` flag, and no `generate_canonical_seeds` although the strategy ledger and the archived benchmark both name it; and the repository's directories were resolved in eight modules, each by counting its own parents, which is now `overboard/paths.py` with a test that keeps it that way (`tests/test_paths.py`).
 
 **Files:** `overboard/models/drivetrain_physics.py`, `overboard/models/__init__.py`, `overboard/core/frontier_seed.py`, `overboard/paths.py`, `tests/test_robot_model.py`, `tests/test_frontier_seed.py`, `tests/test_paths.py`
+
+### KI-054 - The solver could be rewritten without moving the plan, and nothing would have said
+
+**Fixed.** `overboard/core/optimizer.py` is condensed: the collocation, the force bounds and the objective are built by `_formulate_collocation`, the method lays the variables and the bounds out and pins the waypoints and the stops, and the iteration log is per instance *and* per thread. `tests/test_optimizer.py::TestGoldenPlan` pins the plan of three missions sample by sample, so a change of encoding fails a test.
+
+**Was:** the solver was 1141 lines with the whole NLP in one method, and there was no check anywhere that said *the plan* must not move. A rewrite that kept the objective and the feasible set could still land in a different local optimum and every scalar check in the tree would pass. The `opti.bounded` encoding - the same bounds, written as one double-sided constraint instead of two one-sided ones - is exactly that: on the complex mission it moved the plan from 4.96 s to 5.78 s and the trajectory by 118 mm, and the fast-path test's 1% band did not see it.
+
+**Measured:** the rewrite against the solver it replaced, on the same tree, in one process, with the unified path's settings - five of the six example missions are bit-identical, and the complex mission differs by 1.43 ms, 0.205 mm and 9 mrad of heading, which is inside the golden test's tolerances (5 ms, 1 mm, 20 mrad). The golden test was checked against the `opti.bounded` encoding: it fails, on the complex mission, by 66.8 ms.
+
+**The three defects the rewrite carried, and their fixes:**
+
+- **The iteration log was shared between instances.** `TrajectoryOptimizer._local` was a class attribute, so every optimizer in a thread shared one slot, and `__init__` reset it: the CLI's optimizer and the unified planner's overwrote each other's log, and `main.py` reads `local_optimizer.iteration_history` for the convergence plot. It is now an instance attribute, so the log is per instance *and* per thread.
+- **The split path dropped the fast-polish telemetry.** The stitched stats no longer carried `fast_polish`, `stage_count`, `stage_times` and `stage_iterations`, and `benchmark.py --mode solver` reads `stage_iterations` - the reference table for a solver change would have reported zero iterations for every mission that splits at a boundary.
+- **`_compute_cost` changed its layout contract.** It took the number of segments from the waypoint list instead of from the params vector, so a plan whose layout the waypoints do not describe (the KI-022 fixture is a two-waypoint list with an eleven-state plan) raised a broadcast error. The params vector carries the layout; that is the contract the KI-022 test pins.
+
+**Files:** `overboard/core/optimizer.py`, `tests/test_optimizer.py` (`TestGoldenPlan`), `run_tests.py`, `docs/AGENT_OPS.md`
 
 ## The rules this list produced
 
