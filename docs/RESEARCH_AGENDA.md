@@ -29,6 +29,23 @@ with the current evidence, the hypothesis, the experiment, the metric and the su
   - [Q10 — Is "smallest envelope" the right selection objective?](#q10--is-smallest-envelope-the-right-selection-objective)
   - [Q11 — Should the executor be part of the planner?](#q11--should-the-executor-be-part-of-the-planner)
   - [Q12 — What should the Multi-Verse path become?](#q12--what-should-the-multi-verse-path-become)
+  - [Q13 — Should the measured matrix be re-measured on the unified path?](#q13--should-the-measured-matrix-be-re-measured-on-the-unified-path)
+  - [24.1 Suggested order](#241-suggested-order)
+- [25. How to report a result](#25-how-to-report-a-result)
+
+- [24. The open questions](#24-the-open-questions)
+  - [Q1 — Does a curvature-continuous path family beat the straight-line seed?](#q1--does-a-curvature-continuous-path-family-beat-the-straight-line-seed)
+  - [Q2 — Does a time-allocation warm start reduce iterations?](#q2--does-a-time-allocation-warm-start-reduce-iterations)
+  - [Q3 — Is multi-start worth anything at all?](#q3--is-multi-start-worth-anything-at-all)
+  - [Q4 — Should reachability be an objective term?](#q4--should-reachability-be-an-objective-term)
+  - [Q5 — Should the critic feed back into the solver?](#q5--should-the-critic-feed-back-into-the-solver)
+  - [Q6 — Does `accuracy_weight` actually buy accuracy?](#q6--does-accuracy_weight-actually-buy-accuracy)
+  - [Q7 — Does sample density beat timing flexibility?](#q7--does-sample-density-beat-timing-flexibility)
+  - [Q8 — Is the baseline's dominance an artefact of the example missions?](#q8--is-the-baselines-dominance-an-artefact-of-the-example-missions)
+  - [Q9 — What would make the validator a real digital twin?](#q9--what-would-make-the-validator-a-real-digital-twin)
+  - [Q10 — Is "smallest envelope" the right selection objective?](#q10--is-smallest-envelope-the-right-selection-objective)
+  - [Q11 — Should the executor be part of the planner?](#q11--should-the-executor-be-part-of-the-planner)
+  - [Q12 — What should the Multi-Verse path become?](#q12--what-should-the-multi-verse-path-become)
   - [24.1 Suggested order](#241-suggested-order)
 - [25. How to report a result](#25-how-to-report-a-result)
 
@@ -186,6 +203,19 @@ Each question has the current evidence, a hypothesis, and an experiment with a m
 | **Success criterion** | A decision, made on evidence. **Made**: archived, not shipped. |
 | **Cost** | Low. Do not revive it without a new reason; the next lever is the objective, not the search. |
 
+### Q13 — Should the measured matrix be re-measured on the unified path?
+
+| | |
+|---|---|
+| **Question** | The matrix in [Section 9](HEURISTICS_AND_VERIFICATION.md#9-measured-heuristic-comparison) is the **stock** candidate set's measurement: five seeds × two timing models, taken before the 3-Pillar unified engine became the default. The default path solves three frontier candidates instead. Which set is the better buy? |
+| **Current evidence** | The two paths are not comparable as measured: the frontier triad carries its own accuracy weights (0.001 / 0.002 / 0.001), a per-segment timing model and the discretization cost metric, so a candidate-for-candidate comparison would be comparing different objectives. The single numbers that exist for the unified path are from its own campaign (the complex mission at 5.365 s / 3.6 mm / 1.16 cm) and are not a matrix. |
+| **Hypothesis** | The frontier triad wins as a *set*: three candidates that all pass, on a per-segment timing model, against a stock set that leaves two of six missions with no passing candidate at all. If that holds, the stock set is the thing to prune, not the frontier seeds. |
+| **Experiment** | 1. Wait until the optimizer is stable — the frontier seeds and the collocation are both in motion, and a matrix taken now is stale on arrival. 2. Re-run the same matrix with the unified path: the same six missions, the same robot config, the same sample layout, the unified candidates instead of the five seeds. 3. Report both sets on the same missions: candidates solved, candidates passing, selected duration / envelope / tracking, and the wall time. 4. Change the selection rule only if the stock set wins somewhere the triad does not. |
+| **Metric** | Pass rate and selected duration / envelope / tracking per mission, for both sets, on the same tree and the same config. |
+| **Success criterion** | A decision on which candidate set ships as the default, with the numbers behind it. A tie is a decision too: keep the frontier triad and say why. |
+| **Cost** | Low to run, one matrix; the wait is the cost. |
+| **Note** | This is a measurement, not an experiment: nothing in the tree changes. The rules in [Section 25](#25-how-to-report-a-result) are the report shape, and the tables in Section 9 are the baseline to beat. |
+
 ### 24.1 Suggested order
 
 ```text
@@ -214,6 +244,8 @@ Each question has the current evidence, a hypothesis, and an experiment with a m
   Q4  reachability in the objective                          (large)
   Q11 executor in the planner                                (large)
   Q9  hardware-calibrated twin                               (needs hardware)
+  Q13 re-measure the matrix on the unified path              (waits for a
+                                                              stable optimizer)
 ```
 
 The RQ-A items came first because they were the *cause* of the gate failures that everything else is downstream of: 25 of the 29 failures in the 60-candidate matrix cite the tracking gate, and RQ-A shows it was measuring a discretisation artefact rather than the robot. KI-026 to KI-028 have landed, and the artefact is now small at the fine end (the S-curve at n=40: 0.98 → 0.27 cm) but not at the coarse end, where the plan's own deviation is the whole error and only the reference's velocity half ([RQ-A finding F8](research/RQ-A_tracking_error.md)) would remove it. **The 5 mm threshold still measures the discretisation more than it measures the robot**, so it must not be tuned to make missions pass.
