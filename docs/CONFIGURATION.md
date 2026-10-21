@@ -171,22 +171,22 @@ python -m overboard.main -c examples/fll_choreo.json -w examples/example_straigh
 
 - `-n, --samples`: Samples per segment (default 10).
 - `-a, --accuracy-weight`: Smoothness/jerk weight (0 = time-optimal).
-- `--force-weight`: Soft wheel-force and traction-utilisation penalty in the NLP objective (0 = none, the default). Simple solver only; the hard per-wheel limits apply either way.
+- `--force-weight`: Soft wheel-force and traction-utilisation penalty in the NLP objective (0 = none, the default). The hard per-wheel limits apply either way.
 - `--polish`: The post-solve gradient polish. The reachability rollout is differentiated, and the plan is re-solved with the samples the gradient points at weighted; the better of the two plans is kept. Off by default; needs JAX.
 - `--candidates`: Candidates to solve and compare with `--validate` (default 2). The planner's three frontier candidates (`frontier_sprint`, `frontier_sweeper`, `frontier_exploratory`) are solved and `N` shortens that list; the fastest passing one wins, with the envelope breaking a duration tie. `1` disables the comparison.
 - `--stop-waypoints "0,2,4"`: Comma-separated stop indices.
 - `--events "1:lower_arm,3:release"`: Comma-separated event mappings.
-- `--unified` / `--no-unified`: **Deprecated.** The 3-Pillar unified engine is the only planner; both spellings are accepted and ignored, and so is `--simple`.
-- `--pyramid`, `--pyramid-candidates N`, `--h-adaptive`: **Deprecated.** The screen-then-refine pyramid and its adaptive mesh are gone; the flags are accepted and ignored.
-- `--per-segment-dt`: Force each waypoint segment to have its own sample interval (simple solver only). This is the general timing model. The interval may only change across a waypoint where the robot stops *and* the heading is pinned; everywhere else the wheel force profile must be continuous through the point (KI-024). By default candidates mix both modes.
-- `--uniform-dt`: **Deprecated.** Force one shared sample interval across all segments. The CLI warns and ignores it; the planner always uses the per-segment model.
+- `--unified` / `--no-unified`: **Deprecated.** The 3-Pillar unified engine is the only planner; both spellings are accepted, warned about and ignored, and so is `--simple`. The deprecated flags are hidden from `--help`.
+- `--pyramid`, `--pyramid-candidates N`, `--h-adaptive`: **Deprecated.** The screen-then-refine pyramid and its adaptive mesh are gone; the flags are accepted, warned about and ignored.
+- `--per-segment-dt`: **Deprecated.** The planner always uses the per-segment model, so the flag is accepted, warned about and ignored. The interval may only change across a waypoint where the robot stops *and* the heading is pinned; everywhere else the wheel force profile must be continuous through the point (KI-024). By default candidates mix both modes.
+- `--uniform-dt`: **Deprecated.** The equal-duration model forced one shared sample interval across all segments, which penalises a path with unequal segment lengths. The CLI warns and ignores it; the planner always uses the per-segment model.
 - Timing tradeoff: an uneven 1.0 m + 0.2 m path passes all gates with per-segment at `accuracy_weight=0.005` in 2.784 s / 0.32 cm envelope / 0.36 cm tracking / 9.52 m/s³ peak wheel jerk, versus 4.456 s / 0.37 cm / 0.36 cm / 9.52 m/s³ for the equal-duration mode at the same weight, so the mixed loop selects per-segment. At `accuracy_weight=0` the per-segment candidate is 2.710 s / 0.32 cm but fails the Immrax and CPU gates, so the mixed loop falls back to the equal-duration candidate. The complex mission at `accuracy_weight=0` is faster with per-segment (4.650 s / 1.00 cm) but its tracking is 0.84 cm and its motor force is 0.074 N over the limit, so the equal-duration 6.068 s / 1.22 cm candidate is selected. The CPU audit runs per candidate, so a partial pass cannot block a later fully passing candidate. Both modes are held to the same wheel-jerk discipline, so `accuracy_weight` means the same thing in either (KI-022).
 - `--no-parallel`, `--workers`: Solve candidates sequentially or in worker processes; they do not change the selected trajectory.
 
 ### Validation and export
 
 - `--validate`: CPU audit + Immrax + final-waypoint gate. Requires JAX/Immrax. With `--candidates N` (default 2), solves N of the planner's candidates and exports the passing one with the shortest duration (the envelope breaks a tie); on failure, exits 1 and writes nothing.
-- `--sysid-fit PATH`: Optional `sysid_fit.json` measured actuator/odometry model; requires `--validate` or `--live`. The default kinematic model is used when omitted. The plant applies the measured actuator gain, time constant, command delay, odometry scale and braking shortfall (KI-020 keeps the un-modelled residue open).
+- `--sysid-fit PATH`: Optional `sysid_fit.json` measured actuator/odometry model; requires `--validate`. The default kinematic model is used when omitted. The plant applies the measured actuator gain, time constant, command delay, odometry scale and braking shortfall (KI-020 keeps the un-modelled residue open).
 - `--control-dt`: The control period the validator models, in seconds (default 0.02). Set it to the period the robot actually achieves so the gate is measured against the controller that runs.
 - `--propagation [plant|tick]`: The reachability model the envelope gate uses: `plant` (default) or one closed-loop tick (opt-in, 7-10x slower).
 - `--export-format controller|python|python-compact`: Write a fixed-timestep controller JSON, a legacy list-of-dicts Python module, or a packed-compact Python module. The compact module is consumed by `pybricks_code/ramsete_compact.py` or `ramsete_compact_events.py`.
@@ -196,9 +196,7 @@ python -m overboard.main -c examples/fll_choreo.json -w examples/example_straigh
 ### Visualization
 
 - `--plot`, `--animate`: Blocking Matplotlib views.
-- `--live`: Open the browser studio on this mission and solve it there (blocking). The old WebSocket live view was removed (KI-005, KI-016).
-- `--show-convergence`: Plot how the solve converged. `--iteration-history PATH` writes the same history to JSON for the studio.
-- `--convergence-mode`: `parallel`, `best`, or `layered`.
+- `--iteration-history PATH`: Write the solver's iteration history to this JSON file, for the studio to plot how the trajectory converged. The studio always asks for it.
 - `-q, --quiet`: Suppress progress output.
 
 ## Installation note

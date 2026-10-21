@@ -63,7 +63,7 @@ What is still incomplete:
 | `overboard/deploy/export.py` | Fixed-timestep controller JSON, legacy Python, and packed-compact Python export |
 | `overboard/gui_server.py`, `overboard/viz/studio.*` | Browser studio: mission editor, solve jobs, artifact download |
 | `overboard/diagnostics.py` | Environment report behind `--doctor` and the studio health check |
-| `overboard/viz/convergence_plotter.py`, `overboard/viz/plotter.py`, `overboard/viz/animated_plotter.py`, `overboard/viz/fields.py` | Visualization and field geometry |
+| `overboard/viz/plotter.py`, `overboard/viz/animated_plotter.py`, `overboard/viz/fields.py` | Visualization and field geometry |
 | `pybricks_code/` | Robot-side firmware, fast/reference/compact controllers, missions, digital-twin log collector |
 
 ### 2.2 CLI flow
@@ -461,11 +461,11 @@ The full option list is in `README.md` and `docs/CONFIGURATION.md`. Current trut
 
 - The 3-Pillar unified engine (`overboard/core/unified_planner.py`) is the only planner and the CasADi/IPOPT optimizer is its backend; `--no-unified` (alias `--simple`) is deprecated and ignored. The Multi-Verse pipeline was removed from the tree (git tag `archive/legacy-2026-10`).
 - `--validate` requires JAX/Immrax and gates output. `--candidates N` (default 2) selects among the unified frontier candidates, or the seed/timing combinations of the stock set.
-- `--sysid-fit sysid_fit.json` opts into the fitted five-state plant; it requires `--validate` or `--live`.
+- `--sysid-fit sysid_fit.json` opts into the fitted five-state plant; it requires `--validate`.
 - `--export-format controller|python|python-compact` writes optional outputs after the gate.
 - `--per-segment-dt` forces per-segment intervals and `--uniform-dt` forces one shared interval; both are only valid with the simple solver. By default candidates mix both.
 - `--benchmark` writes `<output>_stats.json` after the gate.
-- `--plot`, `--animate`, `--gui` and `--live` are blocking.
+- `--plot`, `--animate` and `--gui` are blocking.
 - `--workers` and `--no-parallel` do not affect the final result (KI-004).
 - `--iteration-history PATH` writes the solver's iteration history to JSON, which is what the studio's convergence plot reads.
 
@@ -473,11 +473,11 @@ The full option list is in `README.md` and `docs/CONFIGURATION.md`. Current trut
 
 `overboard/gui_server.py` serves `overboard/viz/studio.html` on `127.0.0.1:8000` and runs the command line in a subprocess, so the export gate and the validation rules are the same as on the terminal. The studio draws the mission, edits the robot, shows the per-segment validation detail and downloads the artifacts.
 
-The earlier WebSocket live view (`live_visualizer.py`, `viz/index.html`) was removed: it was a second, CDN-dependent user interface for the same job, and it could take a port from another program (KI-005, KI-016). `--live` now opens the studio on the given mission and solves it there.
+The earlier WebSocket live view (`live_visualizer.py`, `viz/index.html`) was removed: it was a second, CDN-dependent user interface for the same job, and it could take a port from another program (KI-005, KI-016). The CLI's own studio wrappers (`--live`, `--show-convergence`, `--convergence-mode`) are gone: the studio does all three natively, and `--gui` is the one way in.
 
 ### 9.3 Convergence
 
-The solver records `iteration_history` in the default path: `--show-convergence` plots it, and `--iteration-history PATH` writes the same history to JSON for the studio. (The archived `MasterTrajectoryOptimizer` declared the field but never filled it; the `--convergence-animate`/`--convergence-output` flags it needed were removed in KI-017.)
+The solver records `iteration_history` in the default path, and `--iteration-history PATH` writes it to JSON for the studio, which plots it. The command line has no convergence plot of its own: the studio draws it. (The archived `MasterTrajectoryOptimizer` declared the field but never filled it; the `--convergence-animate`/`--convergence-output` flags it needed were removed in KI-017.)
 
 ### 9.4 Benchmarks
 
@@ -501,7 +501,7 @@ The solver records `iteration_history` in the default path: `--show-convergence`
 `python run_tests.py` with JAX installed:
 
 ```text
-671 tests run, 0 failures, 0 errors, 0 skipped
+654 tests run, 0 failures, 0 errors, 0 skipped
 ```
 
 (measured 2026-10-21; the count grows as tests are added - `run_tests.py` prints it)
@@ -692,13 +692,11 @@ The path-planning side of this list — the seed heuristics, the timing models, 
 --workers INTEGER              worker processes for parallel candidates
 --validate / --no-validate     CPU + Immrax gate; requires JAX
 --sysid-fit PATH               optional fitted actuator/odometry model
-                              (requires --validate or --live)
+                              (requires --validate)
 --export-format                none | controller | python | python-compact
 --controller-dt FLOAT          controller timestep
 --benchmark                    write <output>_stats.json
 --plot / --animate             blocking visualization
---live                         blocking studio on this mission, then solves it
---show-convergence             convergence plot
 --iteration-history PATH       write the iteration history to JSON
 --control-dt FLOAT             the control period the validator models
 --propagation [plant|tick]     the reachability model the gate uses
@@ -706,7 +704,6 @@ The path-planning side of this list — the seed heuristics, the timing models, 
                               the JAX screen-then-refine pyramid (off by default)
 --surrogate-polish             deprecated: the engine is gone
 --force-weight FLOAT           price wheel-force utilisation in the objective
---convergence-mode             parallel | best | layered
 -v, --verbose                  show solver internals
 -q, --quiet                    suppress progress output
 ```

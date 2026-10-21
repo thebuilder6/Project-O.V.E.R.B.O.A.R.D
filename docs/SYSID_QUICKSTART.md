@@ -107,7 +107,7 @@ python -m overboard.main -c examples/fll_choreo.json \
   --validate --sysid-fit sysid_fit.json
 ```
 
-`--sysid-fit` requires `--validate` or `--live` and JAX/Immrax. Validation is a
+`--sysid-fit` requires `--validate` and JAX/Immrax. Validation is a
 hard gate: a failed solve or failed validation writes no `.traj`, controller,
 Python file, or `_stats.json`.
 

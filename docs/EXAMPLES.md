@@ -345,15 +345,9 @@ python -m overboard.main -c examples/fll_choreo.json -w waypoints.json -o high_r
 
 The three frontier candidates are solved and the fastest passing one is kept. A waypoint is a legitimate timing boundary only when the robot stops there *and* the heading is pinned; at every other waypoint the per-segment model keeps the wheel force profile continuous through the point (KI-024).
 
-```bash
-python -m overboard.main --per-segment-dt \
-  -c examples/fll_choreo.json -w waypoints.json -o per_segment.traj
-
-python -m overboard.main --uniform-dt \
-  -c examples/fll_choreo.json -w waypoints.json -o uniform.traj
-```
-
-This changes the optimization variables, not the waypoint constraints.
+The planner always uses the per-segment model, so there is no timing flag to choose: the
+`--per-segment-dt` and `--uniform-dt` flags are accepted, warned about and ignored. What the
+timing model changes is the optimization variables, not the waypoint constraints.
 
 ---
 
@@ -535,8 +529,8 @@ for w in weights:
 Each candidate combines an initial-guess seed with a timing mode. By default candidate 1 is equal-duration baseline, candidate 2 is per-segment baseline, and the remaining seeds alternate modes. To compare only the five seeds with equal-duration timing, force that mode:
 
 ```bash
-python -m overboard.main --uniform-dt --validate -c examples/fll_choreo.json \
-  -w examples/example_mission_first4.json -o first4.traj --candidates 5
+python -m overboard.main --validate -c examples/fll_choreo.json \
+  -w examples/example_mission_first4.json -o first4.traj --candidates 3
 ```
 
 The five seeds (`baseline`, `rolling`, `bow_left`, `bow_right`, `turn_first`) are the ones the rescue round tries when the planner's candidates produce nothing usable (KI-048); they are declared in one line (`overboard/core/optimizer.py`). The measurements below are the record of the stock candidate set, which was retired with the rest of the multi-track paths: on the first four waypoints of the complex mission all five uniform seeds passed, and `baseline` won at 2.176 s / 0.27 cm; on the full mission the baseline also won (6.068 s / 1.22 cm), the other uniform seeds converging to slower, wider paths (8.1-8.7 s), so they were rejected. The per-segment baseline was faster (1.833 s on first4, and 4.650 s on the mission), but on the mission its tracking was 0.84 cm and its motor force 0.074 N over the limit, so it was rejected there.
@@ -863,7 +857,7 @@ Open the studio on a mission and solve it there, with the same options the comma
 **Command:**
 
 ```bash
-python -m overboard.main --live -w waypoints.json
+python -m overboard.main --gui
 ```
 
 **Steps:**
@@ -874,7 +868,7 @@ python -m overboard.main --live -w waypoints.json
 
 **Notes:**
 
-- `--live` and `--gui` open the same studio. `--live` adds the mission and starts the solve; `--gui` just opens it.
+- `--gui` opens the studio. The mission is loaded in the browser and the solve is started from there; the CLI's own wrappers for it (`--live`, `--show-convergence`, `--convergence-mode`) are gone, because the studio does all three natively.
 - The server is blocking: stop it with Ctrl+C.
 - The studio runs the command line in a subprocess, so the export gate and the validation rules are the same as on the terminal.
 

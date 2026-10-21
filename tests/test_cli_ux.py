@@ -58,7 +58,7 @@ class TestCliBasics(unittest.TestCase):
     def test_help_lists_the_user_facing_flags(self):
         result = self._invoke(["--help"])
         self.assertEqual(result.exit_code, 0)
-        for flag in ("--gui", "--doctor", "--unified", "--preset"):
+        for flag in ("--gui", "--doctor", "--preset", "--candidates", "--polish"):
             self.assertIn(flag, result.output)
 
     def test_the_propagation_flag_is_offered(self):
@@ -656,23 +656,21 @@ class TestIterationHistory(unittest.TestCase):
         self.assertTrue(entries[0]["trajectory"])
 
 class TestStudioEntryPoints(unittest.TestCase):
-    """--gui and --live both open the studio; --live solves the mission."""
+    """--gui opens the studio, and the CLI keeps no wrapper for it."""
 
     def setUp(self):
         import overboard.main as main
         self.main = main
         self.runner = CliRunner()
 
-    def test_live_and_gui_cannot_be_combined(self):
-        result = self.runner.invoke(self.main.main, [
-            "--gui", "--live", "-w", "examples/example_straight.json"])
-        self.assertEqual(result.exit_code, 1)
-        self.assertIn("both open the studio", result.output)
-
-    def test_live_needs_a_mission(self):
-        result = self.runner.invoke(self.main.main, ["--live"])
-        self.assertEqual(result.exit_code, 2)
-        self.assertIn("--waypoints", result.output)
+    def test_the_wrappers_that_duplicated_the_studio_are_gone(self):
+        """--live, --show-convergence and --convergence-mode duplicated what
+        the studio does natively, so they are not options any more."""
+        for flag in ("--live", "--show-convergence", "--convergence-mode"):
+            result = self.runner.invoke(
+                self.main.main, ["-w", "examples/example_straight.json", flag])
+            self.assertNotEqual(result.exit_code, 0, flag)
+            self.assertIn("no such option", result.output.lower(), flag)
 
     def test_studio_options_carry_the_cli_settings(self):
         options = self.main._studio_options(
@@ -729,14 +727,19 @@ class TestDeprecatedCliFlags(unittest.TestCase):
             self.assertNotEqual(result.exit_code, 0, flag)
             self.assertIn("no such option", result.output.lower(), flag)
 
-    def test_help_shows_deprecated_tags(self):
+    def test_help_hides_the_deprecated_flags(self):
+        """A deprecated flag is accepted and warns; it does not clutter the
+        help of the flags that still do something."""
         result = self.runner.invoke(self.main.main, ["--help"])
         self.assertEqual(result.exit_code, 0)
-        self.assertIn("(Deprecated: 80 ms invariant mesh eliminates", result.output)
-        self.assertIn("(Deprecated: equal-duration dt severely", result.output)
-        self.assertIn("Deprecated: the 3-Pillar Unified Trajectory",
-                      result.output)
-        self.assertIn("--unified / --no-unified", result.output)
+        for flag in ("--simple", "--sweep", "--uniform-dt", "--surrogate-polish",
+                     "--pyramid", "--pyramid-candidates", "--h-adaptive",
+                     "--unified", "--no-unified"):
+            self.assertNotIn(flag, result.output, flag)
+        # The flags that still do something are still in the help.
+        self.assertIn("--candidates", result.output)
+        self.assertIn("--polish", result.output)
+        self.assertIn("--gui", result.output)
 
 if __name__ == "__main__":
     unittest.main()

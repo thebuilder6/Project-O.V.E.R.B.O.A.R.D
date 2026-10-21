@@ -284,8 +284,7 @@ Each candidate is solved in its own NLP. With more than one candidate, they are 
 
 Three things force the solve to stay sequential, because they need the solver in the main process:
 
-- `--live` (the live view needs the iteration history),
-- `--show-convergence` (same),
+- a patched or injected optimizer (a worker cannot import it),
 - a patched or injected optimizer class (a worker process cannot import the patched object).
 
 **`--workers` and `--no-parallel` are not quality claims.** They change wall-clock time only. The result is identical either way.
@@ -301,7 +300,7 @@ Every candidate goes through the full gate chain in [Part II](#part-ii--the-veri
 - `duration` — the trajectory duration,
 - `cost` — the solver's objective value.
 
-Then `_select_attempt` (`overboard/main.py`) picks one - the **shortest passing candidate** on the default path, the **lowest fitness score** on the stock path. See [Section 7](#7-scoring-and-selection) and [7.3](#73-the-selection-rule).
+Then `_select_attempt` (`overboard/main.py`) picks one: the **shortest passing candidate**, with the envelope breaking a duration tie. The 5-part fitness score is reported for every candidate, so another rule can be run offline on the same numbers, but it does not decide. See [Section 7](#7-scoring-and-selection) and [7.3](#73-the-selection-rule).
 
 ### 3.4 Export
 

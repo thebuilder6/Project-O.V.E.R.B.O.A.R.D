@@ -52,7 +52,6 @@ overboard/
 ├── viz/                        # Visualization & web studio
 │   ├── __init__.py
 │   ├── plotter.py              # Matplotlib trajectory plotting
-│   ├── convergence_plotter.py  # Optimization convergence visualizer
 │   ├── animated_plotter.py     # Live animated simulation visualizer
 │   ├── fields.py               # FLL game field definitions
 │   ├── mat_import.py           # Field mat image importer
@@ -74,8 +73,8 @@ overboard/
 
 External Isolated Trees:
 - `pybricks_code/`: MicroPython robot-side firmware (strictly isolated, zero host imports).
-- `tests/`: 33 test modules, 671 tests (all importing from `overboard.*`), measured 2026-10-21.
-  With PyYAML installed the suite is 671 tests, 0 failures, 0 skipped; the three
+- `tests/`: 32 test modules, 654 tests (all importing from `overboard.*`), measured 2026-10-21.
+  With PyYAML installed the suite is 654 tests, 0 failures, 0 skipped; the three
   `TestRoboVibeConverter` cases in `tests/test_fields.py` skip when PyYAML is missing.
 - Root developer tools: `run_tests.py`, `testcache.py`, `benchmark.py`.
 

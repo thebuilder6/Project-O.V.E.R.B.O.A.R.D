@@ -396,7 +396,7 @@ python -m overboard.main -w examples/example_straight.json -o output.traj \
   --validate --sysid-fit sysid_fit.json
 ```
 
-`--sysid-fit` requires `--validate` (or `--live`, which passes the same fit to every solve the
+`--sysid-fit` requires `--validate` (the studio passes the same fit to every solve the
 studio runs). The validator applies the fitted actuator response, the odometry belief and the
 measured braking shortfall, and it uses the **gain interval** as the band it plans against, so a
 robot that varies a lot produces a conservative plan.
