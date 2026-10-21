@@ -202,6 +202,38 @@ class TestNoPhantomTurnRate(unittest.TestCase):
         with self.assertRaises(ValueError):
             ImmraxValidator(cfg, wheel_state="velocities")
 
+    def test_gain_subspace_partitioning_shrinks_envelope(self):
+        """Splitting the gain band (opt-in) only ever tightens the tube.
+
+        Each gain sub-box is propagated on its own and the boxes are hulled,
+        which removes the wrapping the single wide box carries. The tracking
+        error is the unpartitioned run's, so its meaning does not move.
+        """
+        cfg = JAXRobotConfig(_TEST_ROBOT)
+        plan = _straight(length=0.6, v=0.4, n=8)
+
+        def run(k):
+            val = ImmraxValidator(cfg, digital_twin=_twin(),
+                                  wheel_state="mean_diff")
+            val.digital_twin_gain_range = (0.95, 1.05)
+            val.gain_partitions = k
+            return _validate(val, plan)
+
+        whole, split = run(1), run(4)
+        self.assertLess(split["max_envelope_radius_m"],
+                        whole["max_envelope_radius_m"])
+        self.assertAlmostEqual(
+            split["reachability"]["max_tracking_error_m"],
+            whole["reachability"]["max_tracking_error_m"], places=9)
+        for a, b in zip(split["reachability"]["envelope"],
+                        whole["reachability"]["envelope"]):
+            self.assertGreaterEqual(a["x_min"], b["x_min"] - 1e-12)
+            self.assertLessEqual(a["x_max"], b["x_max"] + 1e-12)
+            self.assertGreaterEqual(a["y_min"], b["y_min"] - 1e-12)
+            self.assertLessEqual(a["y_max"], b["y_max"] + 1e-12)
+        print("gain partitions: %.4f m -> %.4f m" % (
+            whole["max_envelope_radius_m"], split["max_envelope_radius_m"]))
+
 
 @unittest.skipUnless(HAS_IMMRAX, "immrax not installed")
 class TestTheBoxContainsTheReachableSet(unittest.TestCase):

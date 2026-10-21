@@ -26,7 +26,6 @@ from overboard.paths import HUB_MISSION_MODULE, HUB_RUNNER
 from overboard.models.robot_model import RobotConfig
 from overboard.core.optimizer import TrajectoryOptimizer
 from overboard.verification.validator import (
-    validate_trajectory,
     validate_samples,
     check_final_waypoint,
     compute_metrics,
@@ -362,8 +361,7 @@ def _mark_best_effort(stats, attempts, selected_index):
     """
     attempt = attempts[max(0, selected_index - 1)]
     segments = attempt.get("segments", []) or []
-    excess = max((float(segment.get("envelope_m", 0.0))
-                  - float(segment.get("limit_m", 0.0))
+    excess = max((float(segment.get("excess_m", 0.0))
                   for segment in segments), default=0.0)
     stats["validation"] = {
         "passed": False,
@@ -417,6 +415,10 @@ DEFAULT_ENVELOPE_LIMIT_M = 0.02
 # The propagation cuts the tube off at this radius (KI-049), so a looser
 # limit could never be measured, let alone failed.
 MAX_ENVELOPE_LIMIT_M = 0.05
+# Extra allowance per metre travelled. 0.0 keeps the gate absolute (the tube
+# widens with distance, so that is a duration budget in disguise); a positive
+# slope prices distance instead (KI-054).
+DEFAULT_ENVELOPE_LIMIT_PER_METRE = 0.0
 
 
 def _segment_limit(thresholds, index, default=DEFAULT_ENVELOPE_LIMIT_M):
@@ -442,6 +444,21 @@ def _segment_limit(thresholds, index, default=DEFAULT_ENVELOPE_LIMIT_M):
     if index in thresholds:
         return float(thresholds[index])
     return float(default)
+
+
+def _travelled_m(samples_data):
+    """Cumulative distance along the plan, one entry per sample, in metres."""
+    travelled = [0.0]
+    for a, b in zip(samples_data, samples_data[1:]):
+        travelled.append(travelled[-1] + math.hypot(
+            float(b.get("x", 0.0)) - float(a.get("x", 0.0)),
+            float(b.get("y", 0.0)) - float(a.get("y", 0.0))))
+    return travelled
+
+
+def _envelope_limit_at(base, per_metre, travelled):
+    """The limit in force ``travelled`` metres into the path (KI-054)."""
+    return float(base) + float(per_metre) * float(travelled)
 
 
 def _waypoint_boundaries(segment_samples):
@@ -478,7 +495,8 @@ def _waypoint_of(bounds, index):
 
 
 def _segment_report(samples_data, samples_per_segment, thresholds, immrax_report, cpu_summary,
-                    segment_samples=None, default_limit=DEFAULT_ENVELOPE_LIMIT_M):
+                    segment_samples=None, default_limit=DEFAULT_ENVELOPE_LIMIT_M,
+                    default_limit_per_metre=DEFAULT_ENVELOPE_LIMIT_PER_METRE):
     """Per-segment validation detail: envelope radius, local limit, violations.
 
     The gate checks sample i against the threshold of the waypoint whose
@@ -524,6 +542,7 @@ def _segment_report(samples_data, samples_per_segment, thresholds, immrax_report
                                        ys[j] - sample.get("y", ys[j]))
 
     bounds = _waypoint_boundaries(segment_samples)
+    travelled = _travelled_m(samples_data)
     if len(bounds) > 1:
         # The optimizer's own layout: the boundaries are the waypoints.
         n_segments = len(bounds) - 1
@@ -536,14 +555,23 @@ def _segment_report(samples_data, samples_per_segment, thresholds, immrax_report
     for index in range(n_segments):
         start = starts[index]
         stop = stops[index]
-        limit = _segment_limit(thresholds, index, default_limit)
+        base = _segment_limit(thresholds, index, default_limit)
         radius = 0.0
+        # The limit grows along the segment, so the verdict belongs to the
+        # sample with the biggest excess, not to the biggest radius.
+        limit = _envelope_limit_at(base, default_limit_per_metre, travelled[start])
+        worst_excess = None
         for i in range(start, stop):
             env = envelopes[i] if i < len(envelopes) else None
             if not env:
                 continue
-            radius = max(radius, math.hypot((env["x_max"] - env["x_min"]) / 2.0,
-                                             (env["y_max"] - env["y_min"]) / 2.0))
+            err = math.hypot((env["x_max"] - env["x_min"]) / 2.0,
+                             (env["y_max"] - env["y_min"]) / 2.0)
+            local = _envelope_limit_at(base, default_limit_per_metre, travelled[i])
+            radius = max(radius, err)
+            if worst_excess is None or err - local > worst_excess:
+                worst_excess = err - local
+                limit = local
         violations = sum(1 for i in range(start, stop) if i in violating)
         slip_points = sum(1 for i in range(start, stop) if i in slip)
         segments.append({
@@ -551,16 +579,18 @@ def _segment_report(samples_data, samples_per_segment, thresholds, immrax_report
             "to": index + 1,
             "limit_m": limit,
             "envelope_m": radius,
+            "excess_m": max(0.0, worst_excess or 0.0),
             "drift_m": max(drift[start:stop]) if stop > start else 0.0,
             "violations": violations,
             "slip_points": slip_points,
-            "ok": radius <= limit and violations == 0 and slip_points == 0,
+            "ok": (worst_excess or 0.0) <= 0.0 and violations == 0 and slip_points == 0,
         })
     return segments
 
 
 def _emit_validation_report(attempts, selected_index, propagation=None,
-                            best_effort=False, envelope_limit=None):
+                            best_effort=False, envelope_limit=None,
+                            envelope_limit_per_metre=None):
     """Print the machine-readable validation summary.
 
     Every candidate carries its score vector: the duration, the reachability
@@ -578,8 +608,7 @@ def _emit_validation_report(attempts, selected_index, propagation=None,
     candidates = []
     for number, attempt in enumerate(attempts, 1):
         segments = attempt.get("segments", []) or []
-        excess = max((float(segment.get("envelope_m", 0.0))
-                      - float(segment.get("limit_m", 0.0))
+        excess = max((float(segment.get("excess_m", 0.0))
                       for segment in segments), default=0.0)
         candidates.append({
             "index": number,
@@ -617,6 +646,7 @@ def _emit_validation_report(attempts, selected_index, propagation=None,
                # The run-wide default the gate applied. A verdict depends on
                # it, so it is never left implicit (KI-054).
                "envelope_limit_m": _finite(envelope_limit),
+               "envelope_limit_per_metre": _finite(envelope_limit_per_metre),
                # True when a failed candidate was exported anyway, so the
                # studio can say "failed, shown" instead of "not checked".
                "best_effort": bool(best_effort)}
@@ -979,6 +1009,7 @@ class _ScoreContext:
     control_dt: float
     quiet: bool
     envelope_limit: float = DEFAULT_ENVELOPE_LIMIT_M
+    envelope_limit_per_metre: float = DEFAULT_ENVELOPE_LIMIT_PER_METRE
 
 
 def _record_candidate(spec, solve_result, cand_idx, batch_len, histories, *,
@@ -1038,6 +1069,7 @@ def _score_attempt(attempt_record, ctx):
     waypoint_bounds = _waypoint_boundaries(
         stats.get("segment_samples")
         or (samples if isinstance(samples, (list, tuple, np.ndarray)) else None))
+    travelled = _travelled_m(samples_data)
 
     try:
         validator_cls, robot_config_cls = _ensure_jax_classes()
@@ -1093,8 +1125,9 @@ def _score_attempt(attempt_record, ctx):
         else:
             s_val = samples[0] if isinstance(samples, (list, tuple, np.ndarray)) else samples
             wp_idx = i // max(1, int(s_val))
-        local_threshold = _segment_limit(ctx.waypoint_thresholds, wp_idx,
-                                        ctx.envelope_limit)
+        local_threshold = _envelope_limit_at(
+            _segment_limit(ctx.waypoint_thresholds, wp_idx, ctx.envelope_limit),
+            ctx.envelope_limit_per_metre, travelled[i])
 
         env = samples_data[i].get('reachability_envelope', {})
         if env:
@@ -1214,7 +1247,8 @@ def _score_attempt(attempt_record, ctx):
     attempt_record["segments"] = _segment_report(
         samples_data, samples, ctx.waypoint_thresholds, immrax_report,
         cpu_summary, segment_samples=stats.get("segment_samples"),
-        default_limit=ctx.envelope_limit)
+        default_limit=ctx.envelope_limit,
+        default_limit_per_metre=ctx.envelope_limit_per_metre)
 
     if not ctx.quiet:
         score = ("envelope diverged" if attempt_record["diverged"]
@@ -1414,12 +1448,16 @@ def _choose_attempt(all_attempts, *, validate, quiet, samples, pick=None,
 
 
 def _write_outputs(output, samples_data, stats, config_data, robot_cfg, *,
-                   benchmark, validate, config, waypoints, export_format,
-                   controller_dt):
+                   benchmark, export_format, controller_dt):
     """Write the trajectory and the files the flags asked for.
 
     Returns every path written, the trajectory first.
     """
+    parent = os.path.dirname(os.path.abspath(output))
+    if not os.path.isdir(parent):
+        raise click.ClickException(
+            f"Output directory '{parent}' does not exist. Create it, or pass "
+            f"-o with a path in an existing directory.")
     result = {
         "name": os.path.basename(output).split('.')[0],
         "version": 3,
@@ -1433,8 +1471,13 @@ def _write_outputs(output, samples_data, stats, config_data, robot_cfg, *,
     # mistaken for an approved one when it is read later.
     if stats.get("validation"):
         result["validation"] = stats["validation"]
-    with open(output, 'w') as f:
+    # Write beside the target and swap it in, so a failed write (disk full,
+    # serialization error) keeps the previous trajectory instead of
+    # truncating it. Same pattern as _write_candidates.
+    temporary = f"{output}.tmp"
+    with open(temporary, 'w') as f:
         json.dump(result, f, indent=1)
+    os.replace(temporary, output)
 
     written = [output]
 
@@ -1454,9 +1497,6 @@ def _write_outputs(output, samples_data, stats, config_data, robot_cfg, *,
         with open(stats_output, 'w') as f:
             json.dump(stats_to_write, f, indent=2)
         written.append(stats_output)
-
-    if validate:
-        validate_trajectory(output, config, waypoints=waypoints)
 
     if export_format == 'controller':
         ctrl_output = os.path.splitext(output)[0] + '_controller.json'
@@ -1594,6 +1634,14 @@ def _render(output, samples_data, wps, optimizer, all_attempts, selected_index, 
                    'needs, not a number to make a run pass: the value in force '
                    'is written into the validation report and the trajectory. '
                    'Capped at 0.05, where the tube is cut off.')
+@click.option('--envelope-limit-per-metre',
+              default=DEFAULT_ENVELOPE_LIMIT_PER_METRE,
+              type=click.FloatRange(min=0.0, max=0.05),
+              help='Extra envelope allowance per metre travelled, in m/m, added '
+                   'to the run-wide or waypoint limit (default 0 = absolute). '
+                   'The tube widens with distance, so this prices the drift '
+                   'instead of the elapsed time (KI-054). Recorded with the '
+                   'validation report.')
 @click.option('--sysid-fit', type=click.Path(exists=True, dir_okay=False), default=None,
               help='Optional sysid_fit.json digital-twin fit (requires --validate).')
 @click.option('--export-format', type=click.Choice(['none', 'controller', 'python', 'python-compact'], case_sensitive=False),
@@ -1656,7 +1704,8 @@ def main(ctx, config, waypoints, output, gui, gui_port, doctor, preset,
          samples, accuracy_weight, force_weight, candidates, pick_candidate,
          stop_waypoints, events,
          no_parallel, workers, fast_polish, polish, validate, best_effort,
-         envelope_limit, sysid_fit, export_format, controller_dt, control_dt,
+         envelope_limit, envelope_limit_per_metre,
+         sysid_fit, export_format, controller_dt, control_dt,
          propagation, benchmark,
          push_hub, hub_conn, hub_name, hub_log,
          plot, animate, iteration_history, candidates_out,
@@ -1943,6 +1992,7 @@ def main(ctx, config, waypoints, output, gui, gui_port, doctor, preset,
         control_dt=control_dt,
         quiet=quiet,
         envelope_limit=float(envelope_limit),
+        envelope_limit_per_metre=float(envelope_limit_per_metre),
     )
     all_attempts = _run_candidates(
         specs_to_solve, solve_ctx, score_ctx,
@@ -1961,6 +2011,9 @@ def main(ctx, config, waypoints, output, gui, gui_port, doctor, preset,
     best_effort_export = bool(validate and best_effort and not attempt_passed)
     if best_effort_export:
         excess = _mark_best_effort(stats, all_attempts, selected_index)
+        stats["validation"]["envelope_limit_m"] = float(envelope_limit)
+        stats["validation"]["envelope_limit_per_metre"] = float(
+            envelope_limit_per_metre)
         click.secho(
             "  BEST EFFORT: validation failed ("
             + ("; ".join(best_reasons) or "see the candidate table")
@@ -1972,15 +2025,19 @@ def main(ctx, config, waypoints, output, gui, gui_port, doctor, preset,
     if validate and attempt_passed:
         # The pass depends on the limit, so the file records the limit it
         # passed; a trajectory read later is not silent about its budget.
-        stats["validation"] = {"passed": True,
-                               "envelope_limit_m": float(envelope_limit)}
+        stats["validation"] = {
+            "passed": True,
+            "envelope_limit_m": float(envelope_limit),
+            "envelope_limit_per_metre": float(envelope_limit_per_metre),
+        }
 
     if use_validation:
         # The studio reads this to show which part of the path failed.
         _emit_validation_report(all_attempts, selected_index,
                                 propagation=propagation,
                                 best_effort=best_effort_export,
-                                envelope_limit=envelope_limit)
+                                envelope_limit=envelope_limit,
+                                envelope_limit_per_metre=envelope_limit_per_metre)
     # Every candidate, paths included, for a tool that draws the comparison.
     # Diagnostics, so it is written before the export gate: a failed run is
     # exactly when the operator wants to see what the candidates did.
@@ -2017,8 +2074,7 @@ def main(ctx, config, waypoints, output, gui, gui_port, doctor, preset,
 
     written = _write_outputs(
         output, samples_data, stats, config_data, robot_cfg,
-        benchmark=benchmark, validate=validate, config=config,
-        waypoints=wps, export_format=export_format, controller_dt=controller_dt)
+        benchmark=benchmark, export_format=export_format, controller_dt=controller_dt)
 
     if not quiet:
         _print_summary(output, samples_data, robot_cfg, validate, attempt_passed,

@@ -1,0 +1,27 @@
+{
+  "name": "slippery_underpowered",
+  "version": 4,
+  "type": "Differential",
+  "robot": {
+    "mass": 0.723,
+    "inertia": 0.0024,
+    "track_width": 0.0965,
+    "wheel_radius": 0.028,
+    "v_max_rad_s": 18.94,
+    "t_max_nm": 0.138,
+    "gearing": 1.0,
+    "gravity": 9.81,
+    "cof": 0.55,
+    "torque_headroom": 0.55,
+    "speed_headroom": 0.7,
+    "uncertainties": {
+      "cof": [0.50, 0.60],
+      "torque_headroom": [0.50, 0.60],
+      "gear_backlash_m": [0.0002, 0.0005],
+      "inertia_kg_m2": [0.0022, 0.0026],
+      "track_width_range": [0.0960, 0.0970],
+      "wheel_radius_range": [0.0275, 0.0285]
+    }
+  },
+  "interactions": {}
+}

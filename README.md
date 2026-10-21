@@ -163,8 +163,8 @@ The recommended format is the canonical `robot` object used by `examples/fll_cho
       "torque_headroom": [0.75, 0.90],
       "gear_backlash_m": [0.0002, 0.0008],
       "inertia_kg_m2": [0.0020, 0.0028],
-      "track_width_range": [0.095, 0.098],
-      "wheel_radius_range": [0.027, 0.029]
+      "track_width_range": [0.096, 0.097],
+      "wheel_radius_range": [0.0275, 0.0285]
     }
   }
 }
@@ -533,6 +533,7 @@ python -m overboard.main -c examples/fll_choreo.json -w waypoints.json -o missio
 - `--validate`: CPU + Immrax gate
 - `--best-effort`: with `--validate`, keep the best path when the only failure is an accuracy excess, marked failed (force, slip, integration and convergence still block)
 - `--envelope-limit M`: Envelope budget per sample (default 0.02, max 0.05); a waypoint `error_threshold` still wins, and the value used is recorded in the report and the file (KI-054)
+- `--envelope-limit-per-metre M/M`: Extra allowance per metre travelled, added to the local budget (default 0 = absolute; max 0.05)
 - `--iteration-history PATH`: Write the solver's iteration history to JSON; the studio plots it
 - `--workers`/`--no-parallel` are not quality controls in the current tree
 
@@ -646,7 +647,18 @@ All of the failing commands exit 1 and write no output. This is the gate working
 | Stops | FAIL: envelope 6.76 cm (tracking 0.349 cm) | **PASS** 5.086 s, envelope 1.284 cm, tracking 0.306 cm |
 | Complex mission | FAIL: envelope 10.82 cm (tracking 0.193 cm) | **PASS** 5.698 s, envelope 1.398 cm, tracking 0.159 cm |
 
-With the wide ranges the open-loop tube grows past the 2 cm gate on every curved path (the straight line stays inside), so `safe` validates with the closed-loop tick map and every passing envelope is 0.35-1.40 cm, well inside 2 cm. The S-curve passes with 0.002 cm of margin on the 5 mm tracking gate, which is worth knowing before treating that mission as comfortable. These are still model predictions against declared assumptions, not a hardware fit (KI-020).
+With those earlier ranges the open-loop tube grew past the 2 cm gate on every curved path (the straight line stayed inside), so `safe` validated with the closed-loop tick map and every passing envelope was 0.35-1.40 cm. The S-curve passed with 0.002 cm of margin on the 5 mm tracking gate, which was worth knowing before treating that mission as comfortable. These are still model predictions against declared assumptions, not a hardware fit (KI-020).
+
+**Measured with the current ±0.5 mm ranges** (2026-10-21, same command and gates). Only the two geometry intervals changed, so the envelope is the controlled part of the comparison:
+
+| Case | `tick` | Verdict |
+|---|---|---|
+| Straight | 2.308 s, envelope 0.336 cm, tracking 0.056 cm | PASS |
+| S-curve | 3.775 s, envelope 0.495 cm, tracking 0.513 cm | FAIL (tracking) |
+| Stops | 5.389 s, envelope 0.504 cm, tracking 0.581 cm | FAIL (tracking) |
+| Complex mission | 5.661 s, envelope 0.589 cm, tracking 0.161 cm | PASS |
+
+The envelope fell by 2.2-2.6x on the same code, and it is no longer the binding constraint on these paths: the 5 mm tracking gate is. Tracking does not depend on the uncertainty intervals - it is the same 0.161 cm on the complex plan whether the track-width interval is ±0.5 or ±1.5 mm - so that is the reference/controller question in [RQ-A](docs/research/RQ-A_tracking_error.md), not a range question.
 
 The full gate chain, every threshold with its source line, and the measured comparison of all five initial-guess seeds under both timing models (60 candidates, with the raw logs) are in [docs/HEURISTICS_AND_VERIFICATION.md](docs/HEURISTICS_AND_VERIFICATION.md). The ledger of strategies that did not work is in [docs/STRATEGY_LEDGER.md](docs/STRATEGY_LEDGER.md), and the research agenda in [docs/RESEARCH_AGENDA.md](docs/RESEARCH_AGENDA.md).
 

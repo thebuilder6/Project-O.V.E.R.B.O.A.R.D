@@ -116,6 +116,8 @@ $$v_{\text{ceiling}}(\kappa) = \min\left(v_{\text{wheel\_max}}, \; \frac{v_{\tex
      $$\delta_{\text{parabolic}} = \frac{1}{8} v_{\text{mid}} (\omega_2 - \omega_1) \Delta t_k^2$$
    - **20 ms Zero-Order Hold (ZOH) Command Lag**:
      $$\delta_{\text{hold}} = \frac{1}{2} (v_2 - v_1) \cdot \tau_{\text{ctrl}} \quad (\tau_{\text{ctrl}} = 0.02\text{ s})$$
+
+     The controller samples the reference speed at $t + 10$ ms (`ramsete.py`, `ramsete_compact_events.py`, `immrax_validator.py`), the midpoint of the 20 ms hold and so the exact average of a linear speed over it. This cancels the *setpoint* hold; the DriveBase's own speed loop, motor lag and acceleration limiter are not in the formula (KI-020).
 2. **Elimination of the $10^6$ Hessian Spike via Linear Epigraph Bounds**:
    Standard smooth approximations $\sqrt{x^2 + \epsilon}$ possess the second derivative:
    $$\frac{d^2}{dx^2} \sqrt{x^2 + \epsilon} = \frac{\epsilon}{(x^2 + \epsilon)^{3/2}}$$

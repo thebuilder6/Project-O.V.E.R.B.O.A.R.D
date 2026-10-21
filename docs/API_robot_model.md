@@ -235,8 +235,8 @@ config = RobotConfig({
             "cof": [0.85, 1.05],
             "torque_headroom": [0.75, 0.90],
             "gear_backlash_m": [0.0002, 0.0008],
-            "track_width_range": [0.095, 0.098],
-            "wheel_radius_range": [0.027, 0.029],
+            "track_width_range": [0.096, 0.097],
+            "wheel_radius_range": [0.0275, 0.0285],
             "inertia_kg_m2": [0.0020, 0.0028]
         }
     }

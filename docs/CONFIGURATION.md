@@ -36,8 +36,8 @@ Canonical and legacy key names are both understood, for example `track_width`/`d
       "torque_headroom": [0.75, 0.90],
       "gear_backlash_m": [0.0002, 0.0008],
       "inertia_kg_m2": [0.0020, 0.0028],
-      "track_width_range": [0.095, 0.098],
-      "wheel_radius_range": [0.027, 0.029]
+      "track_width_range": [0.096, 0.097],
+      "wheel_radius_range": [0.0275, 0.0285]
     }
   },
   "interactions": {}
@@ -111,7 +111,7 @@ Recognized ranges:
 | `wheel_radius_range` | `[0.99 * wheel_radius, 1.01 * wheel_radius]` |
 | `inertia_kg_m2` | `[0.90 * inertia, 1.10 * inertia]` |
 
-`examples/fll_choreo.json` declares physical-looking ranges (track width ±1.5 mm, wheel radius ±1 mm, backlash 0.2-0.8 mm, COF ±10 %), but they are still declared assumptions, not measured hardware ranges - no hardware log has been captured yet (KI-020). They are wide enough that the open-loop `plant` tube grows past the 2 cm gate on curved paths; the `safe` preset therefore validates with `--propagation tick` (KI-049/KI-050). `t_max_range` is used: `JAXRobotConfig` builds its stall-torque interval from it (`overboard/models/jax_robot_model.py`), it defaults to 75-95 % of `t_max_nm`, and a `sysid` fit fills it with the measured stall range; `t_max_nm` and `torque_headroom` remain the nominal value and its margin. Use measured values and keep the ranges honest; a narrow range makes the validator optimistic.
+`examples/fll_choreo.json` declares physical-looking ranges (track width ±0.5 mm, wheel radius ±0.5 mm, backlash 0.2-0.8 mm, COF ±10 %), but they are still declared assumptions, not measured hardware ranges - no hardware log has been captured yet (KI-020). The open-loop `plant` tube still grows with distance, so the `safe` preset validates with `--propagation tick` (KI-049/KI-050). `t_max_range` is used: `JAXRobotConfig` builds its stall-torque interval from it (`overboard/models/jax_robot_model.py`), it defaults to 75-95 % of `t_max_nm`, and a `sysid` fit fills it with the measured stall range; `t_max_nm` and `torque_headroom` remain the nominal value and its margin. Use measured values and keep the ranges honest; a narrow range makes the validator optimistic.
 
 ## Archived Multi-Verse parameters
 
@@ -184,7 +184,7 @@ python -m overboard.main -c examples/fll_choreo.json -w examples/example_straigh
 
 - `--validate`: CPU audit + Immrax + final-waypoint gate. Requires JAX/Immrax. With `--candidates N` (default 2), solves N of the planner's candidates and exports the passing one with the shortest duration (the envelope breaks a tie); on failure, exits 1 and writes nothing (the next flag is the one exception).
 - `--best-effort`: with `--validate`, export the best converged candidate when the only failure is an accuracy excess (the envelope radius or the tracking error). The `.traj` root and `_stats.json` carry `validation: {passed: false, best_effort: true, max_excess_m, reasons, segments}`, the summary prints the excess in red, and the studio keeps the path on the field marked *Failed validation*. A motor-force, wheel-slip, integration, divergence, `unknown`-envelope or non-convergence failure still writes nothing, and the report keeps the hard gate: a failed plan is shown for inspection, never approved for the hub.
-- `--envelope-limit METRES`: How far the reachable set may spread around the plan at any sample (default 0.02, range 0.001-0.05). It is the run-wide default: a waypoint's `error_threshold` still overrides it, and `precision_mode` still pins 0.5 cm. The cap is where the propagation cuts the tube off, so a looser limit could not fail. The value in force is recorded in the report (`envelope_limit_m`, per-segment `limit_m`) and in the `.traj`/`_stats.json` (`validation.envelope_limit_m`). The limit is absolute and the `plant` tube is cumulative, so a long path can fail for being long (KI-054): set it to the accuracy the mission needs, not to what makes a run pass.
+- `--envelope-limit METRES`: How far the reachable set may spread around the plan at any sample (default 0.02, range 0.001-0.05). It is the run-wide default: a waypoint's `error_threshold` still overrides it, and `precision_mode` still pins 0.5 cm. The cap is where the propagation cuts the tube off, so a looser limit could not fail. The value in force is recorded in the report (`envelope_limit_m`, per-segment `limit_m`) and in the `.traj`/`_stats.json` (`validation.envelope_limit_m`). The limit is absolute by default and the `plant` tube is cumulative, so a long path can fail for being long (KI-054): set it to the accuracy the mission needs, not to what makes a run pass. `--envelope-limit-per-metre M/M` (default 0, max 0.05) adds an allowance for every metre travelled; both values are recorded in the report and the file.
 - `--sysid-fit PATH`: Optional `sysid_fit.json` measured actuator/odometry model; requires `--validate`. The default kinematic model is used when omitted. The plant applies the measured actuator gain, time constant, command delay, odometry scale and braking shortfall (KI-020 keeps the un-modelled residue open).
 - `--control-dt`: The control period the validator models, in seconds (default 0.02). Set it to the period the robot actually achieves so the gate is measured against the controller that runs.
 - `--propagation [plant|tick]`: The reachability model the envelope gate uses: `plant` (default) or one closed-loop tick (opt-in, 7-10x slower).

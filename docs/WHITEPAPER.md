@@ -307,7 +307,7 @@ These are model predictions from the 2026-10-19 tree under the *narrowed* test r
 
 Under those narrowed ranges, the straight, first-4, events and complex-mission examples pass; the S-curve and stops examples fail and write no output. This was the gate working on an uncalibrated model, not a solver crash.
 
-`examples/fll_choreo.json` now declares physical-looking ranges instead of the clamped ones: track width ±1.5 mm, wheel radius ±1 mm, backlash 0.2-0.8 mm, inertia 0.0020-0.0028 kg·m² and COF 0.95 ±10 %. With those ranges the open-loop `plant` tube grows past the 2 cm gate on every curved path, which is what the closed-loop `tick` map is for (KI-049/KI-050), and the `safe` preset selects it. Measured on 2026-10-21 with `--preset safe` (`-n 14`, `-a 0.005`):
+`examples/fll_choreo.json` now declares physical-looking ranges instead of the clamped ones: track width ±0.5 mm, wheel radius ±0.5 mm, backlash 0.2-0.8 mm, inertia 0.0020-0.0028 kg·m² and COF 0.95 ±10 %. The open-loop `plant` tube grows with distance, which is what the closed-loop `tick` map is for (KI-049/KI-050), and the `safe` preset selects it. The table below is the record with the earlier ±1.5 mm ranges (2026-10-21, `--preset safe`, `-n 14`, `-a 0.005`):
 
 | Example | `plant` | `tick` |
 |---|---|---|
@@ -317,6 +317,17 @@ Under those narrowed ranges, the straight, first-4, events and complex-mission e
 | Complex mission | FAIL: 10.82 cm envelope (tracking 0.193 cm) | **PASS** 5.698 s, 1.398 cm, 0.159 cm |
 
 Every passing envelope is 0.35-1.40 cm, inside the 2 cm gate; the S-curve's 0.498 cm tracking leaves 20 µm of margin against the 5 mm gate. These ranges are still declared assumptions, not measured hardware guarantees (KI-020); the point of the change is that the validator no longer gets an artificially easy interval to propagate.
+
+With the current ±0.5 mm geometry intervals and the same command, the envelope falls by 2.2-2.6x and the binding constraint moves to tracking:
+
+| Example | `tick` | Verdict |
+|---|---|---|
+| Straight | 2.308 s, 0.336 cm, 0.056 cm | PASS |
+| S-curve | 3.775 s, 0.495 cm, 0.513 cm | FAIL (tracking) |
+| Stops | 5.389 s, 0.504 cm, 0.581 cm | FAIL (tracking) |
+| Complex mission | 5.661 s, 0.589 cm, 0.161 cm | PASS |
+
+Tracking does not depend on the uncertainty intervals: on the complex plan it is 0.161 cm whether the track-width interval is ±0.5 or ±1.5 mm. The two failures are therefore the reference/controller question in [RQ-A](research/RQ-A_tracking_error.md), not a range question.
 
 ### 5.4 What the validator does not prove
 
@@ -676,8 +687,8 @@ The path-planning side of this list — the seed heuristics, the timing models, 
       "torque_headroom": [0.75, 0.90],
       "gear_backlash_m": [0.0002, 0.0008],
       "inertia_kg_m2": [0.0020, 0.0028],
-      "track_width_range": [0.095, 0.098],
-      "wheel_radius_range": [0.027, 0.029]
+      "track_width_range": [0.096, 0.097],
+      "wheel_radius_range": [0.0275, 0.0285]
     }
   }
 }

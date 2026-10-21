@@ -493,6 +493,41 @@ class TestValidationReport(unittest.TestCase):
         self.assertIn("exceeds the local threshold",
                       " ".join(data["validation"]["reasons"]))
         self.assertIn("not approved", result.output)
+        # The old second report called the same file safe to run.
+        self.assertNotIn("safe to run", result.output)
+
+    def test_a_missing_output_directory_is_a_plain_error(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            wp = os.path.join(tmp, "wp.json")
+            with open(wp, "w", encoding="utf-8") as handle:
+                json.dump([{"x": 0.0, "y": 0.0, "heading": 0.0},
+                           {"x": 0.1, "y": 0.0, "heading": 0.0}], handle)
+            out = os.path.join(tmp, "missing", "out.traj")
+            with patch.object(self.main, "TrajectoryOptimizer", self._Optimizer):
+                result = self.runner.invoke(self.main.main, [
+                    "-c", os.path.join(self.repo, "examples", "fll_choreo.json"),
+                    "-w", wp, "-o", out, "-n", "5", "--candidates", "1"])
+            self.assertEqual(result.exit_code, 1, result.output)
+            self.assertIn("Output directory", result.output)
+            self.assertNotIn("Traceback", result.output)
+            self.assertFalse(os.path.exists(out))
+
+    def test_a_failed_write_keeps_the_previous_trajectory(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            wp = os.path.join(tmp, "wp.json")
+            out = os.path.join(tmp, "out.traj")
+            with open(wp, "w", encoding="utf-8") as handle:
+                json.dump([{"x": 0.0, "y": 0.0, "heading": 0.0},
+                           {"x": 0.1, "y": 0.0, "heading": 0.0}], handle)
+            with open(out, "w", encoding="utf-8") as handle:
+                handle.write("previous plan")
+            with patch.object(self.main, "TrajectoryOptimizer", self._Optimizer), \
+                    patch("overboard.main.json.dump", side_effect=OSError("disk full")):
+                self.runner.invoke(self.main.main, [
+                    "-c", os.path.join(self.repo, "examples", "fll_choreo.json"),
+                    "-w", wp, "-o", out, "-n", "5", "--candidates", "1"])
+            with open(out, "r", encoding="utf-8") as handle:
+                self.assertEqual(handle.read(), "previous plan")
 
     def test_best_effort_still_refuses_a_physically_unsound_plan(self):
         """A slip is not an accuracy drop, so it is not exported this way."""
@@ -542,6 +577,39 @@ class TestValidationReport(unittest.TestCase):
         self.assertAlmostEqual(payload["envelope_limit_m"], 0.05)
         self.assertAlmostEqual(payload["candidates"][0]["segments"][0]["limit_m"],
                                0.05)
+
+    def test_the_envelope_limit_can_grow_per_metre(self):
+        """A tube that widens with distance can be priced per metre (KI-054)."""
+
+        class _GrowingImmrax(self._WideImmrax):
+            def validate_trajectory(self, samples, *ranges, **kwargs):
+                report = super().validate_trajectory(samples, *ranges, **kwargs)
+                report["reachability"]["envelope"] = []
+                for s in samples:
+                    half = 0.001 + 0.04 * s["x"]
+                    report["reachability"]["envelope"].append({
+                        "x_min": s["x"] - half, "x_max": s["x"] + half,
+                        "y_min": s["y"], "y_max": s["y"],
+                    })
+                return report
+
+        base = ["--envelope-limit", "0.001"]
+        failed, data = self._invoke(base, validator=_GrowingImmrax)
+        self.assertNotEqual(failed.exit_code, 0, failed.output)
+        self.assertIsNone(data)
+
+        passed, data = self._invoke(
+            base + ["--envelope-limit-per-metre", "0.05"],
+            validator=_GrowingImmrax)
+        self.assertEqual(passed.exit_code, 0, passed.output)
+        self.assertTrue(data["validation"]["passed"])
+        self.assertAlmostEqual(
+            data["validation"]["envelope_limit_per_metre"], 0.05)
+
+        marker = [line for line in passed.output.splitlines()
+                  if line.startswith(self.main.VALIDATION_MARKER)]
+        payload = json.loads(marker[0][len(self.main.VALIDATION_MARKER):])
+        self.assertAlmostEqual(payload["envelope_limit_per_metre"], 0.05)
 
     def test_every_candidate_carries_its_score_vector(self):
         """The selection rule can be re-run offline on these numbers.

@@ -1,0 +1,27 @@
+{
+  "name": "worn",
+  "version": 4,
+  "type": "Differential",
+  "robot": {
+    "mass": 0.85,
+    "inertia": 0.0032,
+    "track_width": 0.0965,
+    "wheel_radius": 0.028,
+    "v_max_rad_s": 18.94,
+    "t_max_nm": 0.138,
+    "gearing": 1.0,
+    "gravity": 9.81,
+    "cof": 0.8,
+    "torque_headroom": 0.75,
+    "speed_headroom": 0.9,
+    "uncertainties": {
+      "cof": [0.70, 0.90],
+      "torque_headroom": [0.65, 0.85],
+      "gear_backlash_m": [0.0006, 0.0012],
+      "inertia_kg_m2": [0.0028, 0.0036],
+      "track_width_range": [0.0955, 0.0975],
+      "wheel_radius_range": [0.0270, 0.0290]
+    }
+  },
+  "interactions": {}
+}

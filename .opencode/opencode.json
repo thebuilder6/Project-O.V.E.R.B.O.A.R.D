@@ -1,0 +1,53 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "model": "openrouter/deepseek/deepseek-v4.1-flash-1017",
+  "default_agent": "build",
+  "permissions": [
+    { "action": "shell", "resource": "*", "effect": "ask" },
+    { "action": "shell", "resource": "git status *", "effect": "allow" },
+    { "action": "shell", "resource": "git diff *", "effect": "allow" },
+    { "action": "shell", "resource": "git log *", "effect": "allow" },
+    { "action": "shell", "resource": "git show *", "effect": "allow" },
+    { "action": "shell", "resource": "git rev-parse *", "effect": "allow" },
+    { "action": "shell", "resource": "git push *", "effect": "ask" },
+    { "action": "shell", "resource": "git checkout *", "effect": "ask" },
+    { "action": "shell", "resource": "git switch *", "effect": "ask" },
+    { "action": "shell", "resource": "git restore *", "effect": "ask" },
+    { "action": "shell", "resource": "git reset *", "effect": "ask" },
+    { "action": "shell", "resource": "git clean *", "effect": "ask" },
+    { "action": "shell", "resource": "git rebase *", "effect": "ask" },
+    { "action": "shell", "resource": "git merge *", "effect": "ask" },
+    { "action": "shell", "resource": "git cherry-pick *", "effect": "ask" },
+    { "action": "shell", "resource": "rm *", "effect": "ask" },
+    { "action": "shell", "resource": "del *", "effect": "ask" },
+    { "action": "shell", "resource": "Remove-Item *", "effect": "ask" }
+  ],
+  "agents": {
+    "build": {
+      "permissions": [
+        { "action": "shell", "resource": "python run_tests.py *", "effect": "allow" },
+        { "action": "shell", "resource": "python agent_report.py *", "effect": "allow" },
+        { "action": "shell", "resource": "python -m unittest *", "effect": "allow" },
+        { "action": "shell", "resource": "python benchmark.py *", "effect": "allow" },
+        { "action": "shell", "resource": "python -m overboard.main *", "effect": "allow" },
+        { "action": "shell", "resource": "python research/*", "effect": "allow" },
+        { "action": "shell", "resource": "python -m overboard.sysid.fit *", "effect": "allow" },
+        { "action": "shell", "resource": "python -m overboard.sysid.compare *", "effect": "allow" },
+        { "action": "shell", "resource": "python -m overboard.sysid.collect *", "effect": "ask" },
+        { "action": "shell", "resource": "python -m overboard.deploy.hub_deploy *", "effect": "ask" },
+        { "action": "shell", "resource": "python -m overboard.deploy.hub_ble *", "effect": "ask" },
+        { "action": "shell", "resource": "python *--push-hub*", "effect": "ask" },
+        { "action": "shell", "resource": "git add *", "effect": "allow" },
+        { "action": "shell", "resource": "git commit *", "effect": "allow" },
+        { "action": "edit", "resource": ".git/*", "effect": "deny" },
+        { "action": "edit", "resource": "*.env", "effect": "ask" }
+      ]
+    },
+    "plan": {
+      "model": "openrouter/anthropic/claude-opus-5.5"
+    },
+    "explore": {
+      "model": "openrouter/deepseek/deepseek-v4-flash"
+    }
+  }
+}

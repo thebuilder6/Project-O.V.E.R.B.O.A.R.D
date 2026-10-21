@@ -436,6 +436,8 @@ class TestStudioPush(StudioTestCase):
 
     def test_the_session_lands_next_to_the_mission(self):
         solve_job, _ = self._solve()
+        target = gui_server.MISSIONS_DIR / "pushable.session.csv"
+        target.write_text("POSE,0.0000,0.0000,0.00\n", encoding="utf-8")
         status, job = _request(f"{self.base}/api/push", method="POST", payload={
             "job_id": solve_job["id"], "connection": "ble"})
         deadline = time.time() + 120
@@ -444,13 +446,17 @@ class TestStudioPush(StudioTestCase):
             if body["status"] != "running":
                 break
             time.sleep(0.3)
-        target = gui_server.MISSIONS_DIR / "pushable.session.csv"
         try:
             self.assertTrue(target.is_file())
             self.assertIn("POSE,0.0900", target.read_text(encoding="utf-8"))
+            archived = [path for path in
+                        gui_server.MISSIONS_DIR.glob("pushable*session.csv")
+                        if path != target]
+            self.assertEqual(len(archived), 1)
+            self.assertIn("POSE,0.0000", archived[0].read_text(encoding="utf-8"))
         finally:
-            if target.is_file():
-                target.unlink()
+            for path in gui_server.MISSIONS_DIR.glob("pushable*session.csv"):
+                path.unlink()
 
 class TestStudioReport(StudioTestCase):
     """The report the browser built is written and served back."""
@@ -927,6 +933,21 @@ class TestStudioHelpers(unittest.TestCase):
         joined = " ".join(str(part) for part in command)
         self.assertIn("--candidates-out", joined)
         self.assertIn(gui_server.CANDIDATES_FILE, joined)
+
+    def test_a_running_job_shows_the_paths_it_already_solved(self):
+        """The field is drawn from the file, not only from the finished job."""
+        with tempfile.TemporaryDirectory() as folder:
+            job = gui_server.Job("job1", "test", Path(folder))
+            self.assertEqual(job.snapshot()["result"], {})
+            (Path(folder) / gui_server.CANDIDATES_FILE).write_text(
+                json.dumps({"selected": None, "candidates": [
+                    {"index": 1, "style": "frontier_sprint",
+                     "samples": [{"t": 0.0, "x": 0.25, "y": 0.5}]}]}),
+                encoding="utf-8")
+            candidates = job.snapshot()["result"]["candidates"]
+            self.assertEqual(len(candidates), 1)
+            self.assertEqual(candidates[0]["samples"][0]["x"], 0.25)
+            self.assertEqual(job.status, "running")
 
     def test_the_operator_pick_is_passed_through(self):
         command = gui_server.build_command(

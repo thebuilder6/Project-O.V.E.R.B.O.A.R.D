@@ -24,7 +24,7 @@
 > `--propagation tick`, and the default is still `--propagation plant` for the
 > reason given there.
 
-**Status:** the cause is identified. The three things that stood between the plan and the robot are now closed in the tree — the plan's own collocation (KI-026), the reference's coupling (KI-027) and the model's parity with the controller that runs (KI-028) — and **every table below has been re-measured against that tree**. What is still open is the *shape* of the reference: the controller follows the chord between the samples, and the feedforward reports an interpolated value where the plan's own rule assumes an interval average.
+**Status:** the cause is identified. The three things that stood between the plan and the robot are now closed in the tree — the plan's own collocation (KI-026), the reference's coupling (KI-027) and the model's parity with the controller that runs (KI-028) — and **every table below has been re-measured against that tree**. The velocity half of the reference fix (F8) is also in the tree, but **not in the sample-interval form measured below**: commit `47633e9` replaced that form with the speed at the tick midpoint (`t + 10 ms`), which is the exact average over the 20 ms the command is actually held. What is still open is the *shape* of the reference (the controller follows the chord between samples) and the hardware calibration of the plant (KI-020), not another averaging rule.
 **Date:** 2026-10-20. The first pass was measured in the morning against a pinned copy; the tables were re-measured in the afternoon against the working tree, after KI-027 and KI-028 landed. Where a number has moved, the old one is kept and marked, because it is the record of the bug.
 **Tree under test:** the working tree, token `FD268F4F79AD`; the per-module MD5s are in `archive/research-2026-10:docs/research/rq_a/TREE_2026-10-20.md5`. The tree kept moving while the campaign ran — the studio and the CLI changed under it — so the headline tables were **re-run at the end on the tree as it stood** and came back identical, to the last decimal (the verification output is in `archive/research-2026-10:docs/measurements/2026-10-20-post-ki028/rq_a_verify/`). The first pass was measured against the pinned copy whose MD5s are in `archive/research-2026-10:docs/research/rq_a/PINNED_TREE.md5`.
 **Companions:** [`../HEURISTICS_AND_VERIFICATION.md`](../HEURISTICS_AND_VERIFICATION.md) (the current-state reference) and [`../RESEARCH_AGENDA.md`](../RESEARCH_AGENDA.md) (the research agenda).
@@ -255,7 +255,7 @@ Giving the controller the **interval-average velocity** — exactly what the pla
 
 With the hold gone the error lands on the plan's own deviation, which is the *other* term. The hold is also proportional to the path's total velocity variation — 1.9–3.1 m/s on the S-curve and 4.2–4.5 on the stops, but only 0.95 on the straight path, where the velocity never changes and the hold is therefore worth **nothing**: the interval-average velocity takes the straight path's error from 0.432 cm to 0.0001 cm. On the curves the hold is worth 0.10–0.22 cm at n=40, so a flatter velocity profile is a planner-side lever that has not been tested.
 
-This also says where a fix can live. The *tick* is a property of the model (the firmware's 20 ms loop, which the validator mirrors and cannot change). The *reference* is not: the controller interpolates `v` linearly between samples, and the validator mirrors that too. Interpolating the reference velocity as the interval average would remove the hold error in both, in lockstep, with no change to the control loop.
+This also says where a fix can live. The *tick* is a property of the model (the firmware's 20 ms loop, which the validator mirrors and cannot change). The *reference* is not: the controller interpolates `v` linearly between samples, and the validator mirrors that too. Sampling the reference at the tick midpoint (the shipped form) gives the average over each 20 ms hold; averaging over the whole sample interval (the form measured here) also removes the modelled hold, but holds one speed across several ticks. The tick form is the one in the tree.
 
 Putting the two together maps the whole curve (`exp11_density.py`, S-curve, per-segment timing):
 
@@ -376,9 +376,15 @@ Recorded because two of them produced convincing nonsense that briefly looked li
 
 ### F8 — The complete reference fix: report the interval averages, not interpolated instantaneous values
 
+> **Status (2026-10-21): shipped in the tick-level form; the sample-interval form in this table was retired.**
+>
+> Commit `7312a4a` shipped the sample-interval average `0.5 * (v_k + v_{k+1})` for the feedforward (the **V** column below); commit `47633e9` replaced it in `ramsete.py`, `ramsete_compact_events.py` and `immrax_validator.py` with the speed at `t + 10 ms` — the midpoint, and so the exact average, of a linear speed over the 20 ms the command is held. `ramsete_fast.py` and `ramsete_compact.py` delegate to those modules, so the firmware and the validator still match. **The V column is the retired sample-interval form, not the current code**, and the tick-level form has not been measured in this document.
+>
+> **Is it true on the robot?** The midpoint identity is exact only for the model's plant: a command held for 20 ms and a wheel that reaches it immediately. The real DriveBase has its own speed loop, motor lag, the acceleration limiter and wheel slip, so the lead removes a known half-tick bias in the *setpoint*, not the whole tracking error. No hardware log has tested it (KI-020). The decisive experiment is the same trajectory with the lead on and off, compared with `sysid_compare.py`; until that exists, this is the right compensation for the modelled hold and a likely improvement on hardware, not a proven one.
+
 Two independent lines of work landed on the same place.
 
-The **hold analysis** (from the floor experiment): the plan's own trapezoidal rule says the distance covered in one sample interval is the *interval average speed* × the interval. The controller holds its command for a whole 20 ms tick, so the robot's velocity is a **staircase** and the distance it covers in an interval is the mean of that staircase — not the average the plan assumed. The mismatch per interval is `0.5·(v_k − v_{k+1})·dt_k`, and it accumulates.
+The **hold analysis** (from the floor experiment): the plan's own rule (trapezoidal at the time; the position quadrature has since become Gauss-Legendre, which does not change the speed integral) says the distance covered in one sample interval is the *interval average speed* × the interval. The controller holds its command for a whole 20 ms tick, so the robot's velocity is a **staircase** and the distance it covers in an interval is the mean of that staircase — not the average the plan assumed. The mismatch per interval is `0.5·(v_k − v_{k+1})·dt_k`, and it accumulates.
 
 The **consistency analysis** (F7): the heading and the turn rate are interpolated independently, and if `ω` is a line then the heading is a parabola. They disagree by up to 9° mid-interval.
 
@@ -386,12 +392,12 @@ Both say the same thing: **the reference should report the interval averages.** 
 
 And there is a clean reason it works: the plan's trapezoidal rule **is** "move at the interval-average velocity along the chord". Tell the robot that and it traces exactly the path the plan assumed.
 
-**Half of this is already in the tree.** The turn rate is the derivative of the interpolated heading (KI-027), which is constant over the interval — that *is* the interval average of the turn rate — and the gain is recomputed from the reported `v` and `ω`. What is left is the velocity: the reference still reports an interpolated speed where the plan's own rule assumes the interval average.
+**Half of this was in the tree when the table was measured.** The turn rate is the derivative of the interpolated heading (KI-027), which is constant over the interval — that *is* the interval average of the turn rate — and the gain is recomputed from the reported `v` and `ω`. What was left was the velocity: the reference reported an interpolated speed where the plan's own rule assumes an interval average. The V column below measures that sample-interval form; it was later retired in favour of the tick form.
 
 Measured (`exp15_interval_average.py`, per-segment timing, **on top of the
-shipped reference**; **V** = the interval-average velocity, **W** = the plan's
-own average ω instead of the heading's slope, **VW** = both, with the gain
-recomputed from whatever they report):
+shipped reference**; **V** = the **sample-interval** average velocity (the
+retired form), **W** = the plan's own average ω instead of the heading's
+slope, **VW** = both, with the gain recomputed from whatever they report):
 
 | mission | n | shipped | V | W | VW | best of {shipped, plan fix, VW} |
 |---|---:|---:|---:|---:|---:|---:|
@@ -411,8 +417,16 @@ self-consistent collocation (KI-026), measured by `exp13_package.py`.)
 **The turn-rate half of this fix is already in the tree**, and the table says
 so: **W is worth 1.00× in every cell**, because the shipped reference already
 takes the turn rate as the derivative of the interpolated heading (KI-027),
-which is the interval average of the turn rate over the interval. What is
-left to ship is the **velocity** half.
+which is the interval average of the turn rate over the interval.
+
+**The velocity half has since been shipped too, but not as the V column.** The
+V column averages over the *plan's sample interval*, which can be several
+20 ms ticks long; the command is then held flat for that whole sample, which is
+why V makes the coarse end worse. Commit `47633e9` uses the *tick* instead:
+`v(t + 10 ms)` is the exact average of a linear speed over the next 20 ms, so
+the command's staircase matches the plan's distance tick by tick. The table
+above remains the record of the sample-interval experiment; it does not measure
+the current code.
 
 **The two remaining fixes are mirror images across the density, and that is
 the whole story of RQ-A:**
@@ -428,12 +442,14 @@ to 0.06–1.57 cm. The density question, which looked like the central
 mystery, dissolves once both are in place: the reference fix makes the fine
 end work, and the plan fix covers the coarse end.
 
-**What this means for the work.** The reference fix is the cheaper of the two:
-it is one line per file in `ramsete_compact_events.py`, `ramsete_compact.py`,
-`ramsete_fast.py` and `immrax_validator.py`, it does not change the plan, so
-it does not invalidate the measured candidate set or the seed conclusions, and
-it is worth up to 7.2× at the fine end. The plan fix is already implemented as
-`--self-consistent` and is worth 1.7× at the coarse end.
+**What this means for the work.** Both halves are in the tree now: the plan's
+self-consistent collocation (unconditional, KI-026; the old `--self-consistent`
+switch has been removed) and the tick-level velocity lead (`47633e9`). The
+reference half was the cheaper of the two — it does not change the plan, so it
+does not invalidate the measured candidate set or the seed conclusions — but it
+does not remove the coarse-end error, which is the plan's own deviation. The
+remaining work is the plan at coarse sampling and the hardware calibration of
+the plant (KI-020), not another averaging rule.
 
 ---
 
@@ -623,7 +639,7 @@ Three things in that table:
 
 ### Not fixed - the structural mismatch
 
-Two of the three sides of the three-way discretisation inconsistency are now closed: the plan's own collocation (KI-026) and the reference's coupling (Fix 3). What is left is the *shape* of the reference - the controller still follows the chord between the samples rather than the curve, which is the second half of the package and needs the plan fix to be in place everywhere - and the *feedforward*: the reference reports an interpolated speed where the plan's own rule assumes the interval average (F8). The command hold is modelled at the firmware's real period (Fix 4) and is the remaining floor at fine sampling (OQ1); at the coarse end it is worth nothing and the plan's own deviation is the whole error.
+Two of the three sides of the three-way discretisation inconsistency are now closed: the plan's own collocation (KI-026) and the reference's coupling (Fix 3). The feedforward half of F8 is closed as well, in its tick-level form (`47633e9`); the sample-interval form measured in F8 was retired. What is left is the *shape* of the reference - the controller still follows the chord between the samples rather than the curve, which is the second half of the package and needs the plan fix to be in place everywhere - and the hardware calibration of the plant (KI-020). The command hold is modelled at the firmware's real period (Fix 4), and the tick lead compensates its setpoint. At the coarse end the plan's own deviation is the whole error; what remains at the fine end is not separated from the plant by any measurement in this document.
 
 ---
 
@@ -658,9 +674,9 @@ The stops mission is the exception, and it is the interesting one: there the spl
 | the reference is *coupled* (the turn rate is the derivative of the heading) | **shipped** (KI-027, Fix 3) | F7: seven of the nine (mission, density) cells come under the 5 mm tracking gate, where none of them was |
 | the model mirrors the controller that runs | **shipped** (KI-028, Fix 4) | Fix 4: the numbers are the robot's, not a mirror of a controller that is not in use |
 | the reference is a *curve* through the samples (half 2) | **not shipped** | OQ3: a firmware change, and it needs the plan fix everywhere first |
-| the feedforward reports the *interval averages* (F8) | **not shipped** | F8: the turn-rate half shipped with KI-027; the velocity half is worth up to 7.2× at fine sampling, and it is a one-line change per file |
+| the feedforward is the interval average over the command hold (F8) | **shipped in the tick-level form** (`47633e9`) | the sample-interval form measured in F8 was retired: it is flat across a whole sample and made the coarse end worse. The tick midpoint is exact for a linear speed over the 20 ms hold, but it is exact only in the model; the robot has not been measured (KI-020) |
 
-The open part of RQ-A is therefore narrower than it was: **not** "find a formulation in which the samples, the headings and the profile are mutually consistent by construction" — that is KI-026 — but "make the controller follow the path between the samples instead of the chord, and give it the feedforward the plan's own rule assumes". Both are firmware changes, so both need the parity work again, and both are cheap: the plan fix is in the tree, and the reference fix is one line per file.
+The open part of RQ-A is therefore narrower than it was: **not** "find a formulation in which the samples, the headings and the profile are mutually consistent by construction" — that is KI-026, and it is shipped — and not the feedforward average, which is shipped as the tick lead. What is left is "make the controller follow the path between the samples instead of the chord". That is a firmware change, so it needs the parity work again, and it is cheap compared with the plan work: the plan fix is in the tree, and the reference is coupled.
 
 ---
 
@@ -723,7 +739,8 @@ off; the raw records are in
 What that says:
 
 - **The S-curve's error halves** (1.47 → 0.88 cm) but still misses the 5 mm
-  gate by 0.38 cm. The coarse end needs the reference fix as well (F8).
+  gate by 0.38 cm. The coarse end is the plan's own deviation: F8 has shipped
+  as the tick-level midpoint lead, so another reference average is not the fix.
 - **The candidate set has to be re-tuned under the new formulation.** The
   complex mission's *equal-duration* candidate passes trapezoidal (0.30 cm)
   and fails self-consistent (0.42 cm), and its per-segment candidate does the

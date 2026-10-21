@@ -267,12 +267,38 @@ class Job:
         self.finished = None
         self.error = ""
         self.result = {}
+        self.candidates_mtime = None
         self.cancel_requested = False
 
     def log(self, text):
         self.lines.append(text)
 
+    def _refresh_candidates(self):
+        """Show the compared paths while the run is still going.
+
+        A validated run writes each candidate, paths included, as soon as it
+        is solved - the reachability check of that candidate and the rescue
+        round can take minutes, and an empty field for that long reads as a
+        hang. The file is small and replaced atomically, so a poll may read
+        it; the mtime guard keeps it off the filesystem when nothing changed.
+        """
+        if self.status != "running":
+            return
+        path = Path(self.output_dir) / CANDIDATES_FILE
+        try:
+            modified = path.stat().st_mtime_ns
+        except OSError:
+            return
+        if modified == self.candidates_mtime:
+            return
+        document = _read_json(path)
+        if not isinstance(document, dict):
+            return
+        self.candidates_mtime = modified
+        self.result["candidates"] = document.get("candidates") or []
+
     def snapshot(self):
+        self._refresh_candidates()
         return {
             "id": self.id,
             "name": self.name,
@@ -1485,7 +1511,23 @@ def start_push(server, payload):
                     try:
                         MISSIONS_DIR.mkdir(exist_ok=True)
                         target = MISSIONS_DIR / f"{source.name}.session.csv"
-                        shutil.copyfile(str(session_path), str(target))
+                        if target.exists():
+                            # Keep the earlier measurement instead of
+                            # replacing it. Compare still reads the newest.
+                            stamp = time.strftime(
+                                "%Y%m%d-%H%M%S",
+                                time.localtime(target.stat().st_mtime))
+                            archive = target.with_name(
+                                f"{source.name}.{stamp}.session.csv")
+                            suffix = 2
+                            while archive.exists():
+                                archive = target.with_name(
+                                    f"{source.name}.{stamp}-{suffix}.session.csv")
+                                suffix += 1
+                            target.replace(archive)
+                        temporary = target.with_name(target.name + ".tmp")
+                        shutil.copyfile(str(session_path), str(temporary))
+                        os.replace(temporary, target)
                         job.result["session_path"] = str(target)
                     except OSError as exc:
                         job.log(f"Could not save the session next to the mission: {exc}")

@@ -176,7 +176,7 @@ The page carries **156 element ids**: **81 controls with an id** (36 buttons, 38
 | **Export format** | None / controller JSON / Python / Python compact. |
 | **Controller timestep** | The export's sample interval. |
 | **Validate before export** | The gate; needs JAX. |
-| **Accuracy limit (cm)** | How far the reachable set may spread around the plan at any sample (`--envelope-limit`, default 2 cm, 0.1-5 cm). A waypoint's error threshold still wins. Disabled unless validation is on, and sent only with `--validate`. The limit is absolute, so a long path can fail for being long; declaring the mission's real tolerance is what it is for (KI-054). |
+| **Accuracy limit (cm)** | How far the reachable set may spread around the plan at any sample (`--envelope-limit`, default 2 cm, 0.1-5 cm). A waypoint's error threshold still wins. Disabled unless validation is on, and sent only with `--validate`. The limit is absolute here, so a long path can fail for being long; declaring the mission's real tolerance is what it is for (KI-054). The CLI can grow it with distance (`--envelope-limit-per-metre`), but the studio has no field for that slope yet. |
 | **Keep the best path when validation fails** | Ticked by default: adds `--best-effort` next to `--validate`, so a run whose only failure is an accuracy excess (envelope or tracking) exports the best candidate and draws it on the field, marked failed. A force, slip, integration or convergence failure still blocks, and the push stays gated on the verdict. |
 | **Fast polish** | The budgeted solve. |
 | **Gradient sensitivity polish** | The post-solve gradient polish (`--polish`); needs JAX. |

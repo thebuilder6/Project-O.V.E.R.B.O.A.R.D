@@ -22,6 +22,7 @@ jax.config.update("jax_enable_x64", True)
 import jax.numpy as jnp
 from jax import jit, value_and_grad, vmap
 from immrax import Interval
+from immrax.inclusion.nif import _inclusion_cos_p, _inclusion_sin_p
 
 from overboard.models.jax_ramsete import _sinc_poly
 from overboard.models.robot_model import CG_HEIGHT_M, body_frame_error, angle_diff
@@ -83,26 +84,19 @@ def _extract_state_and_dt_arrays(
 
 
 def _cos_interval(a_min: jnp.ndarray, a_max: jnp.ndarray) -> Tuple[jnp.ndarray, jnp.ndarray]:
-    """Exact interval bounds for cos([a_min, a_max]) in pure JAX."""
-    c1 = jnp.cos(a_min)
-    c2 = jnp.cos(a_max)
-    c_min = jnp.minimum(c1, c2)
-    c_max = jnp.maximum(c1, c2)
-    wide = (a_max - a_min) >= (2.0 * math.pi)
-    c_min = jnp.where(wide, -1.0, c_min)
-    c_max = jnp.where(wide, 1.0, c_max)
-    k_max = jnp.ceil(a_min / (2.0 * math.pi))
-    has_peak = (k_max * (2.0 * math.pi)) <= a_max
-    c_max = jnp.where(has_peak, 1.0, c_max)
-    k_min = jnp.ceil((a_min - math.pi) / (2.0 * math.pi))
-    has_trough = (math.pi + k_min * (2.0 * math.pi)) <= a_max
-    c_min = jnp.where(has_trough, -1.0, c_min)
-    return c_min, c_max
+    """Exact interval bounds for cos([a_min, a_max]), delegated to immrax.inclusion.nif."""
+    a_min = jnp.asarray(a_min)
+    a_max = jnp.asarray(a_max)
+    res = _inclusion_cos_p(Interval(jnp.atleast_1d(a_min), jnp.atleast_1d(a_max)))
+    return res.lower.reshape(a_min.shape), res.upper.reshape(a_max.shape)
 
 
 def _sin_interval(a_min: jnp.ndarray, a_max: jnp.ndarray) -> Tuple[jnp.ndarray, jnp.ndarray]:
-    """Exact interval bounds for sin([a_min, a_max]) in pure JAX."""
-    return _cos_interval(a_min - 0.5 * math.pi, a_max - 0.5 * math.pi)
+    """Exact interval bounds for sin([a_min, a_max]), delegated to immrax.inclusion.nif."""
+    a_min = jnp.asarray(a_min)
+    a_max = jnp.asarray(a_max)
+    res = _inclusion_sin_p(Interval(jnp.atleast_1d(a_min), jnp.atleast_1d(a_max)))
+    return res.lower.reshape(a_min.shape), res.upper.reshape(a_max.shape)
 
 
 def _mul_scalar_iv(s: jnp.ndarray, iv_min: jnp.ndarray, iv_max: jnp.ndarray) -> Tuple[jnp.ndarray, jnp.ndarray]:
@@ -567,10 +561,19 @@ class CompiledReachabilityEngine:
         cof_range: Tuple[float, float],
         torque_margin_range: Tuple[float, float],
         inertia_range: Tuple[float, float],
+        gain_partitions: int = 1,
     ) -> Dict[str, Any]:
         """
         Drop-in replacement for ImmraxValidator.compute_reachability.
         Evaluates arbitrary trajectory samples via compiled jax.lax.scan.
+
+        ``gain_partitions`` > 1 (opt-in; ``validator.gain_partitions`` wins when
+        set) splits the motor-gain band ``w[6]`` into that many sub-intervals,
+        propagates them in parallel with ``jax.vmap`` and hulls the boxes. Every
+        sub-box is sound, so the hull is sound; it is also intersected with the
+        unpartitioned box, so the envelope can only shrink (wrapping effect).
+        Tracking and heading errors stay those of the unpartitioned run, so
+        their meaning does not change with the partition count.
         """
         N = len(samples)
         if N < 2:
@@ -650,6 +653,39 @@ class CompiledReachabilityEngine:
         active_mask = jnp.ones(N - 1, dtype=bool)
 
         scan_out = scan_fn(states, dts_jnp, seg_idx_arr, active_mask, w_lower, w_upper)
+
+        k = int(getattr(self.validator, "gain_partitions", gain_partitions) or 1)
+        if k > 1 and float(w_upper[6] - w_lower[6]) > 1e-6:
+            edges = jnp.linspace(w_lower[6], w_upper[6], k + 1)
+            w_lo_k = jnp.tile(w_lower, (k, 1)).at[:, 6].set(edges[:-1])
+            w_hi_k = jnp.tile(w_upper, (k, 1)).at[:, 6].set(edges[1:])
+            part = vmap(
+                lambda lo, hi: scan_fn(states, dts_jnp, seg_idx_arr, active_mask, lo, hi)
+            )(w_lo_k, w_hi_k)
+            pb = part["boxes"]
+            hull = jnp.stack([
+                jnp.min(pb[:, :, 0], axis=0), jnp.max(pb[:, :, 1], axis=0),
+                jnp.min(pb[:, :, 2], axis=0), jnp.max(pb[:, :, 3], axis=0),
+                jnp.min(pb[:, :, 4], axis=0), jnp.max(pb[:, :, 5], axis=0),
+            ], axis=1)
+            base = scan_out["boxes"]
+            boxes = jnp.stack([
+                jnp.maximum(hull[:, 0], base[:, 0]), jnp.minimum(hull[:, 1], base[:, 1]),
+                jnp.maximum(hull[:, 2], base[:, 2]), jnp.minimum(hull[:, 3], base[:, 3]),
+                jnp.maximum(hull[:, 4], base[:, 4]), jnp.minimum(hull[:, 5], base[:, 5]),
+            ], axis=1)
+            b = boxes[1:]
+            radii = jnp.sqrt(((b[:, 1] - b[:, 0]) * 0.5) ** 2 + ((b[:, 3] - b[:, 2]) * 0.5) ** 2 + 1e-16)
+            radii = jnp.where(active_mask, radii, 0.0)
+            t_errs = scan_out["tracking_errors"]
+            scan_out = dict(scan_out)
+            scan_out.update({
+                "boxes": boxes,
+                "radii": radii,
+                "max_envelope_radius_m": jnp.max(radii),
+                "max_error_m": jnp.max(t_errs + radii),
+                "diverged": jnp.any(radii > 0.05),
+            })
         return self._build_reachability_dict(samples, scan_out)
 
     def build_immrax_report(

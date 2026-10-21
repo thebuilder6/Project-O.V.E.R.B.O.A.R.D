@@ -7,6 +7,7 @@ This document provides practical examples for using the FLL Trajectory Optimizer
 ## Table of Contents
 
 - [Basic Examples](#basic-examples)
+- [Robot variants](#robot-variants)
 - [Advanced Examples](#advanced-examples)
 - [Python API Examples](#python-api-examples)
 - [Troubleshooting Examples](#troubleshooting-examples)
@@ -120,9 +121,26 @@ python -m overboard.main -c examples/fll_choreo.json -w examples/example_complex
 python -m overboard.main --validate -c examples/fll_choreo.json -w examples/example_mission_first4.json -o first4.traj --candidates 5
 ```
 
-With `--validate`, the example config's widened uncertainty ranges need the closed-loop model on a curved path: add `--propagation tick` (the `--preset safe` shortcut sets it for you). The straight line still passes with the default `plant`; a curved mission with the open-loop tube grows past the 2 cm envelope gate.
+With `--validate`, the open-loop `plant` tube grows with distance, so a curved mission can exceed the 2 cm envelope gate: add `--propagation tick` (the `--preset safe` shortcut sets it for you). The straight line still passes with the default `plant`.
 
 ---
+
+## Robot variants
+
+Three ready-made configs in `examples/robots/` for testing a plan against a different build, instead of editing `fll_choreo.json`:
+
+| Config | What it represents | What it tests |
+|---|---|---|
+| `tuned.json` | A measured, healthy robot: nominal physics, tight ranges | The reference case; a plan that fails here is the planner or the mission |
+| `slippery_underpowered.json` | Same geometry, COF 0.55 and 55 % torque headroom | Force and slip gates - the plan should slow down, not export |
+| `worn.json` | Heavier, 0.6-1.2 mm backlash, ±1 mm geometry | The uncertainty path: a good plan can still fail the envelope |
+
+```bash
+python -m overboard.main -c examples/robots/slippery_underpowered.json \
+  -w examples/example_straight.json --preset safe -o slippery.traj
+```
+
+A robot file is a normal `-c` config; nothing else changes. The ranges in these files are declared, not measured (KI-020).
 
 ## Advanced Examples
 
