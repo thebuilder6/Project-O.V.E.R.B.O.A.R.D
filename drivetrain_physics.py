@@ -77,7 +77,12 @@ def diff_drive_fk(vl: Any, vr: Any, track_width: Any) -> Tuple[Any, Any]:
         omega = (vr - vl) / track_width
     """
     v = 0.5 * (vl + vr)
-    omega = (vr - vl) / track_width
+    d_v = vr - vl
+    if hasattr(track_width, "lower") and not hasattr(d_v, "lower"):
+        from immrax import interval
+        d_v = interval(d_v)
+        v = interval(v)
+    omega = d_v / track_width
     return v, omega
 
 

@@ -150,5 +150,54 @@ class TestHeadingMetric(unittest.TestCase):
         self.assertGreater(report["max_heading_error_rad"], 1e-3)
 
 
+@unittest.skipUnless(HAS_IMMRAX, "immrax not installed")
+class TestUnifiedReachabilityAndDrivetrainParity(unittest.TestCase):
+    """Verify CompiledReachabilityEngine dispatch and shared drivetrain physics parity."""
+
+    def test_compiled_vs_legacy_debug_loop_parity(self):
+        validator = ImmraxValidator(JAXRobotConfig(_TEST_ROBOT))
+        samples = _straight(length=0.5, v=0.4, n=5)
+        u_args = (
+            _BACKLASH,
+            (0.0965, 0.0965),
+            (0.028, 0.028),
+            (1.37, 1.37),
+            (0.85, 0.85),
+            (0.001, 0.001),
+        )
+        rep_compiled = validator.compute_reachability(samples, *u_args, legacy_debug_loop=False)
+        rep_legacy = validator.compute_reachability(samples, *u_args, legacy_debug_loop=True)
+
+        self.assertAlmostEqual(rep_compiled["max_tracking_error_m"], rep_legacy["max_tracking_error_m"], places=5)
+        self.assertAlmostEqual(rep_compiled["max_envelope_radius_m"], rep_legacy["max_envelope_radius_m"], places=5)
+        self.assertEqual(len(rep_compiled["envelope"]), len(rep_legacy["envelope"]))
+
+    def test_shared_normal_force_and_traction_parity(self):
+        from validator import audit_constraints
+        from robot_model import RobotConfig
+        from drivetrain_physics import wheel_normal_forces, traction_limits, CG_HEIGHT_M
+
+        cfg_cpu = RobotConfig(_TEST_ROBOT)
+        samples = [
+            {"t": 0.0, "x": 0.0, "y": 0.0, "heading": 0.0, "vl": 0.4, "vr": 0.6, "al": 1.0, "ar": -1.0},
+            {"t": 0.1, "x": 0.05, "y": 0.0, "heading": 0.1, "vl": 0.5, "vr": 0.5, "al": 0.0, "ar": 0.0},
+        ]
+        audit = audit_constraints(samples, cfg_cpu, apply_headroom=False)
+
+        val_jax = ImmraxValidator(JAXRobotConfig(_TEST_ROBOT))
+        val_rep = val_jax.validate_trajectory(
+            samples,
+            (cfg_cpu.cof, cfg_cpu.cof),
+            (1.0, 1.0),
+            (0.0, 0.0),
+            (cfg_cpu.track_width, cfg_cpu.track_width),
+            (cfg_cpu.wheel_radius, cfg_cpu.wheel_radius),
+            (cfg_cpu.inertia, cfg_cpu.inertia),
+        )
+        self.assertTrue(np.isfinite(audit["left_normal_force"]))
+        self.assertTrue(np.isfinite(val_rep["max_motor_violation_N"]))
+
+
+
 if __name__ == "__main__":
     unittest.main()

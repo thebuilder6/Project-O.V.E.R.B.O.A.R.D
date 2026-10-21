@@ -2,7 +2,14 @@ from typing import List, Dict, Tuple, Any, Optional
 import json
 import math
 import numpy as np
-from robot_model import RobotConfig, DifferentialDriveModel, diff_drive_fk, angle_diff, wheel_normal_forces, CG_HEIGHT_M
+from robot_model import RobotConfig, DifferentialDriveModel, angle_diff
+from drivetrain_physics import (
+    CG_HEIGHT_M,
+    diff_drive_fk,
+    wheel_normal_forces,
+    traction_limits,
+    total_traction_limit,
+)
 
 
 # Default time-equivalent weights (in seconds) for the 5-part FLL path fitness
@@ -295,10 +302,12 @@ def compute_metrics(samples: List[Dict[str, Any]], robot_cfg: Optional[RobotConf
             if max_fr > 1e-6:
                 fr_util.append(u_r)
             cof_min = min(robot_cfg.uncertainties["cof"])
+            v_val, omega_val = diff_drive_fk(s["vl"], s["vr"], robot_cfg.track_width)
             nl, nr = wheel_normal_forces(
-                robot_cfg.mass, robot_cfg.g, CG_HEIGHT_M, robot_cfg.track_width, 0.25 * (s["vr"] * s["vr"] - s["vl"] * s["vl"]) / robot_cfg.track_width)
-            tr_l = abs(fl_val) / max(cof_min * nl, 1e-6)
-            tr_r = abs(fr_val) / max(cof_min * nr, 1e-6)
+                robot_cfg.mass, robot_cfg.g, CG_HEIGHT_M, robot_cfg.track_width, v_val * omega_val)
+            lim_l, lim_r = traction_limits(nl, nr, cof_min)
+            tr_l = abs(fl_val) / max(lim_l, 1e-6)
+            tr_r = abs(fr_val) / max(lim_r, 1e-6)
             combined_util.append(max(u_l, u_r, tr_l, tr_r))
 
     rms_wheel_force_n = math.sqrt(weighted_force_sq / total_dt) if total_dt > 1e-9 else 0.0
@@ -438,10 +447,12 @@ def compute_path_fitness(
             fr_val = abs(float(s.get("fr", 0.0)))
             max_fl = max(robot_cfg.get_max_force_at_velocity_robust(s["vl"]), 1e-6)
             max_fr = max(robot_cfg.get_max_force_at_velocity_robust(s["vr"]), 1e-6)
+            v_val, omega_val = diff_drive_fk(s["vl"], s["vr"], robot_cfg.track_width)
             nl, nr = wheel_normal_forces(
-                robot_cfg.mass, robot_cfg.g, CG_HEIGHT_M, robot_cfg.track_width, 0.25 * (s["vr"] * s["vr"] - s["vl"] * s["vl"]) / robot_cfg.track_width)
-            tr_l = max(cof_min * nl, 1e-6)
-            tr_r = max(cof_min * nr, 1e-6)
+                robot_cfg.mass, robot_cfg.g, CG_HEIGHT_M, robot_cfg.track_width, v_val * omega_val)
+            lim_l, lim_r = traction_limits(nl, nr, cof_min)
+            tr_l = max(lim_l, 1e-6)
+            tr_r = max(lim_r, 1e-6)
             combined_util.append(max(fl_val / max_fl, fr_val / max_fr, fl_val / tr_l, fr_val / tr_r))
 
     peak_utilization = float(max(combined_util)) if combined_util else float(metrics.get("peak_traction_utilization", 0.0))

@@ -6,7 +6,13 @@ import immrax
 from immrax import Interval, interval
 from immrax.inclusion import natif, jacif, mjacif
 from jax_robot_model import JAXRobotConfig, JAXDifferentialDriveModel
-from robot_model import CG_HEIGHT_M, wheel_normal_forces
+from drivetrain_physics import (
+    CG_HEIGHT_M,
+    diff_drive_fk,
+    wheel_normal_forces,
+    traction_limits,
+    total_traction_limit,
+)
 from jax_ramsete import JAXRamseteController, quantize_drive_command
 from digital_twin import DigitalTwinConfig
 from typing import List, Dict, Any, Tuple, Optional
@@ -746,7 +752,8 @@ class ImmraxValidator:
                  wheel_state: Optional[str] = None,
                  propagation: Optional[str] = None,
                  tick_inclusion: Optional[str] = None,
-                 belief_mode: Optional[str] = None):
+                 belief_mode: Optional[str] = None,
+                 legacy_debug_loop: bool = False):
         self.cfg = config
         self.model = JAXDifferentialDriveModel(config)
         self.ramsete_b = float(ramsete_b)
@@ -856,6 +863,7 @@ class ImmraxValidator:
         self._controller_if = _controller_inclusion(
             self._controller_command_interval, self.controller_inclusion)
         self._sampled_control = True
+        self.legacy_debug_loop = bool(legacy_debug_loop)
         self.reachability_engine = CompiledReachabilityEngine(self)
 
         # The closed-loop tick map, for the "tick" propagation. The robot's
@@ -1039,19 +1047,19 @@ class ImmraxValidator:
             # 3. Dynamic Normal Force Transfers. Only lateral (turning)
             # transfer applies; a two-wheel robot has no front/rear split
             # (KI-010). Same formula as the optimizer and the CPU audit.
-            v_val = (vl_val + vr_val) / 2.0
-            omega_val = interval(vr_val - vl_val) / track_width_iv
-            centripetal_accel = interval(v_val) * omega_val
+            v_val, omega_val = diff_drive_fk(vl_val, vr_val, track_width_iv)
+            centripetal_accel = v_val * omega_val
             nl, nr = wheel_normal_forces(
                 self.cfg.mass, self.cfg.g, CG_HEIGHT_M, track_width_iv, centripetal_accel
             )
 
             # 4. Global Friction Circle & Local Wheel Slip Violations
-            traction_max = cof_interval.lower * self.cfg.mass * self.cfg.g
+            traction_max = total_traction_limit(self.cfg.mass, self.cfg.g, cof_interval).lower
+            tr_l, tr_r = traction_limits(nl, nr, cof_interval)
             traction_violation = jnp.maximum(0.0, iv_abs_max(fl) + iv_abs_max(fr) - traction_max)
 
-            slip_l = jnp.maximum(0.0, iv_abs_max(fl) - (cof_interval * nl).lower)
-            slip_r = jnp.maximum(0.0, iv_abs_max(fr) - (cof_interval * nr).lower)
+            slip_l = jnp.maximum(0.0, iv_abs_max(fl) - tr_l.lower)
+            slip_r = jnp.maximum(0.0, iv_abs_max(fr) - tr_r.lower)
 
             return motor_violation_l, motor_violation_r, traction_violation, slip_l, slip_r
 
@@ -1294,7 +1302,8 @@ class ImmraxValidator:
                              wheel_radius_range: Tuple[float, float],
                              cof_range: Tuple[float, float],
                              torque_margin_range: Tuple[float, float],
-                             inertia_range: Tuple[float, float]) -> Dict[str, Any]:
+                             inertia_range: Tuple[float, float],
+                             legacy_debug_loop: Optional[bool] = None) -> Dict[str, Any]:
         N = len(samples)
         if N < 2:
             return {
@@ -1321,7 +1330,15 @@ class ImmraxValidator:
             return self._reachability_tick(
                 samples, w_interval, 0.5 * float(w_upper[2]))
 
-        if getattr(self, "_sampled_control", False):
+        use_legacy = (
+            legacy_debug_loop
+            if legacy_debug_loop is not None
+            else getattr(self, "legacy_debug_loop", False)
+        )
+        if not use_legacy and hasattr(self, "emb_sys") and not hasattr(self, "plant_emb_sys"):
+            use_legacy = True
+
+        if not use_legacy:
             if not hasattr(self, "reachability_engine") or self.reachability_engine is None:
                 self.reachability_engine = CompiledReachabilityEngine(self)
             return self.reachability_engine.compute_reachability_report(
@@ -1334,6 +1351,27 @@ class ImmraxValidator:
                 inertia_range=inertia_range,
             )
 
+        return self._legacy_compute_reachability(
+            samples,
+            backlash_range=backlash_range,
+            track_width_range=track_width_range,
+            wheel_radius_range=wheel_radius_range,
+            cof_range=cof_range,
+            torque_margin_range=torque_margin_range,
+            inertia_range=inertia_range,
+            w_interval=w_interval,
+        )
+
+    def _legacy_compute_reachability(self, samples: List[Dict[str, Any]],
+                                     backlash_range: Tuple[float, float],
+                                     track_width_range: Tuple[float, float],
+                                     wheel_radius_range: Tuple[float, float],
+                                     cof_range: Tuple[float, float],
+                                     torque_margin_range: Tuple[float, float],
+                                     inertia_range: Tuple[float, float],
+                                     w_interval: Interval) -> Dict[str, Any]:
+        """Legacy uncompiled Python while-loop reachability evaluation for debug/diagnostic comparisons."""
+        N = len(samples)
         active_twin = getattr(self, "_digital_twin_active", False)
         state_len = self.plant.xlen if active_twin else 3
         delay_s = getattr(self, "digital_twin_delay_s", 0.0) if active_twin else 0.0
@@ -1376,7 +1414,7 @@ class ImmraxValidator:
         command_history = []
         # Half the backlash, used as the position uncertainty the reachable
         # set carries in place of the old velocity offset.
-        backlash_half = 0.5 * float(w_upper[2])
+        backlash_half = 0.5 * float(w_interval.upper[2])
 
         # The robot's own pose estimate. It starts where the plan starts and
         # then drifts away from the truth by the measured odometry error and
