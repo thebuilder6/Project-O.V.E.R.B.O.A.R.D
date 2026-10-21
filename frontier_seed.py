@@ -18,7 +18,7 @@ import math
 from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 import numpy as np
 
-from robot_model import RobotConfig
+from robot_model import RobotConfig, CG_HEIGHT_M
 
 
 def compute_tangent_headings(
@@ -230,7 +230,18 @@ def generate_frontier_seed(
     # v_frontier = v_wheel_max / (1 + 0.5 * B * |kappa|)
     v_frontier = v_wheel_max / (1.0 + 0.5 * track_width * np.abs(kappa))
     v_traction = np.sqrt(mu * g / np.maximum(np.abs(kappa), 1e-3))
-    v_ceiling = np.minimum(v_wheel_max, np.minimum(v_frontier, v_traction))
+    v_tip = np.sqrt((g * track_width) / (2.0 * max(0.01, CG_HEIGHT_M) * np.maximum(np.abs(kappa), 1e-3)))
+    v_ceiling = np.minimum(v_wheel_max, np.minimum(v_frontier, np.minimum(v_traction, v_tip)))
+
+    # Principle 3: Preserve 0.65 - 0.75 * v_max through unpinned intermediate waypoints
+    stop_sample_indices = {wp_indices[s] for s in stops if s < len(wp_indices)}
+    stop_sample_indices.add(0)
+    stop_sample_indices.add(N - 1)
+
+    min_cruising_speed = momentum_frac * v_wheel_max
+    for i, idx in enumerate(wp_indices):
+        if idx not in stop_sample_indices and idx < N:
+            v_ceiling[idx] = max(v_ceiling[idx], min(min_cruising_speed, v_frontier[idx]))
 
     # Apply stop boundaries
     for s_idx in stops:
@@ -243,23 +254,13 @@ def generate_frontier_seed(
     v_ceiling[0] = 0.0
     v_ceiling[-1] = 0.0
 
-    # 4. Forward-Backward Pass (Acceleration & Momentum Preservation)
+    # 4. Forward-Backward Pass (Pontryagin Threshold Acceleration/Deceleration Horizons)
     v_profile = np.copy(v_ceiling)
     for k in range(N - 1):
         v_profile[k + 1] = min(v_profile[k + 1], math.sqrt(v_profile[k] ** 2 + 2.0 * a_max * ds[k]))
 
     for k in range(N - 2, -1, -1):
         v_profile[k] = min(v_profile[k], math.sqrt(v_profile[k + 1] ** 2 + 2.0 * a_max * ds[k]))
-
-    # Principle 3: Preserve 0.65 - 0.75 * v_max through unpinned intermediate waypoints
-    stop_sample_indices = {wp_indices[s] for s in stops if s < len(wp_indices)}
-    stop_sample_indices.add(0)
-    stop_sample_indices.add(N - 1)
-
-    min_cruising_speed = momentum_frac * v_wheel_max
-    for i, idx in enumerate(wp_indices):
-        if idx not in stop_sample_indices and idx < N:
-            v_profile[idx] = max(v_profile[idx], min(min_cruising_speed, v_ceiling[idx]))
 
     for k in range(N):
         if k not in stop_sample_indices and v_profile[k] < 0.08:

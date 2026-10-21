@@ -1060,10 +1060,10 @@ def _print_summary(output, samples_data, robot_cfg, validate, attempt_passed, tu
                    'solver only, needs JAX). The pipeline is used as a seed provider: its '
                    'refinement hands the solver a path through every waypoint with a per-segment '
                    'interval, and the solver does the magnitudes.')
-@click.option('--unified/--no-unified', is_flag=True, default=True,
+@click.option('--unified', is_flag=True, default=False,
               help='Run the 3-Pillar Unified Trajectory Engine: '
                    'Kinetic Frontier Seeds + 80 ms Invariant Mesh + '
-                   'Discretization-Consistent Collocation. Enabled by default.')
+                   'Discretization-Consistent Collocation.')
 @click.option('--surrogate-polish', is_flag=True,
               help='Run the 5-Layer Unified Surrogate-to-Truth parallel pipeline: '
                    'CasADi Discretization-Aware Metric + Linear Epigraph Force Bounds + '
