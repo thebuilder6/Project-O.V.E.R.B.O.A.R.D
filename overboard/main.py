@@ -1773,7 +1773,6 @@ def main(ctx, config, waypoints, output, gui, gui_port, doctor, simple, preset,
         # for the long one on every segment. Per-segment dt lets each segment
         # have its own duration and is the general model (KI-022).
         dt_label = {
-            "auto": "mixed equal-duration/per-segment dt",
             "uniform": "equal-duration segments (legacy)",
             "per-segment": "per-segment dt",
         }[dt_mode]

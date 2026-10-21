@@ -701,9 +701,21 @@ class TestDeprecatedCliFlags(unittest.TestCase):
         self.main = main
         self.runner = CliRunner()
 
-    def test_simple_is_documented_as_an_alias(self):
+    def test_simple_is_deprecated_and_ignored(self):
         result = self.runner.invoke(self.main.main, ["-w", "examples/example_straight.json", "--simple"])
-        self.assertIn("Note: --simple is an alias for --no-unified", result.output)
+        self.assertIn("Warning: --simple is deprecated", result.output)
+
+    def test_the_retired_engines_warn_and_are_ignored(self):
+        """The engines are gone; the flags warn instead of doing something else."""
+        for flag, warning in (
+            ("--surrogate-polish", "--surrogate-polish is deprecated"),
+            ("--pyramid", "--pyramid is deprecated"),
+            ("--no-unified", "--no-unified is deprecated"),
+        ):
+            result = self.runner.invoke(
+                self.main.main, ["-w", "examples/example_straight.json", flag])
+            self.assertEqual(result.exit_code, 0, result.output)
+            self.assertIn(warning, result.output, flag)
 
     def test_sweep_emits_deprecation_warning(self):
         result = self.runner.invoke(self.main.main, ["-w", "examples/example_straight.json", "--sweep"])
