@@ -169,6 +169,16 @@ class TestGradientPolish(unittest.TestCase):
         self.assertLessEqual(self._key(polished, polished_stats),
                              self._key(samples, stats))
 
+    def test_the_polish_never_makes_the_plan_slower(self):
+        """A time-optimal planner must not trade time for a smaller tube."""
+        wps, samples, stats = self._plan()
+
+        polished, _ = self.planner.gradient_polish(
+            samples, stats, wps, max_rounds=1)
+
+        self.assertLessEqual(float(polished[-1]["t"]),
+                             float(samples[-1]["t"]) + 1e-9)
+
     def test_a_plan_that_does_not_converge_is_left_alone(self):
         wps, samples, stats = self._plan()
         stats = dict(stats, converged=False)

@@ -313,6 +313,7 @@ class UnifiedPathEngine:
         weights = np.ones(len(states) - 1, dtype=np.float64)
         best_samples, best_stats = samples, stats
         best_key = self._polish_key(engine, states, dts, sample_to_segment)
+        best_duration = self._duration(samples)
 
         for _ in range(max_rounds):
             report, g_states, _ = engine.sample_sensitivities(
@@ -353,9 +354,13 @@ class UnifiedPathEngine:
             p_states, p_dts = _extract_state_and_dt_arrays(
                 polished, num_segments, segment_samples)
             key = self._polish_key(engine, p_states, p_dts, sample_to_segment)
-            if key >= best_key:
+            # A polish that makes the plan slower is not a polish: the
+            # planner is time-optimal, so the re-solve has to come back
+            # within the time budget and with a tube that is not worse.
+            if self._duration(polished) > best_duration + 1e-9 or key >= best_key:
                 break
             best_samples, best_stats, best_key = polished, polished_stats, key
+            best_duration = self._duration(polished)
             states, dts = p_states, p_dts
 
         best_stats = dict(best_stats)
@@ -367,6 +372,11 @@ class UnifiedPathEngine:
         report = engine.evaluate_states(states, dts, sample_to_segment)
         return (float(report["max_tracking_error_m"]),
                 float(report["max_envelope_radius_m"]))
+
+    @staticmethod
+    def _duration(samples):
+        """How long the plan takes, in seconds."""
+        return float(samples[-1]["t"]) if samples else float("inf")
 
     # =========================================================================
     # High-Level Planning Entry Point
