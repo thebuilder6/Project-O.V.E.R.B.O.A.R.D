@@ -6,6 +6,7 @@ and docs that describe it, so the boundary is checked mechanically here.
 """
 
 import ast
+import os
 import unittest
 from pathlib import Path
 
@@ -30,11 +31,25 @@ EXCLUDED_DIRS = {
 
 
 def _active_python_files():
-    for path in ROOT.rglob("*.py"):
-        relative = path.relative_to(ROOT)
-        if any(part in EXCLUDED_DIRS for part in relative.parts):
-            continue
-        yield path
+    # Prune the excluded trees during the walk: rglob still descends into
+    # .venv and legacy/, and enumerating them costs more than the check.
+    for root, dirs, files in os.walk(ROOT):
+        dirs[:] = [d for d in dirs
+                   if d not in EXCLUDED_DIRS and not d.startswith(".")]
+        for name in files:
+            if name.endswith(".py"):
+                yield Path(root) / name
+
+
+_TREES = {}
+
+
+def _tree(path):
+    """Parse a file once: both checks read the same tree."""
+    if path not in _TREES:
+        _TREES[path] = ast.parse(path.read_text(encoding="utf-8-sig"),
+                                 filename=str(path))
+    return _TREES[path]
 
 
 def _legacy_imports(tree):
@@ -74,7 +89,7 @@ class TestLegacyBoundary(unittest.TestCase):
     def test_no_active_module_imports_the_archive(self):
         offenders = []
         for path in _active_python_files():
-            tree = ast.parse(path.read_text(encoding="utf-8-sig"), filename=str(path))
+            tree = _tree(path)
             for line, module in _legacy_imports(tree):
                 offenders.append(f"{path.relative_to(ROOT)}:{line} imports {module}")
         self.assertEqual(
@@ -86,7 +101,7 @@ class TestLegacyBoundary(unittest.TestCase):
     def test_no_active_module_puts_the_archive_on_sys_path(self):
         offenders = []
         for path in _active_python_files():
-            tree = ast.parse(path.read_text(encoding="utf-8-sig"), filename=str(path))
+            tree = _tree(path)
             for line, entry in _legacy_sys_path_entries(tree):
                 offenders.append(f"{path.relative_to(ROOT)}:{line} adds {entry}")
         self.assertEqual(
