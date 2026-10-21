@@ -4,6 +4,8 @@
 **Scope:** every path-planning heuristic in the repository, the verification chain that judges its output, and an explicit ledger of the strategies that did not work.
 **Audience:** anyone who wants to improve the planner, the validator, or both.
 
+> **Archive note.** Raw logs and experiment scripts referenced below live in the `archive/research-2026-10` tag, not in the product tree. Retrieve a file with `git show archive/research-2026-10:<path>`; see [`ARCHIVE.md`](ARCHIVE.md).
+>
 > **Read this first.** Every number in this document is a **model prediction**, not a hardware measurement. No hardware logs exist in the repository. The robot-side collector (`pybricks_code/sysid_digital_twin.py`) can produce them, but nothing has been captured yet. The uncertainty ranges in `examples/fll_choreo.json` are *declared test assumptions*, not calibrated hardware values. A "PASS" in this document means "the trajectory passes the gates of an uncalibrated model", not "the robot will track it".
 
 ---
@@ -16,7 +18,7 @@
 4. **Two of the six example missions still produce no output at all.** The S-curve and the stops mission fail **every candidate** in the full sweep — 0 of 9 each, across both timing models and the whole accuracy-weight grid. Their best tracking errors are 1.27 cm and 0.75 cm against a 0.50 cm gate. The self-consistent collocation removed the plan's own deviation from the picture, and what is left of the error is the reference's velocity half ([RQ-A finding F8](research/RQ-A_tracking_error.md)).
 5. **The timing model is a bigger lever than any seed, but not on every path.** Per-segment timing is 1.9x faster on the complex mission (4.812 s against 9.249 s) and it is what makes the events mission solvable at all; on the two paths whose segments are short and even (first4, the stops mission) the equal-duration model is the faster one. The seeds changed the outcome on 3 missions; the timing model on 1. The per-segment model also had to be made legitimate at the waypoints the robot drives through (KI-024, [5.5](#55-where-the-time-allocation-may-change-ki-024)); the matrix in [Section 9](#9-measured-heuristic-comparison) was re-measured after that change.
 6. **The accuracy weight is the cheapest lever of all.** On the first-four-waypoints mission, the *same* `baseline` seed fails at weight 0 (it misses the motor-force limit by 0.006 N) and passes at weight 0.001 (0.26 cm tracking). The sweep grid is the only candidate-set change that has ever produced a new best trajectory, and it works because it adds a genuinely different parameter.
-7. **The Multi-Verse pipeline was dead weight; it is repaired, and it is not worth much.** Its JAX-refined guess used to converge to 8.1473 s against the trivial baseline's 6.0677 s. Four defects were behind that - the refinement moved the waypoints, the JAX cost graded a different motion than IPOPT produces, the intervals were hard-coded, and the refined timing was discarded - and with them fixed the probe wins (4.617 s against 6.049 s) and the pipeline is reproducible. But measured over 30 missions as a *seed provider*, the refined seed is **not** better than the stock seeds (it is faster on 2 of the 9 missions where both pass, slower on 6) and it **rescues nothing**; it is a cheaper way to reach the stock set's speed on some missions (KI-004).
+7. **The Multi-Verse pipeline was dead weight; it is repaired, and it is archived.** Its JAX-refined guess used to converge to 8.1473 s against the trivial baseline's 6.0677 s. Four defects were behind that - the refinement moved the waypoints, the JAX cost graded a different motion than IPOPT produces, the intervals were hard-coded, and the refined timing was discarded - and with them fixed the probe wins (4.617 s against 6.049 s) and the pipeline is reproducible. But measured over 30 missions as a *seed provider*, the refined seed is **not** better than the stock seeds (it is faster on 2 of the 9 missions where both pass, slower on 6) and it **rescues nothing**; it is a cheaper way to reach the stock set's speed on some missions (KI-004). It now lives only under `overboard/legacy/` and has no CLI entry point.
 8. **The measurement base is six hand-written paths.** The random benchmark that was supposed to supply a mission suite is fixed (KI-015), and a mission-suite harness exists under [`research/`](../../research/). The six paths are still what [Section 9](#9-measured-heuristic-comparison) quotes; the wider suite is measured in `docs/research/pq_b/`.
 9. **Twelve research questions are listed in Part IV**, ordered so that the cheapest decisive experiment comes first. The first two are measurements, not experiments.
 10. **RQ-A is done, and it reorders the agenda.** [`docs/research/RQ-A_tracking_error.md`](research/RQ-A_tracking_error.md) identifies why the tracking gate binds: the optimizer's collocation, the controller's linear reference and the plant's integration are three different discretisations of the same trajectory, and on a curved path they disagree by about a centimetre. The optimizer's half of that disagreement is closed - the self-consistent collocation is the default ([5.7](#57-the-collocation-where-a-sample-is-placed)) - and the reference's half is not. The tracking error is **not** an uncertainty problem and **not** a physical tracking problem. Fix the discretisation before reaching for reachability in the objective. RQ-A also finds that with a *calibrated* model the binding gate flips to the **envelope**, because the measured actuator-gain band widens the reachable set.
@@ -40,7 +42,7 @@
   - [5. The timing models](#5-the-timing-models)
   - [6. Candidate set construction](#6-candidate-set-construction)
   - [7. Scoring and selection](#7-scoring-and-selection)
-  - [8. The experimental Multi-Verse path](#8-the-experimental-multi-verse-path)
+  - [8. The archived Multi-Verse path](#8-the-archived-multi-verse-path)
   - [9. Measured heuristic comparison](#9-measured-heuristic-comparison)
 - [Part II — The verification strategy](#part-ii--the-verification-strategy)
   - [10. The gate chain](#10-the-gate-chain)
@@ -59,7 +61,7 @@
     - [19.3 The presets](#193-the-presets)
     - [19.4 The 44-Gene Starting-Value Genome & Memetic Evolution](#194-the-44-gene-starting-value-genome--memetic-evolution)
     - [19.5 Deterministic Homotopy Dispatch & Kinematic Velocity Profiling](#195-deterministic-homotopy-dispatch--kinematic-velocity-profiling)
-  - [20. Ledger: Multi-Verse internals](#20-ledger-multi-verse-internals)
+  - [20. Ledger: archived Multi-Verse internals](#20-ledger-archived-multi-verse-internals)
   - [21. Ledger: validation and tooling](#21-ledger-validation-and-tooling)
   - [22. Ledger: silent and unlogged behaviour](#22-ledger-silent-and-unlogged-behaviour)
   - [23. Cross-cutting lessons](#23-cross-cutting-lessons)
@@ -104,9 +106,7 @@ Two files hold most of the subject matter:
 | `main.py` | The CLI, the candidate set, the scoring, the selection and the export gate |
 | `validator.py` | The CPU audit: forward integration, force/slip audit, metrics |
 | `immrax_validator.py` | The closed-loop interval reachability check |
-| `multiverse_optimizer.py` | The experimental five-phase pipeline |
-| `jax_optimizer.py` | TEB/STOMP candidate generation and the JAX refiner |
-| `path_planning.py` | Reeds-Shepp path generation |
+| `overboard/legacy/` | The archived Multi-Verse pipeline, Reeds-Shepp bootstrap and JAX refiner (no shipped imports) |
 | `robot_model.py` | The robot configuration and the shared force model |
 | `digital_twin.py` | The optional fitted plant |
 | `sysid_fit.py` | The host-side fitter |
@@ -181,27 +181,14 @@ waypoints
    └─ export gate   : main.py:272       _export_block_reason
 ```
 
-This is the default path. `main.py` uses it unless `--multiverse` is passed.
+This is the default and only shipped path. The Multi-Verse system is archived under `overboard/legacy/`; no CLI flag selects it.
 
-### 1.2 The experimental system: Multi-Verse
+### 1.2 The archived system: Multi-Verse
 
-**Entry point:** `main.py` → `MasterTrajectoryOptimizer.solve` (`multiverse_optimizer.py:274`), selected by `--multiverse`.
-
-```
-waypoints
-   │
-   ├─ Phase 1 bootstrap      : multiverse_optimizer.py:125  PathBootstrapper.generate_baseline
-   ├─ Phase 2 kinematic prof.: multiverse_optimizer.py:379  _profile_kinematics
-   ├─ Phase 3 critic         : multiverse_optimizer.py:192  TrajectoryCritic.evaluate
-   ├─ Phase 4 JAX refinement : multiverse_optimizer.py:307  generate_candidates_jax + jax refiner
-   ├─ Phase 5 polish         : multiverse_optimizer.py:454  _global_solve
-   │    └─ refine probe      : multiverse_optimizer.py:487  _probe_refined_guess
-   └─ score + export gate    : main.py (shared)
-```
-
-The Multi-Verse path **does not use the five seeds** and **does not use the per-segment timing model**. It falls back to a legacy accuracy-weight ladder (`main.py:107`, `CANDIDATE_WEIGHT_STEP = 2.0`). The plumbing for seeds and timing exists only in `TrajectoryOptimizer`, which is why `main.py:147` says so explicitly.
-
-**Current status (KI-004):** the pipeline runs and its result is **used**: phase 5 probes the refined trajectory as a second starting point, and the probe now wins where it used to lose. `main.py --refine` puts the refined trajectory into the candidate set of the simple solver, so the pipeline is a **seed provider** — a cheaper way to reach the stock set's speed rather than a better one. See [Section 8](#8-the-experimental-multi-verse-path) and [Section 20](#20-ledger-multi-verse-internals).
+The five-phase Multi-Verse pipeline is archived under `overboard/legacy/` and
+has no CLI entry point. It was a seed provider, not a better planner; the
+measured conclusion is in [Section 8](#8-the-archived-multi-verse-path) and
+[Section 20](#20-ledger-archived-multi-verse-internals).
 
 ## 2. What is not in the tree
 
@@ -209,10 +196,10 @@ This is the list a newcomer most needs, because it defines the whole research sp
 
 | Missing | Consequence |
 |---|---|
-| **Any geometric path family.** No splines, clothoids, béziers, quintics, Dubins or Elford paths. | The only path primitives are a straight line between waypoints (`optimizer.py:551` `_guess_point`) and Reeds-Shepp (`path_planning.py:28`). The Reeds-Shepp planner is only reachable from the Multi-Verse bootstrap, and only when both segment endpoints have a heading. |
+| **Any geometric path family.** No splines, clothoids, béziers, quintics, Dubins or Elford paths. | The only path primitive in the shipped planner is a straight line between waypoints (`optimizer.py:551` `_guess_point`). Reeds-Shepp exists only in the archived Multi-Verse bootstrap (`overboard/legacy/path_planning.py`), and only when both segment endpoints have a heading. |
 | **Obstacle or field geometry.** No walls, no mat boundaries, no zone constraints. | The robot is assumed to reach every waypoint in a straight line through space. |
 | **A geometric term in the objective.** The objective is duration plus an optional jerk penalty (`optimizer.py:214-...`). | The optimizer has no idea what the path *looks* like. It is pushed along by the integration constraints and the endpoint equalities. Two paths of the same length and the same smoothness are indistinguishable to it. This is the root cause of many entries in Part III. |
-| **Topology search.** No search over forward/reverse/point-turn combinations per segment. | The reverse and point-turn topologies exist only inside the JAX candidate generator (`jax_optimizer.py:61-66`), which never reaches the solver. |
+| **Topology search.** No search over forward/reverse/point-turn combinations per segment. | The reverse and point-turn topologies exist only inside the archived JAX candidate generator (`overboard/legacy/jax_optimizer.py:61-66`), which never reaches the shipped solver. |
 | **Multi-start beyond five seeds.** | Five deterministic seeds, all from the same straight-line geometry. |
 | **A reachability term.** Reachability is computed *after* the solve. | The optimizer cannot know that a path it is about to find will fail the envelope gate. See [Section 14](#14-what-each-layer-proves-and-does-not-prove). |
 | **Motor or odometry dynamics in the optimizer.** | The optimizer is kinematic. The plant is modelled only in the validator. |
@@ -410,7 +397,7 @@ where `span_k` is the spacing between the midpoints of the two intervals meeting
 
 The normalisation matters. Without it, the raw acceleration jump is proportional to `jerk * dt`, so a segment with a short `dt` is charged `dt^2` less per unit of jerk and can buy violent wheel motion nearly free. That previously let the per-segment model reach **68.9 m/s³** of wheel jerk where the equal-duration model reached **9.5 m/s³** at the same weight. The normalisation makes the price of physical jerk independent of the timing layout.
 
-**The third term is a soft force penalty.** `--force-weight` prices the wheel forces instead of only constraining them: the hard per-wheel limits of [Section 10](#10-the-gate-chain) still apply, and on top of them the objective charges the time integral of the squared force utilisation against both the stall force and the per-wheel traction limit. A plan that runs near the traction limit is therefore paid for *before* the gate rejects it, which is the reachability-driven optimisation KI-020 asks for in its cheapest possible form - the force is a term in the objective, not a constraint on the path. The weight is **0 by default**, so the objective is duration plus jerk unless the operator asks for more; the flag is simple-solver only and is refused by `--multiverse`.
+**The third term is a soft force penalty.** `--force-weight` prices the wheel forces instead of only constraining them: the hard per-wheel limits of [Section 10](#10-the-gate-chain) still apply, and on top of them the objective charges the time integral of the squared force utilisation against both the stall force and the per-wheel traction limit. A plan that runs near the traction limit is therefore paid for *before* the gate rejects it, which is the reachability-driven optimisation KI-020 asks for in its cheapest possible form - the force is a term in the objective, not a constraint on the path. The weight is **0 by default**, so the objective is duration plus jerk unless the operator asks for more; the flag is simple-solver only.
 
 ### 5.4 Why the two models are not peers
 
@@ -553,8 +540,6 @@ With the default `--candidates 2`, the set is exactly `baseline/equal-duration` 
 
 `--uniform-dt` and `--per-segment-dt` (`main.py:707-713`) fix `modes` to a single entry. The seed still rotates, so `--uniform-dt --candidates 5` solves all five seeds under equal-duration timing — this is the cleanest way to compare the seeds against each other.
 
-Both flags are rejected with `--multiverse` (`main.py:797-799`), because the Multi-Verse path has no timing plumbing.
-
 ### 6.3 The sweep grid
 
 `--sweep` (`main.py:724`) adds the timing-mode × accuracy-weight grid:
@@ -567,16 +552,12 @@ The grid uses the `baseline` seed only, and it **adds** candidates — it never 
 
 The rationale for the weight ladder is in the comment at `main.py:109-115`: the weight trades time against wheel-jerk discipline, and the best value depends on the path. A mission with long straight segments wants a low weight; an uneven path wants a little more.
 
-### 6.4 The Multi-Verse ladder
+### 6.4 The archived ladder
 
-`use_styles=False` (the Multi-Verse path) keeps the legacy ladder (`main.py:151-154`):
-
-```python
-[{"accuracy_weight": base + 2.0 * k, "guess_style": "baseline", "per_segment_dt": False}
- for k in range(count)]
-```
-
-This ladder was **removed from the simple path** because it traded speed for a bound that could get worse (longer trajectories accumulate more uncertainty). On the complex mission the slow 17.1 s candidate diverged while the 6.07 s one stayed bounded. It survives only on the Multi-Verse path, where the seed and timing plumbing does not exist.
+The Multi-Verse accuracy-weight ladder was removed with the pipeline. It traded
+speed for a bound that could get worse (longer trajectories accumulate more
+uncertainty); on the complex mission the slow 17.1 s candidate diverged while
+the 6.07 s one stayed bounded. Do not reintroduce it.
 
 ### 6.5 Presets
 
@@ -676,85 +657,15 @@ In words:
 
 Each candidate carries `style`, `timing`, `duration_s`, `envelope_cm`, `tracking_cm`, `ok`, `converged`, `reasons`, and a per-segment breakdown, plus the fitness score and its parts: `fitness_s`, `stop_spread_cm`, `slip_risk`, `rms_force_n` and `rms_force_util`. The browser studio parses this line to show which part of the path failed (`viz/studio.js`). Two invariants: the JSON must stay valid (no `Infinity` — `_finite` maps inf/nan to `null`), and nothing is written to disk on a failed validation, so the report has to go to stdout.
 
-## 8. The experimental Multi-Verse path
+## 8. The archived Multi-Verse path
 
-`MasterTrajectoryOptimizer.solve` (`multiverse_optimizer.py:274`) runs five phases.
-
-### 8.1 Phase 1 — Bootstrap
-
-`PathBootstrapper.generate_baseline` (`multiverse_optimizer.py:125`) produces a geometric guess. Per segment it calls `_generate_segment_waypoints` (`multiverse_optimizer.py:144`):
-
-- If **both** endpoints have a heading, it plans a Reeds-Shepp path (`path_planning.py:28`) and resamples it by arc length (`multiverse_optimizer.py:150`).
-- Otherwise it falls back to `linear_interpolation_waypoints` (`path_planning.py:58`).
-
-The Reeds-Shepp planner is configured from `multiverse.bootstrap` (`multiverse_optimizer.py:117-123`): `turning_radius` (default `0.0`) and `resolution` (default `0.05`).
-
-> **The shipped configuration now plans.** `examples/fll_choreo.json` sets `"turning_radius": 0.05` - the robot's own turning radius - so the Reeds-Shepp path is a real path. It used to be `0.0`, and a zero turning radius makes the path degenerate to a straight line (rsplan could not plan with it at all), so the configured "Reeds-Shepp bootstrap" produced linear paths in the shipped example. Measured on the example missions: **0 of 21** segments that have a heading at both ends plan at radius 0.0, and **21 of 21** at 0.05. The `resolution` is honoured either way.
-
-### 8.2 Phase 2 — Kinematic profile
-
-`_profile_kinematics` (`multiverse_optimizer.py:379`) converts the geometry into a time series without CasADi: arc-length distances, a nominal speed of 40 % of the headroom-limited maximum, a uniform `dt`, central-difference velocities with reverse-motion detection, forced stops, wheel speeds, accelerations and forces.
-
-### 8.3 Phase 3 — Critic
-
-`TrajectoryCritic.evaluate` (`multiverse_optimizer.py:192`) slides a two-segment window over the trajectory and flags it if **any** of six metrics exceeds its threshold:
-
-| Metric | Definition | Threshold | Code |
-|---|---|---:|---|
-| Tortuosity | path length / straight distance | 1.2 | `multiverse_optimizer.py:208` |
-| Yaw excess | total yaw beyond the expected heading change | 0.3 rad | `multiverse_optimizer.py:213` |
-| Velocity chattering | wheel-speed zero crossings | 2 | `multiverse_optimizer.py:218` |
-| Jerk cost | sum of squared acceleration jumps | 5.0 | `multiverse_optimizer.py:223` |
-| Curvature cost | sum of `(dtheta/ds)^2` | 2.0 | `multiverse_optimizer.py:239` |
-| Centripetal cost | sum of `(v*omega/a_max)^2` | 0.8 | `multiverse_optimizer.py:247` |
-
-The thresholds are module constants (`multiverse_optimizer.py:91-96`). **The `critic_thresholds` config block in `examples/fll_choreo.json:41-45` is not read.** The same is true of `stomp_variants`, `stomp_noise` and `teb_weights`.
-
-### 8.4 Phase 4 — JAX refinement
-
-For each flagged window (`multiverse_optimizer.py:307-353`):
-
-1. Resample the window to exactly 10 states (`resample_window_cpu`, `multiverse_optimizer.py:29`).
-2. Generate candidates with `generate_candidates_jax` (`jax_optimizer.py:52`):
-   - 4 heading topologies: standard, reversed (`theta + pi`), point-turn-start, point-turn-end (`jax_optimizer.py:61-66`).
-   - 3 velocity modes: `+0.1`, `-0.1`, `0.0` (`jax_optimizer.py:74-78`).
-   - 12 base guesses, plus **50 STOMP perturbations** (`DEFAULT_STOMP_VARIANTS`, `multiverse_optimizer.py:100`) with Gaussian noise `sigma = [0.05, 0.05, 0.1]` on `x, y, heading`, endpoints re-pinned (`jax_optimizer.py:80-84`).
-   - **62 candidates in total.** `tests/test_jax_heuristics.py:33` asserts the shape.
-3. Keep the 10 lowest-cost candidates (`multiverse_optimizer.py:326-327`).
-4. Refine them for 100 iterations with `jaxopt.ProjectedGradient` under a projection onto the bounds (`jax_optimizer.py:105-118`).
-5. Take the best, resample it back to the original sample count, and write it into the trajectory.
-
-The local cost (`jax_optimizer.py:11`) is a time term, a dynamics-error term weighted 500, a squared constraint-violation term weighted 100, forward/reverse penalties, and the accuracy-weight jerk term.
-
-### 8.5 Phase 5 — Polish and the refine probe
-
-`_global_solve` (`multiverse_optimizer.py:454`) solves with the plain `TrajectoryOptimizer` from the default baseline seed, and then probes the refined trajectory as a *second* starting point (`multiverse_optimizer.py:487` `_probe_refined_guess`):
-
-- Convert the refined samples to a guess array (`optimizer.py:128` `guess_from_samples`).
-- Run a **cold** bounded pass: `max_iter = 400` (`REFINE_PROBE_MAX_ITER`, `multiverse_optimizer.py:108`) and `warm_start_init_point = "no"`.
-- Keep the probe only if it converged **and** its cost is below `primary_cost * (1 - 0.001)` (`REFINE_PROBE_MARGIN`, `multiverse_optimizer.py:112`). Below 0.1 % the difference is solver noise, not a better trajectory.
-
-The outcome is recorded in `stats["refine_probe"]` as `{converged, cost, iterations, used}`.
-
-### 8.6 How the pipeline reaches the solver
-
-The probe used to converge, and then lose. On `examples/example_complex_mission.json`:
-
-| Starting point | Result |
-|---|---|
-| Default baseline guess | 6.0677 s |
-| JAX-refined guess (probe) | 8.1473 s (converged in 38 iterations) |
-
-The probe never won **then**, so the refined trajectory had no effect on the final result. **The residue was the quality of the guess, not the connection to the solver**: four separate defects had to be fixed first (the refinement moved the waypoint in the middle of the window it optimised, the JAX cost integrated from the left endpoint while IPOPT uses the trapezoidal rule, the intervals were hard-coded at 0.1 s whatever the segment's length, and the refined timing was thrown away when the guess was read back with the equal-duration model).
-
-With those fixed the probe **wins**:
-
-| Starting point | Result |
-|---|---|
-| Default baseline guess | 6.049 s |
-| JAX-refined guess (probe) | **4.617 s** |
-
-and `main.py --refine` puts the refined trajectory into the candidate set as a seed provider: the complex mission goes from 6.068 s to **4.936 s** and the trajectory passes the gates (envelope 1.14 cm, tracking 0.45 cm). It is a cheaper way to reach the stock set's speed rather than a better one — the full ten-candidate stock set gives 4.877 s on that mission, and measured over 30 missions the refined seed rescues nothing. See [20.1](#201-the-jax-refinement) and [20.2](#202-the-refine-probe), and KI-004.
+The Multi-Verse pipeline is archived under `overboard/legacy/` and has no CLI
+entry point or candidate path. Its five phases (bootstrap, kinematic profile,
+critic, JAX refinement, polish and refine probe) are preserved there with the
+archived `path_planning.py` and `jax_optimizer.py`; nothing in the shipped
+planner imports them. The measured lesson is in [20.1](#201-the-jax-refinement)
+and [20.2](#202-the-refine-probe): the pipeline was a seed provider, not a
+better planner.
 
 ## 9. Measured heuristic comparison
 
@@ -1091,8 +1002,6 @@ Every number in the gate chain, in one place.
 | 15 | Final waypoint heading | ≤ 2 cm (0.02 rad) | `validator.py:302` | the plan must arrive pointing the right way |
 | 16 | IPOPT iterations | ≤ 5000 | `optimizer.py` solver options | `max_iter`; the **warm** pass in fast-polish is budgeted to 200, and the cold pass that follows it is not |
 | 17 | IPOPT tolerance | 1e-2 | solver options | `tol` and `constr_viol_tol`, deliberately loose for interactive use |
-| 18 | Refine-probe margin | 0.1 % | `multiverse_optimizer.py:112` | the refined guess must beat the primary solve by more than this |
-| 19 | Refine-probe iteration budget | 400 | `multiverse_optimizer.py:108` | the probe must not cost more than a fraction of the primary solve |
 
 ## 11. The uncertainty model
 
@@ -1309,10 +1218,10 @@ Each entry has the same fields:
 | Field | Value |
 |---|---|
 | **Strategy** | Retry the solve with a higher `accuracy_weight` when the first attempt fails |
-| **Mechanism** | Was `accuracy_weight += 2.0`; now only `main.py:151-154` on the Multi-Verse path |
+| **Mechanism** | Was `accuracy_weight += 2.0`; removed from the shipped path and archived with Multi-Verse |
 | **Why it was tried** | A higher weight buys smoothness, which was assumed to buy tracking |
-| **Outcome** | **Removed from the simple path.** The old ladder "silently traded speed for a bound that could get worse (longer trajectories accumulate more uncertainty)". On the complex mission the slow 17.1 s candidate **diverged**, while the 6.07 s one stayed bounded |
-| **Status** | dead on the simple path, still present on the Multi-Verse path |
+| **Outcome** | **Removed.** The old ladder "silently traded speed for a bound that could get worse (longer trajectories accumulate more uncertainty)". On the complex mission the slow 17.1 s candidate **diverged**, while the 6.07 s one stayed bounded |
+| **Status** | dead; no shipped code path uses it |
 | **What would revive it** | Only with a *reason* to expect the retry to help. If the failure mode were "the path is too jerky for the controller", a weight ladder would be the right tool. It is not that failure mode today |
 
 ## 19. Ledger: candidate set strategies
@@ -1380,79 +1289,32 @@ Each entry has the same fields:
 | **Measured Outcomes (2026-10-20)** | **100% Gate Certification Across the Benchmark Suite:**<br>- **`example_complex_mission.json`:** **$5.365\text{ s}$**, envelope **$1.16\text{ cm}$**, tracking error **$3.6\text{ mm}$** (vs $5.0\text{ mm}$ gate), max integration error **$0.45\text{ mm}$**, 0 violations. Smashes the 44-Gene Champion ($5.417\text{ s}$, $4.9\text{ mm}$) and stock baseline ($6.068\text{ s}$, $1.22\text{ cm}$).<br>- **`example_straight.json`:** **$2.270\text{ s}$**, envelope **$0.30\text{ cm}$**, 0 violations, max pos error $0.45\text{ mm}$.<br>- **`example_with_stops.json`:** **$5.105\text{ s}$**, envelope **$0.89\text{ cm}$**, 0 violations, max pos error $0.46\text{ mm}$.<br>- **`example_s_curve.json`:** **$3.602\text{ s}$**, envelope **$0.83\text{ cm}$**, 0 violations, max pos error $0.46\text{ mm}$.<br>- **Compute Overhead:** Triad analytical seed generation takes **$< 2.5\text{ ms}$**; parallel IPOPT solves converge in **$40\text{--}48\text{ iters}$** in $\approx 1.7\text{ s}$ per candidate. |
 | **Status** | **Default** in `unified_planner.py` and `main.py --unified`; `--no-unified` restores the stock candidate set |
 
-## 20. Ledger: Multi-Verse internals
+## 20. Ledger: archived Multi-Verse internals
+
+The Multi-Verse internals are archived under `overboard/legacy/` and are kept
+as history, not as a supported path. Do not reintroduce `--multiverse`,
+`--refine`, the Reeds-Shepp bootstrap, the critic, the JAX refinement or the
+refine probe without new evidence; the measured conclusion was that the
+pipeline rescued nothing over the stock candidate set.
 
 ### 20.1 The JAX refinement
 
-| Field | Value |
-|---|---|
-| **Strategy** | Generate 62 candidate paths per flagged window (4 topologies × 3 velocities + 50 STOMP), score them in parallel with `vmap`, refine the best 10 with projected gradient, and write the winner back |
-| **Mechanism** | `jax_optimizer.py:52` `generate_candidates_jax`; `multiverse_optimizer.py:307-353` |
-| **Why it was tried** | Sample the topology space in parallel (forward / reverse / point-turn), then locally optimise the good ones. This is the "evaluate thousands of structural seed trajectories in parallel" idea from `Future_Plans.md` |
-| **Outcome** | **Repaired (KI-004).** The refinement now produces a *usable* starting point, and the pipeline is re-envisioned as a **seed provider** for the solver that has the right objective. Four separate defects had to be fixed, and each was necessary: the refinement optimised two-segment windows and so **moved the waypoint in the middle**; the JAX cost integrated from the left endpoint while **IPOPT uses the trapezoidal rule**, so the proxy graded a different motion; the initial `dt` and velocities were **hard-coded** at 0.1 s and 0.1 m/s whatever the segment's length; and the refined timing was **thrown away** - the timestamps were not updated, and the probe read the guess with the equal-duration model, which keeps only the first interval |
-| **Status** | live (the pipeline is a seed provider: `main.py --refine`) |
-| **What would revive it** | Nothing further for the refinement itself. The next lever is the **objective**: the pipeline's cost is duration plus a jerk term, so it buys speed with tracking accuracy and the 5 mm gate rejects the trade. On the complex mission the refined seed gives 4.936 s where the default set gives 6.068 s, but the full ten-candidate stock set gives 4.877 s there, so it is a cheaper way to reach the stock set's speed rather than a better one |
+**Hypothesis:** a JAX-refined geometric guess would beat the straight-line seeds.
+**Result:** after four defects were fixed, the probe could win on one mission,
+but over 30 missions the refined seed rescued nothing. The defect list and the
+measurements are in `archive/research-2026-10` (see
+[`ARCHIVE.md`](ARCHIVE.md)).
+**Mechanism (archived):** `overboard/legacy/jax_optimizer.py:52`
+`generate_candidates_jax`; `overboard/legacy/multiverse_optimizer.py:307-353`.
 
 ### 20.2 The refine probe
 
-| Field | Value |
-|---|---|
-| **Strategy** | Probe the refined trajectory as a second starting point for the polish, and keep it if it wins |
-| **Mechanism** | `multiverse_optimizer.py:454` `_global_solve`, `multiverse_optimizer.py:487` `_probe_refined_guess` |
-| **Why it was tried** | KI-004: the refined guess was computed and then thrown away, so the whole Phase 4 cost was wasted |
-| **Outcome** | **The probe now wins.** On `examples/example_complex_mission.json` the refined guess converges to **4.617 s** against the primary solve's **6.049 s**, and it is kept. The reason it never won before was not the mechanism but the guess: the probe read a guess whose per-segment intervals were discarded (the equal-duration model keeps only the first one), so the states were read against a timing they did not belong to |
-| **Status** | live (KI-004) |
-| **What would revive it** | Nothing; it works. The probe is a bounded cold pass with a 0.1 % margin, and it never costs more than a fraction of the primary solve |
-
-### 20.3 The Reeds-Shepp bootstrap with `turning_radius = 0.0`
-
-| Field | Value |
-|---|---|
-| **Strategy** | Bootstrap the geometry with a Reeds-Shepp path so the guess is kinematically valid, including reverse manoeuvres |
-| **Mechanism** | `path_planning.py:28`; configured from `examples/fll_choreo.json:46-49` |
-| **Outcome** | **The bootstrap never ran.** `path_planning.py` read rsplan's `Path` object as a list; the `TypeError` was swallowed by the `except` and every call returned `None`, so the "Reeds-Shepp bootstrap" fell back to the straight line every time. The shipped configuration compounded it with `turning_radius: 0.0`, which rsplan cannot plan with at all: 0 of 12 example segments planned. With the API fixed and the radius at the robot's 0.05 m, 12 of 12 plan (KI-004) |
-| **Status** | live (the bootstrap is the geometry the refined seed is built on) |
-| **What would revive it** | It is revived. As a seed on its own it is **not** a speed lever: on the six example missions it matches the stock seeds (first4 1.680 s, events 4.418 s) and is worse on the complex mission (7.032 s against 4.877 s). The value is in the *refinement* that is built on top of it |
-
-### 20.4 The critic's config block
-
-| Field | Value |
-|---|---|
-| **Strategy** | Make the critic's thresholds configurable per mission |
-| **Mechanism** | `examples/fll_choreo.json:41-45` declares `critic_thresholds`; the code reads module constants instead (`multiverse_optimizer.py:91-96`) |
-| **Outcome** | The config block is silently ignored. A user who tunes it sees no change |
-| **Status** | **dead** |
-| **What would revive it** | Read the block, with the module constants as the defaults. Trivial, and it removes a silent no-op |
-
-### 20.5 The STOMP and TEB config blocks
-
-| Field | Value |
-|---|---|
-| **Strategy** | Make the number of STOMP variants, the noise scale and the TEB topology weights configurable |
-| **Mechanism** | `examples/fll_choreo.json:28-40` declares them; the code uses `DEFAULT_STOMP_VARIANTS = 50` (`multiverse_optimizer.py:100`) and `STOMP_NOISE_POS_STD = 0.05` / `STOMP_NOISE_HEADING_STD = 0.1` (`multiverse_optimizer.py:98-99`) |
-| **Outcome** | Same as 20.4: silently ignored. The declared `stomp_variants: 5` is ignored in favour of 50 |
-| **Status** | **dead** |
-| **What would revive it** | Read the blocks |
-
-### 20.6 The `heuristic_wins` counter
-
-| Field | Value |
-|---|---|
-| **Strategy** | Record which heuristic produced the winning trajectory, so the benchmark can report heuristic effectiveness |
-| **Mechanism** | `OptimizationStats.heuristic_wins` (`multiverse_optimizer.py:65`), exported in `to_dict` (`multiverse_optimizer.py:73`, the field at `:80`), read by the benchmark's "Heuristic Effectiveness" table (`benchmark.py:529-537`) |
-| **Outcome** | **The field is never written to.** The benchmark table is always empty |
-| **Status** | **dead** |
-| **What would revive it** | Populate it in the candidate loop. The information is already there: each attempt records `guess_style` and `per_segment_dt` (`main.py:1058-1059`), and the selected index is known. This is a five-line fix that turns the benchmark from decorative into useful |
-
-### 20.7 `enable_parallel` in the Multi-Verse config
-
-| Field | Value |
-|---|---|
-| **Strategy** | Parallelise the Multi-Verse pipeline |
-| **Mechanism** | `examples/fll_choreo.json:28-29` sets `enable_parallel: true`, `num_workers: 2`; `MasterTrajectoryOptimizer.__init__` accepts both (`multiverse_optimizer.py:255`) |
-| **Outcome** | The flags do not change the result, and the parallel machinery in the Multi-Verse path is not used for the final solve |
-| **Status** | dead |
-| **What would revive it** | Nothing, unless the Multi-Verse path is revived |
+**Hypothesis:** a second cold solve from the refined trajectory would beat the
+primary solve by more than solver noise.
+**Result:** it did on one mission and not across the suite, so `--refine` was
+removed with the pipeline.
+**Mechanism (archived):** `overboard/legacy/multiverse_optimizer.py:454`
+`_global_solve`, `:487` `_probe_refined_guess`.
 
 ## 21. Ledger: validation and tooling
 
@@ -1589,9 +1451,9 @@ Each question has the current evidence, a hypothesis, and an experiment with a m
 | | |
 |---|---|
 | **Question** | The seeds perturb a straight line. Would a seed built from a real path family — a circular arc, a clothoid, a β-spline through the waypoints — find better optima? |
-| **Current evidence** | All four structured seeds lose (17.1). The tree contains no geometric path family at all ([Section 2](#2-what-is-not-in-the-tree)). Reeds-Shepp exists but is only reachable from the Multi-Verse bootstrap, and only with both headings known (20.3). |
+| **Current evidence** | All four structured seeds lose (17.1). The shipped tree contains no geometric path family at all ([Section 2](#2-what-is-not-in-the-tree)). Reeds-Shepp exists only in the archived Multi-Verse bootstrap, not as a shipped seed. |
 | **Hypothesis** | A seed whose geometry is *feasible for a differential-drive robot* (curvature continuous, reachable) starts IPOPT in a much better basin, and the resulting trajectory is both shorter and tighter. |
-| **Experiment** | 1. Implement a geometric path builder in `path_planning.py`: given two poses, produce a curvature-continuous path (Dubins for forward-only, Reeds-Shepp with a real turning radius, or a clothoid-spline for the general case). 2. Add a `guess_style` that uses it, with the timing profile from `_set_rolling_speeds`. 3. Add it to `GUESS_STYLES` and let the candidate set pick it up — no other change is needed. 4. Run the [Section 9](#9-measured-heuristic-comparison) matrix with the new seed added. |
+| **Experiment** | 1. Implement a geometric path builder in the shipped package (`overboard/core/`): given two poses, produce a curvature-continuous path (Dubins for forward-only, Reeds-Shepp with a real turning radius, or a clothoid-spline for the general case). 2. Add a `guess_style` that uses it, with the timing profile from `_set_rolling_speeds`. 3. Add it to `GUESS_STYLES` and let the candidate set pick it up — no other change is needed. 4. Run the [Section 9](#9-measured-heuristic-comparison) matrix with the new seed added. |
 | **Metric** | Trajectory duration, envelope radius, tracking error, IPOPT iteration count, wall time. |
 | **Success criterion** | The new seed wins on at least 2 of the 6 missions *and* does not lose on the rest — i.e. it becomes the selected candidate somewhere. A seed that is sometimes better but usually worse is not useful, because it costs a solve. |
 | **Cost** | Medium. One new module, one new style, and the existing matrix. |
@@ -1727,13 +1589,12 @@ Each question has the current evidence, a hypothesis, and an experiment with a m
 
 | | |
 |---|---|
-| **Question** | The five-phase pipeline is 400 lines of code that produces a trajectory the solver then discards (20.1, 20.2). Keep it, fix it, or delete it? |
-| **Current evidence** | **Answered (KI-004).** The pipeline was repaired rather than deleted: the refinement preserves the waypoints, the JAX cost uses IPOPT's trapezoidal rule, the intervals follow the segment's own length, the refined timing is propagated into the timestamps, the probe reads the guess with the per-segment model, and the Reeds-Shepp bootstrap works (its rsplan API was broken and it had never run). The probe now wins, and the pipeline is re-envisioned as a **seed provider**: `main.py --refine` adds its refined trajectory to the candidate set. Measured over 30 missions, the refined seed is **not** better than the stock seeds and rescues nothing - it is a cheaper way to reach the stock set's speed on some missions (the complex mission: 4.936 s against the default set's 6.068 s, where the full ten-candidate stock set gives 4.877 s) |
-| **Hypothesis** | If Q1 (real path families) or Q5 (critic feedback) produces a good starting point, the Multi-Verse machinery becomes a *multi-seed generator* and its value is the topology sampling (forward / reverse / point-turn), which nothing else in the tree covers |
-| **Experiment** | Done: the four defects were found by measurement and fixed; the refined trajectory was measured as a seed on the six example missions and over 30. The raw records are in [`../measurements/2026-10-20-ki004/`](../measurements/2026-10-20-ki004/) |
-| **Metric** | Whether the pipeline's output wins as a candidate: duration, envelope, tracking, pass rate against the stock seed set |
-| **Success criterion** | A decision, made on evidence. **Made**: the pipeline is repaired and kept, as a seed provider; the measurement says the stock seeds are the better buy, so it stays opt-in |
-| **Cost** | Low to decide, high to execute. **The next lever is the objective, not the search**: the pipeline's cost is duration plus a jerk term, so it buys speed with tracking accuracy and the 5 mm gate rejects the trade. Making the objective answer the gate is Q4's job |
+| **Question** | Keep, fix or delete the five-phase pipeline? |
+| **Current evidence** | **Answered (KI-004).** The pipeline was repaired enough to measure as a seed provider, and the measurement said the stock seeds are the better buy: over 30 missions the refined seed rescued nothing. It is archived under `overboard/legacy/` with no CLI entry point. |
+| **Experiment** | Done; the raw records are in `archive/research-2026-10` (see [`ARCHIVE.md`](ARCHIVE.md)). |
+| **Metric** | Whether the pipeline's output wins as a candidate: duration, envelope, tracking, pass rate against the stock seed set. |
+| **Success criterion** | A decision, made on evidence. **Made**: archived, not shipped. |
+| **Cost** | Low. Do not revive it without a new reason; the next lever is the objective, not the search. |
 
 ### 24.1 Suggested order
 
@@ -1756,9 +1617,8 @@ Each question has the current evidence, a hypothesis, and an experiment with a m
   ---  DONE: Q1  a Bezier path family is measured: a cheaper solve, not a
                 faster trajectory.
   ---  DONE: Q7  the density sweep is measured: n = 10 is the sweet spot.
-  ---  DONE: Q12 the Multi-Verse path is repaired and kept as a seed provider
-                (KI-004); --refine is 4.936 s where the default set gives
-                6.068 s, and the full stock set 4.877 s.
+  ---  DONE: Q12 the Multi-Verse path is archived (KI-004); measured as a
+                seed provider it rescued nothing against the stock seeds.
   ---  ANSWERED: Q5  the critic flags every candidate, so it cannot filter;
                 its thresholds have to discriminate before it can.
   Q4  reachability in the objective                          (large)
@@ -1797,11 +1657,11 @@ All commands run from the repository root.
 
 ```bash
 # Equal-duration timing, all five seeds
-python main.py -c examples/fll_choreo.json -w examples/<mission>.json \
+python -m overboard.main -c examples/fll_choreo.json -w examples/<mission>.json \
   -o <tmp>.traj --validate --candidates 5 --uniform-dt
 
 # Per-segment timing, all five seeds
-python main.py -c examples/fll_choreo.json -w examples/<mission>.json \
+python -m overboard.main -c examples/fll_choreo.json -w examples/<mission>.json \
   -o <tmp>.traj --validate --candidates 5 --per-segment-dt
 ```
 
@@ -1812,14 +1672,14 @@ The machine-readable result is the `##OVERBOARD-VALIDATION##` line in the stdout
 ## A.2 The timing × accuracy-weight grid
 
 ```bash
-python main.py -c examples/fll_choreo.json -w examples/<mission>.json \
+python -m overboard.main -c examples/fll_choreo.json -w examples/<mission>.json \
   -o <tmp>.traj --validate --candidates 5 --sweep
 ```
 
 ## A.3 The seed comparison in one line
 
 ```bash
-python main.py --uniform-dt --validate -c examples/fll_choreo.json \
+python -m overboard.main --uniform-dt --validate -c examples/fll_choreo.json \
   -w examples/example_mission_first4.json -o first4.traj --candidates 5
 ```
 
@@ -1848,7 +1708,7 @@ This is the table to re-measure after any solver change: per mission, the wall t
 ## A.6 The validation pipeline only
 
 ```bash
-python main.py -c examples/fll_choreo.json -w examples/example_complex_mission.json \
+python -m overboard.main -c examples/fll_choreo.json -w examples/example_complex_mission.json \
   -o output.traj --validate --candidates 5
 ```
 
@@ -1955,38 +1815,6 @@ Every symbol this document mentions, with its location in the tree that was meas
 | `compute_reachability` | 1273 | The interval propagation |
 | the divergence radius | 714 | 0.05 m |
 
-## `multiverse_optimizer.py`
-
-| Symbol | Line | Role |
-|---|---|---|
-| `resample_window_cpu` | 29 | The window resampler |
-| `OptimizationStats` | 51 | The phase statistics; `heuristic_wins` at 65 (never written) |
-| the critic thresholds | 91-96 | The six constants |
-| the STOMP constants | 98-100 | Noise and variant count |
-| `JAX_TARGET_SAMPLES` | 103 | 10 |
-| `REFINE_PROBE_MAX_ITER` | 108 | 400 |
-| `REFINE_PROBE_MARGIN` | 112 | 0.001 |
-| `PathBootstrapper` | 114 | The Reeds-Shepp bootstrap |
-| `generate_baseline` | 125 | The geometric guess |
-| `_generate_segment_waypoints` | 144 | Reeds-Shepp or linear |
-| `TrajectoryCritic` | 180 | The six metrics |
-| `evaluate` | 192 | The window detection |
-| `MasterTrajectoryOptimizer` | 252 | The pipeline |
-| `solve` | 281 | The five phases |
-| `_profile_kinematics` | 492 | Phase 2 |
-| `_global_solve` | 567 | Phase 5 and the probe |
-| `_probe_refined_guess` | 600 | The bounded probe |
-
-## `jax_optimizer.py`
-
-| Symbol | Line | Role |
-|---|---|---|
-| `local_trajectory_cost` | 11 | The proxy cost |
-| `local_trajectory_projection` | 52 | The bounds projection |
-| `generate_candidates_jax` | 65 | 4 topologies × 3 velocities + 50 STOMP |
-| `perturb` | 102 | The STOMP noise |
-| `get_jax_refiner` | 127 | The `jaxopt.ProjectedGradient` refiner |
-
 ## `robot_model.py`
 
 | Symbol | Line | Role |
@@ -2000,14 +1828,6 @@ Every symbol this document mentions, with its location in the tree that was meas
 | `get_max_wheel_force_symbolic` | 790 | The per-wheel limit |
 | `get_traction_limit_symbolic` | 812 | The per-wheel traction limit |
 | `check_constraints` | 835 | The CPU-side check |
-
-## `path_planning.py`
-
-| Symbol | Line | Role |
-|---|---|---|
-| `ReedsSheppPath` | 11 | The wrapper |
-| `plan` | 28 | The path; returns `None` on failure |
-| `linear_interpolation_waypoints` | 93 | The fallback |
 
 ## `digital_twin.py`
 
@@ -2031,7 +1851,7 @@ Every symbol this document mentions, with its location in the tree that was meas
 | KI-001 | Solver / output | A failed solve was exported as a success | [22.4](#224-a-failed-solve-was-exported-as-a-success-ki-001-and---validate-could-not-block-output-ki-002) |
 | KI-002 | Validation | `--validate` could not block output or the exit code | [22.4](#224-a-failed-solve-was-exported-as-a-success-ki-001-and---validate-could-not-block-output-ki-002) |
 | KI-003 | Safety | Immrax ignored the upper uncertainty bounds | [22.3](#223-the-immrax-upper-uncertainty-bounds-were-ignored-ki-003) |
-| KI-004 | Multi-Verse | The refinement had no effect on the final trajectory — now repaired and kept as a seed provider | [8.6](#86-how-the-pipeline-reaches-the-solver), [20.1](#201-the-jax-refinement), [20.2](#202-the-refine-probe), Q12 |
+| KI-004 | Multi-Verse | The refinement had no effect on the final trajectory; measured as a seed provider it rescued nothing, and the pipeline is archived | [Section 8](#8-the-archived-multi-verse-path), [20.1](#201-the-jax-refinement), [20.2](#202-the-refine-probe), Q12 |
 | KI-009 | Safety / config | The declared uncertainty ranges were ignored | [Section 11](#11-the-uncertainty-model) |
 | KI-010 | Physics | The weight-transfer math was wrong and the tools disagreed | [22.5](#225-the-weight-transfer-math-was-wrong-and-the-tools-disagreed-ki-010) |
 | KI-014 | Safety model | The JAX Ramsete used a poor large-angle approximation | [Section 12](#12-controller-and-plant-parity) |
@@ -2063,7 +1883,6 @@ Every symbol this document mentions, with its location in the tree that was meas
 | **Gate** | One of G0–G5 in [Part II](#part-ii--the-verification-strategy). A candidate must pass all of them. |
 | **Passing** | A candidate that cleared every gate. Only a passing candidate can be exported. |
 | **The baseline** | The `baseline` seed under equal-duration timing: the historical behaviour of the solver. |
-| **The probe** | The bounded second solve from the Multi-Verse refined trajectory (`multiverse_optimizer.py:487`). |
 | **Digital twin** | The fitted five-state plant, loaded with `--sysid-fit`. Strictly, a *partial* twin: it models the actuator and the odometry, not the motor, the PID or the slip. |
 | **Model prediction** | Any number produced by the simulator. Not a hardware measurement. |
 

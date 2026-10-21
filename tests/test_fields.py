@@ -8,15 +8,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from fields import (
-    Collision,
-    FieldModel,
-    Obstacle,
-    field_from_dict,
-    list_fields,
-    load_all_fields,
-    load_field,
-)
+from overboard.viz.fields import Collision, FieldModel, Obstacle, field_from_dict, list_fields, load_all_fields, load_field
 
 
 def _pdf_bytes(mat_shaped=True):
@@ -250,7 +242,7 @@ class TestFieldFiles(unittest.TestCase):
 
 class TestServerPayload(unittest.TestCase):
     def test_the_studio_gets_the_fields(self):
-        from gui_server import field_payload
+        from overboard.gui_server import field_payload
         payload = field_payload()
         self.assertTrue(payload["seasons"])
         self.assertIn("2026-27", payload["fields"])
@@ -259,7 +251,7 @@ class TestServerPayload(unittest.TestCase):
         self.assertIn("mat", model)
 
     def test_the_collisions_are_computed_for_a_mission(self):
-        from gui_server import field_collisions
+        from overboard.gui_server import field_collisions
         config = {"robot": {"track_width": 0.0965, "wheel_radius": 0.028}}
         # Across the middle of the mat, well clear of every model.
         clean = [{"x": 0.3, "y": 0.2, "t": 0.0}, {"x": 0.4, "y": 0.2, "t": 0.1}]
@@ -272,14 +264,14 @@ class TestServerPayload(unittest.TestCase):
         self.assertFalse(hits[0]["uncertain"])
 
     def test_a_mission_without_a_field_has_no_collisions(self):
-        from gui_server import field_collisions
+        from overboard.gui_server import field_collisions
         samples = [{"x": 0.084, "y": 0.657, "t": 0.0}]
         self.assertEqual(field_collisions(samples, {}, ""), [])
         self.assertEqual(field_collisions(samples, {}, "no-such-season"), [])
 
     def test_sensor_hits_and_robot_config_collisions(self):
-        from fields import load_field
-        from robot_model import RobotConfig
+        from overboard.viz.fields import load_field
+        from overboard.models.robot_model import RobotConfig
         field = load_field("2026-27")
         self.assertIsNotNone(field)
 
@@ -328,7 +320,7 @@ class TestLaunchAreas(unittest.TestCase):
         self.assertEqual(right["quadrant"], 2)
 
     def test_the_launch_areas_reach_the_studio(self):
-        from gui_server import field_payload
+        from overboard.gui_server import field_payload
         payload = field_payload()
         model = payload["fields"]["fll2026founders-robovibe"]
         self.assertEqual(len(model["launch_areas"]), 2)
@@ -382,7 +374,7 @@ class TestRoboVibeField(unittest.TestCase):
         self.assertLess(inspection.x_m, 0.0)
 
     def test_the_collisions_use_this_field(self):
-        from gui_server import field_collisions
+        from overboard.gui_server import field_collisions
         config = {"robot": {"track_width": 0.0965, "wheel_radius": 0.028}}
         # Through the "Forest Elder" tree at (1.940, 0.758).
         hits = field_collisions([{"x": 1.940, "y": 0.758, "t": 0.0}],
@@ -460,7 +452,7 @@ class TestMatDownload(unittest.TestCase):
 
     def test_the_picture_is_composed_from_firsts_document(self):
         """FIRST's field guide is fetched and the mat is composed from it."""
-        import gui_server
+        import overboard.gui_server as gui_server
 
         calls = []
 
@@ -509,7 +501,7 @@ class TestMatDownload(unittest.TestCase):
                 self.assertTrue(handle.read(4) == b"\x89PNG")
 
     def test_a_field_without_a_document_says_so(self):
-        import gui_server
+        import overboard.gui_server as gui_server
         with self.assertRaises(ValueError):
             gui_server.download_field_mat("no-such-season")
 
@@ -520,7 +512,7 @@ class TestMatDownload(unittest.TestCase):
         mat's shape moves its features by a tenth of the mat. The studio
         says so instead of serving it.
         """
-        import gui_server
+        import overboard.gui_server as gui_server
 
         class _Response:
             def __init__(self, data):
@@ -554,7 +546,7 @@ class TestMatDownload(unittest.TestCase):
         self.assertIn("shape", str(ctx.exception))
 
     def test_something_that_is_not_a_pdf_is_refused(self):
-        import gui_server
+        import overboard.gui_server as gui_server
 
         class _Response:
             def __init__(self):

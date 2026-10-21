@@ -35,16 +35,9 @@ from pathlib import Path
 
 import numpy as np
 
-from robot_model import RobotConfig
-from optimizer import TrajectoryOptimizer
-from validator import validate_trajectory
-
-# MV optimizer is optional (JAX may not be installed)
-try:
-    from multiverse_optimizer import MasterTrajectoryOptimizer
-    HAS_MULTIVERSE = True
-except ImportError:
-    HAS_MULTIVERSE = False
+from overboard.models.robot_model import RobotConfig
+from overboard.core.optimizer import TrajectoryOptimizer
+from overboard.verification.validator import validate_trajectory
 
 
 # ---------------------------------------------------------------------------
@@ -113,19 +106,12 @@ class CLIBenchmarkRunner:
             out_file = f"benchmark_{optimizer_type}_{Path(waypoint_file).stem}_run{run}.traj"
 
             cmd = [
-                "py", "main.py",
+                "py", "-m", "overboard.main",
                 "-c", self.config_path,
                 "-w", waypoint_file,
                 "-o", out_file,
                 "-n", str(samples),
             ]
-            if optimizer_type == "simple":
-                cmd.append("--simple")
-            else:
-                # The simple solver is the default now, so the Multi-Verse arm
-                # has to ask for it explicitly.
-                cmd.extend(["--multiverse", "--no-parallel"])
-
             t0 = time.time()
             proc = subprocess.run(cmd, capture_output=True, text=True)
             elapsed = time.time() - t0
@@ -177,11 +163,7 @@ class CLIBenchmarkRunner:
             print(f"\n  {wp}")
             r_simple = self.run_single(wp, "simple", samples, runs, validate)
             self.results.append(r_simple)
-            r_mv = self.run_single(wp, "multiverse", samples, runs, validate)
-            self.results.append(r_mv)
-
-            speedup = r_simple["avg_wall_time"] / r_mv["avg_wall_time"]
-            print(f"    simple={r_simple['avg_wall_time']:.2f}s  mv={r_mv['avg_wall_time']:.2f}s  speedup={speedup:.2f}x")
+            print(f"    simple={r_simple['avg_wall_time']:.2f}s")
 
     # ------------------------------------------------------------------
     def print_summary(self) -> None:
@@ -191,16 +173,12 @@ class CLIBenchmarkRunner:
         files = sorted({r["waypoint_file"] for r in self.results})
         for wp in files:
             s = next((r for r in self.results if r["waypoint_file"] == wp and r["optimizer_type"] == "simple"), None)
-            m = next((r for r in self.results if r["waypoint_file"] == wp and r["optimizer_type"] == "multiverse"), None)
-            if s and m:
+            if s:
                 print(f"\n{Path(wp).name}:")
                 print(f"  Simple:      {s['avg_wall_time']:.2f}s (range {s['max_wall_time'] - s['min_wall_time']:.2f}s)")
-                print(f"  Multi-Verse: {m['avg_wall_time']:.2f}s (range {m['max_wall_time'] - m['min_wall_time']:.2f}s)")
-                print(f"  Speedup:     {s['avg_wall_time'] / m['avg_wall_time']:.2f}x")
-                if s.get("validation") and m.get("validation"):
-                    vs, vm = s["validation"], m["validation"]
+                if s.get("validation"):
+                    vs = s["validation"]
                     print(f"  Val  simple: pos_err={vs['avg_max_pos_error_m']:.6f}m  pass={vs['pass_rate']:.0%}")
-                    print(f"  Val  mv:     pos_err={vm['avg_max_pos_error_m']:.6f}m  pass={vm['pass_rate']:.0%}")
 
     # ------------------------------------------------------------------
     @staticmethod
@@ -270,29 +248,6 @@ def run_pipeline_benchmark(config_data: dict, cfg: RobotConfig) -> dict:
           f"  {'converged' if converged_s else 'FAILED'}")
     result["simple"] = {"solve_time": t_simple, "traj_time": cost_s,
                          "converged": converged_s}
-
-    # --- Multi-Verse (if available) ---------------------------------------
-    if HAS_MULTIVERSE:
-        opt_mv = MasterTrajectoryOptimizer(cfg, enable_parallel=True)
-        # warmup pass
-        opt_mv.solve(wps, verbose=False)
-        t0 = time.time()
-        samples_mv, stats_mv = opt_mv.solve(wps, verbose=False)
-        t_mv = time.time() - t0
-        cost_mv = samples_mv[-1]["t"]
-        converged_mv = bool(stats_mv.get("converged", False))
-        print(f"  JAX Multi-Verse solve={t_mv:.4f}s  traj_time={cost_mv:.4f}s"
-              f"  {'converged' if converged_mv else 'FAILED'}")
-        improvement = (cost_s - cost_mv) / cost_s * 100
-        print(f"  Cost improvement: {improvement:.2f}%")
-        if stats_mv.get("phase_times", {}).get("refinement") is not None:
-            print(f"  JAX refine phase: {stats_mv['phase_times']['refinement']:.4f}s")
-        result["multiverse"] = {"solve_time": t_mv, "traj_time": cost_mv,
-                                "improvement_pct": improvement,
-                                "converged": converged_mv}
-    else:
-        print("  Multi-Verse skipped (JAX not installed).")
-        result["multiverse"] = None
 
     return result
 
@@ -503,25 +458,11 @@ class RandomBenchmark:
                 print(f"    simple failed: {exc}")
                 samples_s, stats_s, val_s = None, None, None
 
-            # Multi-Verse
-            if HAS_MULTIVERSE:
-                print("  Multi-Verse optimizer…")
-                mv_opt = MasterTrajectoryOptimizer(self.cfg, enable_parallel=True, num_workers=4, verbose=False)
-                try:
-                    samples_mv, stats_mv = mv_opt.solve(wps_list, stop_waypoint_indices=stops, verbose=False)
-                    val_mv = self._validate(samples_mv, run_dir / "traj_mv.traj")
-                except Exception as exc:
-                    print(f"    multiverse failed: {exc}")
-                    samples_mv, stats_mv, val_mv = None, None, None
-            else:
-                samples_mv, stats_mv, val_mv = None, None, None
-
             self.results.append({
                 "id": run_id,
                 "profile": profile,
                 "waypoints": wps_json,
                 "simple":    {"stats": stats_s,  "validation": val_s},
-                "multiverse": {"stats": stats_mv, "validation": val_mv},
             })
             self._save_incremental()
 
@@ -534,54 +475,35 @@ class RandomBenchmark:
     def generate_report(self) -> None:
         report_path = self.output_dir / "benchmark_report.md"
         lines = [
-            "# Comprehensive Optimizer Benchmark Report",
+            "# Optimizer Benchmark Report",
             f"Generated: {time.strftime('%Y-%m-%d %H:%M:%S')}",
             "",
             "## Summary Statistics",
-            "| Metric | Simple | Multi-Verse | Delta / Speedup |",
-            "| :--- | :--- | :--- | :--- |",
+            "| Metric | Simple |",
+            "| :--- | :--- |",
         ]
 
         simple_times = [r["simple"]["stats"]["total_time"] for r in self.results if r["simple"]["stats"]]
-        mv_times     = [r["multiverse"]["stats"]["total_time"] for r in self.results if r["multiverse"]["stats"]]
-        avg_s = np.mean(simple_times) if simple_times else 0
-        avg_mv = np.mean(mv_times) if mv_times else 0
-        speedup = avg_s / avg_mv if avg_mv > 0 else 0
-        lines.append(f"| Avg Solve Time | {avg_s:.3f}s | {avg_mv:.3f}s | {speedup:.2f}x |")
-
         simple_costs = [r["simple"]["stats"]["final_cost"] for r in self.results if r["simple"]["stats"]]
-        mv_costs     = [r["multiverse"]["stats"]["final_cost"] for r in self.results if r["multiverse"]["stats"]]
+        avg_s = np.mean(simple_times) if simple_times else 0
         avg_cs = np.mean(simple_costs) if simple_costs else 0
-        avg_cmv = np.mean(mv_costs) if mv_costs else 0
-        improvement = (1 - avg_cmv / avg_cs) * 100 if avg_cs > 0 else 0
-        lines.append(f"| Avg Traj Duration | {avg_cs:.3f}s | {avg_cmv:.3f}s | {improvement:.1f}% better |")
+        lines.append(f"| Avg Solve Time | {avg_s:.3f}s |")
+        lines.append(f"| Avg Traj Duration | {avg_cs:.3f}s |")
 
-        ok_s  = sum(1 for r in self.results if r["simple"]["stats"])
-        ok_mv = sum(1 for r in self.results if r["multiverse"]["stats"])
-        lines.append(f"| Success Rate | {ok_s}/{len(self.results)} | {ok_mv}/{len(self.results)} | |")
+        ok_s = sum(1 for r in self.results if r["simple"]["stats"])
+        lines.append(f"| Success Rate | {ok_s}/{len(self.results)} |")
 
         lines += [
-            "\n## Heuristic Effectiveness",
-            "| Run | Window | Heuristic | Improvement |",
-            "| :--- | :--- | :--- | :--- |",
-        ]
-        for run in self.results:
-            mv_stats = run["multiverse"]["stats"]
-            if mv_stats and mv_stats.get("heuristic_wins"):
-                for win in mv_stats["heuristic_wins"]:
-                    lines.append(f"| {run['id']} | {win['window']} | {win['heuristic']} | {win['improvement_pct']:.1f}% |")
-
-        lines += [
-            "\n## Physical Validation (Multi-Verse)",
+            "\n## Physical Validation",
             "| Run | Max Pos Error | Max Slip | Status |",
             "| :--- | :--- | :--- | :--- |",
         ]
         for run in self.results:
-            v = run["multiverse"]["validation"]
+            v = run["simple"]["validation"]
             if v:
-                err  = v["errors"]["max_pos_error_m"]
+                err = v["errors"]["max_pos_error_m"]
                 slip = v["audit"]["left_wheel_slip"] + v["audit"]["right_wheel_slip"]
-                status = "✅ PASS" if err < 0.01 and slip < 1e-3 else "❌ FAIL"
+                status = "PASS" if err < 0.01 and slip < 1e-3 else "FAIL"
                 lines.append(f"| {run['id']} | {err:.6f}m | {slip:.6f}N | {status} |")
             else:
                 lines.append(f"| {run['id']} | N/A | N/A | N/A |")

@@ -8,12 +8,8 @@ import math
 import unittest
 import numpy as np
 
-from robot_model import RobotConfig
-from frontier_seed import (
-    compute_tangent_headings,
-    _asymmetric_late_apex_bump,
-    generate_frontier_seed,
-)
+from overboard.models.robot_model import RobotConfig
+from overboard.core.frontier_seed import compute_tangent_headings, _asymmetric_late_apex_bump, generate_frontier_seed
 
 
 class TestFrontierSeed(unittest.TestCase):

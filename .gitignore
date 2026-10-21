@@ -82,5 +82,7 @@ output_candidates/
 output_memetic/
 plot_data.json
 scratch/
-legacy/
+/legacy/
 *.png
+!docs/images/
+!docs/images/**

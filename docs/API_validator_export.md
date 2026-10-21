@@ -243,13 +243,13 @@ write_python_file("output.traj", "trajectory.py")
 CLI equivalent:
 
 ```bash
-python main.py -c examples/fll_choreo.json -w waypoints.json -o output.traj --export-format python
+python -m overboard.main -c examples/fll_choreo.json -w waypoints.json -o output.traj --export-format python
 ```
 
 With `compact=True`, `write_python_file` calls `write_compact_python_file` instead. The generated module contains a packed `samples` bytes object, a `config` dictionary, and an `events` tuple. The blob is a 4-byte little-endian header (`<HH` version, count) followed by 24 bytes per sample (`<6f` t, x, y, heading, v, omega). `ramsete_compact.py` and `ramsete_compact_events.py` decode this format directly; the legacy controllers expect the list format.
 
 ```bash
-python main.py -c examples/fll_choreo.json -w waypoints.json -o output.traj --export-format python-compact
+python -m overboard.main -c examples/fll_choreo.json -w waypoints.json -o output.traj --export-format python-compact
 ```
 
 `encode_compact_trajectory(samples)` returns `(blob, events)`. It rejects missing or non-finite fields and values that do not fit in float32. `write_compact_python_file(input_traj_file, output_file)` performs the same load/write path as the CLI.

@@ -10,15 +10,7 @@ import unittest
 
 import numpy as np
 
-from sysid_fit import (
-    fit_session,
-    load_poses,
-    main as sysid_main,
-    parse_session,
-    poses_from_hub_session,
-    read_drivebase_profile,
-    write_poses_csv,
-)
+from overboard.sysid.fit import fit_session, load_poses, main as sysid_main, parse_session, poses_from_hub_session, read_drivebase_profile, write_poses_csv
 
 
 def _first_order(times, command, gain, tau_s, delay_s):
@@ -612,7 +604,7 @@ class TestIntervalLowerBound(unittest.TestCase):
         self.assertLess(straight["gain_ci95_raw"][0], 0.0)
 
     def test_the_fit_file_loads(self):
-        from digital_twin import load_sysid_fit
+        from overboard.sysid.digital_twin import load_sysid_fit
 
         result = fit_session(self._two_repeat_fit(), wheel_radius_m=0.028)
         with tempfile.TemporaryDirectory() as tmp:

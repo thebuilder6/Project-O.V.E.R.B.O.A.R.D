@@ -23,29 +23,5 @@
       "wheel_radius_range": [0.0275, 0.0285]
     }
   },
-  "interactions": {},
-  "multiverse": {
-    "enable_parallel": true,
-    "num_workers": 2,
-    "stomp_variants": 5,
-    "stomp_noise": {
-      "position_std": 0.05,
-      "heading_std": 0.1
-    },
-    "teb_weights": {
-      "forward_bias": 10.0,
-      "reverse_bias": 10.0,
-      "point_turn_bias": 5.0,
-      "wide_sweep_bias": 2.0
-    },
-    "critic_thresholds": {
-      "tortuosity": 1.5,
-      "yaw_buffer_rad": 0.5,
-      "velocity_chattering_threshold": 3
-    },
-    "bootstrap": {
-      "turning_radius": 0.05,
-      "resolution": 0.05
-    }
-  }
+  "interactions": {}
 }

@@ -1,6 +1,6 @@
 # Making the Robot Move
 
-Start by duplicating `mission_template.py`. All your code goes inside `async def main():`. This tutorial walks you through everything you need to write a real mission, from the first straight line to doing multiple things at once.
+Start by duplicating `archive/mission_template.py`. All your code goes inside `async def main():`. This tutorial walks you through everything you need to write a real mission, from the first straight line to doing multiple things at once.
 
 ---
 

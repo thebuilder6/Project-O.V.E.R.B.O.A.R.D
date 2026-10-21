@@ -44,7 +44,7 @@ echo [....] Installing the optional extras (validation, calibration, hub push)
 "%VENV_PY%" -m pip install -r requirements-optional.txt
 if errorlevel 1 (
   echo [warn] The optional extras did not install. The solver and the studio
-  echo        still work, but --validate, --multiverse and the hub tools do not.
+  echo        still work, but --validate and the hub tools do not.
   echo        Run this file again once the network behaves.
 ) else (
   echo [ok]   Optional extras installed
@@ -52,13 +52,13 @@ if errorlevel 1 (
 
 REM --- 4. the check -------------------------------------------------------
 echo.
-"%VENV_PY%" main.py --doctor
+"%VENV_PY%" -m overboard.main --doctor
 if errorlevel 1 goto :failed
 
 echo.
 echo Ready. Start the studio by double-clicking start_studio.bat,
 echo or from a terminal with:
-echo     .venv\Scripts\python main.py --gui
+echo     .venv\Scripts\python -m overboard.main --gui
 echo.
 if "%~1"=="" pause
 endlocal

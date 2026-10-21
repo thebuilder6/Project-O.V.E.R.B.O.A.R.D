@@ -6,10 +6,10 @@ A trajectory optimizer for LEGO differential-drive robots in FIRST LEGO League (
 
 **📖 Technical documentation:** [docs/WHITEPAPER.md](docs/WHITEPAPER.md)
 **🔬 Heuristics and verification:** [docs/HEURISTICS_AND_VERIFICATION.md](docs/HEURISTICS_AND_VERIFICATION.md) — every path-planning heuristic, the full verification chain, the failed-strategy ledger, and the research agenda.
-**⚡ Optimal control derivation:** [docs/OPTIMAL_CONTROL_DERIVATION.md](docs/OPTIMAL_CONTROL_DERIVATION.md) — 5 invariant differential-drive control laws extracted from 50 generations of evolutionary search and the analytical Kinetic Frontier seeds (`frontier_seed.py`).
-**🖼️ Visual gallery:** [docs/VISUAL_GALLERY.md](docs/VISUAL_GALLERY.md) — complete exhibition of state-space phase portraits, multi-shape manifolds, and multi-island convergence figures.
+**⚡ Optimal control derivation:** [docs/OPTIMAL_CONTROL_DERIVATION.md](docs/OPTIMAL_CONTROL_DERIVATION.md) — 5 invariant differential-drive control laws extracted from 50 generations of evolutionary search and the analytical Kinetic Frontier seeds (`overboard/core/frontier_seed.py`). *Historical: the evolutionary search is archived under `overboard/legacy/`.*
+**🖼️ Visual gallery:** [docs/VISUAL_GALLERY.md](docs/VISUAL_GALLERY.md) — gallery of state-space phase portraits, multi-shape manifolds, and multi-island convergence figures from the archived search.
 
-The audit items from KI-001 through KI-050 are resolved in the codebase (see [KNOWN_ISSUES.md](KNOWN_ISSUES.md)). The Multi-Verse pipeline is experimental and is used as a **seed provider**: `main.py --refine` adds its refined trajectory to the candidate set, which is a cheaper way to reach the stock set's speed rather than a better one, so it stays opt-in (KI-004).
+The audit items from KI-001 through KI-052 are resolved in the codebase, except the one still open (hardware calibration and digital-twin validation, KI-020); KI-004 is archived and KI-032 is mitigated (see [KNOWN_ISSUES.md](KNOWN_ISSUES.md)). The 3-Pillar unified planner is the default solve path; `--no-unified` restores the stock candidate set, and the old Multi-Verse pipeline is archived under `overboard/legacy/` and is not reachable from the CLI.
 
 ## Start here (first time)
 
@@ -53,11 +53,11 @@ yet, so on a fresh download you can skip step 2 and go straight to this one.
 That is the whole loop. The terminal runs the same program:
 
 ```bash
-.venv\Scripts\python main.py --gui     # Windows
-.venv/bin/python main.py --gui         # macOS/Linux
+.venv\Scripts\python -m overboard.main --gui     # Windows
+.venv/bin/python -m overboard.main --gui         # macOS/Linux
 ```
 
-If anything is missing, `python main.py --doctor` prints what is wrong and the
+If anything is missing, `python -m overboard.main --doctor` prints what is wrong and the
 exact command that fixes it. The [Installation](#installation) section below
 explains the same steps in detail.
 
@@ -72,7 +72,6 @@ explains the same steps in detail.
 - **Safety gate**: `--validate` blocks every output and returns exit 1 on failure
 - **Controller export**: Fixed-timestep JSON for the Pybricks controller; legacy or packed-compact Python export
 - **Event markers and stops**: Trigger robot actions and force rest at waypoints
-- **Experimental Multi-Verse pipeline**: Reeds-Shepp bootstrap, kinematic profile, critic, and JAX refinement (opt in with `--multiverse`; its refined trajectory is a **seed** for the simple solver via `--refine`, KI-004)
 
 ## Installation
 
@@ -104,9 +103,9 @@ python -m venv .venv
 .venv/bin/python -m pip install -r requirements.txt       # macOS/Linux
 ```
 
-### Optional extras (validation, Multi-Verse, sysid fitting)
+### Optional extras (validation, sysid fitting)
 
-`--validate` and `--multiverse` also need JAX, JAXOpt, and Immrax:
+`--validate` also needs JAX and Immrax:
 
 ```bash
 pip install -r requirements-optional.txt
@@ -117,13 +116,13 @@ stack (JAX 0.12.0, Immrax 0.3.8, numpy 2.5.4), and the straight example
 solves and validates the same way there: 2.3766 s, 0.30 cm envelope, 0.34 cm
 tracking.
 
-Pushing to a hub (`--push-hub`, `hub_deploy.py`, `sysid_collect.py`) needs
+Pushing to a hub (`--push-hub`, `overboard/deploy/hub_deploy.py`, `overboard/sysid/collect.py`) needs
 `pybricksdev`, which is in the same file.
 
 Check what your machine has at any time:
 
 ```bash
-python main.py --doctor
+python -m overboard.main --doctor
 ```
 
 It lists the Python version, every package, the example files, the output directory and the ports the studio wants, with the exact install command for anything missing.
@@ -131,10 +130,10 @@ It lists the Python version, every package, the example files, the output direct
 ### Generate a trajectory
 
 ```bash
-python main.py -w examples/example_straight.json
+python -m overboard.main -w examples/example_straight.json
 ```
 
-The simple CasADi solver is the default, so no extra flag is needed.
+The 3-Pillar unified planner is the default, so no extra flag is needed; `--no-unified` (or its alias `--simple`) solves the stock candidate set with CasADi/IPOPT directly.
 
 ## Quick Start
 
@@ -166,12 +165,6 @@ The recommended format is the canonical `robot` object used by `examples/fll_cho
       "inertia_kg_m2": [0.0008, 0.0011],
       "track_width_range": [0.096, 0.097],
       "wheel_radius_range": [0.0275, 0.0285]
-    }
-  },
-  "multiverse": {
-    "bootstrap": {
-      "turning_radius": 0.0,
-      "resolution": 0.05
     }
   }
 }
@@ -214,15 +207,13 @@ Legacy Choreo files with a `config` object and `{ "val": ... }` entries, and fla
 ### 3. Generate a trajectory
 
 ```bash
-python main.py -w examples/example_straight.json -o output.traj --plot
+python -m overboard.main -w examples/example_straight.json -o output.traj --plot
 ```
-
-The simple CasADi solver is the default. Add `--multiverse` to run the experimental Multi-Verse pipeline as its own solver; it requires JAX. Add `--refine` instead to use the pipeline's refined trajectory as a **seed** for the simple solver (KI-004).
 
 ### 4. Validate and export for the controller
 
 ```bash
-python main.py -w examples/example_straight.json -o output.traj \
+python -m overboard.main -w examples/example_straight.json -o output.traj \
   --validate --export-format controller --controller-dt 0.02
 ```
 
@@ -231,10 +222,10 @@ python main.py -w examples/example_straight.json -o output.traj \
 The `--preset safe` shortcut does the same in one flag:
 
 ```bash
-python main.py -w examples/example_straight.json --preset safe -o output.traj
+python -m overboard.main -w examples/example_straight.json --preset safe -o output.traj
 ```
 
-If you have run `pybricks_code/sysid_digital_twin.py` and fitted the logs with `sysid_fit.py`, add `--sysid-fit sysid_fit.json` to opt into the measured model. The default kinematic model is unchanged when the flag is omitted. The current integration applies the straight-line actuator gain range, first-order time constant, command delay, and odometry scale. Braking slip is loaded and reported but not applied yet because the plant has no braking state (KI-020). A fit also measures the motor: the stall torque (the robot is pushed into a wall) and the free-running speed (the robot is lifted off the ground), which are the two ends of the torque-speed line the planner uses. With the flag, those measured numbers replace the declared ones in the robot config, so the optimizer, the validator and the exported controller all plan against the same motor. The model itself is in `drivetrain.py`; see [docs/research/RQ-B_drivetrain_model.md](docs/research/RQ-B_drivetrain_model.md) for what it predicts and what an independent simulator says about it.
+If you have run `pybricks_code/sysid_digital_twin.py` and fitted the logs with `python -m overboard.sysid.fit`, add `--sysid-fit sysid_fit.json` to opt into the measured model. The default kinematic model is unchanged when the flag is omitted. The current integration applies the straight-line actuator gain range, first-order time constant, command delay, odometry scale and the measured braking shortfall. A fit also measures the motor: the stall torque (the robot is pushed into a wall) and the free-running speed (the robot is lifted off the ground), which are the two ends of the torque-speed line the planner uses. With the flag, those measured numbers replace the declared ones in the robot config, so the optimizer, the validator and the exported controller all plan against the same motor. The model itself is in `overboard/models/drivetrain.py`; see [docs/research/RQ-B_drivetrain_model.md](docs/research/RQ-B_drivetrain_model.md) for what it predicts and what an independent simulator says about it.
 
 The studio's **Field** block picks the season: the mission models standing on the mat come from `fields/<season>.json`, measured off FIRST's public field wireframe, and the mat's picture is the one you bring (FIRST's artwork is not ours to ship). After a solve the server reports where the planned path ran into a mission model and the studio marks those places on the field and lists them under the result. Nothing is planned around: the collisions are only marked, so you can decide what to do about them. A collision shallower than the field's placement uncertainty (50 mm) is reported as uncertain rather than as a hit, because two independent readings of the same wireframe disagree by up to 100 mm. See `research/field_maps/README.md` for the provenance. The studio can also fetch the season's mat picture for you: FIRST's mat artwork is copyrighted, so it is downloaded on request from the URL the field file records and kept in `mats/`, outside the repository.
 
@@ -251,9 +242,9 @@ The host tools are drivebase-agnostic. A minimal profile only needs wheel radius
 Use it when fitting and comparing:
 
 ```bash
-python sysid_fit.py logs/session.csv --poses poses.csv \
+python -m overboard.sysid.fit logs/session.csv --poses poses.csv \
   --profile examples/drivebase_profile.example.json --out sysid_fit.json
-python sysid_compare.py output.traj poses.csv --run-id 4 \
+python -m overboard.sysid.compare output.traj poses.csv --run-id 4 \
   --profile examples/drivebase_profile.example.json
 ```
 
@@ -264,15 +255,15 @@ For the end-to-end profile, fit, validate, and compare walkthrough, see [docs/SY
 After a hardware run, compare the planned and measured stop/final poses:
 
 ```bash
-python sysid_compare.py output.traj poses.csv --run-id 4
+python -m overboard.sysid.compare output.traj poses.csv --run-id 4
 ```
 
 For a multi-stop trajectory, pass the waypoint file used to plan it, or use explicit trajectory sample indices:
 
 ```bash
-python sysid_compare.py output.traj poses.csv --run-id 12 \
+python -m overboard.sysid.compare output.traj poses.csv --run-id 12 \
   --waypoints examples/example_with_stops.json
-python sysid_compare.py output.traj poses.csv --stop-indices 20,40
+python -m overboard.sysid.compare output.traj poses.csv --stop-indices 20,40
 ```
 
 The report prints position and shortest-angle heading errors and says whether each measured pose is inside the trajectory's reachability envelope. It also prints the drivebase profile and warns if its geometry differs from the trajectory config. It is a diagnostic only; it does not change the 5 mm/2 cm gate.
@@ -284,12 +275,12 @@ When validation passes, the command writes:
 - `output.py` instead of the controller file when `--export-format python` is used
 - `output.py` packed trajectory module when `--export-format python-compact` is used; import it with `pybricks_code/ramsete_compact.py` (or `ramsete_compact_events.py` for events)
 
-> **Safety note:** if validation fails, the command prints the reason, exits 1, and writes no trajectory, controller, Python file, or stats. A pre-existing file at the output path is left untouched. The straight example and the complex mission pass under the current narrowed test ranges; the S-curve, stops, and events examples still fail the Immrax gate (KI-020), so always check the exit code.
+> **Safety note:** if validation fails, the command prints the reason, exits 1, and writes no trajectory, controller, Python file, or stats. A pre-existing file at the output path is left untouched. Which example missions currently pass is a measurement, not a promise - it changes with the config and the planner - so always check the exit code, and see the ledger in `docs/HEURISTICS_AND_VERIFICATION.md` and the KI-020 entry in `KNOWN_ISSUES.md` for the latest numbers.
 
 ### 5. Browser studio (optional)
 
 ```bash
-python main.py --gui
+python -m overboard.main --gui
 ```
 
 Or double-click `start_studio.bat` (Windows) / `sh start_studio.sh`
@@ -308,7 +299,7 @@ The studio runs the same command line in the background, so the export gate, the
 
 The studio also draws the plots the command line can make, from the same samples: the velocity profiles, the wheel forces against the force limit, the accelerations, the heading over time, and how the solve converged. The solver's first guess is drawn on the field as a dashed path, so you can see what the optimizer changed.
 
-The Advanced section has the same levers the command line has: **fast polish**, **self-consistent** samples and **sweep** (the timing model x weight grid, ten candidates). The self-consistent switch is ticked by default, like the command line's, and unticking it is `--no-self-consistent`. The candidate chips are the leaderboard, and they say which weight each candidate used.
+The Advanced section has the same levers the command line has: **fast polish**, **self-consistent** samples and **sweep** (the timing model x weight grid, ten candidates - kept for experiments; the command line marks it deprecated because the 80 ms invariant mesh removed the need for it). The self-consistent switch is ticked by default, like the command line's, and unticking it is `--no-self-consistent`. The candidate chips are the leaderboard, and they say which weight each candidate used.
 
 When a validation fails, the studio shows **where**: a row per path segment with the reachability envelope, the local limit and the drift, the failing segment marked in red on the field, and the reason the gate gave. Under the table it names the lever that might fix it - the other timing model, a smaller accuracy weight, or the sweep - and each one is a button that re-solves. The robot itself is editable in the studio — mass, wheel and track size, motor limits, friction and the uncertainty ranges — so the last JSON file you need to open by hand is gone.
 
@@ -320,7 +311,7 @@ A calibrated robot can be loaded into the studio (**Measured model** in the robo
 
 After a push, the studio shows the plan against the robot in the same table the command line prints: the measured and planned pose per stop, the position and heading error, and whether the measured pose landed inside the reachability envelope.
 
-**Calibrate this robot** runs the whole calibration in the browser: push the test suite to the hub and watch the progress, type the tape measurements into a form instead of a sheet of paper, and fit the model from the session and the form. The session, the sheet, the measured poses and the fit are kept in `calibration/`, and a session collected in the studio can also be fitted with `sysid_fit.py` on the command line.
+**Calibrate this robot** runs the whole calibration in the browser: push the test suite to the hub and watch the progress, type the tape measurements into a form instead of a sheet of paper, and fit the model from the session and the form. The session, the sheet, the measured poses and the fit are kept in `calibration/`, and a session collected in the studio can also be fitted with `python -m overboard.sysid.fit` on the command line.
 
 While it solves, the header ticks the elapsed time and names the stage (*Solving… - 4.2 s - 3 candidates in parallel*). Stops and events are marked on the field, and when several candidates were compared the studio says which one won and what the others cost: *"equal-duration baseline won (7.21 s). per-segment baseline was 0.48 s faster but failed: tracking error 0.61 cm > 0.50 cm"*.
 
@@ -333,24 +324,24 @@ The arrow keys nudge the selected waypoint (1 cm; Shift is 10 cm, Alt is 1 mm), 
 ### 6. Solve in the browser (optional)
 
 ```bash
-python main.py --live -w examples/example_complex_mission.json
+python -m overboard.main --live -w examples/example_complex_mission.json
 ```
 
-`--live` opens the studio on that mission and solves it there, with the same options the command line would use. It is the old live view's job: the browser shows the solve, and the studio does it properly. The server blocks until you stop it, and it never takes a port from another program.
+`--live` opens the studio on that mission and solves it there, with the same options the command line would use: the browser shows the solve, and the studio does it properly. The server blocks until you stop it, and it never takes a port from another program.
 
 ## CLI Options
 
 ```text
-Usage: main.py [OPTIONS]
+﻿Usage: python -m overboard.main [OPTIONS]
 
   FLL Trajectory Optimizer CLI. Generates time-optimal trajectories for Lego
   robots.
 
   Examples:
-    python main.py -w examples/example_straight.json
-    python main.py -w mission.json --preset safe -o mission.traj
-    python main.py --gui
-    python main.py --doctor
+    python -m overboard.main -w examples/example_straight.json
+    python -m overboard.main -w mission.json --preset safe -o mission.traj
+    python -m overboard.main --gui
+    python -m overboard.main --doctor
 
 Options:
   -c, --config FILE               Path to the robot configuration file
@@ -363,10 +354,9 @@ Options:
   --gui-port INTEGER              Port for the browser studio.
   --doctor                        Check the install, dependencies, examples
                                   and ports, then exit.
-  --multiverse                    Use the experimental Multi-Verse pipeline
-                                  instead of the simple solver (needs JAX).
-  --simple                        Deprecated: the simple CasADi solver is now
-                                  the default.
+  --simple                        Alias for --no-unified: solve the stock
+                                  candidate set with the CasADi/IPOPT
+                                  optimizer directly.
   --preset [fast|balanced|safe]   Named starting point. fast: 1 candidate, no
                                   validation. balanced: the defaults. safe: 3
                                   candidates, --validate and a controller
@@ -375,21 +365,20 @@ Options:
   -a, --accuracy-weight FLOAT RANGE
                                   Smoothness/accuracy weight (0 = pure time-
                                   optimal).  [x>=0.0]
-  --candidates INTEGER RANGE      Candidates to solve and compare. With the
-                                  simple solver these combine initial-guess
-                                  seeds (baseline, rolling, bow_left,
-                                  bow_right, turn_first) with the timing mode:
-                                  by default candidate 1 is equal-duration
-                                  baseline, candidate 2 is per-segment
-                                  baseline, then the remaining seeds
-                                  alternate. The Multi-Verse path uses
-                                  accuracy_weight steps of 2.0 instead.
-                                  Validation picks the passing candidate with
-                                  the lowest fitness score, then the
-                                  smallest envelope, then the fastest.
-                                  Without --validate only the first candidate
-                                  is solved. Use 1 for a single solve.
-                                  [1<=x<=5]
+  --force-weight FLOAT RANGE      Soft wheel-force and traction-utilization
+                                  penalty weight in the NLP objective (simple
+                                  solver only).  [x>=0.0]
+  --candidates INTEGER RANGE      Candidates to solve and compare. Each
+                                  candidate combines an initial-guess seed
+                                  (baseline, rolling, bow_left, bow_right,
+                                  turn_first) with the timing mode: by default
+                                  candidate 1 is equal-duration baseline,
+                                  candidate 2 is per-segment baseline, then
+                                  the remaining seeds alternate. Validation
+                                  picks the passing candidate with the best
+                                  fitness, then the fastest. Without
+                                  --validate only the first candidate is
+                                  solved. Use 1 for a single solve.  [x>=1]
   --stop-waypoints TEXT           Comma-separated waypoint indices where robot
                                   must stop (e.g., "2,5,7").
   --events TEXT                   Comma-separated waypoint:event pairs (e.g.,
@@ -398,15 +387,12 @@ Options:
                                   sample interval (simple solver only). This
                                   is the general timing model. By default
                                   candidates mix both modes.
-  --uniform-dt                    Force one shared sample interval across all
-                                  segments (simple solver only). This makes
-                                  every waypoint segment take the SAME time,
-                                  so a path with unequal segment lengths is
-                                  slow. By default candidates mix both modes.
+  --uniform-dt                    (Deprecated: equal-duration dt severely
+                                  penalizes variable-length segments) Force
+                                  one shared sample interval across all
+                                  segments.
   --no-parallel                   Solve the candidates in this process instead
-                                  of in worker processes, and disable the
-                                  parallel Multi-Verse refinement (no effect
-                                  on the result).
+                                  of in worker processes.
   --workers INTEGER               Number of worker processes used to solve
                                   candidates in parallel.
   --fast-polish                   Solve large missions faster. The warm-start
@@ -415,35 +401,72 @@ Options:
                                   budget and finishes from that point with a
                                   cold pass. Missions that solve inside the
                                   budget return the same trajectory as before.
-  --sweep                         Search the timing model and the accuracy
-                                  weight for the fastest trajectory that
-                                  passes the gates (simple solver only). Adds
-                                  candidates to the set instead of replacing
-                                  them, so it costs more solves and more
-                                  validation passes.
+  --sweep                         (Deprecated: 80 ms invariant mesh eliminates
+                                  manual grid sweep) Search the timing model
+                                  and accuracy weight grid.
+  --self-consistent / --no-self-consistent
+                                  Plan a self-consistent trajectory: the
+                                  samples are placed on the path the
+                                  trajectory's own (v, omega) profile traces,
+                                  so the headings are its tangents (simple
+                                  solver only). On by default (KI-026).
+  --unified / --no-unified        Run the 3-Pillar Unified Trajectory Engine
+                                  (default: on): Kinetic Frontier Seeds + 80
+                                  ms Invariant Mesh + Discretization-
+                                  Consistent Collocation.
+  --surrogate-polish              Run the 5-Layer Unified Surrogate-to-Truth
+                                  parallel pipeline: CasADi Discretization-
+                                  Aware Metric + Linear Epigraph Force Bounds
+                                  + Single-Process ThreadPoolExecutor +
+                                  Compiled float64 jax.lax.scan Reachability +
+                                  Differentiable Immrax Polish + Gate-
+                                  Certified Min-Time Selection.
+  --pyramid                       Multi-Fidelity "Screen-then-Refine" Pyramid:
+                                  vectorized JAX sieve over 100-350
+                                  hypotheses, topological clustering into
+                                  survivor seeds, and process-isolated
+                                  parallel IPOPT solves.
+  --pyramid-candidates INTEGER RANGE
+                                  Number of top distinct homotopy finalists to
+                                  solve in parallel during --pyramid mode
+                                  (defaults to 10).  [x>=1]
+  --h-adaptive                    Adaptive mesh refinement (h-refinement):
+                                  selectively allocates higher node density
+                                  (8-10 nodes) to curved apex segments,
+                                  lowering forward-integration discretization
+                                  error to sub-centimeter levels (<1.0 cm).
   --validate / --no-validate      Run validation and block export on failure
                                   (requires JAX/Immrax).
   --sysid-fit FILE                Optional sysid_fit.json digital-twin fit
-                                  (requires --validate).
+                                  (requires --validate or --live).
   --export-format [none|controller|python|python-compact]
                                   Export format for controller consumption
                                   (python-compact is the packed Pybricks
                                   format).
   --controller-dt FLOAT RANGE     Fixed timestep for controller export
                                   (seconds).  [0.001<=x<=1.0]
+  --control-dt FLOAT RANGE        The control period the validator models, in
+                                  seconds. The deployed controllers hold their
+                                  command for 20 ms, but a robot that cannot
+                                  sustain it runs slower; set this to the
+                                  period the robot actually achieves (the
+                                  pushed session reports it) so the gate is
+                                  measured against the controller that will
+                                  run.  [0.001<=x<=0.2]
   --propagation [plant|tick]      Which reachability propagation the envelope
                                   gate uses. "plant" is the default: the plant
-                                  is embedded and propagated, and the controller
-                                  is evaluated outside the propagation, so the
-                                  tube bounds an open-loop plant driven by a
-                                  pre-recorded command. "tick" embeds one
-                                  control tick of the closed loop - controller,
-                                  pose estimate and delayed command inside the
-                                  map - and propagates that, so the feedback
-                                  contracts the tube the way the robot's does.
-                                  It needs a Jacobian inclusion and costs
-                                  7-10x the validation time. The propagation
-                                  in force is reported with every candidate.
+                                  is embedded and propagated, and the
+                                  controller is evaluated outside the
+                                  propagation, so the tube bounds an open-loop
+                                  plant driven by a pre-recorded command.
+                                  "tick" embeds one control tick of the closed
+                                  loop - controller, pose estimate and delayed
+                                  command inside the map - and propagates
+                                  that, so the feedback contracts the tube the
+                                  way the robot's does. It needs a Jacobian
+                                  inclusion and costs 7-10x the validation
+                                  time. The propagation in force is reported
+                                  with every candidate.
   --benchmark                     Collect comprehensive benchmarking data for
                                   whitepaper.
   --push-hub                      Push the trajectory to a Pybricks hub and
@@ -460,6 +483,9 @@ Options:
   --live                          Open the browser studio on this mission and
                                   solve it there (blocking).
   --show-convergence              Show convergence visualization.
+  --iteration-history FILE        Write the solver's iteration history to this
+                                  JSON file, for the studio to plot how the
+                                  trajectory converged.
   --convergence-mode [parallel|best|layered]
                                   Convergence visualization mode.
   -v, --verbose                   Show solver internals.
@@ -473,35 +499,25 @@ Options:
 Project-O.V.E.R.B.O.A.R.D/
 ├── install.bat / install.sh     # One-click install into .venv
 ├── start_studio.bat / .sh       # One-click start of the browser studio
-├── main.py                    # CLI entry point and export gate
-├── optimizer.py               # CasADi + IPOPT trajectory optimizer
-├── multiverse_optimizer.py    # Experimental Multi-Verse pipeline
-├── robot_model.py             # Config parsing, force model, per-wheel constraints
-├── validator.py               # CPU forward integration and constraint audit
-├── immrax_validator.py        # Closed-loop interval reachability validator
-├── digital_twin.py            # Optional sysid_fit.json model loader
-├── sysid_fit.py               # Host-side fitter for robot SysId logs
-├── sysid_compare.py           # Planned-vs-measured stop/final pose report
-├── sysid_collect.py           # Collect a SysId session from a hub and fit it
-├── sheet_form.py              # The measurement sheet as a form in a browser
-├── hub_deploy.py              # Push a program to a Pybricks hub, capture its output
-├── jax_robot_model.py         # JAX robot model
-├── jax_ramsete.py             # JAX Ramsete parity / interval controller
-├── jax_optimizer.py           # JAX candidate generation and refinement
-├── export.py                  # Controller JSON and Python export
-├── plotter.py                 # Trajectory and envelope plots
-├── animated_plotter.py        # Trajectory animation
-├── convergence_plotter.py     # Convergence plots
-├── gui_server.py              # Browser studio backend (stdlib HTTP server)
-├── diagnostics.py             # Environment checks for --doctor
-├── path_planning.py           # Reeds-Shepp path utilities
-├── tests/                     # unittest suite
-├── examples/                  # Example configs and waypoint files
-├── missions/                  # Missions saved from the studio
-├── pybricks_code/             # Pybricks robot controller code
-├── viz/                       # Browser studio (studio.html, studio.js, studio.css)
-├── research/                  # Measurement harness for the research agenda (not imported by the planner)
-└── docs/                      # Configuration, examples, API, whitepaper
+├── benchmark.py                 # The four benchmark modes
+├── run_tests.py, testcache.py   # Test runner and its cache
+├── overboard/
+│   ├── main.py                  # CLI entry point and export gate
+│   ├── gui_server.py            # Browser studio backend (stdlib HTTP server)
+│   ├── diagnostics.py           # Environment checks for --doctor
+│   ├── core/                    # optimizer, frontier seeds, unified planner, surrogate polish
+│   ├── models/                  # robot config, drivetrain, JAX models
+│   ├── verification/            # CPU validator, Immrax reachability, reachability engine
+│   ├── sysid/                   # collect, fit, compare, digital twin, sheet form
+│   ├── deploy/                  # controller export, hub push and BLE discovery
+│   ├── viz/                     # plotters, fields, studio.html/js/css
+│   └── legacy/                  # archived Multi-Verse pipeline and research prototypes
+├── tests/                       # unittest suite
+├── examples/                    # Example configs and waypoint files
+├── missions/                    # Missions saved from the studio
+├── pybricks_code/               # Pybricks robot controller code (archive/ holds the demos)
+├── research/                    # Measurement harness for the research agenda (not imported by the planner)
+└── docs/                        # Configuration, examples, API, whitepaper
 ```
 
 ## How It Works
@@ -511,7 +527,7 @@ The simple optimizer solves a direct-collocation optimal-control problem:
 1. **Discretization**: Each segment is divided into samples; the decision variables include the timestep and the pose/wheel speeds at every sample. The candidate set mixes a uniform-timestep formulation with a per-segment formulation (`--per-segment-dt` forces the latter, `--uniform-dt` forces the former).
 2. **Objective**: Minimize total time, plus an optional jerk/smoothness penalty controlled by `--accuracy-weight`.
 3. **Constraints**:
-   - Trapezoidal kinematic integration
+   - Self-consistent position rule by default: four-node Gauss-Legendre integration along the integrated heading, so the samples sit on the path the plan's own profile traces (`--no-self-consistent` restores the trapezoidal rule)
    - Waypoint position constraints and optional heading constraints
    - Start, end, and intermediate stop constraints
    - Per-wheel torque-speed limits
@@ -520,40 +536,28 @@ The simple optimizer solves a direct-collocation optimal-control problem:
    - Worst-case force bounds over the declared uncertainty ranges
 4. **Solve**: IPOPT finds a locally optimal trajectory. The result is converted to Choreo v3 samples.
 
-The simple solver is deterministic and is the recommended path for current use.
-
-### Multi-Verse Refinement
-
-The experimental pipeline (opt in with `--multiverse`) is:
-
-1. **Bootstrap**: Reeds-Shepp geometry.
-2. **Kinematic profile**: Convert geometry into a time series.
-3. **Critic**: Flag bad windows with six metrics (tortuosity, yaw excess, chattering, jerk, curvature, centripetal cost).
-4. **JAX refinement**: Generate candidates for flagged windows and refine them with JAX.
-5. **CasADi polish**: Re-solve the global problem with IPOPT.
-
-The refinement phase updates an intermediate trajectory, and that trajectory is now used: the polish probes it with a bounded cold pass and keeps it when it beats the default starting point, so the refinement can change the result (KI-004). On the complex mission the probe converges to **4.617 s** against the **6.049 s** the default starting point finds, so the probe wins there. `main.py --refine` puts the refined trajectory into the candidate set of the simple solver, so the pipeline is a **seed provider**: on the complex mission that is 4.936 s where the default two-candidate set gives 6.068 s — but the full ten-candidate stock set gives 4.877 s there, and over 30 missions the refined seed rescues nothing. It is a cheaper way to reach the stock set's speed, not a better one, which is why it stays opt-in. `--workers` controls the worker processes that solve the candidates in parallel; it does not change the result.
+The 3-Pillar unified planner is the default path: it supplies the seeds and the collocation mesh, and `--no-unified` solves the stock candidate set directly with the same CasADi/IPOPT backend. The old Multi-Verse pipeline is archived under `overboard/legacy/` and has no CLI entry point.
 
 ## Common Usage Patterns
 
 ### Simple straight line
 
 ```bash
-python main.py -w examples/example_straight.json -o straight.traj --plot
+python -m overboard.main -w examples/example_straight.json -o straight.traj --plot
 ```
 
 ### Path with turns
 
 ```bash
-python main.py -w examples/example_s_curve.json -o s_curve.traj --plot
+python -m overboard.main -w examples/example_s_curve.json -o s_curve.traj --plot
 ```
 
-This path generates output, but it currently fails `--validate` (KI-020).
+The S-curve is the harder case: run it with `--validate` and check the exit code, because not every path passes the Immrax gate under every config (KI-020).
 
 ### Mission with stops and events
 
 ```bash
-python main.py -w examples/example_complete.json -o mission.traj \
+python -m overboard.main -w examples/example_complete.json -o mission.traj \
   --export-format controller --controller-dt 0.02 --plot
 ```
 
@@ -562,14 +566,14 @@ Add `--validate` if you want the safety gate; check the exit code, because some 
 ### Smooth trajectory for better tracking
 
 ```bash
-python main.py -w examples/example_s_curve.json -o smooth.traj \
+python -m overboard.main -w examples/example_s_curve.json -o smooth.traj \
   -a 1.0 --plot
 ```
 
 ### Full suite (experimental)
 
 ```bash
-python main.py -c examples/fll_choreo.json -w waypoints.json -o mission.traj \
+python -m overboard.main -c examples/fll_choreo.json -w waypoints.json -o mission.traj \
   -a 1.0 --benchmark --validate --export-format controller \
   --show-convergence
 ```
@@ -590,7 +594,7 @@ By default the optimizer is purely time-optimal (`--accuracy-weight 0.0`). This 
 
 The exact tradeoff depends on the path and robot. Measure it on your own trajectory rather than relying on a fixed percentage.
 
-With `--validate`, the tradeoff is measured, not assumed: `--candidates N` (default 2, max 5) solves N candidates, validates and scores every one, and keeps a passing candidate with the smallest Immrax envelope, with the shortest trajectory breaking ties. The candidates combine initial-guess seeds with the timing mode: by default candidate 1 is equal-duration `baseline` (linear, zero-speed guess), candidate 2 is per-segment `baseline`, then the remaining seeds (`rolling`, `bow_left`, `bow_right`, `turn_first`) alternate modes. `--uniform-dt` or `--per-segment-dt` forces one mode. The Multi-Verse path has no seed or timing plumbing yet, so it keeps the historical `accuracy_weight` ladder (`base`, `base + 2.0`, ...). `--candidates 1` disables the comparison. A slower or differently shaped candidate that scores worse is discarded; nothing is escalated silently.
+With `--validate`, the tradeoff is measured, not assumed: `--candidates N` (default 2) solves N candidates, validates and scores every one, and keeps the passing candidate with the lowest 5-part fitness score, with the envelope and the shortest trajectory breaking ties. The stock candidate set (`--no-unified`) combines initial-guess seeds with the timing mode: by default candidate 1 is equal-duration `baseline` (linear, zero-speed guess), candidate 2 is per-segment `baseline`, then the remaining seeds (`rolling`, `bow_left`, `bow_right`, `turn_first`) alternate modes. The default `--unified` path replaces that set with three frontier candidates (`frontier_sprint`, `frontier_sweeper`, `frontier_exploratory`, all per-segment at a low accuracy weight), and `--candidates` truncates that list. `--uniform-dt` or `--per-segment-dt` forces one mode. `--candidates 1` disables the comparison. A slower or differently shaped candidate that scores worse is discarded; nothing is escalated silently.
 
 The two timing modes are not peers. The equal-duration mode shares one `dt` across all segments, and because every segment has the same sample count, that also forces every segment to take the **same time**. On a path with unequal segment lengths the short segment inherits the long segment's duration, so the robot crawls through it and has to make the time back up with non-monotone wheel motion. The per-segment mode gives every segment its own duration and is the general model: setting every `dt_i` equal recovers the equal-duration solution exactly, and the per-segment optimum is never worse at the same weight. Both modes are held to the same wheel-jerk discipline, so `--accuracy-weight` means the same thing in either (KI-022).
 
@@ -607,9 +611,11 @@ Because the path is one NLP over one shared variable set, the state agreement is
 
 The default candidate set includes both timing modes, so the equal-duration candidate preserves the complex-mission pass while an uneven path can select per-segment. The CPU audit runs on every candidate, not only the winner, so a candidate that passes Immrax but fails the force/slip/integration gate cannot block a later passing candidate. On an uneven 1.0 m + 0.2 m path, per-segment at `--accuracy-weight 0.005` passes all gates at 2.784 s with envelope 0.32 cm, tracking 0.36 cm and peak wheel jerk 9.52 m/s³, versus 4.456 s / 0.37 cm / 0.36 cm / 9.52 m/s³ for the equal-duration mode at the same weight; the mixed loop selects the per-segment candidate. At the default weight 0, per-segment is 2.710 s / 0.32 cm but fails the Immrax and CPU gates, so the mixed loop falls back to the equal-duration candidate (4.463 s / 0.35 cm). On the complex mission at `--accuracy-weight 0`, per-segment is faster (4.650 s, envelope 1.00 cm) but its tracking is 0.84 cm, above the 5 mm gate, and its motor force is 0.074 N over the limit, so it is rejected and the equal-duration 6.068 s / 1.22 cm candidate wins. Forcing one mode is available for experiments and reproducibility, not as a silent default.
 
-### Sweeping for the fastest passing trajectory
+### Sweeping for the fastest passing trajectory (deprecated)
 
-The two timing modes and the accuracy weight are a two-dimensional search, and the best combination depends on the path. `--sweep` searches it: it adds the timing-mode × accuracy-weight grid (weights `0`, `0.001`, `0.002`, `0.005`, `0.01`) to the candidate set, validates every combination on the same scale, and lets the usual rule pick the winner — the passing candidate with the lowest fitness score (the time its defects are worth), the envelope and the shortest one breaking the tie. The default candidates stay in the set, so a sweep can only add options, never remove them.
+> **Deprecated.** `--sweep` still runs, but the 80 ms invariant mesh in the default `--unified` path made the manual grid unnecessary, so the CLI now warns and turns `--unified` off. The section is kept because the measurements below are the record of why the grid no longer pays.
+
+The two timing modes and the accuracy weight are a two-dimensional search, and the best combination depends on the path. `--sweep` searched it: it added the timing-mode × accuracy-weight grid (weights `0`, `0.001`, `0.002`, `0.005`, `0.01`) to the candidate set, validated every combination on the same scale, and let the usual rule pick the winner — the passing candidate with the lowest fitness score (the time its defects are worth), the envelope and the shortest one breaking the tie. The default candidates stayed in the set, so a sweep could only add options, never remove them.
 
 Measured on the example missions:
 
@@ -665,7 +671,7 @@ With `--sysid-fit`, the Immrax plant switches from the default three-state kinem
 
 The final pose is also checked against the last waypoint. If any check fails, the CLI exits 1 and writes nothing.
 
-With `--validate`, `--candidates N` (default 2, max 5) solves N trajectories. With the simple solver, each candidate combines an initial-guess seed with a timing mode at the same `accuracy_weight`; the Multi-Verse path uses `accuracy_weight`, `accuracy_weight + 2.0`, and so on. Every candidate is validated and CPU-audited; the selected one is the passing candidate with the lowest fitness score — a single number in seconds covering the reachability spread at the stops, the slip risk, the RMS wheel force, the tracking error and the run time — with the envelope and the shortest trajectory breaking ties. If none pass, the candidate closest to passing is selected for reporting but still blocked from export. Without `--validate`, only the first candidate is solved.
+With `--validate`, `--candidates N` (default 2) solves N trajectories. With the stock candidate set, each candidate combines an initial-guess seed with a timing mode at the same `accuracy_weight`; the default `--unified` path uses its three frontier candidates instead. Every candidate is validated and CPU-audited; the selected one is the passing candidate with the lowest fitness score — a single number in seconds covering the reachability spread at the stops, the slip risk, the RMS wheel force, the tracking error and the run time — with the envelope and the shortest trajectory breaking ties. If none pass, the candidate closest to passing is selected for reporting but still blocked from export. Without `--validate`, only the first candidate is solved.
 
 **Measured current examples** (model predictions, not hardware). All rows use the default two candidates unless stated: candidate 1 is equal-duration baseline, candidate 2 is per-segment baseline.
 
@@ -700,8 +706,6 @@ The full gate chain, every threshold with its source line, the measured comparis
 Measured on the current working tree with the example config:
 
 - 1 m straight, simple optimizer: about **0.06 s** solve wall time, **2.377 s** trajectory time, **0.000407 m** max forward-integration error.
-- 3-waypoint pipeline benchmark: simple **0.1076 s**, Multi-Verse **0.1224 s**, both with a **6.7614 s** trajectory and **0.00 %** improvement.
-- Multi-Verse refinement phase: about **0.0115 s**; the refined trajectory is probed as a starting point for the polish and wins on the complex mission (4.617 s against 6.049 s), and `--refine` adds it to the candidate set (KI-004).
 - 10-waypoint complex mission, simple solver: the IPOPT polish takes **1557 iterations** and about **35 s** on the machine it was measured on, and **669 iterations** and about **3 s** on another - the count depends on the machine's floating point, so IPOPT takes a different path through the same NLP. `--fast-polish` budgets the warm pass at 200 iterations and then solves the mission cold from the original guess: **354 iterations** and **7 s** on the first machine, **708** and **3 s** on the second, for a trajectory within 1 % of the plain one. Every other example mission solves inside the iteration budget and returns a bit-identical trajectory.
 
 `python benchmark.py --mode solver --config examples/fll_choreo.json` prints that table for every example mission; add `--fast-polish` for the fast path.
@@ -713,7 +717,7 @@ Measured on the current working tree with the example config:
 The solve is not GPU-shaped, and the measurements are not ambiguous:
 
 - The time is in **IPOPT**, which is CPU-only. CasADi's `ipopt` plugin uses a sparse direct solver (MUMPS in the pip build; MA57/MA27 are not compiled in), and IPOPT has no GPU backend at all. Nothing on a GPU can take part in that loop.
-- The **JAX** part is latency-bound, not FLOP-bound. The refinement of a window is 4 ms of compute behind 1.3 s of first-call compilation, over 10x5 matrices. Moving it to a GPU cannot help.
+- The **JAX** part is latency-bound, not FLOP-bound. The reachability validation is small-matrix work behind a first-call compilation cost. Moving it to a GPU cannot help.
 - The **Immrax** validation marches a 3-to-5 state system through a Python loop of 20 ms control ticks. On a GPU every one of those tiny steps becomes a kernel launch.
 - **JAX has no native Windows GPU build.** The support matrix lists Windows x86_64 + NVIDIA as unsupported and WSL2 as experimental, so a GPU path would fork the development environment for every contributor.
 
@@ -721,9 +725,7 @@ The remaining lever was the solver itself, not the hardware: the warm-start solv
 
 ### Example Trajectory
 
-![Example trajectory visualization](random_suite/run_000/plot.png)
-
-This historical plot is kept for visualization. It is not a current Multi-Verse quality claim.
+The example plots that used to sit here were produced by the archived evolutionary search; they now live in [docs/VISUAL_GALLERY.md](docs/VISUAL_GALLERY.md), with a note on how to regenerate them from the `archive/research-2026-10` tag.
 
 ## Research & References
 
@@ -734,7 +736,6 @@ See [docs/trajectory_tools_research.md](docs/trajectory_tools_research.md) for c
 - ✅ Phase 1: CasADi + IPOPT solver
 - ✅ Phase 2: Time vs. accuracy tradeoff
 - ✅ Phase 3: Validation and controller export (with a hard export gate)
-- 🟡 Phase 4: Multi-Verse pipeline implemented and repaired; its refined trajectory is a seed (`--refine`), opt-in (KI-004)
 - ✅ Phase 5: Events and stops implemented; the final-waypoint event fires (KI-012)
 - ⚪ Phase 6: Field geometry/obstacle constraints (optional)
 - 🟡 Digital twin: parity, gate, and optional fitted actuator/odometry model implemented; motor/DriveBase/slip dynamics remain (KI-020)
@@ -750,6 +751,7 @@ See [docs/trajectory_tools_research.md](docs/trajectory_tools_research.md) for c
 - **[docs/SYSID_QUICKSTART.md](docs/SYSID_QUICKSTART.md)**: The short path from a session to a fitted model
 - **[docs/HEURISTICS_AND_VERIFICATION.md](docs/HEURISTICS_AND_VERIFICATION.md)**: Path-planning heuristics, the verification chain, the failed-strategy ledger, and the research agenda
 - **[docs/research/pq_b/FINDINGS.md](docs/research/pq_b/FINDINGS.md)**: The research agenda measured on 32 missions instead of six — which of its claims survive, and which do not
+- **[docs/ARCHIVE.md](docs/ARCHIVE.md)**: How to read the raw measurements and experiment scripts from the `archive/research-2026-10` tag
 - **[docs/research/RQ-A_tracking_error.md](docs/research/RQ-A_tracking_error.md)**: Why the closed-loop tracking gate fails: it is a discretisation mismatch, not a physical tracking error
 - **[docs/STUDIO_HUB_PLAN.md](docs/STUDIO_HUB_PLAN.md)**: The "push to hub" feature for the browser studio, and how it ties the missions, the robot code and the sysid loop together
 - **[docs/CALIBRATION_STUDIO_PLAN.md](docs/CALIBRATION_STUDIO_PLAN.md)**: How the sysid loop (collect, measure, fit) and the studio's compare step fit together in one browser
@@ -759,34 +761,32 @@ See [docs/trajectory_tools_research.md](docs/trajectory_tools_research.md) for c
 
 The `pybricks_code/` directory contains the robot-side controller:
 
-- `ramsete_fast.py`: Pathing controller used by `mission_4_ramsete.py` (50 Hz loop)
-- `ramsete.py`: Event-capable reference controller used by `mission_5_lambdas.py`
+- `ramsete.py`: Reference controller (odometry, Ramsete maths, limiter, 20 ms loop)
+- `ramsete_fast.py`: List-of-dicts pathing entry point; delegates to `ramsete.py`
 - `ramsete_compact.py`, `ramsete_compact_events.py`: Packed-trajectory controllers for `--export-format python-compact`
 - `hub_runner.py`: Entry point for a trajectory pushed from the host; it imports the trajectory from `hub_mission.py` and reports the measured pose
-- `robot.py`, `robot_config.py`: Hub menu and hardware definitions
-- `mission_*.py`: Example mission scripts
-- `sysid_digital_twin.py`: Robot-side calibration collector
-- `plot_tracking.py`: Tracking visualization
+- `robot.py`, `robot_config.py`: Hub menu (pushed trajectory / SysId) and hardware definitions
+- `sysid_digital_twin.py`: Robot-side calibration collector, with `complex_mission.py` as its replay fixture
+- `archive/`: The unsupported demos (`mission_1..5`, `mission_template`, `complete_mission`) and the old telemetry logger
 
 **Note:** an event on the final waypoint *is* fired: the event-capable controllers fire the events that are left after the loop, once the robot has arrived and the drivebase has stopped (KI-012). The controllers that are in use are `ramsete_compact_events.py` (the pushed run) and `ramsete.py` (the IDE missions).
 
 ### Pushing to the hub without the IDE
 
-The Pybricks IDE is one client of a documented protocol. `hub_deploy.py` and
-`main.py --push-hub` are another: they push a program to the hub over
+The Pybricks IDE is one client of a documented protocol. `overboard/deploy/hub_deploy.py` and `overboard/main.py --push-hub` are another: they push a program to the hub over
 Bluetooth and capture what it prints, so a trajectory can be sent to the
 robot and its measured pose read back without a browser.
 
 ```bash
-python main.py -w mission.json --push-hub --hub-log session.csv
+python -m overboard.main -w mission.json --push-hub --hub-log session.csv
 ```
 
-Calibration works the same way. `sysid_collect.py` pushes the collector,
+Calibration works the same way. `python -m overboard.sysid.collect` pushes the collector,
 captures the session, and writes the measurement sheet; the operator measures
 the end pose of the tests that need a tape and fills the sheet in.
 
 ```bash
-python sysid_collect.py --conn ble --profile my_drivebase.json \
+python -m overboard.sysid.collect --conn ble --profile my_drivebase.json \
   --session session.csv --sheet calibration_sheet.csv
 ```
 
@@ -795,7 +795,7 @@ browser (`calibration_sheet.html`) that you fill in with the numbers the
 tape says. The form downloads the CSV, so the fit takes it as it is:
 
 ```bash
-python sysid_fit.py session.csv --sheet calibration_sheet.csv \
+python -m overboard.sysid.fit session.csv --sheet calibration_sheet.csv \
   --profile my_drivebase.json --out sysid_fit.json
 ```
 

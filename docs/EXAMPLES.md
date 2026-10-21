@@ -2,7 +2,7 @@
 
 This document provides practical examples for using the FLL Trajectory Optimizer.
 
-> **Optimizer choice:** the simple CasADi solver is the default, so every example below works with a core `requirements.txt` install. The Multi-Verse path is opt-in with `--multiverse`; it needs JAX, and its refined trajectory reaches the solver as a seed (KI-004). `--validate` always needs JAX/Immrax. With `--validate`, `--candidates N` (default 2, max 5) solves N candidates and exports the passing one with the lowest fitness score; with the simple solver the candidates combine initial-guess seeds with uniform or per-segment timing, on the Multi-Verse path they are accuracy-weight variants. Use `--candidates 1` for a single solve. Without `--validate`, only the first candidate is solved.
+> **Optimizer choice:** CasADi/IPOPT is the backend and the 3-Pillar unified planner is the default path on top of it, so every example below works with a core `requirements.txt` install; `--no-unified` (alias `--simple`) runs the stock candidate set instead. The old Multi-Verse pipeline is archived under `overboard/legacy/` and has no CLI entry point. `--validate` needs JAX/Immrax. With `--validate`, `--candidates N` (default 2) solves N candidates and exports the passing one with the lowest fitness score; the candidates combine initial-guess seeds with uniform or per-segment timing (the unified path uses its three frontier candidates). Use `--candidates 1` for a single solve. Without `--validate`, only the first candidate is solved.
 
 ## Table of Contents
 
@@ -12,7 +12,7 @@ This document provides practical examples for using the FLL Trajectory Optimizer
 - [Troubleshooting Examples](#troubleshooting-examples)
 - [Integration Examples](#integration-examples)
 - [Browser Studio](#browser-studio)
-- [Live Visualization](#live-visualization)
+- [Solving in the Browser](#solving-in-the-browser)
 
 ## Basic Examples
 
@@ -32,7 +32,7 @@ Generate a straight-line trajectory from (0, 0) to (1, 0):
 **Command:**
 
 ```bash
-python main.py -c examples/fll_choreo.json -w waypoints.json -o straight.traj --plot
+python -m overboard.main -c examples/fll_choreo.json -w waypoints.json -o straight.traj --plot
 ```
 
 **Expected output:**
@@ -60,7 +60,7 @@ Generate a trajectory with a turn:
 **Command:**
 
 ```bash
-python main.py -c examples/fll_choreo.json -w waypoints.json -o turn.traj --plot
+python -m overboard.main -c examples/fll_choreo.json -w waypoints.json -o turn.traj --plot
 ```
 
 **Expected output:**
@@ -88,7 +88,7 @@ Generate a path where only positions matter, not heading:
 **Command:**
 
 ```bash
-python main.py -c examples/fll_choreo.json -w waypoints.json -o arc.traj --plot
+python -m overboard.main -c examples/fll_choreo.json -w waypoints.json -o arc.traj --plot
 ```
 
 **Expected output:**
@@ -105,19 +105,19 @@ The repository includes several example waypoint files:
 
 ```bash
 # Straight line
-python main.py -c examples/fll_choreo.json -w examples/example_straight.json -o straight.traj --plot
+python -m overboard.main -c examples/fll_choreo.json -w examples/example_straight.json -o straight.traj --plot
 
 # S-curve path
-python main.py -c examples/fll_choreo.json -w examples/example_s_curve.json -o s_curve.traj --plot
+python -m overboard.main -c examples/fll_choreo.json -w examples/example_s_curve.json -o s_curve.traj --plot
 
 # Complete mission with stops and events
-python main.py -c examples/fll_choreo.json -w examples/example_complete.json -o complete.traj --plot
+python -m overboard.main -c examples/fll_choreo.json -w examples/example_complete.json -o complete.traj --plot
 
 # Complex mission
-python main.py -c examples/fll_choreo.json -w examples/example_complex_mission.json -o complex.traj --plot
+python -m overboard.main -c examples/fll_choreo.json -w examples/example_complex_mission.json -o complex.traj --plot
 
 # First four waypoints of the complex mission (candidate-seed benchmark)
-python main.py --validate -c examples/fll_choreo.json -w examples/example_mission_first4.json -o first4.traj --candidates 5
+python -m overboard.main --validate -c examples/fll_choreo.json -w examples/example_mission_first4.json -o first4.traj --candidates 5
 ```
 
 ---
@@ -143,7 +143,7 @@ Generate a trajectory with stops at specific waypoints using JSON:
 **Command:**
 
 ```bash
-python main.py -c examples/fll_choreo.json -w waypoints_with_stops.json -o stops.traj --plot
+python -m overboard.main -c examples/fll_choreo.json -w waypoints_with_stops.json -o stops.traj --plot
 ```
 
 **Expected output:**
@@ -163,7 +163,7 @@ python main.py -c examples/fll_choreo.json -w waypoints_with_stops.json -o stops
 Alternatively, specify stops via CLI flag:
 
 ```bash
-python main.py -c examples/fll_choreo.json -w waypoints.json -o stops.traj \
+python -m overboard.main -c examples/fll_choreo.json -w waypoints.json -o stops.traj \
   --stop-waypoints "0,2,4" --plot
 ```
 
@@ -189,7 +189,7 @@ Generate a trajectory with mission event markers using JSON:
 **Command:**
 
 ```bash
-python main.py -c examples/fll_choreo.json -w waypoints_with_events.json -o events.traj \
+python -m overboard.main -c examples/fll_choreo.json -w waypoints_with_events.json -o events.traj \
   --export-format controller \
   --controller-dt 0.02
 ```
@@ -200,7 +200,7 @@ python main.py -c examples/fll_choreo.json -w waypoints_with_events.json -o even
 - Controller export preserves events at nearest timestep
 - Robot controller reads events and triggers actions (arm, intake, release)
 
-> **Runtime caveat:** an event on the final waypoint is exported but not fired by the deployed `ramsete_fast.py` loop (KI-012). Trigger the final action after the trajectory finishes.
+> **Final event:** an event on the final waypoint is fired after the loop, once the robot has arrived and the drivebase has stopped (KI-012, fixed).
 
 ---
 
@@ -209,7 +209,7 @@ python main.py -c examples/fll_choreo.json -w waypoints_with_events.json -o even
 Alternatively, specify events via CLI flag:
 
 ```bash
-python main.py -c examples/fll_choreo.json -w waypoints.json -o events.traj \
+python -m overboard.main -c examples/fll_choreo.json -w waypoints.json -o events.traj \
   --events "1:lower_arm,3:release" \
   --export-format controller \
   --controller-dt 0.02
@@ -226,19 +226,19 @@ Compare time-optimal vs. smooth trajectories:
 **Time-optimal (default):**
 
 ```bash
-python main.py -c examples/fll_choreo.json -w waypoints.json -o fast.traj -a 0.0 --validate
+python -m overboard.main -c examples/fll_choreo.json -w waypoints.json -o fast.traj -a 0.0 --validate
 ```
 
 **Balanced smoothness:**
 
 ```bash
-python main.py -c examples/fll_choreo.json -w waypoints.json -o smooth.traj -a 1.0 --validate
+python -m overboard.main -c examples/fll_choreo.json -w waypoints.json -o smooth.traj -a 1.0 --validate
 ```
 
 **Very smooth:**
 
 ```bash
-python main.py -c examples/fll_choreo.json -w waypoints.json -o very_smooth.traj -a 5.0 --validate
+python -m overboard.main -c examples/fll_choreo.json -w waypoints.json -o very_smooth.traj -a 5.0 --validate
 ```
 
 **Comparison:**
@@ -256,7 +256,7 @@ The exact time/jerk tradeoff depends on the path and robot; measure it on your o
 Generate a trajectory and export for on-robot execution:
 
 ```bash
-python main.py -c examples/fll_choreo.json -w waypoints.json -o traj.traj \
+python -m overboard.main -c examples/fll_choreo.json -w waypoints.json -o traj.traj \
   --validate \
   --export-format controller \
   --controller-dt 0.02
@@ -290,7 +290,7 @@ python main.py -c examples/fll_choreo.json -w waypoints.json -o traj.traj \
 Export trajectory as a Python file for direct import:
 
 ```bash
-python main.py -c examples/fll_choreo.json -w waypoints.json -o traj.traj \
+python -m overboard.main -c examples/fll_choreo.json -w waypoints.json -o traj.traj \
   --export-format python
 ```
 
@@ -300,41 +300,41 @@ python main.py -c examples/fll_choreo.json -w waypoints.json -o traj.traj \
 
 ---
 
-### Example 11b: Compact Python Export
+### Example 12: Compact Python Export
 
 Export the packed module used by the compact Pybricks controllers:
 
 ```bash
-python main.py -c examples/fll_choreo.json -w waypoints.json -o traj.traj \
+python -m overboard.main -c examples/fll_choreo.json -w waypoints.json -o traj.traj \
   --export-format python-compact
 ```
 
 **Output file:** `traj.py` with a `config` dictionary, a packed `samples` bytes object, and an `events` tuple. The blob uses a 4-byte header plus 24 bytes per sample.
 
-**Use case:** Import the module with `pybricks_code/ramsete_compact.py` for pathing or `pybricks_code/ramsete_compact_events.py` for events. The compact controllers are not wired into the existing `robot.py` menu or missions, and the final-event caveat still applies (KI-012).
+**Use case:** Import the module with `pybricks_code/ramsete_compact.py` for pathing or `pybricks_code/ramsete_compact_events.py` for events. This is the format a pushed run uses: `hub_runner.py` imports `ramsete_compact_events.follow_trajectory`, and `robot.py` menu option 1 runs `hub_runner.py`, so a pushed compact mission is wired into the menu.
 
 ---
 
-### Example 12: Varying Sample Density
+### Example 13: Varying Sample Density
 
 Compare different sample densities:
 
 **Low density (fast, less accurate):**
 
 ```bash
-python main.py -c examples/fll_choreo.json -w waypoints.json -o low_res.traj -n 5
+python -m overboard.main -c examples/fll_choreo.json -w waypoints.json -o low_res.traj -n 5
 ```
 
 **Medium density (default):**
 
 ```bash
-python main.py -c examples/fll_choreo.json -w waypoints.json -o med_res.traj -n 10
+python -m overboard.main -c examples/fll_choreo.json -w waypoints.json -o med_res.traj -n 10
 ```
 
 **High density (slower, more accurate):**
 
 ```bash
-python main.py -c examples/fll_choreo.json -w waypoints.json -o high_res.traj -n 20
+python -m overboard.main -c examples/fll_choreo.json -w waypoints.json -o high_res.traj -n 20
 ```
 
 **Tradeoffs:**
@@ -346,58 +346,14 @@ python main.py -c examples/fll_choreo.json -w waypoints.json -o high_res.traj -n
 The candidate loop mixes the two timing modes by default: with `--validate`, candidate 1 is equal-duration baseline, candidate 2 is per-segment baseline, and selection keeps the passing candidate with the lowest fitness score. A waypoint is a legitimate timing boundary only when the robot stops there *and* the heading is pinned; at every other waypoint the per-segment model keeps the wheel force profile continuous through the point (KI-024). To force one mode for an experiment:
 
 ```bash
-python main.py --per-segment-dt \
+python -m overboard.main --per-segment-dt \
   -c examples/fll_choreo.json -w waypoints.json -o per_segment.traj
 
-python main.py --uniform-dt \
+python -m overboard.main --uniform-dt \
   -c examples/fll_choreo.json -w waypoints.json -o uniform.traj
 ```
 
-This changes the optimization variables, not the waypoint constraints. It is not available on the Multi-Verse path.
-
----
-
-### Example 13: Multi-Verse Refinement (experimental)
-
-The Multi-Verse pipeline is opt-in. It requires JAX and runs:
-
-```text
-bootstrap -> kinematic profile -> critic -> JAX refinement -> CasADi polish
-```
-
-Example:
-
-```bash
-python main.py --multiverse -c examples/fll_choreo.json -w complex_waypoints.json -o complex.traj \
-  -n 15 \
-  -a 1.0 \
-  --plot
-```
-
-**Current behaviour:** the refinement phase updates an intermediate trajectory and the polish now **probes** it as a second starting point (`multiverse_optimizer.py:_global_solve`, KI-004). The probe wins where it used to lose — 4.617 s against 6.049 s on the complex mission — and `main.py --refine` puts the refined trajectory into the candidate set of the simple solver, so the pipeline is a **seed provider** rather than a second solver. `--workers`/`--no-parallel` still do not change the result.
-
-**The simple solver is the default, so it needs no flag:**
-
-```bash
-python main.py -c examples/fll_choreo.json -w waypoints.json -o output.traj
-```
-
-**The refined seed, opt-in:**
-
-```bash
-python main.py --refine -c examples/fll_choreo.json -w examples/example_complex_mission.json -o complex.traj
-```
-
-On the complex mission that gives 4.936 s where the default two-candidate set gives 6.068 s — but the full ten-candidate stock set gives 4.877 s there, and over 30 missions the refined seed rescues nothing. It is a cheaper way to reach the stock set's speed, not a better one, which is why it stays opt-in.
-
-**Flags kept for compatibility:**
-
-```bash
-python main.py --multiverse -c examples/fll_choreo.json -w waypoints.json -o output.traj --no-parallel
-python main.py --multiverse -c examples/fll_choreo.json -w waypoints.json -o output.traj --workers 16
-```
-
-Do not expect these to improve quality or speed up the final solve.
+This changes the optimization variables, not the waypoint constraints.
 
 ---
 
@@ -420,7 +376,7 @@ Generate a trajectory for a typical FLL mission:
 **Command:**
 
 ```bash
-python main.py -c examples/fll_choreo.json -w mission_waypoints.json -o mission.traj \
+python -m overboard.main -c examples/fll_choreo.json -w mission_waypoints.json -o mission.traj \
   -n 10 \
   -a 0.5 \
   --validate \
@@ -431,8 +387,8 @@ python main.py -c examples/fll_choreo.json -w mission_waypoints.json -o mission.
 
 **Expected output:**
 
-- Solves are typically a few tenths of a second; the Multi-Verse path adds JAX overhead, and its refined trajectory can change the result (KI-004)
-- The solve may converge while `--validate` still rejects the path; under the current test ranges the S-curve, stops, and events examples fail, while the complex mission passes (KI-020)
+- Solves are typically a few tenths of a second on the example missions
+- The solve may converge while `--validate` still rejects the path; which example missions pass is a measurement that moves with the config and the planner (see the ledger in `docs/HEURISTICS_AND_VERIFICATION.md` and KI-020), so check the exit code rather than assuming a list
 - If validation passes, the controller profile has one sample per 20 ms of trajectory
 
 Run without `--validate` for exploratory output, or use a path that passes the gate before exporting to the robot.
@@ -444,8 +400,8 @@ Run without `--validate` for exploratory output, or use a path that passes the g
 ### Example 15: Using the Optimizer Directly
 
 ```python
-from robot_model import RobotConfig
-from optimizer import TrajectoryOptimizer
+from overboard.models.robot_model import RobotConfig
+from overboard.core.optimizer import TrajectoryOptimizer
 import json
 
 # Load configuration
@@ -477,58 +433,10 @@ print(f"Max speed: {max(s['vl'] + s['vr'] for s in samples) / 2:.3f} m/s")
 
 ---
 
-### Example 16: Using Multi-Verse Optimizer
+### Example 16: Validating a Trajectory
 
 ```python
-from robot_model import RobotConfig
-from multiverse_optimizer import MasterTrajectoryOptimizer
-import json
-
-# Load configuration
-with open('examples/fll_choreo.json', 'r') as f:
-    config_data = json.load(f)
-
-robot_cfg = RobotConfig(config_data)
-optimizer = MasterTrajectoryOptimizer(
-    robot_cfg,
-    enable_parallel=True,
-    num_workers=8
-)
-
-# Define waypoints
-waypoints = [
-    (0.0, 0.0, 0.0),
-    (0.5, 0.3, 0.5),
-    (1.0, 0.0, 0.0),
-    (1.5, 0.3, -0.5),
-    (2.0, 0.0, 0.0)
-]
-
-# Solve with stops and events. solve() returns (samples, stats).
-stop_waypoint_indices = [0, 2, 4]
-waypoint_events = {1: "lower_arm", 3: "release"}
-
-samples, stats = optimizer.solve(
-    waypoints,
-    num_samples_per_segment=15,
-    accuracy_weight=1.0,
-    stop_waypoint_indices=stop_waypoint_indices,
-    waypoint_events=waypoint_events
-)
-
-print(f"Total time: {samples[-1]['t']:.3f}s")
-print(f"Number of samples: {len(samples)}")
-print(f"Refinement phase: {stats['phase_times']['refinement']:.4f}s")
-```
-
-> **Current status:** the Multi-Verse `solve()` returns `(samples, stats)` and the polish probes the refined guess as a second starting point (KI-004). The pipeline is a **seed provider**: `main.py --refine` adds its refined trajectory to the candidate set. For predictable output, use `TrajectoryOptimizer`, which is the default.
-
----
-
-### Example 17: Validating a Trajectory
-
-```python
-from validator import validate_trajectory
+from overboard.verification.validator import validate_trajectory
 
 # Run validation
 metrics, audit, errors = validate_trajectory('output.traj', 'examples/fll_choreo.json')
@@ -563,10 +471,10 @@ print(f"\nTrajectory is {'SAFE' if is_safe else 'UNSAFE'}")
 
 ---
 
-### Example 18: Exporting for Controller
+### Example 17: Exporting for Controller
 
 ```python
-from export import write_controller_file
+from overboard.deploy.export import write_controller_file
 import json
 
 # Export with 20ms timestep
@@ -587,12 +495,12 @@ print(f"First sample: {ctrl_data['samples'][0]}")
 
 ---
 
-### Example 19: Comparing Accuracy Weights
+### Example 18: Comparing Accuracy Weights
 
 ```python
-from robot_model import RobotConfig
-from optimizer import TrajectoryOptimizer
-from validator import compute_metrics
+from overboard.models.robot_model import RobotConfig
+from overboard.core.optimizer import TrajectoryOptimizer
+from overboard.verification.validator import compute_metrics
 import json
 
 # Load config
@@ -622,12 +530,12 @@ for w in weights:
 
 **Typical output:** exact values depend on the robot and path. The table is intentionally not hardcoded; record the output from your own run. Increasing the weight usually reduces jerk at the cost of a longer trajectory.
 
-### Example 19b: Comparing Initial-Guess Seeds and Timing Modes
+### Example 19: Comparing Initial-Guess Seeds and Timing Modes
 
 Each candidate combines an initial-guess seed with a timing mode. By default candidate 1 is equal-duration baseline, candidate 2 is per-segment baseline, and the remaining seeds alternate modes. To compare only the five seeds with equal-duration timing, force that mode:
 
 ```bash
-python main.py --uniform-dt --validate -c examples/fll_choreo.json \
+python -m overboard.main --uniform-dt --validate -c examples/fll_choreo.json \
   -w examples/example_mission_first4.json -o first4.traj --candidates 5
 ```
 
@@ -648,7 +556,7 @@ The seeds only change the initial guess; every waypoint, stop, and force limit i
 
 ### The program does not start at all
 
-If `python main.py` dies with `ModuleNotFoundError: No module named 'click'`
+If `python -m overboard.main` dies with `ModuleNotFoundError: No module named 'click'`
 (or any other package), nothing is installed yet. Run the install script from
 the project folder:
 
@@ -658,7 +566,7 @@ sh install.sh          # macOS/Linux
 ```
 
 It creates a `.venv`, installs everything the solver and the studio need, and
-runs the check at the end. `python main.py --doctor` reports the same thing
+runs the check at the end. `python -m overboard.main --doctor` reports the same thing
 without needing any package, and it names the exact command that fixes what is
 missing.
 
@@ -670,11 +578,11 @@ If optimization fails or times out:
 
 ```bash
 # First, try with fewer samples
-python main.py -c examples/fll_choreo.json -w waypoints.json -o test.traj -n 5
+python -m overboard.main -c examples/fll_choreo.json -w waypoints.json -o test.traj -n 5
 
 # If that works, gradually increase
-python main.py -c examples/fll_choreo.json -w waypoints.json -o test.traj -n 10
-python main.py -c examples/fll_choreo.json -w waypoints.json -o test.traj -n 15
+python -m overboard.main -c examples/fll_choreo.json -w waypoints.json -o test.traj -n 10
+python -m overboard.main -c examples/fll_choreo.json -w waypoints.json -o test.traj -n 15
 ```
 
 Check for:
@@ -691,7 +599,7 @@ If validation shows constraint violations:
 
 ```bash
 # Run validation to see details
-python main.py -c examples/fll_choreo.json -w waypoints.json -o output.traj --validate
+python -m overboard.main -c examples/fll_choreo.json -w waypoints.json -o output.traj --validate
 ```
 
 **Output interpretation:**
@@ -726,7 +634,7 @@ If the robot deviates significantly from the planned path:
 
 1. **Increase accuracy weight:**
 ```bash
-python main.py -c examples/fll_choreo.json -w waypoints.json -o smooth.traj -a 2.0
+python -m overboard.main -c examples/fll_choreo.json -w waypoints.json -o smooth.traj -a 2.0
 ```
 
 2. **Check configuration:**
@@ -746,7 +654,7 @@ python main.py -c examples/fll_choreo.json -w waypoints.json -o smooth.traj -a 2
 
 4. **Increase sample density:**
 ```bash
-python main.py -c examples/fll_choreo.json -w waypoints.json -o high_res.traj -n 20
+python -m overboard.main -c examples/fll_choreo.json -w waypoints.json -o high_res.traj -n 20
 ```
 
 ---
@@ -758,14 +666,14 @@ python main.py -c examples/fll_choreo.json -w waypoints.json -o high_res.traj -n
 ```python
 import os
 import json
-from robot_model import RobotConfig
-from multiverse_optimizer import MasterTrajectoryOptimizer
+from overboard.models.robot_model import RobotConfig
+from overboard.core.optimizer import TrajectoryOptimizer
 
 # Load config once
 with open('examples/fll_choreo.json', 'r') as f:
     config_data = json.load(f)
 robot_cfg = RobotConfig(config_data)
-optimizer = MasterTrajectoryOptimizer(robot_cfg, enable_parallel=True, num_workers=8)
+optimizer = TrajectoryOptimizer(robot_cfg)
 
 # Process multiple waypoint files
 waypoint_files = [
@@ -798,14 +706,14 @@ for wp_file in waypoint_files:
     print(f"Generated {output_file}")
 ```
 
-> **Note:** `MasterTrajectoryOptimizer.solve()` returns `(samples, stats)`, and its refinement can change the final trajectory — the polish probes it, and `--refine` uses it as a seed (KI-004). For batch work, `TrajectoryOptimizer` (the default) is faster and predictable.
+> **Note:** `TrajectoryOptimizer.solve()` returns `(samples, stats)` and is the supported batch path.
 
 ---
 
 ### Example 24: Generating Comparison Plots
 
 ```python
-from plotter import plot_trajectory
+from overboard.viz.plotter import plot_trajectory
 import json
 
 # Load trajectory
@@ -850,7 +758,7 @@ Generate a comprehensive trajectory using all available features: stops, events,
 **Command:**
 
 ```bash
-python main.py -c examples/fll_choreo.json -w complete_mission.json -o examples/complete_mission.traj \
+python -m overboard.main -c examples/fll_choreo.json -w complete_mission.json -o examples/complete_mission.traj \
   -a 1.0 \
   -n 15 \
   --validate \
@@ -869,9 +777,9 @@ python main.py -c examples/fll_choreo.json -w complete_mission.json -o examples/
 - **Controller export**: `--export-format controller` resamples to 20ms timestep for robot
 - **Plotting**: `--plot` visualizes the trajectory with waypoints overlay
 
-> **Current status:** under the narrowed test ranges in `examples/fll_choreo.json`, the complex mission passes (about 6.068 s, 1.22 cm envelope, 0.49 cm tracking), while the S-curve, stops, and events examples still fail the Immrax gate. Always check the exit code: failed `--validate` runs exit 1 and write nothing. Run without `--validate` only for exploratory output, or use a path that passes the gate before exporting. This is KI-020, not a solver crash.
+> **Status is a measurement, not a promise:** which example missions pass the Immrax gate moves with the config and the planner. Always check the exit code: failed `--validate` runs exit 1 and write nothing. Run without `--validate` only for exploratory output, or use a path that passes the gate before exporting. This is KI-020, not a solver crash; the latest pass/fail ledger is in `docs/HEURISTICS_AND_VERIFICATION.md`.
 
-> **Final event:** waypoint 7 is not the final waypoint here, but if an event were placed on the final waypoint it would not fire on the deployed controller (KI-012).
+> **Final event:** waypoint 7 is not the final waypoint here; an event placed on the final waypoint would fire after the loop, once the robot has arrived and the drivebase has stopped (KI-012, fixed).
 
 **Output files:**
 
@@ -884,12 +792,12 @@ python main.py -c examples/fll_choreo.json -w complete_mission.json -o examples/
 
 ## Browser Studio
 
-### Example 25: Draw a Mission in the Browser
+### Example 26: Draw a Mission in the Browser
 
 **Command:**
 
 ```bash
-python main.py --gui
+python -m overboard.main --gui
 ```
 
 The browser opens at `http://127.0.0.1:8000` (use `--gui-port` for a different port).
@@ -942,20 +850,20 @@ The browser opens at `http://127.0.0.1:8000` (use `--gui-port` for a different p
 
 - The studio runs the same command line in the background, so the export gate, the validation rules and the file formats are identical to the terminal path. A failed validation shows the reason and offers no download.
 - It needs no extra packages and no internet connection.
-- It always uses the simple solver; there is no Multi-Verse toggle.
+- It leaves the backend at the CLI default (`--unified` on) and forwards `--unified`/`--no-unified` when the page sets it; there is no Multi-Verse toggle.
 
 ---
 
 ## Solving in the Browser
 
-### Example 26: Solve a Mission in the Studio
+### Example 27: Solve a Mission in the Studio
 
 Open the studio on a mission and solve it there, with the same options the command line would use:
 
 **Command:**
 
 ```bash
-python main.py --live -w waypoints.json
+python -m overboard.main --live -w waypoints.json
 ```
 
 **Steps:**

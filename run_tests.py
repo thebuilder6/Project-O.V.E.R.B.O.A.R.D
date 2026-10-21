@@ -204,10 +204,7 @@ from tests.test_regressions import (
 
 # JAX-dependent tests (skip if jax is not installed)
 try:
-    from tests.test_jax_heuristics import TestJAXHeuristics
     from tests.test_jax_ramsete import TestJAXRamsete, TestJAXDriveQuantization
-    from tests.test_refinement_accuracy import TestRefinementAccuracy
-    from tests.test_critic_metrics import TestCriticMetrics
     from tests.test_surrogate_polish import TestSurrogatePolishPipeline
     JAX_AVAILABLE = True
 except ImportError as e:
@@ -356,11 +353,8 @@ def test_classes():
     ]
     if JAX_AVAILABLE:
         classes = [
-            TestJAXHeuristics,
             TestJAXRamsete,
             TestJAXDriveQuantization,
-            TestRefinementAccuracy,
-            TestCriticMetrics,
             TestSurrogatePolishPipeline,
         ] + classes
     return classes

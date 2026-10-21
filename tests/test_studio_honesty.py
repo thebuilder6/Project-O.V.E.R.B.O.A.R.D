@@ -15,10 +15,10 @@ import unittest
 import urllib.request
 from pathlib import Path
 
-import gui_server
+import overboard.gui_server as gui_server
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-VIZ = REPO_ROOT / "viz"
+VIZ = REPO_ROOT / "overboard" / "viz"
 
 
 def _read(path):

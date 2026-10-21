@@ -57,14 +57,14 @@ if "$VENV_PY" -m pip install -r requirements-optional.txt; then
     echo "[ok]   Optional extras installed"
 else
     echo "[warn] The optional extras did not install. The solver and the studio still"
-    echo "       work, but --validate, --multiverse and the hub tools do not."
+    echo "       work, but --validate and the hub tools do not."
 fi
 
 # --- 4. the check ----------------------------------------------------------
 echo
-"$VENV_PY" main.py --doctor
+"$VENV_PY" -m overboard.main --doctor
 
 echo
 echo "Ready. Start the studio with sh start_studio.sh,"
 echo "or from a terminal with:"
-echo "    .venv/bin/python main.py --gui"
+echo "    .venv/bin/python -m overboard.main --gui"

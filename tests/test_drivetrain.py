@@ -3,14 +3,7 @@
 import math
 import unittest
 
-from drivetrain import (
-    DrivetrainModel,
-    MotorSpec,
-    SPIKE_PRIME_MEDIUM,
-    compare_declared_motor,
-    gearbox_drag,
-    motor_torque,
-)
+from overboard.models.drivetrain import DrivetrainModel, MotorSpec, SPIKE_PRIME_MEDIUM, compare_declared_motor, gearbox_drag, motor_torque
 
 
 def _model(spec=SPIKE_PRIME_MEDIUM, **kwargs):

@@ -16,21 +16,16 @@ import numpy as np
 import jax
 import jax.numpy as jnp
 
-from robot_model import RobotConfig
-from jax_robot_model import JAXRobotConfig
-from immrax_validator import ImmraxValidator
-from optimizer import TrajectoryOptimizer
-from reachability_engine import CompiledReachabilityEngine
-from surrogate_polish import (
-    SurrogatePolishOptimizer,
+from overboard.models.robot_model import RobotConfig
+from overboard.models.jax_robot_model import JAXRobotConfig
+from overboard.verification.immrax_validator import ImmraxValidator
+from overboard.core.optimizer import TrajectoryOptimizer
+from overboard.verification.reachability_engine import (
+    CompiledReachabilityEngine,
     _extract_state_and_dt_arrays,
-    generate_homotopy_bank,
-    screen_candidates_jax,
-    select_topological_representatives,
-    solve_candidates_threaded,
-    solve_pyramid_candidates,
 )
-from main import _select_attempt, _load_waypoints
+from overboard.core.surrogate_polish import SurrogatePolishOptimizer, generate_homotopy_bank, screen_candidates_jax, select_topological_representatives, solve_candidates_threaded, solve_pyramid_candidates
+from overboard.main import _select_attempt, _load_waypoints
 
 
 class TestSurrogatePolishPipeline(unittest.TestCase):
@@ -144,7 +139,6 @@ class TestSurrogatePolishPipeline(unittest.TestCase):
             (
                 self.config,
                 wps,
-                {"guess_style": "baseline", "per_segment_dt": False, "accuracy_weight": 0.0},
                 {
                     "num_samples_per_segment": 5,
                     "accuracy_weight": 0.0,
@@ -156,12 +150,10 @@ class TestSurrogatePolishPipeline(unittest.TestCase):
                     "max_polish_rounds": 0,
                     "build_full_report": False,
                 },
-                False,
             ),
             (
                 self.config,
                 wps,
-                {"guess_style": "baseline", "per_segment_dt": True, "accuracy_weight": 0.0},
                 {
                     "num_samples_per_segment": 5,
                     "accuracy_weight": 0.0,
@@ -173,7 +165,6 @@ class TestSurrogatePolishPipeline(unittest.TestCase):
                     "max_polish_rounds": 0,
                     "build_full_report": False,
                 },
-                False,
             ),
         ]
         solved, _ = solve_candidates_threaded(

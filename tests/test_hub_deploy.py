@@ -19,7 +19,7 @@ from unittest.mock import patch
 
 from click.testing import CliRunner
 
-import hub_deploy
+import overboard.deploy.hub_deploy as hub_deploy
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PYBRICKS_CODE = os.path.join(REPO_ROOT, "pybricks_code")
@@ -61,7 +61,7 @@ class TestSessionFile(unittest.TestCase):
                 self.assertEqual(handle.read(), "\n".join(lines) + "\n")
 
     def test_the_sysid_fitter_can_read_the_session(self):
-        from sysid_fit import parse_session
+        from overboard.sysid.fit import parse_session
 
         lines = [
             "TEST_START,drive",
@@ -90,7 +90,7 @@ class TestPushHubCli(unittest.TestCase):
         self.runner = CliRunner()
 
     def _run(self, tmp, deploy, extra=None):
-        import main
+        import overboard.main as main
 
         out = os.path.join(tmp, "out.traj")
         wp = os.path.join(tmp, "wp.json")
@@ -156,7 +156,7 @@ class TestPushHubCli(unittest.TestCase):
         self.assertIn("pip install pybricksdev", result.output)
 
     def test_a_plain_solve_does_not_import_the_hub_tooling(self):
-        code = "import sys, main; print('pybricksdev' in sys.modules)"
+        code = "import sys, overboard.main; print('pybricksdev' in sys.modules)"
         result = subprocess.run(
             [sys.executable, "-c", code], cwd=REPO_ROOT,
             capture_output=True, text=True)
@@ -199,7 +199,7 @@ class TestHubRunnerContract(unittest.TestCase):
                 os.path.exists(os.path.join(PYBRICKS_CODE, name + ".py")), name)
 
     def test_generated_mission_module_has_what_the_runner_imports(self):
-        from export import write_compact_python_file
+        from overboard.deploy.export import write_compact_python_file
 
         config = {
             "mass": 0.723, "inertia": 0.001, "track_width": 0.0965,

@@ -82,9 +82,9 @@ backlash/2 in both directions.
 ## The order of work
 
 1. **Build the machinery** (done above). It is inert without a fit.
-2. **Collect.** `python sysid_collect.py --conn ble --profile examples/drivebase_profile.example.json`
+2. **Collect.** `python -m overboard.sysid.collect --conn ble --profile examples/drivebase_profile.example.json`
    pushes the collector, captures the session and writes the fit.
-3. **Compare.** `python sysid_compare.py output.traj poses.csv --run-id <id>`
+3. **Compare.** `python -m overboard.sysid.compare output.traj poses.csv --run-id <id>`
    gives the planned-versus-measured residual. That residual is the only
    honest measure of what the model is still missing.
 4. **Decide from the residual.** Add the mechanism the residual points at,

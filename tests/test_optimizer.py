@@ -8,8 +8,8 @@ import os
 import time
 import unittest
 import numpy as np
-from robot_model import RobotConfig
-from optimizer import TrajectoryOptimizer, GUESS_STYLES
+from overboard.models.robot_model import RobotConfig
+from overboard.core.optimizer import TrajectoryOptimizer, GUESS_STYLES
 
 
 def _plan_deviation(samples, track_width, steps=400):
@@ -952,7 +952,7 @@ class TestBenchmarkDryRun(unittest.TestCase):
     # Shared config so we only build it once per test class
     @classmethod
     def setUpClass(cls):
-        from robot_model import RobotConfig
+        from overboard.models.robot_model import RobotConfig
         cls.config_data = STANDARD_CONFIG
         cls.cfg = RobotConfig(STANDARD_CONFIG)
 
@@ -970,12 +970,11 @@ class TestBenchmarkDryRun(unittest.TestCase):
 
     # ------------------------------------------------------------------
     def test_pipeline_benchmark_result_keys(self):
-        """Pipeline result must include 'waypoints' and 'multiverse' keys."""
+        """Pipeline result must include the waypoint count and the simple solve."""
         result = run_pipeline_benchmark(self.config_data, self.cfg)
 
         self.assertIn("waypoints", result)
-        # 'multiverse' key must exist (value may be None if JAX absent)
-        self.assertIn("multiverse", result)
+        self.assertIn("simple", result)
 
     # ------------------------------------------------------------------
     def test_cli_aggregate_validation_all_pass(self):
@@ -1070,7 +1069,7 @@ class TestBenchmarkDryRun(unittest.TestCase):
         In-process simple solve (same fixture as pipeline) must produce samples
         that start and end at rest and have monotonically increasing time.
         """
-        from optimizer import TrajectoryOptimizer
+        from overboard.core.optimizer import TrajectoryOptimizer
         opt = TrajectoryOptimizer(self.cfg)
         wps = [(0, 0, 0), (1, 0, 0), (2, 1, np.pi / 2)]
         samples, stats = opt.solve(wps, num_samples_per_segment=5, verbose=False)
@@ -1160,7 +1159,7 @@ class TestSoftWheelForceCost(unittest.TestCase):
     }
 
     def test_force_weight_reduces_rms_wheel_force_and_peak_traction(self):
-        from validator import compute_metrics
+        from overboard.verification.validator import compute_metrics
         config = RobotConfig(self.CONFIG)
         optimizer = TrajectoryOptimizer(config)
         waypoints = [(0.0, 0.0, 0.0), (0.35, 0.0, 0.0)]
@@ -1204,8 +1203,8 @@ class TestPathFitnessScoring(unittest.TestCase):
     }
 
     def setUp(self):
-        from validator import compute_path_fitness
-        from main import _select_attempt
+        from overboard.verification.validator import compute_path_fitness
+        from overboard.main import _select_attempt
         self.compute_path_fitness = compute_path_fitness
         self.select = _select_attempt
         self.robot_cfg = RobotConfig(self.CONFIG)

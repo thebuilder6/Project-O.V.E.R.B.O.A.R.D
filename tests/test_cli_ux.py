@@ -19,7 +19,7 @@ from click.testing import CliRunner
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 try:
-    import immrax_validator  # noqa: F401
+    import overboard.verification.immrax_validator as immrax_validator  # noqa: F401
     HAS_IMMRAX = True
 except ImportError:
     HAS_IMMRAX = False
@@ -52,13 +52,13 @@ class TestCliBasics(unittest.TestCase):
         self.runner = CliRunner()
 
     def _invoke(self, args):
-        import main
+        import overboard.main as main
         return self.runner.invoke(main.main, args)
 
     def test_help_lists_the_user_facing_flags(self):
         result = self._invoke(["--help"])
         self.assertEqual(result.exit_code, 0)
-        for flag in ("--gui", "--doctor", "--multiverse", "--preset"):
+        for flag in ("--gui", "--doctor", "--unified", "--preset"):
             self.assertIn(flag, result.output)
 
     def test_the_propagation_flag_is_offered(self):
@@ -78,8 +78,8 @@ class TestCliBasics(unittest.TestCase):
         """
         if not HAS_IMMRAX:
             self.skipTest("immrax not installed")
-        import immrax_validator
-        import main
+        import overboard.verification.immrax_validator as immrax_validator
+        import overboard.main as main
         for param in main.main.params:
             if param.name == "propagation":
                 self.assertEqual(param.default, immrax_validator.PROPAGATION)
@@ -94,7 +94,7 @@ class TestCliBasics(unittest.TestCase):
         functions have to be in it: a number whose model is not stated
         cannot be compared with a number from another run (KI-049).
         """
-        import main
+        import overboard.main as main
         attempts = [{
             "guess_style": "baseline", "per_segment_dt": False,
             "accuracy_weight": 0.0, "duration": 2.0, "tube": 0.003,
@@ -177,12 +177,6 @@ class TestCliBasics(unittest.TestCase):
         self.assertEqual(result.exit_code, 2)
         self.assertIn("index:event", result.output)
 
-    def test_simple_and_multiverse_cannot_be_combined(self):
-        result = self._invoke(["-w", "examples/example_straight.json",
-                                "--simple", "--multiverse"])
-        self.assertEqual(result.exit_code, 1)
-        self.assertIn("not both", result.output)
-
     def test_quiet_and_verbose_cannot_be_combined(self):
         result = self._invoke(["-w", "examples/example_straight.json",
                                 "--quiet", "--verbose"])
@@ -202,7 +196,7 @@ class TestCliBasics(unittest.TestCase):
             wp = os.path.join(tmp, "wp.json")
             with open(wp, "w", encoding="utf-8") as handle:
                 json.dump([{"x": 0.0, "y": 0.0}, {"x": 0.1, "y": 0.0}], handle)
-            import main
+            import overboard.main as main
             with patch.object(main, "TrajectoryOptimizer", _RecordingOptimizer):
                 result = self.runner.invoke(main.main, ["-w", wp, "-o", out, "-q"])
             self.assertEqual(result.exit_code, 0, result.output)
@@ -216,7 +210,7 @@ class TestCliBasics(unittest.TestCase):
             wp = os.path.join(tmp, "wp.json")
             with open(wp, "w", encoding="utf-8") as handle:
                 json.dump([{"x": 0.0, "y": 0.0}, {"x": 0.1, "y": 0.0}], handle)
-            import main
+            import overboard.main as main
             with patch.object(main, "TrajectoryOptimizer", _RecordingOptimizer):
                 result = self.runner.invoke(
                     main.main, ["-w", wp, "-o", out, "-q", "--preset", "fast"])
@@ -231,7 +225,7 @@ class TestCliBasics(unittest.TestCase):
             wp = os.path.join(tmp, "wp.json")
             with open(wp, "w", encoding="utf-8") as handle:
                 json.dump([{"x": 0.0, "y": 0.0}, {"x": 0.1, "y": 0.0}], handle)
-            import main
+            import overboard.main as main
             with patch.object(main, "TrajectoryOptimizer", _RecordingOptimizer):
                 result = self.runner.invoke(
                     main.main, ["-w", wp, "-o", out, "-q", "-n", "12",
@@ -241,7 +235,7 @@ class TestCliBasics(unittest.TestCase):
 
     def test_solve_does_not_import_jax(self):
         """A simple solve must not pay for the JAX import."""
-        code = "import sys, main; print('jax' in sys.modules)"
+        code = "import sys, overboard.main; print('jax' in sys.modules)"
         result = subprocess.run(
             [sys.executable, "-c", code], cwd=REPO_ROOT,
             capture_output=True, text=True)
@@ -262,7 +256,7 @@ class TestUnifiedDefaults(unittest.TestCase):
             wp = os.path.join(tmp, "wp.json")
             with open(wp, "w", encoding="utf-8") as handle:
                 json.dump([{"x": 0.0, "y": 0.0}, {"x": 0.1, "y": 0.0}], handle)
-            import main
+            import overboard.main as main
             with patch.object(main, "TrajectoryOptimizer", _RecordingOptimizer):
                 result = self.runner.invoke(
                     main.main, ["-w", wp, "-o", out, "-q"] + extra)
@@ -305,13 +299,13 @@ class TestFirstRun(unittest.TestCase):
     """A first-time user must get the install command, not a traceback."""
 
     def test_missing_core_packages_names_what_is_missing(self):
-        import diagnostics
+        import overboard.diagnostics as diagnostics
         with patch.object(diagnostics, "module_available",
                           side_effect=lambda name: name != "casadi"):
             self.assertEqual(diagnostics.missing_core_packages(), ["casadi"])
 
     def test_the_doctor_names_the_install_command(self):
-        import diagnostics
+        import overboard.diagnostics as diagnostics
         with patch.object(diagnostics, "module_available",
                           side_effect=lambda name: name != "casadi"):
             buffer = io.StringIO()
@@ -329,7 +323,7 @@ class TestFirstRun(unittest.TestCase):
             "for name in ('click', 'numpy', 'casadi', 'plotly', 'matplotlib'):\n"
             "    sys.modules[name] = None\n"
             "sys.argv = ['main.py', '--doctor']\n"
-            "runpy.run_path('main.py', run_name='__main__')\n"
+            "runpy.run_path('overboard/main.py', run_name='__main__')\n"
         )
         result = subprocess.run([sys.executable, "-c", code], cwd=REPO_ROOT,
                                 capture_output=True, text=True)
@@ -359,7 +353,7 @@ class TestParallelCandidates(unittest.TestCase):
         self.waypoints = os.path.join(REPO_ROOT, "examples", "example_straight.json")
 
     def _run(self, extra_args):
-        import main
+        import overboard.main as main
         with tempfile.TemporaryDirectory() as tmp:
             out = os.path.join(tmp, "out.traj")
             result = self.runner.invoke(
@@ -409,7 +403,7 @@ class TestValidationReport(unittest.TestCase):
     """The CLI prints a per-segment report the studio can read."""
 
     def setUp(self):
-        import main
+        import overboard.main as main
         self.main = main
         self.runner = CliRunner()
         self.repo = REPO_ROOT
@@ -521,7 +515,7 @@ class TestVariableSampleLayout(unittest.TestCase):
     """
 
     def setUp(self):
-        import main
+        import overboard.main as main
         self.main = main
         self.runner = CliRunner()
         self.repo = REPO_ROOT
@@ -623,7 +617,7 @@ class TestIterationHistory(unittest.TestCase):
     """--iteration-history writes how the trajectory converged."""
 
     def test_the_history_has_the_first_guess_and_the_solution(self):
-        import main
+        import overboard.main as main
         runner = CliRunner()
         with tempfile.TemporaryDirectory() as tmp:
             out = os.path.join(tmp, "out.traj")
@@ -649,7 +643,7 @@ class TestIterationHistory(unittest.TestCase):
         convergence plot and its first-guess path are empty whenever the
         candidates run in parallel, which is the studio's default.
         """
-        import main
+        import overboard.main as main
         runner = CliRunner()
         with tempfile.TemporaryDirectory() as tmp:
             out = os.path.join(tmp, "out.traj")
@@ -666,28 +660,11 @@ class TestIterationHistory(unittest.TestCase):
         self.assertEqual(entries[1]["phase"], "final_solution")
         self.assertTrue(entries[0]["trajectory"])
 
-    def test_the_history_is_captured_under_multiverse(self):
-        """KI-017: --multiverse forwards iteration history when requested."""
-        import main
-        runner = CliRunner()
-        with tempfile.TemporaryDirectory() as tmp:
-            out = os.path.join(tmp, "out.traj")
-            history = os.path.join(tmp, "iterations.json")
-            result = runner.invoke(main.main, [
-                "-w", "examples/example_straight.json", "-o", out,
-                "--multiverse", "--iteration-history", history, "-q"])
-            self.assertEqual(result.exit_code, 0, result.output)
-            self.assertTrue(os.path.exists(history))
-            with open(history, "r", encoding="utf-8") as handle:
-                entries = json.load(handle)
-        self.assertGreaterEqual(len(entries), 1)
-
-
 class TestStudioEntryPoints(unittest.TestCase):
     """--gui and --live both open the studio; --live solves the mission."""
 
     def setUp(self):
-        import main
+        import overboard.main as main
         self.main = main
         self.runner = CliRunner()
 
@@ -720,21 +697,13 @@ class TestDeprecatedCliFlags(unittest.TestCase):
     """Verification of thin deprecation notices for superseded flags."""
 
     def setUp(self):
-        import main
+        import overboard.main as main
         self.main = main
         self.runner = CliRunner()
 
-    def test_simple_emits_deprecation_warning(self):
+    def test_simple_is_documented_as_an_alias(self):
         result = self.runner.invoke(self.main.main, ["-w", "examples/example_straight.json", "--simple"])
-        self.assertIn("Note: --simple is deprecated; CasADi is already standard.", result.output)
-
-    def test_multiverse_emits_deprecation_warning(self):
-        result = self.runner.invoke(self.main.main, ["-w", "examples/example_straight.json", "--multiverse"])
-        self.assertIn("Warning: --multiverse is deprecated and superseded by --unified (legacy pipeline in legacy/).", result.output)
-
-    def test_refine_emits_deprecation_warning(self):
-        result = self.runner.invoke(self.main.main, ["-w", "examples/example_straight.json", "--refine"])
-        self.assertIn("Warning: --refine is deprecated", result.output)
+        self.assertIn("Note: --simple is an alias for --no-unified", result.output)
 
     def test_sweep_emits_deprecation_warning(self):
         result = self.runner.invoke(self.main.main, ["-w", "examples/example_straight.json", "--sweep"])
@@ -744,23 +713,21 @@ class TestDeprecatedCliFlags(unittest.TestCase):
         result = self.runner.invoke(self.main.main, ["-w", "examples/example_straight.json", "--uniform-dt"])
         self.assertIn("Warning: --uniform-dt is deprecated", result.output)
 
-    def test_recombine_segments_emits_deprecation_warning(self):
-        result = self.runner.invoke(self.main.main, ["-w", "examples/example_straight.json", "--recombine-segments"])
-        self.assertIn("Warning: --recombine-segments is deprecated", result.output)
-
-    def test_memetic_evolution_emits_deprecation_warning(self):
-        result = self.runner.invoke(self.main.main, ["-w", "examples/example_straight.json", "--memetic-evolution"])
-        self.assertIn("Warning: --memetic-evolution is deprecated", result.output)
+    def test_the_dead_legacy_flags_are_gone(self):
+        """Parsed-but-unused flags are worse than absent: nothing happens, quietly."""
+        for flag in ("--recombine-segments", "--memetic-evolution",
+                     "--generations", "--population-size"):
+            result = self.runner.invoke(
+                self.main.main, ["-w", "examples/example_straight.json", flag])
+            self.assertNotEqual(result.exit_code, 0, flag)
+            self.assertIn("no such option", result.output.lower(), flag)
 
     def test_help_shows_deprecated_tags(self):
         result = self.runner.invoke(self.main.main, ["--help"])
         self.assertEqual(result.exit_code, 0)
-        self.assertIn("(Deprecated: superseded by --unified)", result.output)
-        self.assertIn("(Deprecated: CasADi is already standard)", result.output)
-        self.assertIn("(Deprecated: relied on legacy multiverse", result.output)
         self.assertIn("(Deprecated: 80 ms invariant mesh eliminates", result.output)
         self.assertIn("(Deprecated: equal-duration dt severely", result.output)
-        self.assertIn("(Deprecated: superseded by analytical", result.output)
+        self.assertIn("Alias for --no-unified", result.output)
         self.assertIn("--unified / --no-unified", result.output)
 
 if __name__ == "__main__":

@@ -1,8 +1,11 @@
 """The live tree must not depend on the archived implementation.
 
-`legacy/` holds code that has been replaced but is kept for reference.  A live
-module importing from it would resurrect the old behaviour without the tests
-and docs that describe it, so the boundary is checked mechanically here.
+The archive holds code that has been replaced but is kept for reference: the
+old Multi-Verse pipeline, the memetic search and the prototypes around them.
+A live module importing from it would resurrect the old behaviour without the
+tests and docs that describe it, so the boundary is checked mechanically here.
+
+The archive lives at `overboard/legacy/` (`overboard.legacy` in import terms).
 """
 
 import ast
@@ -52,15 +55,24 @@ def _tree(path):
     return _TREES[path]
 
 
+def _is_archive(module):
+    """True when `module` names the archive, however it is reached.
+
+    `legacy`, `legacy.x`, `overboard.legacy` and `overboard.legacy.x` all
+    import archived code.
+    """
+    return "legacy" in module.split(".")
+
+
 def _legacy_imports(tree):
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             for alias in node.names:
-                if alias.name == "legacy" or alias.name.startswith("legacy."):
+                if _is_archive(alias.name):
                     yield node.lineno, alias.name
         elif isinstance(node, ast.ImportFrom):
             module = node.module or ""
-            if module == "legacy" or module.startswith("legacy."):
+            if _is_archive(module):
                 yield node.lineno, module
 
 
@@ -81,7 +93,10 @@ def _legacy_sys_path_entries(tree):
         for argument in node.args:
             for inner in ast.walk(argument):
                 if isinstance(inner, ast.Constant) and isinstance(inner.value, str):
-                    if inner.value == "legacy" or inner.value.startswith("legacy/"):
+                    # "legacy", "legacy/", "overboard/legacy" and their
+                    # Windows spellings all put the archive on the path.
+                    segments = inner.value.replace("\\", "/").split("/")
+                    if "legacy" in segments:
                         yield node.lineno, inner.value
 
 

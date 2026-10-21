@@ -31,10 +31,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(
     os.path.abspath(__file__)))))
 
-from drivetrain import (  # noqa: E402
-    DrivetrainModel,
-    SPIKE_PRIME_MEDIUM,
-)
+from overboard.models.drivetrain import DrivetrainModel, SPIKE_PRIME_MEDIUM
 
 # The reference simulator's drive base, as its own source declares it.
 REFERENCE_WHEEL_RADIUS_M = 0.028

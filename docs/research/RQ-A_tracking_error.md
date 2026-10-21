@@ -1,5 +1,10 @@
 # RQ-A — Why does the closed-loop tracking gate fail?
 
+> **Archive note.** The experiment scripts under `rq_a/` and the raw measurement
+> trees referenced below are archived in the `archive/research-2026-10` tag.
+> Retrieve a file with `git show archive/research-2026-10:<path>`; see
+> [`../ARCHIVE.md`](../ARCHIVE.md).
+
 **Status:** the cause is identified. The three things that stood between the plan and the robot are now closed in the tree — the plan's own collocation (KI-026), the reference's coupling (KI-027) and the model's parity with the controller that runs (KI-028) — and **every table below has been re-measured against that tree**. What is still open is the *shape* of the reference: the controller follows the chord between the samples, and the feedforward reports an interpolated value where the plan's own rule assumes an interval average.
 **Date:** 2026-10-20. The first pass was measured in the morning against a pinned copy; the tables were re-measured in the afternoon against the working tree, after KI-027 and KI-028 landed. Where a number has moved, the old one is kept and marked, because it is the record of the bug.
 **Tree under test:** the working tree, token `FD268F4F79AD`; the per-module MD5s are in [`rq_a/TREE_2026-10-20.md5`](rq_a/TREE_2026-10-20.md5). The tree kept moving while the campaign ran — the studio and the CLI changed under it — so the headline tables were **re-run at the end on the tree as it stood** and came back identical, to the last decimal (the verification output is in [`../../measurements/2026-10-20-post-ki028/rq_a_verify/`](../../measurements/2026-10-20-post-ki028/rq_a_verify/)). The first pass was measured against the pinned copy whose MD5s are in [`rq_a/PINNED_TREE.md5`](rq_a/PINNED_TREE.md5).

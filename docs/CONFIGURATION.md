@@ -40,13 +40,7 @@ Canonical and legacy key names are both understood, for example `track_width`/`d
       "wheel_radius_range": [0.0275, 0.0285]
     }
   },
-  "interactions": {},
-  "multiverse": {
-    "bootstrap": {
-      "turning_radius": 0.0,
-      "resolution": 0.05
-    }
-  }
+  "interactions": {}
 }
 ```
 
@@ -92,7 +86,7 @@ The `uncertainties` block is used in two places:
 - The optimizer's per-wheel force and traction limits use the declared worst cases (minimum cof, minimum torque headroom, smallest wheel radius for the speed term, largest wheel radius for the force term, maximum inertia and minimum track width for the force split).
 - `--validate` passes the same ranges to Immrax.
 
-The optional `--sysid-fit sysid_fit.json` model is separate from this file. It is produced by `sysid_fit.py` from robot logs and is not a `robot` config block. `sysid_fit.py --profile examples/drivebase_profile.example.json` can read the minimal wheel-radius/track-width profile instead of a full robot config. After a run, `sysid_compare.py` compares the planned trajectory with measured `poses.csv` rows.
+The optional `--sysid-fit sysid_fit.json` model is separate from this file. It is produced by `python -m overboard.sysid.fit` from robot logs and is not a `robot` config block. `python -m overboard.sysid.fit --profile examples/drivebase_profile.example.json` can read the minimal wheel-radius/track-width profile instead of a full robot config. After a run, `sysid_compare.py` compares the planned trajectory with measured `poses.csv` rows.
 
 A minimal drivebase profile is:
 
@@ -117,27 +111,11 @@ Recognized ranges:
 | `wheel_radius_range` | `[0.99 * wheel_radius, 1.01 * wheel_radius]` |
 | `inertia_kg_m2` | `[0.90 * inertia, 1.10 * inertia]` |
 
-`examples/fll_choreo.json` currently narrows `track_width_range` and `gear_backlash_m` for repeatable tests; those values are test assumptions, not measured hardware ranges. The parser also accepts `t_max_range`, but the current optimizer, CPU validator, and Immrax path use `t_max_nm` plus `torque_headroom` rather than this range. Use measured values and keep the ranges honest; a narrow range makes the validator optimistic.
+`examples/fll_choreo.json` currently narrows `track_width_range` and `gear_backlash_m` for repeatable tests; those values are test assumptions, not measured hardware ranges. `t_max_range` is used: `JAXRobotConfig` builds its stall-torque interval from it (`overboard/models/jax_robot_model.py`), it defaults to 75-95 % of `t_max_nm`, and a `sysid` fit fills it with the measured stall range; `t_max_nm` and `torque_headroom` remain the nominal value and its margin. Use measured values and keep the ranges honest; a narrow range makes the validator optimistic.
 
-## Multi-Verse parameters (`multiverse`)
+## Archived Multi-Verse parameters
 
-> **Current status:** the Multi-Verse pipeline runs and its refined guess now reaches the solver as a **seed** — the polish probes it, and `main.py --refine` adds it to the candidate set (KI-004). `--workers` and `--no-parallel` still do not change the final trajectory. The only `multiverse` block read by the current code is `bootstrap`.
-
-### `bootstrap` (used)
-
-- `turning_radius` (m): Minimum Reeds-Shepp turning radius. `0.0` allows point turns.
-- `resolution` (m): Discretization step for the generated geometry.
-
-### Reserved / currently ignored
-
-These keys may appear in older configs but are not read by the current pipeline:
-
-- `enable_parallel`, `num_workers`
-- `stomp_variants`, `stomp_noise.position_std`, `stomp_noise.heading_std`
-- `teb_weights` (`forward_bias`, `reverse_bias`, `point_turn_bias`, `wide_sweep_bias`)
-- `critic_thresholds` (the critic uses module-level constants in `multiverse_optimizer.py`)
-
-The JAX candidate generator currently uses a fixed 50 variants, fixed noise constants, and the critic's hardcoded thresholds. Treat these keys as reserved until the code reads them.
+The old `multiverse` block is no longer read. The pipeline is archived under `overboard/legacy/` and has no CLI entry point; older configs that still carry the block are accepted and the block is ignored.
 
 ## Waypoint file format
 
@@ -173,14 +151,14 @@ Waypoints can be dictionaries or `[x, y, heading]` arrays:
 ]
 ```
 
-> **Runtime caveat:** an event on the final waypoint is exported but not fired by the deployed Pybricks loop (KI-012).
+> An event on the final waypoint is fired after the loop, once the robot has arrived and the drivebase has stopped (KI-012, fixed).
 
 ## Command line interface
 
 Run from the repository root:
 
 ```bash
-python main.py --simple -c examples/fll_choreo.json -w examples/example_straight.json -o output.traj
+python -m overboard.main -c examples/fll_choreo.json -w examples/example_straight.json -o output.traj
 ```
 
 ### Input/output
@@ -195,19 +173,22 @@ python main.py --simple -c examples/fll_choreo.json -w examples/example_straight
 - `-a, --accuracy-weight`: Smoothness/jerk weight (0 = time-optimal).
 - `--force-weight`: Soft wheel-force and traction-utilisation penalty in the NLP objective (0 = none, the default). Simple solver only; the hard per-wheel limits apply either way.
 - `--surrogate-polish`: Run the 5-layer surrogate-to-truth pipeline (the discretisation-aware metric, the linear epigraph force bounds, one warm thread pool, a compiled `jax.lax.scan` reachability engine, a differentiable Immrax polish, and a minimum-time selection). Off by default; the default path is the one the rest of this document describes.
-- `--candidates`: Candidates to solve and compare with `--validate` (default 2, max 5). With the simple solver each candidate combines an initial-guess seed (`baseline`, `rolling`, `bow_left`, `bow_right`, `turn_first`) with a timing mode: by default candidate 1 is equal-duration baseline, candidate 2 is per-segment baseline, then the remaining seeds alternate. The Multi-Verse path keeps the `accuracy_weight` ladder. A passing candidate wins by the lowest fitness score (the envelope, then the shortest time, break ties); `1` disables the comparison.
+- `--candidates`: Candidates to solve and compare with `--validate` (default 2). With the stock (`--no-unified`) candidate set each candidate combines an initial-guess seed (`baseline`, `rolling`, `bow_left`, `bow_right`, `turn_first`) with a timing mode: by default candidate 1 is equal-duration baseline, candidate 2 is per-segment baseline, then the remaining seeds alternate. A passing candidate wins by the lowest fitness score (the envelope, then the shortest time, break ties); `1` disables the comparison.
 - `--stop-waypoints "0,2,4"`: Comma-separated stop indices.
 - `--events "1:lower_arm,3:release"`: Comma-separated event mappings.
-- `--simple`: CasADi-only optimizer (recommended).
+- `--unified` / `--no-unified`: Run the 3-Pillar unified engine (the default) or the stock candidate set. `--simple` is an alias for `--no-unified`.
+- `--pyramid`, `--pyramid-candidates N`, `--h-adaptive`: The screen-then-refine pyramid (a JAX sieve over a homotopy bank, then IPOPT on the top N finalists) and its adaptive mesh. Off by default and needs JAX.
 - `--per-segment-dt`: Force each waypoint segment to have its own sample interval (simple solver only). This is the general timing model. The interval may only change across a waypoint where the robot stops *and* the heading is pinned; everywhere else the wheel force profile must be continuous through the point (KI-024). By default candidates mix both modes.
-- `--uniform-dt`: Force one shared sample interval across all segments (simple solver only). Because every segment has the same sample count, this also forces every segment to take the SAME time, so a path with unequal segment lengths is slow. By default candidates mix both modes. Use it to reproduce the equal-duration-only behavior.
+- `--uniform-dt`: **Deprecated.** Force one shared sample interval across all segments (stock candidate set only). Because every segment has the same sample count, this also forces every segment to take the SAME time, so a path with unequal segment lengths is slow. The CLI warns and turns `--unified` off. Use it only to reproduce the equal-duration-only behaviour.
 - Timing tradeoff: an uneven 1.0 m + 0.2 m path passes all gates with per-segment at `accuracy_weight=0.005` in 2.784 s / 0.32 cm envelope / 0.36 cm tracking / 9.52 m/s³ peak wheel jerk, versus 4.456 s / 0.37 cm / 0.36 cm / 9.52 m/s³ for the equal-duration mode at the same weight, so the mixed loop selects per-segment. At `accuracy_weight=0` the per-segment candidate is 2.710 s / 0.32 cm but fails the Immrax and CPU gates, so the mixed loop falls back to the equal-duration candidate. The complex mission at `accuracy_weight=0` is faster with per-segment (4.650 s / 1.00 cm) but its tracking is 0.84 cm and its motor force is 0.074 N over the limit, so the equal-duration 6.068 s / 1.22 cm candidate is selected. The CPU audit runs per candidate, so a partial pass cannot block a later fully passing candidate. Both modes are held to the same wheel-jerk discipline, so `accuracy_weight` means the same thing in either (KI-022).
-- `--no-parallel`, `--workers`: Multi-Verse options; currently no effect on the result (KI-004).
+- `--no-parallel`, `--workers`: Solve candidates sequentially or in worker processes; they do not change the selected trajectory.
 
 ### Validation and export
 
-- `--validate`: CPU audit + Immrax + final-waypoint gate. Requires JAX/Immrax. With `--candidates N` (default 2, max 5), solves N candidates (seed/timing combinations with `--simple`, accuracy-weight variants otherwise) and exports the passing one with the lowest fitness score (the envelope and the shortest time break ties); on failure, exits 1 and writes nothing.
-- `--sysid-fit PATH`: Optional `sysid_fit.json` measured actuator/odometry model; requires `--validate` or `--live`. The default kinematic model is used when omitted. Slip is loaded/reported but not applied yet (KI-020).
+- `--validate`: CPU audit + Immrax + final-waypoint gate. Requires JAX/Immrax. With `--candidates N` (default 2), solves N candidates (seed/timing combinations in the stock set, the three frontier candidates in the unified one) and exports the passing one with the lowest fitness score (the envelope and the shortest time break ties); on failure, exits 1 and writes nothing.
+- `--sysid-fit PATH`: Optional `sysid_fit.json` measured actuator/odometry model; requires `--validate` or `--live`. The default kinematic model is used when omitted. The plant applies the measured actuator gain, time constant, command delay, odometry scale and braking shortfall (KI-020 keeps the un-modelled residue open).
+- `--control-dt`: The control period the validator models, in seconds (default 0.02). Set it to the period the robot actually achieves so the gate is measured against the controller that runs.
+- `--propagation [plant|tick]`: The reachability model the envelope gate uses: `plant` (default) or one closed-loop tick (opt-in, 7-10x slower).
 - `--export-format controller|python|python-compact`: Write a fixed-timestep controller JSON, a legacy list-of-dicts Python module, or a packed-compact Python module. The compact module is consumed by `pybricks_code/ramsete_compact.py` or `ramsete_compact_events.py`.
 - `--controller-dt`: Controller timestep in seconds (default 0.02).
 - `--benchmark`: Write `<output>_stats.json` after a successful export gate.
@@ -215,12 +196,11 @@ python main.py --simple -c examples/fll_choreo.json -w examples/example_straight
 ### Visualization
 
 - `--plot`, `--animate`: Blocking Matplotlib views.
-- `--live`: Blocking WebSocket live view on port 8765. It kills the process that owns the port (KI-005), and the first client misses config/waypoints (KI-016).
-- `--show-convergence`: Works with the simple optimizer.
+- `--live`: Open the browser studio on this mission and solve it there (blocking). The old WebSocket live view was removed (KI-005, KI-016).
+- `--show-convergence`: Plot how the solve converged. `--iteration-history PATH` writes the same history to JSON for the studio.
 - `--convergence-mode`: `parallel`, `best`, or `layered`.
-- `--convergence-animate`, `--convergence-output`: Parsed but currently unused (KI-017).
 - `-q, --quiet`: Suppress progress output.
 
 ## Installation note
 
-`pip install -r requirements.txt` covers the simple optimizer. `--validate`, `--multiverse` and `--refine` need `jax`, `jaxopt`, and `immrax`. A plain solve can run without JAX, but live reachability envelopes require it. The optional packages live in `requirements-optional.txt` (KI-006). JAX 0.6.2 was used for the current tests. `install.bat` and `install.sh` install both sets into a `.venv` and check the result, and `python main.py --doctor` reports what is missing and prints the install command.
+`pip install -r requirements.txt` covers the simple optimizer. `--validate` needs `jax` and `immrax`. A plain solve can run without JAX, but live reachability envelopes require it. The optional packages live in `requirements-optional.txt` (KI-006). JAX 0.6.2 was used for the current tests. `install.bat` and `install.sh` install both sets into a `.venv` and check the result, and `python -m overboard.main --doctor` reports what is missing and prints the install command.

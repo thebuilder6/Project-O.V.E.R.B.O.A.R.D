@@ -1,14 +1,12 @@
 # PQ-B — the research agenda, measured
 
 **Status:** the measurement campaign is complete. **Read
-[`FINDINGS.md`](FINDINGS.md)** for the answers; the generated tables are in
-`MEASUREMENTS_*.md` and the raw records are in
-[`../../measurements/2026-10-20/`](../../measurements/2026-10-20/) (see
-[`PQ-B.md`](../../measurements/2026-10-20/PQ-B.md) for the file guide).
+[`FINDINGS.md`](FINDINGS.md)** for the answers. The generated tables and raw
+records were archived in the `archive/research-2026-10` tag; retrieve a file
+with `git show archive/research-2026-10:docs/measurements/...`.
 
-**Tree under test:** pinned, see [`pq_b_PINNED_TREE.md5`](pq_b_PINNED_TREE.md5)
-and [`pq_c_PINNED_TREE.md5`](pq_c_PINNED_TREE.md5) (the second pin is the
-self-consistent comparison).
+**Tree under test:** pinned; the hashes are in the archive tag alongside the
+raw records.
 
 **Companions:** [`../HEURISTICS_AND_VERIFICATION.md`](../HEURISTICS_AND_VERIFICATION.md)
 (the agenda this answers) and [`../RQ-A_tracking_error.md`](../RQ-A_tracking_error.md)
@@ -24,7 +22,7 @@ meantime), so the "baseline seed always wins" statement, the "the tracking gate
 binds" statement and the "the weight grid is the cheapest lever" statement are
 all statements about six paths.
 
-The tooling in [`../../research/`](../../research/) produces:
+The campaign used the measurement tooling under `research/`:
 
 - a stratified random mission suite (24 missions over four path profiles),
 - a (mission x candidate) matrix run through the **production** gate chain,
@@ -32,7 +30,8 @@ The tooling in [`../../research/`](../../research/) produces:
   under,
 - an offline analyzer that answers the questions from the records.
 
-Nothing in the production tree is changed by any of it.
+Nothing in the production tree is changed by any of it. The raw records and
+one-off scripts are in the archive tag, not in `main`.
 
 ## The pinned tree
 
@@ -45,22 +44,24 @@ $env:OVERBOARD_TREE = "C:\path\to\pinned\copy"
 powershell -File research/run_studies.ps1
 ```
 
-The hashes of the pinned tree are in [`pq_b_PINNED_TREE.md5`](pq_b_PINNED_TREE.md5),
-and every record in every result file carries a `tree` token, so a mixed run
-is detectable rather than silently wrong.
+The hashes of the pinned tree are in the archive tag, and every record in every
+result file carries a `tree` token, so a mixed run is detectable rather than
+silently wrong.
 
 ## The runs
 
-| file | what it measures | questions |
+| result file (archive) | what it measures | questions |
 |---|---|---|
-| `research/results/matrix.jsonl` | 32 missions x 21 candidates through the full gate chain | Q3, Q5, Q8, Q10, and the seed/timing baseline |
-| `research/results/weights.jsonl` | a 9-point accuracy-weight ladder, both timing models | Q6 |
-| `research/results/density.jsonl` | samples per segment in {5, 10, 20, 40} | Q7 |
-| `research/results/multiverse.jsonl` | the Multi-Verse pipeline against the simple solver | Q12 |
-| `research/results/spread.jsonl` | the same candidates validated at 5 uncertainty widths | KI-020 |
-| `research/results/sc_off.jsonl`, `sc_on.jsonl` | the same seed matrix with and without `--self-consistent` (KI-026), on one tree | RQ-A's OQ6 |
+| `matrix.jsonl` | 32 missions x 21 candidates through the full gate chain | Q3, Q5, Q8, Q10, and the seed/timing baseline |
+| `weights.jsonl` | a 9-point accuracy-weight ladder, both timing models | Q6 |
+| `density.jsonl` | samples per segment in {5, 10, 20, 40} | Q7 |
+| `spread.jsonl` | the same candidates validated at 5 uncertainty widths | KI-020 |
+| `sc_off.jsonl`, `sc_on.jsonl` | the same seed matrix with and without `--self-consistent` (KI-026), on one tree | RQ-A's OQ6 |
 
 ## Reproducing
+
+The tooling still lives under `research/`; the recorded runs are in
+`archive/research-2026-10`.
 
 ```powershell
 python research/suite.py --count 24 --seed 7 --out research/missions

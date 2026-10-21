@@ -3,14 +3,12 @@
 # The core solver and the browser studio only need requirements.txt.
 # These packages add:
 #   --validate    the Immrax reachability gate (needs jax + immrax)
-#   --multiverse  the experimental Multi-Verse pipeline (needs jax + jaxopt)
 #   --push-hub    pushing a trajectory to a Pybricks hub (needs pybricksdev)
 #
 # Verified with JAX 0.6.2. A fresh install brings the newest stack (JAX
 # 0.12.0, Immrax 0.3.8), which needs numpy 2.2 or newer; requirements.txt
 # asks for numpy 1.24 or newer and below 3.0, so the two files fit together.
 jax
-jaxopt
 immrax
 pybricksdev
 # The PDF renderer for the mat import: FIRST's field guide is a PDF, and

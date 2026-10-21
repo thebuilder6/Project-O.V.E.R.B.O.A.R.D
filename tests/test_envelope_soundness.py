@@ -36,9 +36,9 @@ try:
     import jax
     import jax.numpy as jnp
     from immrax import Interval
-    from immrax_validator import ImmraxValidator, DigitalTwinOpenLoop
-    from digital_twin import DigitalTwinConfig
-    from jax_robot_model import JAXRobotConfig
+    from overboard.verification.immrax_validator import ImmraxValidator, DigitalTwinOpenLoop
+    from overboard.sysid.digital_twin import DigitalTwinConfig
+    from overboard.models.jax_robot_model import JAXRobotConfig
     HAS_IMMRAX = True
 except ImportError:
     HAS_IMMRAX = False
@@ -90,7 +90,7 @@ def _point_poses(samples, w, plant, cfg, with_belief=False):
     sample-and-hold and the same substeps the validator uses, so the poses
     are the ones the validator's model says the robot reaches.
     """
-    import immrax_validator as IV
+    import overboard.verification.immrax_validator as IV
 
     ctrl = IV.RamseteController(2.0, 0.7, track_width=cfg.track_width)
 

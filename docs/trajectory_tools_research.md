@@ -2,7 +2,7 @@
 
 *Context: FLL differential-drive path optimizer. The current implementation uses CasADi and IPOPT with trapezoidal direct collocation; it no longer uses SLSQP or scipy.minimize.*
 
-> **Current status (2026-10-20):** time-optimal solving, the jerk/accuracy weight, CPU validation, Immrax reachability, stops/events, and controller export are implemented. The Multi-Verse refinement is repaired and used as a **seed provider** — `main.py --refine` puts its refined trajectory into the candidate set (KI-004); it is a cheaper way to reach the stock set's speed, not a better one, so it stays opt-in. An optional fitted actuator/odometry plant (`sysid_digital_twin.py` + `sysid_fit.py` + `--sysid-fit`) exists, but the validator is not yet a full digital twin (KI-020). See `KNOWN_ISSUES.md` and `docs/WHITEPAPER.md` for the measured state.
+> **Current status (2026-10-20):** time-optimal solving, the jerk/accuracy weight, CPU validation, Immrax reachability, stops/events, and controller export are implemented. The Multi-Verse refinement and its JAX seed provider are archived under `overboard/legacy/` with no CLI entry point (KI-004). An optional fitted actuator/odometry plant (`sysid_digital_twin.py` + `sysid_fit.py` + `--sysid-fit`) exists, but the validator is not yet a full digital twin (KI-020). See `KNOWN_ISSUES.md` and `docs/WHITEPAPER.md` for the measured state.
 
 ---
 

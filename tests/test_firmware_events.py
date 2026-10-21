@@ -53,7 +53,7 @@ ramsete_compact.gc = _GcStub()
 ramsete_compact_events.gc = _GcStub()
 ramsete_fast.gc = _GcStub()
 
-from export import encode_compact_trajectory  # noqa: E402
+from overboard.deploy.export import encode_compact_trajectory  # noqa: E402
 
 
 class TestFirmwareParity(unittest.TestCase):
@@ -94,7 +94,7 @@ class TestFirmwareParity(unittest.TestCase):
                          f"the controllers disagree on the hold: {periods}")
 
     def test_the_validator_holds_the_command_for_the_firmware_period(self):
-        from immrax_validator import CONTROL_DT
+        from overboard.verification.immrax_validator import CONTROL_DT
         period_ms = self._declared_period_ms("ramsete_compact_events.py")
         self.assertAlmostEqual(CONTROL_DT, period_ms / 1000.0, places=9,
                                msg="the validator's control period does not "
@@ -121,7 +121,7 @@ class TestFirmwareParity(unittest.TestCase):
         rounded command is a different command, so the model has to agree
         with the firmware that runs (KI-028).
         """
-        from immrax_validator import RamseteController
+        from overboard.verification.immrax_validator import RamseteController
         import jax.numpy as jnp
         controller = RamseteController(2.0, 0.7, track_width=0.0965)
         pose = jnp.array([0.0, 0.0, 0.0])

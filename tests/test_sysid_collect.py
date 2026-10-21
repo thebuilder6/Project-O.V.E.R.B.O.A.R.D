@@ -23,7 +23,7 @@ from contextlib import redirect_stdout
 from unittest.mock import patch
 
 from tests.firmware_stubs import install_firmware_stubs, GcStub
-from sysid_fit import sheet_rows, write_sheet
+from overboard.sysid.fit import sheet_rows, write_sheet
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PYBRICKS_CODE = os.path.join(REPO_ROOT, "pybricks_code")
@@ -174,7 +174,7 @@ class TestCollectorMetadata(unittest.TestCase):
         self.assertIn("META,notes,notes;with;commas", text)
 
     def test_the_session_parses_with_a_run_id(self):
-        from sysid_fit import parse_session
+        from overboard.sysid.fit import parse_session
 
         collector = _load_collector()
         buffer = io.StringIO()
@@ -195,7 +195,7 @@ class TestSessionPoses(unittest.TestCase):
     """A pose belongs to the test that was open when it was printed."""
 
     def test_poses_take_the_run_id_of_their_test(self):
-        from sysid_fit import poses_from_hub_session
+        from overboard.sysid.fit import poses_from_hub_session
 
         rows, events = poses_from_hub_session(_session().splitlines())
         by_run = {}
@@ -208,14 +208,14 @@ class TestSessionPoses(unittest.TestCase):
         self.assertAlmostEqual(by_run["3"][2]["y_m"], 0.0)
 
     def test_a_session_without_meta_keeps_one_run(self):
-        from sysid_fit import poses_from_hub_session
+        from overboard.sysid.fit import poses_from_hub_session
 
         rows, _ = poses_from_hub_session(["POSE,0.1000,0.0000,0.00"])
         self.assertEqual([row["run_id"] for row in rows], ["hub"])
         self.assertEqual([row["stop"] for row in rows], [0])
 
     def test_the_written_csv_is_read_back(self):
-        from sysid_fit import load_poses, poses_from_hub_session, write_poses_csv
+        from overboard.sysid.fit import load_poses, poses_from_hub_session, write_poses_csv
 
         rows, _ = poses_from_hub_session(_session().splitlines())
         with tempfile.TemporaryDirectory() as tmp:
@@ -236,8 +236,7 @@ class TestFittedScales(unittest.TestCase):
     """
 
     def _fit(self, session):
-        from sysid_fit import (fit_session, load_poses, load_runs,
-                               poses_from_hub_session, write_poses_csv)
+        from overboard.sysid.fit import fit_session, load_poses, load_runs, poses_from_hub_session, write_poses_csv
         with tempfile.TemporaryDirectory() as tmp:
             log = os.path.join(tmp, "session.csv")
             poses = os.path.join(tmp, "poses.csv")
@@ -256,7 +255,7 @@ class TestFittedScales(unittest.TestCase):
         self.assertGreater(result["odometry"]["heading_scale"], 0.0)
 
     def test_the_fit_with_a_turn_loads(self):
-        from digital_twin import load_sysid_fit
+        from overboard.sysid.digital_twin import load_sysid_fit
 
         result = self._fit(_turn_session())
         with tempfile.TemporaryDirectory() as tmp:
@@ -316,7 +315,7 @@ class TestMeasurementSheet(unittest.TestCase):
         return _measurement_session(repeats)
 
     def _runs(self, repeats=1):
-        from sysid_fit import load_runs
+        from overboard.sysid.fit import load_runs
         with tempfile.TemporaryDirectory() as tmp:
             path = os.path.join(tmp, "session.csv")
             with open(path, "w", encoding="utf-8") as handle:
@@ -324,7 +323,7 @@ class TestMeasurementSheet(unittest.TestCase):
             return load_runs([path])[1]
 
     def test_the_sheet_lists_the_tests_that_need_a_measurement(self):
-        from sysid_fit import read_sheet, write_sheet
+        from overboard.sysid.fit import read_sheet, write_sheet
 
         with tempfile.TemporaryDirectory() as tmp:
             path = os.path.join(tmp, "sheet.csv")
@@ -343,7 +342,7 @@ class TestMeasurementSheet(unittest.TestCase):
         self.assertNotIn("static", text)
 
     def test_the_sheet_becomes_measured_poses(self):
-        from sysid_fit import sheet_to_poses
+        from overboard.sysid.fit import sheet_to_poses
 
         rows = [
             {"test": "odometry_straight", "repeat": 0, "stop": 0,
@@ -366,7 +365,7 @@ class TestMeasurementSheet(unittest.TestCase):
 
     def test_a_repeat_is_matched_to_its_own_run(self):
         """The same test in two repeats is two different runs."""
-        from sysid_fit import sheet_to_poses
+        from overboard.sysid.fit import sheet_to_poses
 
         rows = [
             {"test": "odometry_straight", "repeat": 0, "stop": 0,
@@ -379,7 +378,7 @@ class TestMeasurementSheet(unittest.TestCase):
         self.assertEqual([p["run_id"] for p in poses], ["2", "5"])
 
     def test_a_row_for_a_test_that_did_not_run_is_reported(self):
-        from sysid_fit import sheet_to_poses
+        from overboard.sysid.fit import sheet_to_poses
 
         rows = [{"test": "no_such_test", "repeat": 0, "stop": 0,
                  "x_mm": 1.0, "y_mm": 0.0, "turn_right_deg": 0.0}]
@@ -389,8 +388,7 @@ class TestMeasurementSheet(unittest.TestCase):
 
     def test_the_fit_uses_the_measured_poses(self):
         """A measured pose has to beat the hub's own odometry."""
-        from sysid_fit import (fit_session, load_poses, parse_session,
-                               sheet_to_poses, write_poses_csv)
+        from overboard.sysid.fit import fit_session, load_poses, parse_session, sheet_to_poses, write_poses_csv
 
         rows = [{"test": "odometry_straight", "repeat": 0, "stop": 0,
                  "x_mm": 998.0, "y_mm": 0.0, "turn_right_deg": 0.0}]
@@ -412,14 +410,14 @@ class TestRepeatStatistics(unittest.TestCase):
     """The numbers have to carry an interval, and say what it covers."""
 
     def test_one_run_has_no_interval(self):
-        from sysid_fit import repeat_statistics
+        from overboard.sysid.fit import repeat_statistics
 
         stats = repeat_statistics([0.98])
         self.assertEqual(stats["n"], 1)
         self.assertIsNone(stats["ci95"])
 
     def test_three_runs_give_a_t_interval(self):
-        from sysid_fit import repeat_statistics
+        from overboard.sysid.fit import repeat_statistics
 
         stats = repeat_statistics([0.98, 1.00, 1.02])
         self.assertEqual(stats["n"], 3)
@@ -431,7 +429,7 @@ class TestRepeatStatistics(unittest.TestCase):
         self.assertAlmostEqual(stats["ci95"][1], 1.0 + half, places=9)
 
     def test_the_fit_reports_the_interval_over_the_repeats(self):
-        from sysid_fit import fit_session, parse_session
+        from overboard.sysid.fit import fit_session, parse_session
 
         lines = []
         for repeat in range(3):
@@ -462,7 +460,7 @@ class TestRepeatStatistics(unittest.TestCase):
         self.assertIsNotNone(straight.get("gain_ci95"))
 
     def test_the_validator_band_is_the_interval(self):
-        from digital_twin import load_sysid_fit
+        from overboard.sysid.digital_twin import load_sysid_fit
 
         fit = {
             "actuator": {
@@ -551,7 +549,7 @@ class TestDriftAndStallTorque(unittest.TestCase):
         return "\n".join(lines) + "\n"
 
     def _fit(self, poses=None):
-        from sysid_fit import fit_session, load_poses, parse_session
+        from overboard.sysid.fit import fit_session, load_poses, parse_session
         if poses is None:
             poses = {}
         return fit_session(parse_session(self._session()), poses=poses,
@@ -567,7 +565,7 @@ class TestDriftAndStallTorque(unittest.TestCase):
         self.assertEqual(stall["n_sources"], 3)
 
     def test_without_the_tests_neither_is_calibrated(self):
-        from sysid_fit import fit_session, parse_session
+        from overboard.sysid.fit import fit_session, parse_session
         session = ("TEST_START static\nMETA,run_id,1\nMETA,test,static\n"
                    "META,poses,0\nDATA\nt_ms,speed\n0,0\nTEST_END,1\n")
         result = fit_session(parse_session(session), wheel_radius_m=0.028)
@@ -589,7 +587,7 @@ class TestRefinedStepFit(unittest.TestCase):
         return times, measured, command
 
     def test_it_recovers_a_known_step(self):
-        from sysid_fit import _fit_first_order
+        from overboard.sysid.fit import _fit_first_order
 
         times, measured, command = self._step()
         fit = _fit_first_order(times, measured, command)
@@ -601,7 +599,7 @@ class TestRefinedStepFit(unittest.TestCase):
 
     def test_the_answer_is_not_on_the_ten_millisecond_grid(self):
         """The first pass can only land on a 10 ms boundary."""
-        from sysid_fit import _fit_first_order
+        from overboard.sysid.fit import _fit_first_order
 
         times, measured, command = self._step(tau=0.0837, delay=0.0163)
         fit = _fit_first_order(times, measured, command)
@@ -691,7 +689,7 @@ class TestDriftRegression(unittest.TestCase):
         ] + [",".join(str(v) for v in row) for row in rows] + [f"TEST_END,{len(rows)}"])
 
     def _fit(self, poses=None, **kwargs):
-        from sysid_fit import fit_session, load_poses, parse_session
+        from overboard.sysid.fit import fit_session, load_poses, parse_session
         if poses is None:
             poses = {}
         return fit_session(parse_session(self._session(**kwargs)), poses=poses,
@@ -725,7 +723,7 @@ class TestDriftRegression(unittest.TestCase):
 
     def test_too_few_points_does_not_crash_the_fit(self):
         """A line through two points has no standard error to report."""
-        from sysid_fit import fit_session, parse_session
+        from overboard.sysid.fit import fit_session, parse_session
 
         # One step in the forward run and one in the reverse run: two points.
         session = "\n".join([
@@ -766,7 +764,7 @@ class TestWallHoming(unittest.TestCase):
         ] + [",".join(str(v) for v in row) for row in rows] + ["TEST_END,3"])
 
     def _fit(self, session, wall_distance_m):
-        from sysid_fit import fit_session, parse_session
+        from overboard.sysid.fit import fit_session, parse_session
         return fit_session(parse_session(session), wheel_radius_m=0.028,
                            wall_distance_m=wall_distance_m)
 
@@ -815,7 +813,7 @@ class TestWallHoming(unittest.TestCase):
         ]) + "\n"
         poses = {"2": [{"stop": 0, "x_m": 0.990, "y_m": 0.0,
                         "heading_deg": 0.0}]}
-        from sysid_fit import fit_session, load_poses, parse_session
+        from overboard.sysid.fit import fit_session, load_poses, parse_session
         with tempfile.TemporaryDirectory() as tmp:
             path = os.path.join(tmp, "poses.csv")
             with open(path, "w", encoding="utf-8") as handle:
@@ -834,7 +832,7 @@ class TestWallHoming(unittest.TestCase):
                                places=6)
 
     def test_the_profile_carries_the_wall_distance(self):
-        from sysid_fit import read_drivebase_profile
+        from overboard.sysid.fit import read_drivebase_profile
 
         with tempfile.TemporaryDirectory() as tmp:
             path = os.path.join(tmp, "profile.json")
@@ -855,7 +853,7 @@ class TestSheetFormAndOneStepFit(unittest.TestCase):
     """
 
     def _runs(self, repeats=1):
-        from sysid_fit import load_runs
+        from overboard.sysid.fit import load_runs
         with tempfile.TemporaryDirectory() as tmp:
             path = os.path.join(tmp, "session.csv")
             with open(path, "w", encoding="utf-8") as handle:
@@ -863,7 +861,7 @@ class TestSheetFormAndOneStepFit(unittest.TestCase):
             return load_runs([path])[1]
 
     def test_the_form_holds_every_measurement(self):
-        from sheet_form import write_form
+        from overboard.sysid.sheet_form import write_form
 
         rows = sheet_rows(self._runs(repeats=2))
         with tempfile.TemporaryDirectory() as tmp:
@@ -884,7 +882,7 @@ class TestSheetFormAndOneStepFit(unittest.TestCase):
         self.assertIn("calibration_sheet.csv", text)
 
     def test_the_form_and_the_sheet_agree_on_the_rows(self):
-        from sheet_form import write_form
+        from overboard.sysid.sheet_form import write_form
 
         runs = self._runs(repeats=2)
         rows = sheet_rows(runs)
@@ -911,7 +909,7 @@ class TestSheetFormAndOneStepFit(unittest.TestCase):
         The form writes the columns in the order the fitter reads them, so a
         file that came out of the browser is fitted without being touched.
         """
-        from sysid_fit import read_sheet
+        from overboard.sysid.fit import read_sheet
 
         csv_text = ("test,repeat,stop,x_mm,y_mm,turn_right_deg\n"
                     "odometry_straight,0,0,998,2,0\n"
@@ -929,7 +927,7 @@ class TestSheetFormAndOneStepFit(unittest.TestCase):
 
     def test_the_fit_takes_the_sheet_directly(self):
         """--sheet fits in one step: there is no intermediate pose CSV."""
-        from sysid_fit import main as fit_main
+        from overboard.sysid.fit import main as fit_main
 
         with tempfile.TemporaryDirectory() as tmp:
             session = os.path.join(tmp, "session.csv")
@@ -956,7 +954,7 @@ class TestSheetFormAndOneStepFit(unittest.TestCase):
                                places=3)
 
     def test_a_sheet_with_no_measurement_is_reported(self):
-        from sysid_fit import main as fit_main
+        from overboard.sysid.fit import main as fit_main
 
         with tempfile.TemporaryDirectory() as tmp:
             session = os.path.join(tmp, "session.csv")
@@ -977,7 +975,7 @@ class TestSheetFormAndOneStepFit(unittest.TestCase):
         self.assertEqual(code, 1)
 
     def test_the_cli_writes_the_form(self):
-        from sysid_fit import main as fit_main
+        from overboard.sysid.fit import main as fit_main
 
         with tempfile.TemporaryDirectory() as tmp:
             session = os.path.join(tmp, "session.csv")
@@ -999,7 +997,7 @@ class TestSheetFormAndOneStepFit(unittest.TestCase):
 class TestCollectCommand(unittest.TestCase):
 
     def _run(self, tmp, extra=None):
-        import sysid_collect
+        import overboard.sysid.collect as sysid_collect
 
         session = os.path.join(tmp, "session.csv")
         poses = os.path.join(tmp, "poses.csv")
@@ -1038,7 +1036,7 @@ class TestCollectCommand(unittest.TestCase):
 
     def test_the_hub_poses_are_not_handed_to_the_fit(self):
         """The robot must not be calibrated against its own odometry."""
-        import sysid_collect
+        import overboard.sysid.collect as sysid_collect
 
         recorded = {}
 
@@ -1081,7 +1079,7 @@ class TestCollectCommand(unittest.TestCase):
         it names has to work. The fit comes after the measurements, and it
         gets the profile then.
         """
-        import sysid_collect
+        import overboard.sysid.collect as sysid_collect
 
         with tempfile.TemporaryDirectory() as tmp:
             session = os.path.join(tmp, "session.csv")
@@ -1105,7 +1103,7 @@ class TestCollectCommand(unittest.TestCase):
             self.assertFalse(os.path.exists(fit))
 
     def test_the_sheet_and_the_form_are_written(self):
-        import sysid_collect
+        import overboard.sysid.collect as sysid_collect
 
         with tempfile.TemporaryDirectory() as tmp:
             session = os.path.join(tmp, "session.csv")
@@ -1143,8 +1141,8 @@ class TestCollectCommand(unittest.TestCase):
 
     def test_a_dropped_link_still_fits_what_arrived(self):
         """One flaky link must not throw away a ten minute session."""
-        import sysid_collect
-        from hub_deploy import HubLinkError
+        import overboard.sysid.collect as sysid_collect
+        from overboard.deploy.hub_deploy import HubLinkError
 
         def dropping_deploy(script, connection="ble", name=None, wait=True,
                             print_output=True, stream_path=None):

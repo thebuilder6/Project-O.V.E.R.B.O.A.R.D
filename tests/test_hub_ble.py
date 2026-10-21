@@ -13,8 +13,8 @@ import types
 import unittest
 from unittest.mock import patch
 
-import hub_ble
-import hub_deploy
+import overboard.deploy.hub_ble as hub_ble
+import overboard.deploy.hub_deploy as hub_deploy
 
 
 class _Adv:
@@ -254,7 +254,7 @@ class TestTheStudioHeadline(unittest.TestCase):
     """The studio shows the operator the headline, not the last line."""
 
     def test_the_error_line_is_the_headline(self):
-        import gui_server
+        import overboard.gui_server as gui_server
 
         lines = [
             "error: No Pybricks hub found over Bluetooth.",
@@ -265,7 +265,7 @@ class TestTheStudioHeadline(unittest.TestCase):
         self.assertEqual(headline, "No Pybricks hub found over Bluetooth.")
 
     def test_a_tool_that_says_nothing_uses_the_last_line(self):
-        import gui_server
+        import overboard.gui_server as gui_server
 
         self.assertEqual(gui_server._error_headline(["", "boom"]), "boom")
         self.assertEqual(gui_server._error_headline([]), "The push failed.")

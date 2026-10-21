@@ -149,7 +149,7 @@ The studio shows them as a table: the first three columns are read-only keys, th
 
 The numbers go straight back into a sheet CSV, so the spreadsheet path and the GUI path produce the same file.
 
-The command line has the same form as a standalone file: `python sysid_fit.py session.csv --write-form calibration_sheet.html` writes the same rows as a self-contained page, and the page downloads the same sheet CSV. An operator who never opens the studio gets the same sheet, and the fit takes it either way (`--sheet`).
+The command line has the same form as a standalone file: `python -m overboard.sysid.fit session.csv --write-form calibration_sheet.html` writes the same rows as a self-contained page, and the page downloads the same sheet CSV. An operator who never opens the studio gets the same sheet, and the fit takes it either way (`--sheet`).
 
 ---
 
@@ -196,7 +196,7 @@ straight example therefore **fails** validation with a 5.4 cm tracking error, an
 This is not a bug in the studio; the same thing happens on the command line:
 
 ```text
-python main.py -w examples/example_straight.json --validate --sysid-fit fit.json
+python -m overboard.main -w examples/example_straight.json --validate --sysid-fit fit.json
 Digital twin: gain 0.971-0.991, tau 0.081s, delay 0.021s, odometry 0.9980/1.0000
   FAILED: envelope radius 5.59 cm exceeds the local threshold; tracking error 5.41 cm > 0.50 cm.
 ```

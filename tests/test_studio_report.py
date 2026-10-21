@@ -16,7 +16,7 @@ import urllib.request
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-VIZ = REPO_ROOT / "viz"
+VIZ = REPO_ROOT / "overboard" / "viz"
 
 
 def _read(path):
@@ -54,12 +54,12 @@ class TestStudioReportRoute(unittest.TestCase):
     """The server writes the report and serves it back."""
 
     def test_the_report_is_a_static_asset(self):
-        import gui_server
+        import overboard.gui_server as gui_server
         self.assertIn("/report.js", gui_server.STATIC_FILES)
 
     def test_the_report_is_written_next_to_the_trajectory(self):
         """The report is an artifact, so it lives with the solve."""
-        from gui_server import artifact_path
+        from overboard.gui_server import artifact_path
 
         class FakeJob:
             name = "unit-test"

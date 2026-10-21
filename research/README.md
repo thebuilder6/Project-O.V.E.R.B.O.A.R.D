@@ -21,8 +21,7 @@ JSON record per candidate so the questions can be answered from data.
 | `check_instrument.py` | Compares what the harness records with what the CLI's own validation report says, on the same mission and the same tree. Run this before believing anything the harness produces. |
 | `peek.py` | Prints a measurement file as a compact table (quick inspection). |
 | `weight_breakdown.py` | The accuracy-weight study broken down per timing model and per mission (Q6). |
-| `multiverse_vs_simple.py` | The Multi-Verse pipeline against the simple solver, mission by mission (Q12). |
-| `run_studies.ps1` | The full campaign: the matrix, the weight ladder, the density study, the Multi-Verse run and the uncertainty sensitivity. |
+| `run_studies.ps1` | The full campaign: the matrix, the weight ladder, the density study and the uncertainty sensitivity. |
 | `run_self_consistent.ps1` | The same matrix with and without `--self-consistent` (KI-026), for RQ-A's OQ6. The flag is two-way (`--self-consistent/--no-self-consistent`), so the comparison runs on one tree; note that the harness follows the **library** default, which is the self-consistent rule (KI-051, KI-052). |
 
 ## Measuring against a pinned tree
@@ -106,9 +105,8 @@ solver's exceptions, which is what a stress run is for.
 ## The records
 
 One JSON object per line. The first line of a file is a `meta` record with the
-hashes of `optimizer.py`, `main.py`, `immrax_validator.py`, `validator.py`,
-`robot_model.py` and `multiverse_optimizer.py`, so a measurement can always be
-tied to the tree state that produced it.
+hashes of the package modules that decide what a measurement means, so a
+measurement can always be tied to the tree state that produced it.
 
 Each candidate record carries the spec that produced it (`label`, `style`,
 `guess`, `timing`, `weight`, `samples`), the solver outcome (`converged`,

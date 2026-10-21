@@ -2,7 +2,7 @@
 #
 # Everything runs against a PINNED copy of the planner, because the working
 # tree is edited while a measurement runs (KI-024 landed mid-session once).
-# The pinned tree is recorded in docs/research/pq_b_PINNED_TREE.md5.
+# The pinned tree hashes are in the archive tag (docs/ARCHIVE.md).
 #
 #   $env:OVERBOARD_TREE = <pinned copy>
 #   powershell -File research/run_studies.ps1
@@ -12,7 +12,6 @@
 #   matrix.jsonl      the seed / timing / gate matrix on the whole suite
 #   weights.jsonl     Q6  - is the accuracy weight a dial or a lottery?
 #   density.jsonl     Q7  - sample density against timing flexibility
-#   multiverse.jsonl  Q12 - does the experimental pipeline ever win?
 #   spread.jsonl      KI-020 - how much of a PASS depends on the declared
 #                            uncertainty ranges?
 
@@ -54,10 +53,6 @@ python research/harness.py --missions $study --out research/results/weights.json
 Write-Output '=== Q7: sample density ==='
 python research/harness.py --missions $density --out research/results/density.jsonl `
     --specs density --workers 8 --no-critic
-
-Write-Output '=== Q12: the Multi-Verse pipeline ==='
-python research/harness.py --missions $study --out research/results/multiverse.jsonl `
-    --specs multiverse --samples 10 --workers 8 --no-critic
 
 Write-Output '=== KI-020: uncertainty sensitivity ==='
 python research/harness.py --missions $study --out research/results/spread.jsonl `

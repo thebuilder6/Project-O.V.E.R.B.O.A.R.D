@@ -7,8 +7,8 @@ import numpy as np
 import json
 import tempfile
 import os
-from robot_model import RobotConfig
-from validator import forward_integrate, audit_constraints, compute_metrics
+from overboard.models.robot_model import RobotConfig
+from overboard.verification.validator import forward_integrate, audit_constraints, compute_metrics
 
 
 class TestForwardIntegrate(unittest.TestCase):
@@ -507,7 +507,7 @@ class TestValidateTrajectory(unittest.TestCase):
             config_path = config_file.name
         
         try:
-            from validator import validate_trajectory
+            from overboard.verification.validator import validate_trajectory
             metrics, audit, errors = validate_trajectory(traj_path, config_path, apply_headroom=True)
             
             # Check that all components are returned

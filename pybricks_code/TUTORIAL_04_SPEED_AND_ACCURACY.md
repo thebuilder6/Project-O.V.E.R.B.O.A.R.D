@@ -150,4 +150,4 @@ The robot will feel noticeably snappier — it finishes each movement and flows 
 
 **You've finished the tutorials!**
 
-Open `mission_3_advanced.py` to see curves, wall squaring, async multitasking, and speed tuning all combined in a single realistic competitive run.
+Open `archive/mission_3_advanced.py` to see curves, wall squaring, async multitasking, and speed tuning all combined in a single realistic competitive run.

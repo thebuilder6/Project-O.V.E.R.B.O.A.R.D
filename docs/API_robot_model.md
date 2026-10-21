@@ -31,7 +31,7 @@ RobotConfig(config_dict: dict)
 - legacy Choreo: `{ "config": { "mass": { "val": 0.723 }, ... } }`
 - flat: `{ "mass": 0.723, ... }`
 
-The canonical and legacy key names are normalized (`track_width`/`differentialTrackWidth`, `wheel_radius`/`radius`, `v_max_rad_s`/`vmax`, `t_max_nm`/`tmax`, `torque_headroom`/`torqueHeadroom`, `speed_headroom`/`speedHeadroom`). The `multiverse` block is stored as `multiverse_config`.
+The canonical and legacy key names are normalized (`track_width`/`differentialTrackWidth`, `wheel_radius`/`radius`, `v_max_rad_s`/`vmax`, `t_max_nm`/`tmax`, `torque_headroom`/`torqueHeadroom`, `speed_headroom`/`speedHeadroom`).
 
 ### Fields and defaults
 
@@ -60,7 +60,6 @@ The canonical and legacy key names are normalized (`track_width`/`differentialTr
 | `color_sensor_offsets` | `{'left': (0.06, -0.03), 'right': (0.06, 0.03)}` | m |
 | `hardware` | hub axes & motor/sensor port mapping | — |
 | `uncertainties` | see below | — |
-| `multiverse_config` | `{}` | — |
 
 ### `uncertainties`
 

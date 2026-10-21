@@ -6,7 +6,7 @@
 
 This document describes the current implementation in the working tree. It replaces the earlier version, which mixed implemented code with aspirational designs and unreproducible performance numbers. The code, `KNOWN_ISSUES.md`, and the test suite are the authority if this document drifts again.
 
-> **Scope and safety status:** this is an offline desktop tool for one FLL differential-drive robot. The simple optimizer and safety gate work. The validation model is not yet a full digital twin, some representative curved paths still fail the Immrax gate (KI-020), and the Multi-Verse refinement is a **seed provider** rather than a second solver (KI-004). Only output that has passed `--validate` should be treated as safety-checked.
+> **Scope and safety status:** this is an offline desktop tool for one FLL differential-drive robot. The simple optimizer and safety gate work. The validation model is not yet a full digital twin, and some representative curved paths still fail the Immrax gate (KI-020). The old Multi-Verse pipeline is archived under `overboard/legacy/` and has no CLI entry point (KI-004). Only output that has passed `--validate` should be treated as safety-checked.
 
 > **Companion document:** [`docs/HEURISTICS_AND_VERIFICATION.md`](HEURISTICS_AND_VERIFICATION.md) documents every path-planning heuristic in the tree, the full verification chain and what each layer does and does not prove, a ledger of the strategies that did not work, and a prioritised research agenda. Section 5 below summarises the validation chain; the companion document is the reference for the gate thresholds, the seed heuristics and the failed approaches.
 >
@@ -28,7 +28,7 @@ The current tree contains uncommitted fixes for several safety and correctness i
 
 What is still incomplete:
 
-- The Multi-Verse pipeline is a **seed provider**, not a second solver: `main.py --refine` puts its refined trajectory into the candidate set, and on the complex mission that is 4.936 s against the stock set's 6.068 s (KI-004). Its own cost function is still duration plus a jerk term, so the gain is bought with tracking accuracy and the gate rejects the trade at the higher weights.
+- The Multi-Verse pipeline is archived under `overboard/legacy/` and has no CLI entry point (KI-004). The unified planner is the only solve path.
 - The validator is kinematic and has no motor, DriveBase, odometry, or slip dynamics (KI-020).
 - Under the narrowed test ranges in `examples/fll_choreo.json`, the straight and complex-mission examples pass; the S-curve, stops, and events examples still fail.
 - Convergence flags and some export edge cases remain open (KI-017). The random benchmarks work (KI-015).
@@ -44,13 +44,13 @@ What is still incomplete:
 | `main.py` | CLI, waypoint/config loading, candidate loop, safety gate, export |
 | `robot_model.py` | Config parsing, motor curve, per-wheel normal/traction model, CPU force checks |
 | `optimizer.py` | CasADi/IPOPT trajectory optimizer (`TrajectoryOptimizer`) |
-| `multiverse_optimizer.py` | Experimental bootstrap/critic/JAX-refinement pipeline (`MasterTrajectoryOptimizer`) |
+| `overboard/legacy/multiverse_optimizer.py` | Archived bootstrap/critic/JAX-refinement pipeline (`MasterTrajectoryOptimizer`); no CLI entry point |
 | `validator.py` | CPU forward integration, constraint audit, metrics, final-waypoint and sample gates |
 | `immrax_validator.py` | Interval reachability with the deployed Ramsete structure, plus optional fitted plant |
 | `digital_twin.py` | Loader/validation for `sysid_fit.json` actuator and odometry fits |
 | `jax_robot_model.py` | JAX configuration and force model |
 | `jax_ramsete.py` | JAX Ramsete parity and interval-friendly controller |
-| `jax_optimizer.py` | JAX candidate generation and per-window refinement |
+| `overboard/legacy/jax_optimizer.py` | JAX candidate generation used by the archived pipeline |
 | `sysid_fit.py` | Host-side fitter for digital-twin logs |
 | `sysid_compare.py` | Planned-vs-measured stop/final pose report |
 | `export.py` | Fixed-timestep controller JSON, legacy Python, and packed-compact Python export |
@@ -63,10 +63,10 @@ What is still incomplete:
 ### 2.2 CLI flow
 
 1. Parse the robot config and waypoints.
-2. Select `TrajectoryOptimizer` (default) or `MasterTrajectoryOptimizer` (`--multiverse`).
+2. Select `TrajectoryOptimizer` (the only solver).
 3. Solve the first candidate.
 4. With `--validate`, run Immrax reachability on that candidate and score its envelope.
-5. With `--validate`, repeat for the remaining `--candidates` trajectories (default 2, max 5). With the simple solver each candidate combines an initial-guess seed (`baseline`, `rolling`, `bow_left`, `bow_right`, `turn_first`) with a timing mode: by default candidate 1 is equal-duration baseline, candidate 2 is per-segment baseline, then the remaining seeds alternate. The Multi-Verse path uses accuracy-weight steps of 2.0. Select the passing converged candidate with the lowest 5-part path fitness score (the envelope, then the shortest duration, break ties); otherwise keep the converged one closest to passing for reporting.
+5. With `--validate`, repeat for the remaining `--candidates` trajectories (default 2, max 5). With the simple solver each candidate combines an initial-guess seed (`baseline`, `rolling`, `bow_left`, `bow_right`, `turn_first`) with a timing mode: by default candidate 1 is equal-duration baseline, candidate 2 is per-segment baseline, then the remaining seeds alternate. Select the passing converged candidate with the lowest 5-part path fitness score (the envelope, then the shortest duration, break ties); otherwise keep the converged one closest to passing for reporting.
 6. Check the final waypoint, and with `--validate`, run the CPU `validate_samples` gate.
 7. Write the trajectory, then optional stats/controller/legacy-Python/compact-Python exports, then plots.
 
@@ -74,7 +74,7 @@ A failed solve and a failed validation both exit non-zero without writing the tr
 
 ### 2.3 Installation modes
 
-`requirements.txt` covers the default path: numpy, CasADi, Plotly, Click, Matplotlib and rsplan. `--validate`, `--multiverse`, and `sysid_solver.py` need the optional stack (JAX, JAXOpt, Immrax, pandas), now listed in `requirements-optional.txt`. JAX 0.6.2 was used for the current test run; a fresh install brings the newest stack (JAX 0.12.0, Immrax 0.3.8) and solves the same missions with the same numbers. `install.bat` and `install.sh` set the whole thing up in one step.
+`requirements.txt` covers the default path: numpy, CasADi, Plotly, Click, Matplotlib and rsplan. `--validate` needs the optional stack (JAX, Immrax, pandas), now listed in `requirements-optional.txt`. JAX 0.6.2 was used for the current test run; a fresh install brings the newest stack (JAX 0.12.0, Immrax 0.3.8) and solves the same missions with the same numbers. `install.bat` and `install.sh` set the whole thing up in one step.
 
 ---
 
@@ -230,7 +230,7 @@ On failure, `TrajectoryOptimizer.solve` still returns a best-effort sample list 
 
 ### 4.5 Limitations
 
-- `TrajectoryOptimizer.solve` exposes deterministic `guess_style` seeds and takes a full `initial_guess`, so `main.py --refine` can hand it the Multi-Verse refinement. The refined trajectory therefore reaches the solver — it is a seed provider, not a second solver, and it is not better than the stock seeds (KI-004).
+- `TrajectoryOptimizer.solve` exposes deterministic `guess_style` seeds and accepts a full `initial_guess` for experiments and external seed providers.
 - There are no obstacle or field-geometry constraints.
 - The solver is local; a bad waypoint/heading combination can converge to a poor local solution or fail.
 - The model is kinematic at the trajectory level. Motor lag, DriveBase response, odometry, and slip are handled only by the validation approximation, not the optimizer; the optional `--sysid-fit` plant adds fitted actuator/odometry response, but not full dynamics (KI-020).
@@ -275,7 +275,7 @@ Validation has three layers.
 
 The envelope is the axis-aligned bounding box of the reachable set. The planner checks its radius against a local threshold: 2 cm for transit samples by default, 0.5 cm for `precision_mode` waypoints, or an explicit `error_threshold`. Tracking error is checked separately at 0.5 cm.
 
-The gate is a post-solve check. With `--validate`, `main.py` solves `--candidates` trajectories (default 2, max 5), validates each one, and selects the passing candidate with the lowest **5-part path fitness score**: the reachability spread at the stops and the final waypoint (200 s/m), the slip risk above a 70 % utilisation dead-zone (8 s), the RMS wheel force against the stall force (0.5 s), the tracking error (80 s/m) and the run time (1 s/s). The weights are in seconds, so the score reads as the time the plan's defects are worth, and lower is better. The envelope and the duration break ties. With the simple solver, the candidates combine initial-guess seeds (`baseline`, `rolling`, `bow_left`, `bow_right`, `turn_first`) with the uniform or per-segment timing mode; the default alternates modes and the Multi-Verse path uses increasing accuracy weights. The CPU audit runs on every candidate, not only the selected one. If none pass, it selects the closest candidate for reporting but still blocks export. Reachability is not a term or constraint in the optimizer (KI-020).
+The gate is a post-solve check. With `--validate`, `main.py` solves `--candidates` trajectories (default 2, max 5), validates each one, and selects the passing candidate with the lowest **5-part path fitness score**: the reachability spread at the stops and the final waypoint (200 s/m), the slip risk above a 70 % utilisation dead-zone (8 s), the RMS wheel force against the stall force (0.5 s), the tracking error (80 s/m) and the run time (1 s/s). The weights are in seconds, so the score reads as the time the plan's defects are worth, and lower is better. The envelope and the duration break ties. With the simple solver, the candidates combine initial-guess seeds (`baseline`, `rolling`, `bow_left`, `bow_right`, `turn_first`) with the uniform or per-segment timing mode; the default alternates modes. The CPU audit runs on every candidate, not only the selected one. If none pass, it selects the closest candidate for reporting but still blocks export. Reachability is not a term or constraint in the optimizer (KI-020).
 
 The default candidate set mixes both timing modes, and the CPU audit runs on every candidate so a partial pass cannot block a later fully passing one. The two modes are not peers: the equal-duration mode shares one `dt` across all segments, which because every segment has the same sample count also forces every segment to take the SAME time, so on a path with unequal segment lengths the short segment inherits the long segment's duration. The per-segment mode is the general model, and both are held to the same wheel-jerk discipline so `accuracy_weight` means the same thing in either (KI-022). The per-segment mode also holds the wheel force profile continuous through every waypoint the robot does not stop at, which is what makes a change of time scale at such a point legitimate (KI-024). Measured on 2026-10-19: an uneven 1.0 m + 0.2 m path passes all gates with per-segment at `accuracy_weight=0.005` in 2.784 s with envelope 0.32 cm, tracking 0.36 cm and peak wheel jerk 9.52 m/s³, versus 4.456 s / 0.37 cm / 0.36 cm / 9.52 m/s³ for the equal-duration mode at the same weight, so selection keeps the per-segment winner. At `accuracy_weight=0`, per-segment is 2.710 s / 0.32 cm but fails the Immrax and CPU gates, so selection falls back to the equal-duration candidate (4.463 s / 0.35 cm). On the complex mission at `accuracy_weight=0`, per-segment is faster (4.650 s, envelope 1.00 cm) but its tracking is 0.84 cm and its motor force is 0.074 N over the limit, so it is rejected; the equal-duration 6.068 s / 1.22 cm / 0.49 cm candidate passes and wins. `--uniform-dt` forces the equal-duration-only behavior and `--per-segment-dt` forces per-segment timing.
 
@@ -360,9 +360,9 @@ The hardware calibration path is implemented but has not been validated on hardw
 
 ---
 
-## 7. Multi-Verse pipeline as implemented
+## 7. Archived Multi-Verse pipeline
 
-> The five phases are documented phase by phase below. How the pipeline reaches the solver as a seed provider, and the ledger of Multi-Verse strategies that did not work (the degenerate Reeds-Shepp bootstrap, the unread config blocks, the dead `heuristic_wins` counter), are in [`docs/HEURISTICS_AND_VERIFICATION.md`](HEURISTICS_AND_VERIFICATION.md) §8 and §20.
+> The pipeline is archived under `overboard/legacy/` and has no CLI entry point. The five phases are documented phase by phase below as history. The ledger of Multi-Verse strategies that did not work (the degenerate Reeds-Shepp bootstrap, the unread config blocks, the dead `heuristic_wins` counter) is in [`docs/HEURISTICS_AND_VERIFICATION.md`](HEURISTICS_AND_VERIFICATION.md) §8 and §20.
 
 `MasterTrajectoryOptimizer.solve` runs five phases and returns `(final_traj, stats)`.
 
@@ -454,7 +454,7 @@ Do not tune the 5 mm tracking or 2 cm envelope thresholds to one path. The strai
 
 The full option list is in `README.md` and `docs/CONFIGURATION.md`. Current truth:
 
-- The simple CasADi optimizer is the default; `--multiverse` selects the Multi-Verse pipeline and `--simple` is a deprecated alias.
+- The simple CasADi optimizer is the only solver; `--simple` is a deprecated alias. The Multi-Verse pipeline is archived under `overboard/legacy/`.
 - `--validate` requires JAX/Immrax and gates output. `--candidates N` (default 2, max 5) selects among seed/timing combinations with the simple solver, or accuracy-weight variants on the Multi-Verse path.
 - `--sysid-fit sysid_fit.json` opts into the fitted five-state plant; it requires `--validate`.
 - `--export-format controller|python|python-compact` writes optional outputs after the gate.
@@ -508,7 +508,7 @@ The JAX-dependent modules are imported in a `try`; if JAX is missing, they are s
 ### 10.2 Straight example
 
 ```bash
-python main.py -c examples/fll_choreo.json \
+python -m overboard.main -c examples/fll_choreo.json \
   -w examples/example_straight.json -o straight.traj --validate
 ```
 
@@ -534,9 +534,9 @@ The S-curve, stops, and events examples converge but fail the Immrax gate and pr
 
 These are model predictions. There is no hardware tracking log in the repository; the collector and fitter have only been exercised with synthetic data.
 
-### 10.4 Multi-Verse comparison
+### 10.4 Multi-Verse comparison (archived)
 
-The pipeline benchmark in §7.6 produced identical final costs for simple and Multi-Verse, with 0.00 % improvement — that was the state before the repair, and it is why KI-004 was opened. The pipeline has since been repaired and re-envisioned as a **seed provider**: `main.py --refine` adds its refined trajectory to the candidate set, and the probe now wins the polished solve (4.617 s against 6.049 s on the complex mission). As a seed it is a cheaper way to reach the stock set's speed rather than a better one: 4.936 s where the default two-candidate set gives 6.068 s, and the full ten-candidate stock set gives 4.877 s. Measured over 30 missions it rescues nothing, so it stays opt-in.
+The pipeline benchmark in §7.6 produced identical final costs for simple and Multi-Verse, with 0.00 % improvement — that was the state before the repair, and it is why KI-004 was opened. The pipeline was later repaired and used as a **seed provider**, but measured over 30 missions the refined seed rescued nothing and was not better than the stock seeds. It is now archived under `overboard/legacy/` and has no CLI entry point.
 
 ### 10.5 Evolutionary discovery and analytical Kinetic Frontier seeds
 
@@ -586,7 +586,7 @@ For the complete theoretical derivation and state-space formulations, see [`docs
 
 | ID | State | Impact |
 |---|---|---|
-| KI-004 | Fixed | The Multi-Verse refinement is repaired and used as a seed: `--refine` puts the refined trajectory into the candidate set (4.936 s against the default set's 6.068 s on the complex mission; the full stock set gives 4.877 s there) |
+| KI-004 | Archived | The Multi-Verse pipeline is archived under `overboard/legacy/`; it has no CLI entry point |
 | KI-005 | Fixed | The live view that killed port owners is gone; the studio never takes a port |
 | KI-006 | Fixed | The optional stack lives in `requirements-optional.txt`; `install.bat` / `install.sh` set up both |
 | KI-011 | Fixed | The controller heading interpolation no longer crosses ±π the long way |
@@ -655,12 +655,6 @@ The path-planning side of this list — the seed heuristics, the timing models, 
       "track_width_range": [0.096, 0.097],
       "wheel_radius_range": [0.0275, 0.0285]
     }
-  },
-  "multiverse": {
-    "bootstrap": {
-      "turning_radius": 0.0,
-      "resolution": 0.05
-    }
   }
 }
 ```
@@ -683,12 +677,11 @@ The path-planning side of this list — the seed heuristics, the timing models, 
                               otherwise)
 --stop-waypoints TEXT          comma-separated stop indices
 --events TEXT                  comma-separated index:event pairs
---multiverse                   Multi-Verse pipeline (experimental)
 --simple                       deprecated: the simple solver is the default
 --per-segment-dt               force per-segment intervals; simple solver only
 --uniform-dt                   force one shared interval; simple solver only
---no-parallel                  Multi-Verse flag; no current result effect
---workers INTEGER              Multi-Verse flag; no current result effect
+--no-parallel                  solve candidates in this process
+--workers INTEGER              worker processes for parallel candidates
 --validate / --no-validate     CPU + Immrax gate; requires JAX
 --sysid-fit PATH               optional fitted actuator/odometry model
                               (requires --validate)

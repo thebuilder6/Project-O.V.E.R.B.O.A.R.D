@@ -1,11 +1,11 @@
 # PQ-B — the research agenda, measured
 
-**Status:** the measurement campaign is complete. The generated tables are in
-[`MEASUREMENTS_matrix.md`](MEASUREMENTS_matrix.md) (and the per-study files
-next to it); the raw records are in
-[`../../measurements/2026-10-20/`](../../measurements/2026-10-20/).
+**Status:** the measurement campaign is complete. The generated tables and raw
+records are archived in the `archive/research-2026-10` tag; retrieve a file
+with `git show archive/research-2026-10:<path>` (see
+[`../../ARCHIVE.md`](../../ARCHIVE.md)).
 
-**Tree under test:** pinned, see [`pq_b_PINNED_TREE.md5`](pq_b_PINNED_TREE.md5).
+**Tree under test:** pinned; the hashes are in the archive tag.
 
 **Companions:** [`../HEURISTICS_AND_VERIFICATION.md`](../HEURISTICS_AND_VERIFICATION.md)
 (the agenda this answers) and [`../RQ-A_tracking_error.md`](../RQ-A_tracking_error.md)
@@ -374,30 +374,16 @@ At the time, the reason was KI-004: the pipeline's phase 5 re-solved from the
 default baseline guess, and the JAX-refined probe never won. The one mission
 where it differed was the one where the probe did win.
 
-**That measurement is the record of why the pipeline was worth repairing, and
-the verdict it produced has since been overtaken.** The pipeline was not
-deleted; it was **repaired** (KI-004): the refinement no longer moves the
-waypoints, the JAX cost uses IPOPT's trapezoidal rule, the intervals follow
-the segment's own length, the refined timing is propagated into the
-timestamps, the probe reads the guess with the per-segment model, and the
-Reeds-Shepp bootstrap works (its rsplan API was broken, so the bootstrap had
-never run). With those fixed the probe **wins** on the complex mission —
-4.617 s against 6.049 s — and `main.py --refine` puts the refined trajectory
-into the candidate set: 6.068 s becomes **4.936 s** there, and the trajectory
-passes the gates (envelope 1.14 cm, tracking 0.45 cm).
-
-**Answer to Q12 (updated): the pipeline is a seed provider, not a second
-solver.** The measurement above stands — a seed provider that reproduces the
-trivial answer at 3-15x the wall time is exactly what must not happen — but
-"delete it or stop funding it" is superseded. What the pipeline is for now is
-the topology sampling (forward / reverse / point-turn) that nothing else in
-the tree covers. On the complex mission the refined seed gives **4.936 s**
-where the default two-candidate set gives 6.068 s — but the full ten-candidate
-stock set gives 4.877 s there, so the refined seed is a **cheaper way to reach
-the stock set's speed, not a better one**, and over 30 missions it rescues
-nothing. It stays opt-in (`--refine`). The open part is the objective: the
-pipeline's cost is duration plus a jerk term, so it buys speed with tracking
-accuracy, and the 5 mm gate rejects the trade at the higher weights.
+**That measurement is the record of why the pipeline was repaired, and the
+verdict it produced was later overtaken by the repair itself.** With the four
+defects fixed the probe won on the complex mission — 4.617 s against 6.049 s —
+and as a seed provider it gave **4.936 s** against the default two-candidate
+set's 6.068 s. But the full ten-candidate stock set gives 4.877 s there, and
+over 30 missions the refined seed rescued nothing. **Answer to Q12: a seed
+provider, not a second solver — and not worth shipping.** It was archived
+under `overboard/legacy/` with no CLI entry point (KI-004). The open part is
+the objective: the pipeline's cost is duration plus a jerk term, so it buys
+speed with tracking accuracy, and the 5 mm gate rejects the trade.
 
 ---
 
@@ -483,12 +469,12 @@ KI-026 before touching the candidate set.
 | Q4 | reachability as an objective term? | **The cheap proxy exists** (duration explains the envelope with r = 0.90) but it is not the binding constraint; the envelope does bind on 46 % of candidates, yet the failures that block missions are tracking failures | F2, F11 |
 | Q5 | feed the critic back into the solver? | **No**: the critic flags 100 % of passing and 100 % of failing candidates, so it cannot select anything | F7 |
 | Q6 | does the accuracy weight buy accuracy? | **Yes, within a mission** (median per-mission Spearman -0.68: more weight, less tracking error) **but it is a trade, not a dial** (21 of 192 steps are non-monotone, and the best weight differs per mission). The best trade found: per-segment at `a = 0.005` gives 42 % pass against 17 % at weight 0, for 5 % more time | section 4 |
-| Q7 | sample density against timing flexibility? | **Per-segment timing at low density wins.** n = 10 is the sweet spot: more samples cost 5x the solve time and do not improve the tracking error (0.60 cm at n = 10, 0.72 cm at n = 40) and can lose gate coverage (n = 20 passes on 0 of 6 missions) | `MEASUREMENTS_density.md` |
+| Q7 | sample density against timing flexibility? | **Per-segment timing at low density wins.** n = 10 is the sweet spot: more samples cost 5x the solve time and do not improve the tracking error (0.60 cm at n = 10, 0.72 cm at n = 40) and can lose gate coverage (n = 20 passes on 0 of 6 missions) | `archive/research-2026-10` |
 | Q8 | is the baseline's dominance an artefact? | **Yes.** The baseline is the speed winner (11 of 32 missions) and the gate loser (lowest pass rate of the five seeds) — on the six example paths those two roles did not conflict. And under the self-consistent collocation the seed set buys nothing at all | F1, section 7 |
 | Q9 | what would make the validator a digital twin? | **Not answerable without hardware.** What *is* answerable: the tracking error is a discretisation artefact (RQ-A), the declared uncertainty does not move it at all (section 6), and the plant still assumes instant tracking, so 8 % of passing plans exceed the hub's acceleration limit | F3, F10, section 6 |
 | Q10 | is "smallest envelope" the right selection rule? | **It does not matter**: five rules pick the same trajectory on every mission. **The rule has since changed** - the passing candidates are now ranked by the 5-part path fitness score, with the envelope and the duration as tie-breakers - and the measurement behind this answer was taken on the old rule | F6 |
 | Q11 | should the executor be part of the planner? | **Partly answerable now**: 7 % of candidates, and 8 % of the passing ones, demand more acceleration than the DriveBase delivers. The gate cannot see it | F10 |
-| Q12 | what should the Multi-Verse path become? | **Repaired and kept, as a seed provider** (KI-004). `main.py --refine` puts the refined trajectory into the candidate set: 4.936 s against the default set's 6.068 s on the complex mission — but the full ten-candidate stock set gives 4.877 s there, and over 30 missions the refined seed rescues nothing. Cheaper, not better; it stays opt-in | section 5 |
+| Q12 | what should the Multi-Verse path become? | **Archived** (KI-004). As a seed provider it gave 4.936 s against the default set's 6.068 s on the complex mission, but the full ten-candidate stock set gives 4.877 s there, and over 30 missions the refined seed rescued nothing. Cheaper, not better; it has no CLI entry point | section 5 |
 
 ---
 

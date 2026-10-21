@@ -26,8 +26,8 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from optimizer import TrajectoryOptimizer
-from robot_model import RobotConfig
+from overboard.core.optimizer import TrajectoryOptimizer
+from overboard.models.robot_model import RobotConfig
 from research.suite import build_suite
 
 DEFAULT_CONFIG = "examples/fll_choreo.json"
@@ -82,7 +82,7 @@ def run_suite(num_runs: int = 10, output_dir: str = "random_suite",
                 import matplotlib
                 matplotlib.use("Agg")
                 import matplotlib.pyplot as plt
-                from plotter import plot_trajectory
+                from overboard.viz.plotter import plot_trajectory
                 figure = plot_trajectory(
                     trajectory, waypoints=waypoints,
                     title=f"{run_name} ({mission['profile']})", show=False)

@@ -13,7 +13,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from jax_ramsete import JAXRamseteController, _sinc_poly, ramsete_step_jax
+from overboard.models.jax_ramsete import JAXRamseteController, _sinc_poly, ramsete_step_jax
 
 
 class FastRamseteReference:
@@ -106,7 +106,7 @@ class TestJAXRamsete(unittest.TestCase):
         instead; the difference is worth nothing on the tracking error
         (docs/research/RQ-A_tracking_error.md, finding F7).
         """
-        from immrax_validator import _interpolated_reference
+        from overboard.verification.immrax_validator import _interpolated_reference
 
         b = 2.0
         track_width = 0.0965
@@ -136,7 +136,7 @@ class TestJAXRamsete(unittest.TestCase):
 
     def test_turn_rate_is_the_heading_derivative_across_the_wrap(self):
         """The heading difference is the short way, like the firmware's."""
-        from immrax_validator import _interpolated_reference
+        from overboard.verification.immrax_validator import _interpolated_reference
 
         s0 = {"t": 0.0, "x": 0.0, "y": 0.0, "heading": 3.0,
               "vl": 0.2, "vr": 0.2, "omega": 0.0}
@@ -208,7 +208,7 @@ class TestJAXDriveQuantization(unittest.TestCase):
     """
 
     def test_round_half_away_from_zero(self):
-        from jax_ramsete import _round_half_away
+        from overboard.models.jax_ramsete import _round_half_away
 
         cases = [
             (0.4, 0.0), (0.5, 1.0), (1.5, 2.0), (2.5, 3.0),
@@ -220,7 +220,7 @@ class TestJAXDriveQuantization(unittest.TestCase):
                 msg=f"round({value})")
 
     def test_quantize_drive_command_units(self):
-        from jax_ramsete import quantize_drive_command
+        from overboard.models.jax_ramsete import quantize_drive_command
 
         # 0.6 mm/s rounds up to 1 mm/s, 0.4 mm/s rounds down to 0.
         v, _ = quantize_drive_command(jnp.array(0.0006), jnp.array(0.0))
@@ -239,7 +239,7 @@ class TestJAXDriveQuantization(unittest.TestCase):
         self.assertAlmostEqual(float(omega), math.radians(-1.0), places=6)
 
     def test_validator_controller_quantizes_drive_command(self):
-        from immrax_validator import RamseteController
+        from overboard.verification.immrax_validator import RamseteController
 
         controller = RamseteController(2.0, 0.7, track_width=0.0965)
         pose = jnp.array([0.0, 0.0, 0.0])

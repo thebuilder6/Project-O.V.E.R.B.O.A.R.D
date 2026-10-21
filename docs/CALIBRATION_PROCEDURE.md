@@ -17,13 +17,13 @@ the rest is your setup between tests and the tape work.
 
 ```bash
 # 1. collect: the robot runs the tests, you press the hub button between them
-python sysid_collect.py --conn ble --profile my_drivebase.json \
+python -m overboard.sysid.collect --conn ble --profile my_drivebase.json \
   --session session.csv --sheet calibration_sheet.csv
 
 # 2. fill in calibration_sheet.html in a browser, click Download CSV
 
 # 3. fit: the sheet is the measurement, so there is no file to convert
-python sysid_fit.py session.csv --sheet calibration_sheet.csv \
+python -m overboard.sysid.fit session.csv --sheet calibration_sheet.csv \
   --profile my_drivebase.json --out sysid_fit.json
 ```
 
@@ -117,7 +117,7 @@ The cost is that you measure more. Seven poses per repeat, three repeats,
 ## Step 1 — collect the session
 
 ```bash
-python sysid_collect.py --conn ble --profile my_drivebase.json \
+python -m overboard.sysid.collect --conn ble --profile my_drivebase.json \
   --session session.csv --sheet calibration_sheet.csv
 ```
 
@@ -222,7 +222,7 @@ measurements it still needs.
 some other way, write it here:
 
 ```bash
-python sysid_fit.py session.csv --write-sheet calibration_sheet.csv
+python -m overboard.sysid.fit session.csv --write-sheet calibration_sheet.csv
 ```
 
 The sheet has one row per measurement the session needs, and nothing else:
@@ -257,7 +257,7 @@ measurements are missing instead of guessing.
 form next to the sheet:
 
 ```bash
-python sysid_fit.py session.csv --write-form calibration_sheet.html
+python -m overboard.sysid.fit session.csv --write-form calibration_sheet.html
 ```
 
 Open `calibration_sheet.html` in a browser. It has one row per measurement,
@@ -272,7 +272,7 @@ session you measured in two goes is not measured twice.
 ## Step 3 — fit the model
 
 ```bash
-python sysid_fit.py session.csv --sheet calibration_sheet.csv \
+python -m overboard.sysid.fit session.csv --sheet calibration_sheet.csv \
   --profile my_drivebase.json --out sysid_fit.json
 ```
 
@@ -289,7 +289,7 @@ If you want the measured poses as a file of their own (to compare the plan
 against later, for instance), write them out:
 
 ```bash
-python sysid_fit.py session.csv --from-sheet calibration_sheet.csv \
+python -m overboard.sysid.fit session.csv --from-sheet calibration_sheet.csv \
   --out-poses poses.csv
 ```
 
@@ -392,7 +392,7 @@ found out which.
 Plan with it:
 
 ```bash
-python main.py -w examples/example_straight.json -o output.traj \
+python -m overboard.main -w examples/example_straight.json -o output.traj \
   --validate --sysid-fit sysid_fit.json
 ```
 
@@ -405,9 +405,9 @@ Check the plan against the robot you measured. The comparator reads the
 measured poses, so write them out of the sheet first:
 
 ```bash
-python sysid_fit.py session.csv --from-sheet calibration_sheet.csv \
+python -m overboard.sysid.fit session.csv --from-sheet calibration_sheet.csv \
   --out-poses poses.csv
-python sysid_compare.py output.traj poses.csv --run-id 11 \
+python -m overboard.sysid.compare output.traj poses.csv --run-id 11 \
   --profile my_drivebase.json
 ```
 

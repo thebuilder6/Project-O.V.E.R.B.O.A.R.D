@@ -8,7 +8,7 @@ number, so a heading that crosses +/-pi took the long way round the circle.
 import math
 import unittest
 
-from export import resample_to_fixed_dt
+from overboard.deploy.export import resample_to_fixed_dt
 
 
 def _samples(headings, dt=0.1):

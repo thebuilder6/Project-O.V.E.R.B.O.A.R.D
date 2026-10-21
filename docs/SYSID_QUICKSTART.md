@@ -33,13 +33,13 @@ It has the setup for each test, the measurement convention, and the
 troubleshooting. This is the short version.
 
 Run `pybricks_code/sysid_digital_twin.py` on the Hub, not with host Python. It
-wraps the drivebase from `robot_config.py`, runs the step/turn/odometry/brake
+wraps the drivebase from `robot_config.py`, runs the step/turn/odometry/brake/wall/top-speed/chirp/replay
 tests, and prints one or more `TEST_START` / `TEST_END` blocks.
 
 The host can push it and capture the session for you:
 
 ```bash
-python sysid_collect.py --conn ble --profile my_drivebase.json \
+python -m overboard.sysid.collect --conn ble --profile my_drivebase.json \
   --session session.csv --sheet calibration_sheet.csv
 ```
 
@@ -65,7 +65,7 @@ a sheet and let the tool do the bookkeeping:
 ```bash
 # the operator fills in x_mm, y_mm and turn_right_deg, in the browser form
 # or in the CSV
-python sysid_fit.py session.csv --sheet calibration_sheet.csv \
+python -m overboard.sysid.fit session.csv --sheet calibration_sheet.csv \
   --profile my_drivebase.json --out sysid_fit.json
 ```
 
@@ -73,7 +73,7 @@ The sheet is fitted directly, so there is no intermediate `poses.csv`. To keep
 the measured poses as a file of their own:
 
 ```bash
-python sysid_fit.py session.csv --from-sheet calibration_sheet.csv \
+python -m overboard.sysid.fit session.csv --from-sheet calibration_sheet.csv \
   --out-poses poses.csv
 ```
 
@@ -82,7 +82,7 @@ python sysid_fit.py session.csv --from-sheet calibration_sheet.csv \
 From the repository root:
 
 ```bash
-python sysid_fit.py logs/session.csv --poses poses.csv \
+python -m overboard.sysid.fit logs/session.csv --poses poses.csv \
   --profile my_drivebase.json --out sysid_fit.json
 ```
 
@@ -93,7 +93,7 @@ odometry scale, and brake-slip estimate. It writes those parameters plus a
 Existing full configs still work:
 
 ```bash
-python sysid_fit.py logs/session.csv --robot-config examples/fll_choreo.json \
+python -m overboard.sysid.fit logs/session.csv --robot-config examples/fll_choreo.json \
   --out sysid_fit.json
 ```
 
@@ -102,7 +102,7 @@ Do not pass both `--profile` and `--robot-config`.
 ## 4. Validate with the fitted model
 
 ```bash
-python main.py --simple -c examples/fll_choreo.json \
+python -m overboard.main -c examples/fll_choreo.json \
   -w examples/example_straight.json -o output.traj \
   --validate --sysid-fit sysid_fit.json
 ```
@@ -111,28 +111,28 @@ python main.py --simple -c examples/fll_choreo.json \
 hard gate: a failed solve or failed validation writes no `.traj`, controller,
 Python file, or `_stats.json`.
 
-`main.py` prints the profile and warns if the fitted wheel radius or track width
+`python -m overboard.main` prints the profile and warns if the fitted wheel radius or track width
 differs from the robot config. The validator still uses the robot config for
 geometry; the profile does not override it.
 
 ## 5. Compare planned and measured poses
 
 ```bash
-python sysid_compare.py output.traj poses.csv --run-id 1 \
+python -m overboard.sysid.compare output.traj poses.csv --run-id 1 \
   --profile my_drivebase.json
 ```
 
 For a multi-stop run, map the measured rows to the trajectory:
 
 ```bash
-python sysid_compare.py output.traj poses.csv --run-id 12 \
+python -m overboard.sysid.compare output.traj poses.csv --run-id 12 \
   --waypoints examples/example_with_stops.json --profile my_drivebase.json
 ```
 
 Or pass explicit sample indices:
 
 ```bash
-python sysid_compare.py output.traj poses.csv --run-id 12 \
+python -m overboard.sysid.compare output.traj poses.csv --run-id 12 \
   --stop-indices 20,40 --profile my_drivebase.json
 ```
 
@@ -168,7 +168,7 @@ change the 5 mm tracking or 2 cm envelope thresholds.
 
 - The Pybricks collector is a reference adapter. A non-Pybricks drivebase needs
   a logger that emits the same CSV blocks.
-- Braking slip is loaded and reported but not applied by the plant yet (KI-020).
+- Braking slip is fitted and applied by the plant as a measured shortfall in grip (KI-020 keeps the un-modelled residue open).
 - There are no checked-in hardware logs; the current fitted-model numbers are
   synthetic or model-only. Calibrate on your own drivebase before trusting the
   envelope.

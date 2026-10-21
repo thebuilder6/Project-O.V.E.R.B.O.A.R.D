@@ -37,7 +37,7 @@ if errorlevel 1 if not exist "%~dp0.venv\Scripts\python.exe" (
 )
 
 echo Checking the environment...
-"%PY%" main.py --doctor
+"%PY%" -m overboard.main --doctor
 if errorlevel 1 (
   echo.
   echo The environment check failed. Fix the [fail] lines above, then run this file again.
@@ -48,6 +48,6 @@ if errorlevel 1 (
 
 echo.
 echo Starting the studio...
-"%PY%" main.py --gui %*
+"%PY%" -m overboard.main --gui %*
 if errorlevel 1 pause
 endlocal

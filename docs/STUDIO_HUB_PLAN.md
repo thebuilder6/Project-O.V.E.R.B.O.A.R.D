@@ -126,7 +126,7 @@ def push_trajectory(traj_file, connection="ble", name=None, log_path=None):
 subprocess (which is what makes cancel work):
 
 ```bash
-python hub_deploy.py --trajectory output.traj --conn ble --name HUB --out session.csv
+python -m overboard.deploy.hub_deploy --trajectory output.traj --conn ble --name HUB --out session.csv
 ```
 
 `main.py --push-hub` then calls `push_trajectory` instead of doing the two steps
@@ -146,7 +146,7 @@ The server:
 
 1. Looks up the solve job and its `.traj`. **If the file is not there, the export
    gate did not pass** — the push is unreachable, which is the point.
-2. Runs `python hub_deploy.py --trajectory <traj> --conn <conn> --name <name>
+2. Runs `python -m overboard.deploy.hub_deploy --trajectory <traj> --conn <conn> --name <name>
    --out <job_dir>/session.csv` as a subprocess.
 3. Puts the subprocess output in the job log, so the hub's console appears in
    the studio while the robot drives.
@@ -253,7 +253,7 @@ said" into a better plan.
 What is built today:
 
 - `hub_deploy.push_trajectory(traj_file, connection, name, log_path)` writes the packed
-  mission and pushes the runner. `python hub_deploy.py --trajectory out.traj --conn ble
+  mission and pushes the runner. `python -m overboard.deploy.hub_deploy --trajectory out.traj --conn ble
   --out session.csv` does the same from the command line, and `main.py --push-hub` calls
   the same function, so there is one push path in the tree.
 - The studio's **Push to hub** button (`POST /api/push`) runs that command as a

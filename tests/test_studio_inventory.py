@@ -12,8 +12,8 @@ import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-HTML_PATH = ROOT / "viz" / "studio.html"
-JS_PATH = ROOT / "viz" / "studio.js"
+HTML_PATH = ROOT / "overboard" / "viz" / "studio.html"
+JS_PATH = ROOT / "overboard" / "viz" / "studio.js"
 DOC_PATH = ROOT / "docs" / "STUDIO_UI_INVENTORY.md"
 
 

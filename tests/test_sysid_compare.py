@@ -8,7 +8,7 @@ import os
 import tempfile
 import unittest
 
-from sysid_compare import compare, main
+from overboard.sysid.compare import compare, main
 
 
 def _trajectory():

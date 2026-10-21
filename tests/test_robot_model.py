@@ -4,7 +4,7 @@ Unit tests for robot_model.py
 
 import unittest
 import numpy as np
-from robot_model import RobotConfig, DifferentialDriveModel
+from overboard.models.robot_model import RobotConfig, DifferentialDriveModel
 
 
 class TestRobotConfig(unittest.TestCase):
@@ -25,11 +25,6 @@ class TestRobotConfig(unittest.TestCase):
                 "gravity": 9.81,
                 "torque_headroom": 0.9,
                 "speed_headroom": 0.95
-            },
-            "multiverse": {
-                "bootstrap": {
-                    "turning_radius": 0.3
-                }
             }
         }
         config = RobotConfig(config_dict)
@@ -45,7 +40,6 @@ class TestRobotConfig(unittest.TestCase):
         self.assertEqual(config.g, 9.81)
         self.assertEqual(config.torque_headroom, 0.9)
         self.assertEqual(config.speed_headroom, 0.95)
-        self.assertEqual(config.multiverse_config, {"bootstrap": {"turning_radius": 0.3}})
 
     def test_init_with_old_choreo_format(self):
         """Test initialization with old Choreo format."""
@@ -76,7 +70,6 @@ class TestRobotConfig(unittest.TestCase):
         self.assertEqual(config.g, 9.81)  # Default gravity
         self.assertEqual(config.torque_headroom, 0.85)
         self.assertEqual(config.speed_headroom, 0.90)
-        self.assertEqual(config.multiverse_config, {})
 
     def test_init_with_defaults(self):
         """Test initialization with default values."""
@@ -487,7 +480,7 @@ class TestUniversalRobotConfig(unittest.TestCase):
         self.assertGreater(cfg.chassis_radius_m(), 0.12)
 
     def test_apply_sysid_fit_complete_merge(self):
-        from digital_twin import DigitalTwinConfig, OdometryFit, StallTorqueFit, DrivetrainFit, ActuatorFit, SlipFit
+        from overboard.sysid.digital_twin import DigitalTwinConfig, OdometryFit, StallTorqueFit, DrivetrainFit, ActuatorFit, SlipFit
         cfg = RobotConfig({"robot": {"wheel_radius": 0.028, "track_width": 0.0965, "t_max_nm": 0.04}})
         twin = DigitalTwinConfig(
             drivebase={"wheel_radius_m": 0.0275, "track_width_m": 0.0960},
@@ -545,7 +538,7 @@ class TestUnifiedMathPrimitives(unittest.TestCase):
     """Test cases for unified analytical kinematics and dynamics primitives."""
 
     def test_diff_drive_fk_ik_roundtrip_scalar(self):
-        from robot_model import diff_drive_fk, diff_drive_ik
+        from overboard.models.robot_model import diff_drive_fk, diff_drive_ik
         track_width = 0.100
         v_in, omega_in = 0.45, 2.5
         vl, vr = diff_drive_ik(v_in, omega_in, track_width)
@@ -554,7 +547,7 @@ class TestUnifiedMathPrimitives(unittest.TestCase):
         self.assertAlmostEqual(omega_in, omega_out)
 
     def test_diff_drive_fk_ik_roundtrip_numpy(self):
-        from robot_model import diff_drive_fk, diff_drive_ik
+        from overboard.models.robot_model import diff_drive_fk, diff_drive_ik
         track_width = 0.0965
         v_in = np.array([0.0, 0.2, 0.5, -0.3])
         omega_in = np.array([0.0, 1.2, -3.4, 0.8])
@@ -564,7 +557,7 @@ class TestUnifiedMathPrimitives(unittest.TestCase):
         np.testing.assert_allclose(omega_in, omega_out, atol=1e-12)
 
     def test_wrap_angle_and_angle_diff(self):
-        from robot_model import wrap_angle, angle_diff
+        from overboard.models.robot_model import wrap_angle, angle_diff
         # Wrapping tests
         self.assertAlmostEqual(wrap_angle(0.0), 0.0)
         self.assertAlmostEqual(wrap_angle(np.pi / 2), np.pi / 2)
@@ -578,7 +571,7 @@ class TestUnifiedMathPrimitives(unittest.TestCase):
         self.assertAlmostEqual(angle_diff(-3.10, 3.10), 2 * np.pi - 6.20, delta=1e-5)
 
     def test_diff_drive_wheel_forces_decomposition(self):
-        from robot_model import diff_drive_wheel_forces
+        from overboard.models.robot_model import diff_drive_wheel_forces
         mass = 0.8
         inertia = 0.002
         track_width = 0.10
@@ -596,7 +589,7 @@ class TestUnifiedMathPrimitives(unittest.TestCase):
         self.assertAlmostEqual(fl_t, -expected_ang_force)
 
     def test_kinematic_cornering_ceiling(self):
-        from robot_model import kinematic_cornering_ceiling
+        from overboard.models.robot_model import kinematic_cornering_ceiling
         track_width = 0.10
         v_wheel_max = 0.80
         # Straight path: kappa = 0 -> ceiling is v_wheel_max
@@ -608,7 +601,7 @@ class TestUnifiedMathPrimitives(unittest.TestCase):
         self.assertLess(float(v_curve), v_wheel_max)
 
     def test_get_motor_linear_limits(self):
-        from robot_model import RobotConfig
+        from overboard.models.robot_model import RobotConfig
         cfg = RobotConfig({"robot": {"t_max_nm": 0.04, "wheel_radius": 0.028, "v_max_rad_s": 15.7, "gearing": 1.0}})
         f_stall, v_noload = cfg.get_motor_linear_limits(apply_headroom=False)
         self.assertAlmostEqual(f_stall, 0.04 / 0.028)
@@ -616,11 +609,7 @@ class TestUnifiedMathPrimitives(unittest.TestCase):
 
     def test_drivetrain_physics_duck_typing(self):
         """Verify drivetrain_physics operates seamlessly across all 5 backends."""
-        from drivetrain_physics import (
-            motor_force_at_velocity,
-            diff_drive_wheel_forces,
-            check_drivetrain_constraints,
-        )
+        from overboard.models.drivetrain_physics import motor_force_at_velocity, diff_drive_wheel_forces, check_drivetrain_constraints
         import casadi as ca
         import jax.numpy as jnp
         from immrax import Interval
@@ -662,7 +651,7 @@ class TestUnifiedMathPrimitives(unittest.TestCase):
         self.assertTrue(isinstance(fr_iv, Interval))
 
     def test_body_frame_error(self):
-        from robot_model import body_frame_error
+        from overboard.models.robot_model import body_frame_error
         # Pure forward displacement along x with 0 heading
         ex, ey = body_frame_error(1.0, 0.0, 0.5, 0.0, 0.0)
         self.assertAlmostEqual(ex, 0.5)
@@ -674,7 +663,7 @@ class TestUnifiedMathPrimitives(unittest.TestCase):
         self.assertAlmostEqual(ey90, -1.0)
 
     def test_asymmetric_late_apex_bump(self):
-        from robot_model import asymmetric_late_apex_bump
+        from overboard.models.robot_model import asymmetric_late_apex_bump
         # Boundaries must evaluate to 0.0
         self.assertEqual(asymmetric_late_apex_bump(0.0), 0.0)
         self.assertEqual(asymmetric_late_apex_bump(1.0), 0.0)
@@ -684,7 +673,7 @@ class TestUnifiedMathPrimitives(unittest.TestCase):
         self.assertLess(asymmetric_late_apex_bump(0.5, u_peak=0.68), 1.0)
 
     def test_ramsete_gain(self):
-        from robot_model import ramsete_gain
+        from overboard.models.robot_model import ramsete_gain
         # k1 = 2 * zeta * sqrt(omega^2 + b * v^2)
         k1 = ramsete_gain(v=0.5, omega=1.0, b=2.0, zeta=0.7)
         expected = 2.0 * 0.7 * np.sqrt(1.0**2 + 2.0 * 0.5**2)

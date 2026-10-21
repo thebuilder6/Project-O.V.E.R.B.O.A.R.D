@@ -24,8 +24,8 @@ if [ ! -x "$PY" ]; then
     PY=python3
 fi
 
-"$PY" main.py --doctor || exit 1
+"$PY" -m overboard.main --doctor || exit 1
 
 echo
 echo "Starting the studio..."
-exec "$PY" main.py --gui "$@"
+exec "$PY" -m overboard.main --gui "$@"

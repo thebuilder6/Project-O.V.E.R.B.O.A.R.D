@@ -38,10 +38,10 @@ for _root in (TOOL_ROOT, MEASURE_ROOT):
 
 import numpy as np
 
-import main as cli
-from optimizer import GUESS_STYLES, TrajectoryOptimizer
-from robot_model import RobotConfig
-from validator import check_final_waypoint, compute_metrics, validate_samples
+import overboard.main as cli
+from overboard.core.optimizer import GUESS_STYLES, TrajectoryOptimizer
+from overboard.models.robot_model import RobotConfig
+from overboard.verification.validator import check_final_waypoint, compute_metrics, validate_samples
 
 from research import robots as robot_lib
 from research import seeds as seed_lib
@@ -52,8 +52,10 @@ CLI_SWEEP_WEIGHTS = (0.0, 0.001, 0.002, 0.005, 0.01)
 WIDE_WEIGHTS = (0.0, 0.00025, 0.0005, 0.001, 0.002, 0.005, 0.01, 0.02, 0.05)
 
 # The files whose content decides what a measurement means.
-PROVENANCE_FILES = ("optimizer.py", "main.py", "immrax_validator.py",
-                     "validator.py", "robot_model.py", "multiverse_optimizer.py")
+PROVENANCE_FILES = ("overboard/core/optimizer.py", "overboard/main.py",
+                    "overboard/verification/immrax_validator.py",
+                    "overboard/verification/validator.py",
+                    "overboard/models/robot_model.py")
 
 
 def _hash_file(path: Path) -> str:
@@ -98,7 +100,7 @@ def _resolve(path: str) -> str:
 # --------------------------------------------------------------------------
 
 def _spec(label: str, style: str, timing: str, weight: float, samples: int,
-          guess: str = "stock", engine: str = "simple") -> Dict[str, Any]:
+          guess: str = "stock") -> Dict[str, Any]:
     return {
         "label": label,
         "style": style,
@@ -106,7 +108,6 @@ def _spec(label: str, style: str, timing: str, weight: float, samples: int,
         "weight": float(weight),
         "samples": int(samples),
         "guess": guess,
-        "engine": engine,
     }
 
 
@@ -156,27 +157,6 @@ def build_specs(name: str, base_weight: float, samples: int) -> List[Dict[str, A
             add(_spec(f"spline/{timing}/a={base_weight:g}", "baseline", timing,
                       base_weight, samples, guess="spline"))
 
-    if name in ("reeds", "matrix"):
-        # Q12: the Multi-Verse bootstrap, with its rsplan API fixed.
-        for timing in timings:
-            add(_spec(f"reeds-shepp/{timing}/a={base_weight:g}", "baseline", timing,
-                      base_weight, samples, guess="reeds_shepp"))
-
-    if name in ("refined", "matrix"):
-        # Q12: the repaired Multi-Verse pipeline as a seed provider. The
-        # refined trajectory carries a per-segment interval, so it only
-        # makes sense under the per-segment timing model.
-        add(_spec(f"refined/per-segment/a={base_weight:g}", "baseline",
-                  "per-segment", base_weight, samples, guess="refined"))
-
-    if name == "refined-weights":
-        # The refined seed against the accuracy-weight grid: the weight is
-        # what buys the tracking error (Q6), so the seed has to be judged
-        # with it.
-        for weight in CLI_SWEEP_WEIGHTS:
-            add(_spec(f"refined/per-segment/a={weight:g}", "baseline",
-                      "per-segment", weight, samples, guess="refined"))
-
     if name in ("proportional", "matrix"):
         # Q2: a length-proportional time allocation.
         add(_spec(f"proportional-dt/per-segment/a={base_weight:g}", "rolling",
@@ -188,12 +168,6 @@ def build_specs(name: str, base_weight: float, samples: int) -> List[Dict[str, A
             for timing in timings:
                 add(_spec(f"baseline/{timing}/a={base_weight:g}/n={density}",
                           "baseline", timing, base_weight, density))
-
-    if name == "multiverse":
-        # Q12: the experimental pipeline against the simple solver.
-        for weight in (base_weight, base_weight + 2.0):
-            add(_spec(f"multiverse/equal-duration/a={weight:g}", "baseline",
-                      "equal-duration", weight, samples, engine="multiverse"))
 
     if not specs:
         raise SystemExit(f"Unknown spec set {name!r}")
@@ -222,7 +196,7 @@ def _score(samples_data: List[Dict[str, Any]], stats: Dict[str, Any],
            robot_cfg, validator_cls, robot_config_cls,
            thresholds: Dict[int, float], samples_per_segment: int,
            waypoints: Sequence[Tuple[float, float, Optional[float]]],
-           critic=None, profiles: bool = False, spread: float = 1.0,
+           profiles: bool = False, spread: float = 1.0,
            propagation: str = "plant") -> Dict[str, Any]:
     """Run the full gate chain on one candidate and return the measurements."""
     record: Dict[str, Any] = {
@@ -350,14 +324,6 @@ def _score(samples_data: List[Dict[str, Any]], stats: Dict[str, Any],
         "reasons": reasons,
     })
 
-    if critic is not None:
-        try:
-            windows = critic.evaluate(samples_data, samples_per_segment)
-            record["critic_windows"] = len(windows)
-        except Exception as exc:
-            record["critic_windows"] = -1
-            record["critic_error"] = str(exc)
-
     if profiles:
         # Per-sample envelope radius and forward drift, for the Q4 proxy study.
         radii = []
@@ -413,17 +379,16 @@ def _initial_guess(spec: Dict[str, Any], mission: Dict[str, Any], robot_cfg):
         return seed_lib.spline_guess(waypoints, samples, robot_cfg, stops)
     if guess_kind == "proportional_dt":
         return seed_lib.proportional_dt_guess(waypoints, samples, robot_cfg, stops)
-    if guess_kind == "reeds_shepp":
-        return seed_lib.reeds_shepp_guess(waypoints, samples, robot_cfg, stops)
-    if guess_kind == "refined":
-        return seed_lib.refined_guess(waypoints, samples, robot_cfg, stops,
-                                      spec.get("weight", 0.0))
     raise ValueError(f"Unknown guess kind {guess_kind!r}")
 
 
 def _payloads(mission: Dict[str, Any], specs: List[Dict[str, Any]], robot_cfg,
               self_consistent: bool = True) -> List[Any]:
-    """The solve payloads for one mission on one robot."""
+    """The solve payloads for one mission on one robot.
+
+    A payload is ``(robot_cfg, waypoints, solve_kwargs)``: the shape
+    ``main._solve_candidate_worker`` unpacks in the worker process.
+    """
     waypoints = mission["waypoints"]
     stop_indices = mission["stop_indices"]
 
@@ -436,17 +401,14 @@ def _payloads(mission: Dict[str, Any], specs: List[Dict[str, Any]], robot_cfg,
             "waypoint_events": {},
             "verbose": False,
             "capture_iterations": False,
+            "guess_style": spec["style"],
+            "per_segment_dt": spec["timing"] == "per-segment",
+            "self_consistent": bool(self_consistent),
         }
-        engine = spec.get("engine", "simple")
-        if engine == "simple":
-            solve_kwargs["guess_style"] = spec["style"]
-            solve_kwargs["per_segment_dt"] = spec["timing"] == "per-segment"
-            solve_kwargs["self_consistent"] = bool(self_consistent)
-            guess = _initial_guess(spec, mission, robot_cfg)
-            if guess is not None:
-                solve_kwargs["initial_guess"] = guess
-        payloads.append((robot_cfg, waypoints, spec, solve_kwargs,
-                         engine == "multiverse"))
+        guess = _initial_guess(spec, mission, robot_cfg)
+        if guess is not None:
+            solve_kwargs["initial_guess"] = guess
+        payloads.append((robot_cfg, waypoints, solve_kwargs))
     return payloads
 
 
@@ -457,20 +419,20 @@ def _score_jobs(jobs: List[Any], solved: List[Any], validator_cls,
                 ) -> List[Dict[str, Any]]:
     """Score a solved batch. One job per solved payload, in order.
 
-    A job is (mission, spec, robot config, critic, robot label, robot
-    factors): the mission and the spec say what was solved, the robot says
-    what it was solved for.
+    A job is (mission, spec, robot config, robot label, robot factors): the
+    mission and the spec say what was solved, the robot says what it was
+    solved for.
     """
     records = []
     state = tree_state()
     for job, result in zip(jobs, solved):
-        mission, spec, robot_cfg, critic, robot_label, factors = job
+        mission, spec, robot_cfg, robot_label, factors = job
         samples_data, stats = result
         for spread in spreads:
             record = _score(samples_data, stats, robot_cfg, validator_cls,
                             robot_config_cls, mission["thresholds"],
                             spec["samples"], mission["waypoints"],
-                            critic=critic, profiles=profiles, spread=spread,
+                            profiles=profiles, spread=spread,
                             propagation=propagation)
             record.update({
                 "mission": mission["meta"].get("id") or mission["meta"]["file"],
@@ -481,7 +443,6 @@ def _score_jobs(jobs: List[Any], solved: List[Any], validator_cls,
                 "label": spec["label"],
                 "style": spec["style"],
                 "guess": spec["guess"],
-                "engine": spec.get("engine", "simple"),
                 "self_consistent": bool(self_consistent),
                 "timing": spec["timing"],
                 "weight": spec["weight"],
@@ -496,7 +457,7 @@ def _score_jobs(jobs: List[Any], solved: List[Any], validator_cls,
 
 
 def run_mission(mission: Dict[str, Any], specs: List[Dict[str, Any]], robot_cfg,
-                validator_cls, robot_config_cls, critic=None,
+                validator_cls, robot_config_cls,
                 workers: int = 8, profiles: bool = False,
                 spreads: Sequence[float] = (1.0,),
                 self_consistent: bool = True,
@@ -505,7 +466,7 @@ def run_mission(mission: Dict[str, Any], specs: List[Dict[str, Any]], robot_cfg,
     payloads = _payloads(mission, specs, robot_cfg, self_consistent)
     solved, _histories = cli._solve_candidates(payloads, workers, quiet=True,
                                                 parallel=workers > 1)
-    jobs = [(mission, spec, robot_cfg, critic, None, None) for spec in specs]
+    jobs = [(mission, spec, robot_cfg, None, None) for spec in specs]
     return _score_jobs(jobs, solved, validator_cls, robot_config_cls,
                        spreads=spreads, profiles=profiles,
                        self_consistent=self_consistent,
@@ -530,8 +491,6 @@ def main() -> None:
                         help="Robot config.")
     parser.add_argument("--limit", type=int, default=0,
                         help="Only run the first N missions (0 = all).")
-    parser.add_argument("--no-critic", action="store_true",
-                        help="Skip the Multi-Verse critic metrics (Q5).")
     parser.add_argument("--profiles", action="store_true",
                         help="Store the per-sample envelope profile (Q4).")
     parser.add_argument("--spread", type=float, default=1.0,
@@ -586,14 +545,6 @@ def main() -> None:
     config_data, _declared_robot = cli._load_config(_resolve(args.config))
     validator_cls, robot_config_cls = cli._ensure_jax_classes()
 
-    critic_cls = None
-    if not args.no_critic:
-        try:
-            from multiverse_optimizer import TrajectoryCritic
-            critic_cls = TrajectoryCritic
-        except Exception as exc:
-            print(f"critic unavailable: {exc}")
-
     specs = build_specs(args.specs, args.weight, args.samples)
     spreads = tuple(args.spreads) if args.spreads else (args.spread,)
     out_path = Path(args.out)
@@ -636,9 +587,8 @@ def main() -> None:
                     config_data, args.robot_seed, f"{mission_key}#{draw}",
                     args.robot_jitter)
                 robot_cfg = RobotConfig(robot_data)
-                critic = critic_cls(robot_cfg) if critic_cls is not None else None
                 for spec in specs:
-                    jobs.append((mission, spec, robot_cfg, critic,
+                    jobs.append((mission, spec, robot_cfg,
                                  f"{mission_key}#{draw}", factors))
 
         chunk = max(1, int(args.chunk)) * max(1, len(specs))
@@ -646,7 +596,7 @@ def main() -> None:
         for start_index in range(0, len(jobs), chunk):
             batch = jobs[start_index:start_index + chunk]
             payloads = []
-            for mission, spec, robot_cfg, critic, label, factors in batch:
+            for mission, spec, robot_cfg, label, factors in batch:
                 payloads.extend(_payloads(mission, [spec], robot_cfg,
                                          args.self_consistent))
             solved, _histories = cli._solve_candidates(

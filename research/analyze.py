@@ -455,8 +455,6 @@ def report_compare(rows: Sequence[Row], label_a: str, label_b: str) -> None:
         if label == "baseline":
             return lambda r: (r.get("style") == "baseline"
                               and r.get("guess", "stock") == "stock")
-        if label == "multiverse":
-            return lambda r: r.get("engine") == "multiverse"
         return lambda r: label in r.get("label", "")
 
     match_a = family(label_a)

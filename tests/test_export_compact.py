@@ -13,13 +13,7 @@ import struct
 import tempfile
 import unittest
 
-from export import (
-    COMPACT_HEADER_SIZE,
-    COMPACT_RECORD_SIZE,
-    COMPACT_VERSION,
-    encode_compact_trajectory,
-    write_python_file,
-)
+from overboard.deploy.export import COMPACT_HEADER_SIZE, COMPACT_RECORD_SIZE, COMPACT_VERSION, encode_compact_trajectory, write_python_file
 
 _CONFIG = {
     "mass": 0.723, "inertia": 0.001, "track_width": 0.0965,

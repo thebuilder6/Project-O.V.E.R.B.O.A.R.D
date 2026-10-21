@@ -22,7 +22,7 @@ if REPO_ROOT not in sys.path:
     sys.path.insert(0, REPO_ROOT)
 
 from research import robots  # noqa: E402  (needs the path above)
-from robot_model import RobotConfig  # noqa: E402
+from overboard.models.robot_model import RobotConfig  # noqa: E402
 
 CONFIG_PATH = os.path.join(REPO_ROOT, "examples", "fll_choreo.json")
 

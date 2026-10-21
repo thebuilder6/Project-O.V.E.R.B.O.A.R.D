@@ -20,9 +20,9 @@ import robot_config
 from ramsete_compact_events import follow_trajectory
 from hub_mission import samples, config, events
 
-# Actions for the exported events. Fill this in for your robot, the same way
-# mission_5_lambdas.py does it. An event with no action here is only
-# reported, so the trajectory still runs.
+# Actions for the exported events. Fill this in for your robot; the archived
+# archive/mission_5_lambdas.py shows the same idea with a nested table. An
+# event with no action here is only reported, so the trajectory still runs.
 MISSION_EVENTS = {}
 
 

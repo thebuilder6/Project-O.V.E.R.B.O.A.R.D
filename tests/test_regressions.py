@@ -23,15 +23,15 @@ from unittest.mock import patch
 import numpy as np
 from click.testing import CliRunner
 
-from robot_model import RobotConfig
-from optimizer import GUESS_STYLES
-from export import write_python_file
+from overboard.models.robot_model import RobotConfig
+from overboard.core.optimizer import GUESS_STYLES
+from overboard.deploy.export import write_python_file
 from benchmark import RandomBenchmark
-from validator import check_final_waypoint, forward_integrate, validate_samples
-import main
+from overboard.verification.validator import check_final_waypoint, forward_integrate, validate_samples
+import overboard.main as main
 
 try:
-    from immrax_validator import ImmraxValidator
+    from overboard.verification.immrax_validator import ImmraxValidator
     HAS_IMMRAX = True
 except ImportError:
     HAS_IMMRAX = False
@@ -113,7 +113,7 @@ class TestAttemptSelection(unittest.TestCase):
                 "tube": tube, "duration": duration}
 
     def setUp(self):
-        from main import _select_attempt
+        from overboard.main import _select_attempt
         self.select = _select_attempt
 
     def test_passing_attempt_beats_cheaper_failed_one(self):
@@ -182,11 +182,11 @@ class TestCandidateSpecs(unittest.TestCase):
     """KI-020: candidates are an ordered, scored set, not silent escalation."""
 
     def setUp(self):
-        from main import _candidate_specs
+        from overboard.main import _candidate_specs
         self.specs = _candidate_specs
 
     def test_auto_alternates_timing_modes_per_seed(self):
-        specs = self.specs(0.0, 5, use_styles=True)
+        specs = self.specs(0.0, 5)
         self.assertEqual([s["guess_style"] for s in specs],
                          ["baseline", "baseline", "rolling", "rolling", "bow_left"])
         self.assertEqual([s["per_segment_dt"] for s in specs],
@@ -194,82 +194,50 @@ class TestCandidateSpecs(unittest.TestCase):
         self.assertEqual([s["accuracy_weight"] for s in specs], [0.0] * 5)
 
     def test_uniform_mode_uses_seeds_without_per_segment_timing(self):
-        specs = self.specs(0.0, 3, use_styles=True, dt_mode="uniform")
+        specs = self.specs(0.0, 3, dt_mode="uniform")
         self.assertEqual([s["guess_style"] for s in specs],
                          ["baseline", "rolling", "bow_left"])
         self.assertTrue(all(not s["per_segment_dt"] for s in specs))
 
     def test_per_segment_mode_uses_seeds_with_per_segment_timing(self):
-        specs = self.specs(0.0, 3, use_styles=True, dt_mode="per-segment")
+        specs = self.specs(0.0, 3, dt_mode="per-segment")
         self.assertEqual([s["guess_style"] for s in specs],
                          ["baseline", "rolling", "bow_left"])
         self.assertTrue(all(s["per_segment_dt"] for s in specs))
 
     def test_unknown_dt_mode_is_rejected(self):
         with self.assertRaises(ValueError):
-            self.specs(0.0, 2, use_styles=True, dt_mode="nope")
+            self.specs(0.0, 2, dt_mode="nope")
 
     def test_single_candidate_is_the_uniform_baseline(self):
-        specs = self.specs(1.5, 1, use_styles=True)
+        specs = self.specs(1.5, 1)
         self.assertEqual(len(specs), 1)
         self.assertEqual(specs[0]["guess_style"], "baseline")
         self.assertEqual(specs[0]["accuracy_weight"], 1.5)
         self.assertFalse(specs[0]["per_segment_dt"])
 
     def test_count_is_clamped_to_at_least_one(self):
-        specs = self.specs(0.0, 0, use_styles=True)
+        specs = self.specs(0.0, 0)
         self.assertEqual(len(specs), 1)
         self.assertEqual(specs[0]["guess_style"], "baseline")
         self.assertFalse(specs[0]["per_segment_dt"])
-
-    def test_multiverse_keeps_accuracy_weight_ladder(self):
-        specs = self.specs(0.0, 3, use_styles=False)
-        self.assertEqual([s["accuracy_weight"] for s in specs], [0.0, 2.0, 4.0])
-        self.assertTrue(all(s["guess_style"] == "baseline" for s in specs))
-        self.assertTrue(all(not s["per_segment_dt"] for s in specs))
-
-    def test_refine_adds_the_pipeline_trajectory_without_replacing_any(self):
-        """KI-004: the pipeline is a seed provider, not a second solver."""
-        plain = self.specs(0.0, 2, use_styles=True)
-        refined = self.specs(0.0, 2, use_styles=True, refined=True)
-        self.assertEqual(plain, refined[:len(plain)])
-        added = refined[len(plain):]
-        self.assertTrue(added, "the refined candidate was not added")
-        for spec in added:
-            self.assertEqual(spec.get("guess"), "refined")
-            # The refined trajectory carries a per-segment interval, so only
-            # the model that reads those intervals can use it.
-            self.assertTrue(spec["per_segment_dt"])
-
-    def test_refine_is_off_by_default(self):
-        specs = self.specs(0.0, 2, use_styles=True)
-        self.assertFalse(any(s.get("guess") == "refined" for s in specs))
-
-    def test_refine_covers_the_accuracy_weight_grid(self):
-        """The weight is what buys the tracking error, so the seed needs it."""
-        specs = self.specs(0.0, 1, use_styles=True, refined=True)
-        weights = [s["accuracy_weight"] for s in specs if s.get("guess") == "refined"]
-        self.assertIn(0.0, weights)
-        self.assertIn(0.001, weights)
-        self.assertIn(0.005, weights)
-
 
 class TestSweepSpecs(unittest.TestCase):
     """The sweep adds the timing-mode x accuracy-weight grid to the set."""
 
     def setUp(self):
-        from main import _candidate_specs, SWEEP_WEIGHTS
+        from overboard.main import _candidate_specs, SWEEP_WEIGHTS
         self.specs = _candidate_specs
         self.weights = SWEEP_WEIGHTS
 
     def test_sweep_keeps_the_default_candidates(self):
-        plain = self.specs(0.0, 2, use_styles=True)
-        swept = self.specs(0.0, 2, use_styles=True, sweep=True)
+        plain = self.specs(0.0, 2)
+        swept = self.specs(0.0, 2, sweep=True)
         for spec in plain:
             self.assertIn(spec, swept)
 
     def test_sweep_covers_both_timing_modes_at_every_weight(self):
-        swept = self.specs(0.0, 2, use_styles=True, sweep=True)
+        swept = self.specs(0.0, 2, sweep=True)
         for weight in self.weights:
             for per_segment_dt in (False, True):
                 self.assertIn(
@@ -278,18 +246,18 @@ class TestSweepSpecs(unittest.TestCase):
                     swept)
 
     def test_sweep_does_not_solve_the_same_combination_twice(self):
-        swept = self.specs(0.0, 2, use_styles=True, sweep=True)
+        swept = self.specs(0.0, 2, sweep=True)
         keys = [(s["accuracy_weight"], s["guess_style"], s["per_segment_dt"])
                 for s in swept]
         self.assertEqual(len(keys), len(set(keys)))
 
     def test_sweep_includes_a_non_zero_base_weight(self):
-        swept = self.specs(0.005, 2, use_styles=True, sweep=True)
+        swept = self.specs(0.005, 2, sweep=True)
         self.assertIn(0.005, [s["accuracy_weight"] for s in swept])
         self.assertIn(0.0, [s["accuracy_weight"] for s in swept])
 
     def test_sweep_is_off_by_default(self):
-        plain = self.specs(0.0, 2, use_styles=True)
+        plain = self.specs(0.0, 2)
         self.assertEqual(len(plain), 2)
 
 
@@ -298,7 +266,7 @@ class TestExportGate(unittest.TestCase):
     """KI-001/KI-002: the write gate refuses failed solves and validation."""
 
     def setUp(self):
-        from main import _export_block_reason
+        from overboard.main import _export_block_reason
         self.gate = _export_block_reason
 
     def test_non_converged_solve_is_blocked(self):
@@ -504,7 +472,7 @@ class TestWriteGateIntegration(unittest.TestCase):
             type(self).last_twin = digital_twin
 
     def setUp(self):
-        import main as main_module
+        import overboard.main as main_module
         self.main = main_module
         repo = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         self.config = os.path.join(repo, "examples", "fll_choreo.json")
@@ -812,8 +780,8 @@ class TestOpenLoopModel(unittest.TestCase):
 
     def test_no_soft_speed_saturation(self):
         import jax.numpy as jnp
-        from jax_robot_model import JAXRobotConfig
-        from immrax_validator import RobotOpenLoop
+        from overboard.models.jax_robot_model import JAXRobotConfig
+        from overboard.verification.immrax_validator import RobotOpenLoop
 
         config = {"robot": {
             "mass": 0.723, "inertia": 0.001, "track_width": 0.0965,

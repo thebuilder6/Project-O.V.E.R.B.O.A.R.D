@@ -6,7 +6,7 @@ import unittest
 
 from PIL import Image, ImageDraw
 
-from mat_import import autocrop, compose_mat
+from overboard.viz.mat_import import autocrop, compose_mat
 
 
 def _page(draw_box=(200, 300, 1600, 1100), size=(2000, 1400)):
@@ -95,7 +95,7 @@ class TestPdfRendering(unittest.TestCase):
             import shutil
             if not shutil.which("pdftoppm"):
                 self.skipTest("no PDF renderer is installed")
-        from mat_import import render_pdf_page
+        from overboard.viz.mat_import import render_pdf_page
 
         # A one-page PDF with a drawing on it, written by hand.
         pdf = (b"%PDF-1.4\n"

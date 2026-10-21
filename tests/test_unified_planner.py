@@ -7,12 +7,8 @@ from __future__ import annotations
 import unittest
 import numpy as np
 
-from robot_model import RobotConfig
-from unified_planner import (
-    UnifiedPathEngine,
-    PlannerCandidateResult,
-    UnifiedPlanResult,
-)
+from overboard.models.robot_model import RobotConfig
+from overboard.core.unified_planner import UnifiedPathEngine, PlannerCandidateResult, UnifiedPlanResult
 
 
 class TestUnifiedPlanner(unittest.TestCase):

@@ -18,7 +18,7 @@ import urllib.request
 from pathlib import Path
 from unittest.mock import patch
 
-import gui_server
+import overboard.gui_server as gui_server
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 

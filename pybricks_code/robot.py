@@ -1,37 +1,41 @@
 """
 MAIN ENTRY POINT (HUB MENU)
 ---------------------------
-This script acts as the "brain" for the robot. When you run this file, 
-it opens a menu on the Hub's screen (1-9, 0). 
-Pressing the hub buttons selects a mission to run.
+Run this file on the hub to start a supported program from the hub's own
+buttons, with no laptop attached:
+
+    1  Follow the trajectory the host pushed last (hub_runner.py)
+    2  Run the SysId data-collection protocol (sysid_digital_twin.py)
+
+The host-side tools do the same jobs with the laptop connected:
+
+    python -m overboard.main --push-hub ...   # writes hub_mission.py and runs option 1
+    python -m overboard.sysid.collect ...     # the connected version of option 2
+
+The demo missions this menu used to list are archived under archive/.
 """
 
 from pybricks.tools import hub_menu
-# We import the hub from our config so we can check the battery
+
+# The hub comes from the config so the battery can be checked before a run.
 from robot_config import hub
 
 print("Starting Robot...")
-print(f"Battery: {hub.battery.voltage()}mV <- This value should be at least 8000 to run.")
+print("Battery: %dmV <- This value should be at least 8000 to run."
+      % hub.battery.voltage())
 
-# `hub_menu` creates an interactive menu on the hub.
-# Use the Left/Right buttons to scroll through 1, 2, 3... and the Center button to select.
-mission_selection = hub_menu(1, 2, 3, 4, 5, 6, 7, 8, 9, 10)
-print(f"Selected Mission: {mission_selection}")
+selection = hub_menu(1, 2)
+print("Selected: %d" % selection)
 
-# Below is a routing table. Based on the selected number, we import or run 
-# the corresponding mission file. 
-# Importing a file automatically runs any code inside it unless protected by 
-# `if __name__ == "__main__":`
-
-if mission_selection == 1:
-    import mission_1_simple
-elif mission_selection == 2:
-    import mission_2_async
-elif mission_selection == 3:
-    import mission_3_advanced
-elif mission_selection == 4:
-    import mission_4_ramsete
-elif mission_selection == 5:
-    import mission_5_lambdas
-# elif mission_selection == 3:
-#     import missions.mission_3_advanced
+if selection == 1:
+    try:
+        import hub_mission  # noqa: F401  written by --push-hub
+    except ImportError:
+        print("No pushed trajectory found. Run --push-hub from the host first.")
+    else:
+        # Importing the runner follows the trajectory it finds in hub_mission.
+        import hub_runner  # noqa: F401
+elif selection == 2:
+    # Importing the collector starts the SysId protocol (its __main__ guard
+    # accepts this module name too).
+    import sysid_digital_twin  # noqa: F401

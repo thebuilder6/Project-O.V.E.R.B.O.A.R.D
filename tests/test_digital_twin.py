@@ -9,21 +9,15 @@ from unittest.mock import patch
 
 import numpy as np
 
-from robot_model import RobotConfig
+from overboard.models.robot_model import RobotConfig
 
-from digital_twin import (
-    ActuatorFit,
-    DigitalTwinConfig,
-    OdometryFit,
-    SlipFit,
-    load_sysid_fit,
-)
+from overboard.sysid.digital_twin import ActuatorFit, DigitalTwinConfig, OdometryFit, SlipFit, load_sysid_fit
 
 try:
     import jax.numpy as jnp
     from immrax import Interval
-    from immrax_validator import ImmraxValidator
-    from jax_robot_model import JAXRobotConfig
+    from overboard.verification.immrax_validator import ImmraxValidator
+    from overboard.models.jax_robot_model import JAXRobotConfig
     HAS_IMMRAX = True
 except ImportError:
     HAS_IMMRAX = False
@@ -521,7 +515,7 @@ class TestMeasuredMotorEndToEnd(unittest.TestCase):
 
     def test_the_solver_gets_the_measured_motor(self):
         try:
-            import main  # noqa: F401
+            import overboard.main as main  # noqa: F401
             from click.testing import CliRunner
         except ImportError:
             self.skipTest("click is not installed")
@@ -566,7 +560,7 @@ class TestMeasuredMotorEndToEnd(unittest.TestCase):
                 json.dump([{"x": 0.0, "y": 0.0}, {"x": 0.2, "y": 0.0}], handle)
             with open(fit_path, "w", encoding="utf-8") as handle:
                 json.dump(fit, handle)
-            import main
+            import overboard.main as main
             with patch.object(main, "TrajectoryOptimizer", StubOptimizer):
                 result = CliRunner().invoke(
                     main.main,

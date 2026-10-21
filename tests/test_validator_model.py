@@ -16,8 +16,8 @@ import numpy as np
 
 try:
     import jax.numpy as jnp
-    from immrax_validator import ImmraxValidator
-    from jax_robot_model import JAXRobotConfig
+    from overboard.verification.immrax_validator import ImmraxValidator
+    from overboard.models.jax_robot_model import JAXRobotConfig
     HAS_IMMRAX = True
 except ImportError:
     HAS_IMMRAX = False
@@ -173,9 +173,9 @@ class TestUnifiedReachabilityAndDrivetrainParity(unittest.TestCase):
         self.assertEqual(len(rep_compiled["envelope"]), len(rep_legacy["envelope"]))
 
     def test_shared_normal_force_and_traction_parity(self):
-        from validator import audit_constraints
-        from robot_model import RobotConfig
-        from drivetrain_physics import wheel_normal_forces, traction_limits, CG_HEIGHT_M
+        from overboard.verification.validator import audit_constraints
+        from overboard.models.robot_model import RobotConfig
+        from overboard.models.drivetrain_physics import wheel_normal_forces, traction_limits, CG_HEIGHT_M
 
         cfg_cpu = RobotConfig(_TEST_ROBOT)
         samples = [
