@@ -51,7 +51,7 @@ from overboard.models.robot_model import RobotConfig
 from overboard.sysid.digital_twin import DigitalTwinConfig
 from overboard.verification.immrax_validator import ImmraxValidator
 
-CONFIG_PATH = "examples/fll_choreo.json"
+CONFIG_PATH = str(Path(__file__).resolve().parent.parent / "examples" / "fll_choreo.json")
 
 # An illustrative actuator: a 50 ms lag and a 2 % gain band.
 ACTUATOR = {"actuator": {"straight": {
