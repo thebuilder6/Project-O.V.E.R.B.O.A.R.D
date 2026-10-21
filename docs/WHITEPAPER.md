@@ -500,7 +500,7 @@ The solver records `iteration_history` in the default path: `--show-convergence`
 `python run_tests.py` with JAX installed:
 
 ```text
-656 tests run, 0 failures, 0 errors, 0 skipped
+657 tests run, 0 failures, 0 errors, 0 skipped
 ```
 
 The three `TestRoboVibeConverter` cases skip when PyYAML is missing and pass when it is installed. The JAX-dependent modules are imported in a `try`; if JAX is missing, they are skipped rather than silently hidden behind a stale import (KI-007).
