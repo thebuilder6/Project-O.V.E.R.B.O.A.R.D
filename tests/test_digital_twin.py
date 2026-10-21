@@ -434,6 +434,27 @@ class TestDigitalTwinMechanisms(unittest.TestCase):
 
         self.assertAlmostEqual(float(slipping[0]), float(gripping[0]), places=6)
 
+    def test_the_brake_slip_needs_the_actuator_plant(self):
+        """The grip belongs to the five-state plant, not the kinematic one.
+
+        The plant is chosen for the actuator - the five-state plant carries
+        the wheel speeds - and it is the only plant that models the braking
+        shortfall. A fit that carries the slip but no actuator time constant
+        keeps the kinematic plant, so the slip is loaded and not applied.
+        """
+        slip_only = DigitalTwinConfig.from_dict(
+            {"slip": {"calibrated": True, "brake_ratio_min": 0.05,
+                      "brake_ratio_median": 0.10, "brake_ratio_max": 0.15}},
+            enabled=True)
+        validator = self._validator(slip_only)
+
+        self.assertEqual(slip_only.actuator_tau_s(), 0.0)
+        self.assertEqual(slip_only.brake_shortfall(), 0.10)
+        self.assertEqual(type(validator.plant).__name__, "RobotOpenLoop")
+        # No grip in the kinematic plant, so the ground covered is the plain
+        # one: the slip has nowhere to act.
+        self.assertFalse(hasattr(validator.plant, "brake_shortfall"))
+
     def test_accel_limit_caps_the_wheel_rate(self):
         validator = self._validator(self._twin())
         w = jnp.array([1.37, 0.85, 0.0004, 0.0965, 0.028, 0.001, 1.0])
