@@ -26,7 +26,7 @@ from immrax import Interval
 from jax_ramsete import _sinc_poly
 from robot_model import CG_HEIGHT_M, body_frame_error, angle_diff
 
-_JAX_COMPILE_LOCK = threading.RLock()
+JAX_COMPILE_LOCK = threading.RLock()
 
 STATIC_MAX_INTERVALS = 180
 STATIC_MAX_SEGMENTS = 16
@@ -160,7 +160,7 @@ class CompiledReachabilityEngine:
         if cache_key in self._scan_fn_cache:
             return self._scan_fn_cache[cache_key]
 
-        with _JAX_COMPILE_LOCK:
+        with JAX_COMPILE_LOCK:
             if cache_key in self._scan_fn_cache:
                 return self._scan_fn_cache[cache_key]
 
@@ -422,7 +422,7 @@ class CompiledReachabilityEngine:
 
         self._get_scan_fn(GRAD_TICKS_PER_INTERVAL, 1)
         raw_grad_scan_fn = self._uncompiled_grad_scan_fn
-        with _JAX_COMPILE_LOCK:
+        with JAX_COMPILE_LOCK:
             if key in self._compiled_grad_cache:
                 return self._compiled_grad_cache[key]
 

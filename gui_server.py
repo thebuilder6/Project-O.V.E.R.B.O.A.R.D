@@ -375,7 +375,7 @@ def build_command(job_dir, config_path, waypoints_path, output_path, options):
     elif options.get("self_consistent"):
         command.append("--self-consistent")
 
-    if options.get("unified", True):
+    if options.get("unified"):
         command.append("--unified")
 
     # The iteration history is always requested: the studio's convergence

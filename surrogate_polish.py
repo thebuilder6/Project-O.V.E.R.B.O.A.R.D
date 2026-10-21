@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import math
 import os
-import threading
 import time
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from functools import partial
@@ -50,13 +49,8 @@ from reachability_engine import (
     _mul_scalar_iv,
     _mul_iv_iv,
     CompiledReachabilityEngine,
+    JAX_COMPILE_LOCK,
 )
-
-# MUMPS inside CasADi/IPOPT is not re-entrant across OS threads on Windows;
-# serialize the C++ MUMPS call while keeping all candidates in a single warm
-# ThreadPoolExecutor process (zero multiprocessing spawn or IPC overhead).
-from optimizer import CASADI_SOLVE_LOCK as _CASADI_SOLVE_LOCK
-_JAX_COMPILE_LOCK = threading.RLock()
 
 
 def _gauss_legendre_integrate_jax(
@@ -376,7 +370,7 @@ class SurrogatePolishOptimizer:
         seg_idx_arr = jnp.asarray(sample_to_segment, dtype=jnp.int32)
         active_mask = jnp.ones(states.shape[0] - 1, dtype=bool)
         w_lower, w_upper = self.engine._uncertainty_bounds()
-        with _JAX_COMPILE_LOCK:
+        with JAX_COMPILE_LOCK:
             (_, report), (g_states, g_dts) = grad_fn(states, dts, seg_idx_arr, active_mask, w_lower, w_upper)
         return report, np.asarray(g_states, dtype=np.float64), np.asarray(g_dts, dtype=np.float64)
 
@@ -463,7 +457,7 @@ class SurrogatePolishOptimizer:
             return samples, stats
 
         states, dts = _extract_state_and_dt_arrays(samples, num_segments, segment_samples)
-        with _JAX_COMPILE_LOCK:
+        with JAX_COMPILE_LOCK:
             report = self.engine.evaluate_states(states, dts, sample_to_segment)
 
         init_tracking = float(report["max_tracking_error_m"])
@@ -542,7 +536,7 @@ class SurrogatePolishOptimizer:
             cur_states, cur_dts = _extract_state_and_dt_arrays(
                 cur_samples, num_segments, segment_samples
             )
-            with _JAX_COMPILE_LOCK:
+            with JAX_COMPILE_LOCK:
                 report = self.engine.evaluate_states(cur_states, cur_dts, sample_to_segment)
             cur_tracking = float(report["max_tracking_error_m"])
             cur_tube = float(report["max_envelope_radius_m"])
@@ -563,7 +557,7 @@ class SurrogatePolishOptimizer:
             and not self.engine.active_twin
             and getattr(self.validator, "propagation", "plant") == "plant"
         ):
-            with _JAX_COMPILE_LOCK:
+            with JAX_COMPILE_LOCK:
                 best_stats["immrax_report"] = self.engine.build_immrax_report(
                     best_samples, best_report, safety_threshold_m=self.safety_gate_m
                 )
@@ -630,7 +624,7 @@ class SurrogatePolishOptimizer:
         )
 
         # --- STAGE 2: Compiled JAX Sieve (evaluate_batch_vmap) ---
-        with _JAX_COMPILE_LOCK:
+        with JAX_COMPILE_LOCK:
             surrogate_costs = screen_candidates_jax(
                 self.engine,
                 cand_states,
@@ -682,7 +676,7 @@ class SurrogatePolishOptimizer:
             if not cand_stats.get("converged", False) or not cand_samples:
                 continue
             c_states, c_dts = _extract_state_and_dt_arrays(cand_samples, num_segments, segment_samples)
-            with _JAX_COMPILE_LOCK:
+            with JAX_COMPILE_LOCK:
                 c_rep = self.engine.evaluate_states(c_states, c_dts, sample_to_segment)
             track_m = float(c_rep["max_tracking_error_m"])
             tube_m = float(c_rep["max_envelope_radius_m"])
@@ -786,7 +780,7 @@ class SurrogatePolishOptimizer:
                 pol_states, pol_dts = _extract_state_and_dt_arrays(
                     pol_samples, num_segments, segment_samples
                 )
-                with _JAX_COMPILE_LOCK:
+                with JAX_COMPILE_LOCK:
                     pol_report = self.engine.evaluate_states(pol_states, pol_dts, sample_to_segment)
                 pol_tracking = float(pol_report["max_tracking_error_m"])
                 pol_tube = float(pol_report["max_envelope_radius_m"])
@@ -809,7 +803,7 @@ class SurrogatePolishOptimizer:
             and not self.engine.active_twin
             and getattr(self.validator, "propagation", "plant") == "plant"
         ):
-            with _JAX_COMPILE_LOCK:
+            with JAX_COMPILE_LOCK:
                 best_stats["immrax_report"] = self.engine.build_immrax_report(
                     best_samples, best_report, safety_threshold_m=self.safety_gate_m
                 )
@@ -889,7 +883,7 @@ def _worker_pyramid_solve(args: Tuple[Any, ...]) -> Tuple[List[Dict[str, Any]], 
     """
     Worker solve function for ProcessPoolExecutor.
     Runs in an isolated process with its own memory space and MUMPS instance,
-    completely eliminating Windows _CASADI_SOLVE_LOCK contention.
+    completely eliminating Windows CASADI_SOLVE_LOCK contention.
     """
     import os
     os.environ["OMP_NUM_THREADS"] = "1"
@@ -1007,7 +1001,7 @@ def recombine_candidate_segments(
         candidate_states_list.append(states)
         candidate_dts_list.append(dts)
 
-        with _JAX_COMPILE_LOCK:
+        with JAX_COMPILE_LOCK:
             rep = engine.evaluate_states(states, dts, sample_to_segment)
         track_errs = np.asarray(rep["tracking_errors"])
         radii = np.asarray(rep["radii"])
@@ -1096,7 +1090,7 @@ def recombine_candidate_segments(
         return None, None, {"recombined": False, "reason": "Polish solve did not converge"}
 
     c_states, c_dts = _extract_state_and_dt_arrays(pol_samples, num_segments, segment_samples)
-    with _JAX_COMPILE_LOCK:
+    with JAX_COMPILE_LOCK:
         rep = engine.evaluate_states(c_states, c_dts, sample_to_segment)
 
     recomb_info = {
@@ -1211,7 +1205,7 @@ def run_memetic_evolution(
 
     def _eval_individual(samples, stats, tag="seed", gen=0):
         states, dts = _extract_state_and_dt_arrays(samples, num_segments, segment_samples)
-        with _JAX_COMPILE_LOCK:
+        with JAX_COMPILE_LOCK:
             rep = engine.evaluate_states(states, dts, sample_to_segment)
         track_errs = np.asarray(rep["tracking_errors"])
         radii = np.asarray(rep["radii"])
@@ -1466,7 +1460,7 @@ def run_memetic_evolution(
                         seg_idx_arr = jnp.asarray(sample_to_segment, dtype=jnp.int32)
                         active_mask = jnp.ones(off_states.shape[0] - 1, dtype=bool)
                         w_lower, w_upper = engine._uncertainty_bounds()
-                        with _JAX_COMPILE_LOCK:
+                        with JAX_COMPILE_LOCK:
                             (_, _), (g_states, g_dts) = grad_fn(
                                 jnp.asarray(off_states), jnp.asarray(off_dts), seg_idx_arr, active_mask, w_lower, w_upper
                             )

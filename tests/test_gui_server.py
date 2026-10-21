@@ -854,6 +854,18 @@ class TestStudioHelpers(unittest.TestCase):
         self.assertNotIn("--uniform-dt", joined)
         self.assertNotIn("--per-segment-dt", joined)
 
+    def test_command_does_not_enable_unified_by_default(self):
+        command = gui_server.build_command(
+            Path("."), Path("c.json"), Path("w.json"), Path("o.traj"),
+            {"samples": 10})
+        self.assertNotIn("--unified", " ".join(str(part) for part in command))
+
+    def test_unified_is_passed_through_only_when_asked(self):
+        command = gui_server.build_command(
+            Path("."), Path("c.json"), Path("w.json"), Path("o.traj"),
+            {"samples": 10, "unified": True})
+        self.assertIn("--unified", " ".join(str(part) for part in command))
+
     def test_fast_polish_is_passed_through(self):
         command = gui_server.build_command(
             Path("."), Path("c.json"), Path("w.json"), Path("o.traj"),

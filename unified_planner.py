@@ -100,7 +100,7 @@ class UnifiedPathEngine:
         try:
             from jax_robot_model import JAXRobotConfig
             from immrax_validator import ImmraxValidator
-            from surrogate_polish import CompiledReachabilityEngine
+            from reachability_engine import CompiledReachabilityEngine
 
             jax_cfg = JAXRobotConfig(self.config)
             self._validator = ImmraxValidator(jax_cfg, control_dt=self.control_dt, propagation="plant")

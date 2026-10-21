@@ -20,8 +20,8 @@ from robot_model import RobotConfig
 from jax_robot_model import JAXRobotConfig
 from immrax_validator import ImmraxValidator
 from optimizer import TrajectoryOptimizer
+from reachability_engine import CompiledReachabilityEngine
 from surrogate_polish import (
-    CompiledReachabilityEngine,
     SurrogatePolishOptimizer,
     _extract_state_and_dt_arrays,
     generate_homotopy_bank,
