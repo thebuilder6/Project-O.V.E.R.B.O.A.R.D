@@ -998,24 +998,23 @@ class TrajectoryOptimizer:
 
     @staticmethod
     def _sample_times(dt_values: np.ndarray, num_samples_per_segment: Union[int, Sequence[int]], N: int) -> np.ndarray:
-        dt_values = np.asarray(dt_values, dtype=float)
-        num_segments = len(dt_values)
+        dts = np.asarray(dt_values, dtype=float)
+        num_segments = len(dts)
+        if N <= 1 or num_segments == 0:
+            return np.zeros(N, dtype=float)
         if isinstance(num_samples_per_segment, (list, tuple, np.ndarray)):
-            seg_samples = [int(s) for s in num_samples_per_segment]
+            seg_samples = np.asarray(num_samples_per_segment, dtype=int)
         else:
-            seg_samples = [int(num_samples_per_segment)] * num_segments
-        
-        sample_to_segment = np.repeat(np.arange(num_segments), seg_samples)
-        segment_durations = [seg_samples[i] * dt_values[i] for i in range(num_segments)]
-        starts = np.concatenate(([0.0], np.cumsum(segment_durations)))
-        waypoint_sample_indices = [0] + list(np.cumsum(seg_samples))
-        
-        times = np.zeros(N)
-        for k in range(N - 1):
-            seg = sample_to_segment[k]
-            offset = k - waypoint_sample_indices[seg]
-            times[k] = starts[seg] + offset * dt_values[seg]
-        times[N - 1] = starts[-1]
+            seg_samples = np.full(num_segments, int(num_samples_per_segment), dtype=int)
+
+        starts = np.concatenate(([0.0], np.cumsum(seg_samples * dts)))
+        wp_idx = np.concatenate(([0], np.cumsum(seg_samples)))
+        sample_to_seg = np.repeat(np.arange(num_segments), seg_samples)[:N - 1]
+        offsets = np.arange(len(sample_to_seg)) - np.repeat(wp_idx[:-1], seg_samples)[:N - 1]
+
+        times = np.empty(N, dtype=float)
+        times[:len(sample_to_seg)] = starts[sample_to_seg] + offsets * dts[sample_to_seg]
+        times[-1] = starts[-1]
         return times
 
     def format_output(self, params: np.ndarray, N: int, num_samples_per_segment: Union[int, Sequence[int]] = 10, waypoint_events: Optional[Dict[int, str]] = None) -> List[Dict[str, Any]]:
