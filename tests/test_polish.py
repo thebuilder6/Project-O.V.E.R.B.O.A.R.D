@@ -341,12 +341,16 @@ class TestPlanGates(unittest.TestCase):
         self.assertTrue(evaluation.diverged)
         self.assertFalse(evaluation.passed_gates)
 
-    def test_without_the_engine_the_declared_numbers_decide(self):
+    def test_without_the_engine_nothing_is_certified(self):
+        # No validator means no measurement. The old rule certified the
+        # declared 0.45 / 1.20 cm instead, which printed CERTIFIED on a
+        # machine where nothing had been checked (KI-020).
         evaluation = self._evaluate(0.0, 0.0, engine=False)
 
-        self.assertAlmostEqual(evaluation.tracking_cm, 0.45)
-        self.assertAlmostEqual(evaluation.envelope_cm, 1.20)
-        self.assertTrue(evaluation.passed_gates)
+        self.assertFalse(evaluation.passed_gates)
+        self.assertIn(evaluation.tracking_cm, (float("inf"),))
+        self.assertIn(evaluation.envelope_cm, (float("inf"),))
+        self.assertEqual(evaluation.score, float("inf"))
 
     def test_a_diverged_polish_is_not_certified(self):
         """The polish path used to certify a plan whose rollout diverged."""

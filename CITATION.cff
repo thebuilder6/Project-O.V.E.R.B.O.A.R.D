@@ -1,0 +1,23 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+title: "OVERBOARD: time-optimal trajectories for a LEGO differential-drive robot"
+abstract: >-
+  A planner that generates time-optimal, physically constrained trajectories
+  for a LEGO/FLL differential-drive robot with CasADi and IPOPT, validates them
+  against a reachability gate, and exports them for a Pybricks Ramsete
+  controller.
+type: software
+authors:
+  - name: "InfiniteQuery"
+repository-code: "https://github.com/thebuilder6/Project-O.V.E.R.B.O.A.R.D"
+url: "https://github.com/thebuilder6/Project-O.V.E.R.B.O.A.R.D"
+license: MIT
+keywords:
+  - trajectory optimization
+  - differential drive
+  - CasADi
+  - IPOPT
+  - reachability analysis
+  - LEGO
+  - FIRST LEGO League
+  - Pybricks

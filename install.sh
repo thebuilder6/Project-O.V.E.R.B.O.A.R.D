@@ -52,12 +52,19 @@ echo "[....] Installing the solver and the studio. This can take a few minutes."
 "$VENV_PY" -m pip install -r requirements.txt
 echo "[ok]   Core packages installed"
 
-echo "[....] Installing the optional extras (validation, calibration, hub push)"
-if "$VENV_PY" -m pip install -r requirements-optional.txt; then
-    echo "[ok]   Optional extras installed"
+# The optional stack (JAX) has no wheels for 3.9, so it is skipped there
+# instead of failing the whole install.
+if "$VENV_PY" -c 'import sys; sys.exit(0 if sys.version_info >= (3, 10) else 1)'; then
+    echo "[....] Installing the optional extras (validation, calibration, hub push)"
+    if "$VENV_PY" -m pip install -r requirements-optional.txt; then
+        echo "[ok]   Optional extras installed"
+    else
+        echo "[warn] The optional extras did not install. The solver and the studio still"
+        echo "       work, but --validate and the hub tools do not."
+    fi
 else
-    echo "[warn] The optional extras did not install. The solver and the studio still"
-    echo "       work, but --validate and the hub tools do not."
+    echo "[warn] Python 3.9 or older: the optional extras (JAX) are skipped."
+    echo "       Install Python 3.10 or newer and run this again for --validate."
 fi
 
 # --- 4. the check ----------------------------------------------------------

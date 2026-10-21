@@ -80,7 +80,7 @@ A failed solve and a failed validation both exit non-zero without writing the tr
 
 ### 2.3 Installation modes
 
-`requirements.txt` covers the default path: numpy, CasADi, Plotly, Click, Matplotlib and rsplan. `--validate` needs the optional stack (JAX, Immrax, pandas), now listed in `requirements-optional.txt`. JAX 0.6.2 was used for the current test run; a fresh install brings the newest stack (JAX 0.12.0, Immrax 0.3.8) and solves the same missions with the same numbers. `install.bat` and `install.sh` set the whole thing up in one step.
+`requirements.txt` covers the default path: numpy, CasADi, Plotly, Click and Matplotlib. `--validate` needs the optional stack (JAX and Immrax, pinned to the pair the suite is measured against), listed in `requirements-optional.txt`. JAX 0.6.2 was used for the current test run; a fresh install brings the newest stack (JAX 0.12.0, Immrax 0.3.8) and solves the same missions with the same numbers. `install.bat` and `install.sh` set the whole thing up in one step.
 
 ---
 

@@ -496,6 +496,13 @@ def run_tests():
         for test, traceback in result.errors:
             print(f"  - {test}")
 
+    # The one way to exit 1 with no failure and no error: a test marked
+    # expectedFailure that passed. It used to be silent.
+    if result.unexpectedSuccesses:
+        print("\nUnexpected successes (marked expectedFailure but passed):")
+        for test in result.unexpectedSuccesses:
+            print(f"  - {test}")
+
     if flags["durations"] and result.durations:
         print("\nSlowest tests:")
         for duration, test_id in sorted(result.durations, reverse=True)[:flags["durations"]]:

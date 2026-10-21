@@ -201,6 +201,12 @@ class TestCliBasics(unittest.TestCase):
                 result = self.runner.invoke(main.main, ["-w", wp, "-o", out, "-q"])
             self.assertEqual(result.exit_code, 0, result.output)
             self.assertTrue(os.path.exists(out))
+            # No --validate: the file says so, in the same place a passed one
+            # records its pass, so it cannot be read as an approved plan.
+            with open(out, "r", encoding="utf-8") as handle:
+                data = json.load(handle)
+            self.assertEqual(data["validation"]["status"], "unvalidated")
+            self.assertFalse(data["validation"]["passed"])
         self.assertEqual(len(_RecordingOptimizer.calls), 1)
 
     def test_preset_fills_in_options_the_user_did_not_set(self):

@@ -208,9 +208,10 @@ class UnifiedPathEngine:
             envelope_cm = float(report["max_envelope_radius_m"]) * 100.0
             diverged = bool(report.get("diverged", False))
         else:
-            # No reachability engine: the declared numbers can be neither
-            # checked nor broken, and the gates are decided on them.
-            tracking_cm, envelope_cm, diverged = 0.45, 1.20, False
+            # No reachability engine: nothing was checked, so nothing passes.
+            # The old fallback (0.45 / 1.20 cm) let a run without the optional
+            # stack report CERTIFIED on numbers nobody measured (KI-020).
+            tracking_cm, envelope_cm, diverged = float("inf"), float("inf"), False
 
         passed_gates = (tracking_cm <= self.tracking_gate_m * 100.0
                         and envelope_cm <= self.envelope_gate_m * 100.0

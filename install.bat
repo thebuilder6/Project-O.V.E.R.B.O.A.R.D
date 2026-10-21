@@ -40,14 +40,22 @@ echo [....] Installing the solver and the studio. This can take a few minutes.
 if errorlevel 1 goto :no_packages
 echo [ok]   Core packages installed
 
-echo [....] Installing the optional extras (validation, calibration, hub push)
-"%VENV_PY%" -m pip install -r requirements-optional.txt
+REM The optional stack (JAX) has no wheels for 3.9, so it is skipped there
+REM instead of failing the whole install.
+"%VENV_PY%" -c "import sys; sys.exit(0 if sys.version_info >= (3, 10) else 1)" >nul 2>nul
 if errorlevel 1 (
-  echo [warn] The optional extras did not install. The solver and the studio
-  echo        still work, but --validate and the hub tools do not.
-  echo        Run this file again once the network behaves.
+  echo [warn] Python 3.9 or older: the optional extras ^(JAX^) are skipped.
+  echo        Install Python 3.10 or newer and run this file again for --validate.
 ) else (
-  echo [ok]   Optional extras installed
+  echo [....] Installing the optional extras (validation, calibration, hub push)
+  "%VENV_PY%" -m pip install -r requirements-optional.txt
+  if errorlevel 1 (
+    echo [warn] The optional extras did not install. The solver and the studio
+    echo        still work, but --validate and the hub tools do not.
+    echo        Run this file again once the network behaves.
+  ) else (
+    echo [ok]   Optional extras installed
+  )
 )
 
 REM --- 4. the check -------------------------------------------------------

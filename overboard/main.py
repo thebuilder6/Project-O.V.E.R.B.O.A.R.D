@@ -2030,6 +2030,10 @@ def main(ctx, config, waypoints, output, gui, gui_port, doctor, preset,
             "envelope_limit_m": float(envelope_limit),
             "envelope_limit_per_metre": float(envelope_limit_per_metre),
         }
+    elif not validate:
+        # No reachability gate ran, so the file says so. A `.traj` without
+        # this could be read later as an approved plan.
+        stats["validation"] = {"status": "unvalidated", "passed": False}
 
     if use_validation:
         # The studio reads this to show which part of the path failed.

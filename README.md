@@ -92,7 +92,7 @@ yourself.
 pip install -r requirements.txt
 ```
 
-This installs numpy, CasADi, Plotly, Click, Matplotlib and rsplan. It is enough for the default solver and the browser studio.
+This installs numpy, CasADi, Plotly, Click and Matplotlib. It is enough for the default solver and the browser studio.
 
 A virtual environment is the safer place for it, because it keeps the packages
 out of the system Python and makes "uninstall" a matter of deleting the folder:
@@ -783,4 +783,5 @@ See [pybricks_code/README.md](pybricks_code/README.md) for setup instructions.
 
 ## License
 
-This project is for FLL educational use.
+MIT. See [LICENSE](LICENSE). If you use this software in academic work, cite
+it with [CITATION.cff](CITATION.cff).

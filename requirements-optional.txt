@@ -5,11 +5,11 @@
 #   --validate    the Immrax reachability gate (needs jax + immrax)
 #   --push-hub    pushing a trajectory to a Pybricks hub (needs pybricksdev)
 #
-# Verified with JAX 0.6.2. A fresh install brings the newest stack (JAX
-# 0.12.0, Immrax 0.3.8), which needs numpy 2.2 or newer; requirements.txt
-# asks for numpy 1.24 or newer and below 3.0, so the two files fit together.
-jax
-immrax
+# Pinned to the pair the test suite runs against here: the Immrax inclusion
+# rules and the JAX API move, and an unpinned install brings a stack whose
+# numbers nobody measured. Raise both together and re-run the suite.
+jax==0.6.2
+immrax==0.3.6
 pybricksdev
 # The PDF renderer for the mat import: FIRST's field guide is a PDF, and
 # the studio composes the mat picture from it. Without this the mat

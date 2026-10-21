@@ -33,7 +33,6 @@ CORE_PACKAGES = [
 OPTIONAL_PACKAGES = [
     ("jax", "jax", False),
     ("immrax", "immrax", False),
-    ("pandas", "pandas", False),
 ]
 
 EXAMPLE_FILES = [
