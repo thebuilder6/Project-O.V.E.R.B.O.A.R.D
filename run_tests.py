@@ -92,6 +92,7 @@ from tests.test_polish import (
     TestPlannerCandidateSet,
     TestReachabilityEngine,
     TestGradientPolish,
+    TestCandidatePolish,
 )
 from tests.test_envelope_soundness import (
     TestNoPhantomTurnRate,
@@ -208,7 +209,6 @@ from tests.test_regressions import (
 # JAX-dependent tests (skip if jax is not installed)
 try:
     from tests.test_jax_ramsete import TestJAXRamsete, TestJAXDriveQuantization
-    from tests.test_surrogate_polish import TestSurrogatePolishPipeline
     JAX_AVAILABLE = True
 except ImportError as e:
     print(f"Warning: JAX-dependent tests skipped ({e})")
@@ -313,6 +313,7 @@ def test_classes():
         TestPlannerCandidateSet,
         TestReachabilityEngine,
         TestGradientPolish,
+        TestCandidatePolish,
         TestNoPhantomTurnRate,
         TestTheBoxContainsTheReachableSet,
         TestTheTickPropagation,
@@ -359,7 +360,6 @@ def test_classes():
         classes = [
             TestJAXRamsete,
             TestJAXDriveQuantization,
-            TestSurrogatePolishPipeline,
         ] + classes
     return classes
 
