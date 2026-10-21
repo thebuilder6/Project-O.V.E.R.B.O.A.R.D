@@ -1073,16 +1073,15 @@ def _print_summary(output, samples_data, robot_cfg, validate, attempt_passed, tu
               help='Number of top distinct homotopy finalists to solve in parallel during '
                    '--pyramid mode (defaults to 10).')
 @click.option('--recombine-segments', is_flag=True, default=False,
-              help='Advanced Optimization: Segment-wise recombination (chimera splicing) '
-                   'that extracts the best-performing segments from different candidates, '
-                   'splices them at waypoint knots, and rapidly warm-polishes the composite.')
+              help='(Deprecated: superseded by analytical frontier seeds; archived in legacy/) '
+                   'Segment-wise recombination (chimera splicing).')
 @click.option('--memetic-evolution', is_flag=True, default=False,
-              help='Memetic Evolution: population-based genetic algorithm with segment-wise '
-                   'chimera crossover, creep mutation, and rapid warm IPOPT local search.')
+              help='(Deprecated: superseded by analytical frontier seeds; archived in legacy/) '
+                   'Population-based genetic algorithm.')
 @click.option('--generations', default=3, type=click.IntRange(min=1),
-              help='Number of evolution generations for --memetic-evolution (defaults to 3).')
+              help='(Deprecated: legacy GA parameter) Number of evolution generations.')
 @click.option('--population-size', default=10, type=click.IntRange(min=4),
-              help='Population size for --memetic-evolution (defaults to 10).')
+              help='(Deprecated: legacy GA parameter) Population size for GA.')
 @click.option('--h-adaptive', is_flag=True, default=False,
               help='Adaptive mesh refinement (h-refinement): selectively allocates higher node density '
                    '(8-10 nodes) to curved apex segments, lowering forward-integration discretization '
@@ -1192,6 +1191,16 @@ def main(ctx, config, waypoints, output, gui, gui_port, doctor, multiverse, simp
     if uniform_dt and not quiet:
         click.secho(
             "Warning: --uniform-dt is deprecated (equal-duration dt penalizes variable-length segments; per-segment dt is standard).",
+            fg="yellow",
+        )
+    if recombine_segments and not quiet:
+        click.secho(
+            "Warning: --recombine-segments is deprecated (superseded by analytical frontier seeds; archived in legacy/evolutionary_research/).",
+            fg="yellow",
+        )
+    if memetic_evolution and not quiet:
+        click.secho(
+            "Warning: --memetic-evolution is deprecated (superseded by analytical frontier seeds; archived in legacy/evolutionary_research/).",
             fg="yellow",
         )
     if ctx.get_parameter_source('unified') == click.core.ParameterSource.DEFAULT:
@@ -1478,9 +1487,9 @@ def main(ctx, config, waypoints, output, gui, gui_port, doctor, multiverse, simp
         if not use_validation:
             specs_to_solve = specs_to_solve[:1]
 
-    if (pyramid or memetic_evolution) and not multiverse:
+    if pyramid and not multiverse:
         if not HAS_JAX:
-            raise click.ClickException(f"--pyramid/--memetic-evolution requires JAX. {JAX_HINT}")
+            raise click.ClickException(f"--pyramid requires JAX. {JAX_HINT}")
         from surrogate_polish import (
             generate_homotopy_bank,
             screen_candidates_jax,
@@ -1518,8 +1527,6 @@ def main(ctx, config, waypoints, output, gui, gui_port, doctor, multiverse, simp
         )
         if pyramid_candidates is not None:
             target_k = pyramid_candidates
-        elif memetic_evolution:
-            target_k = population_size
         elif ctx.get_parameter_source('candidates') != click.core.ParameterSource.DEFAULT:
             target_k = candidates
         else:
@@ -1587,7 +1594,7 @@ def main(ctx, config, waypoints, output, gui, gui_port, doctor, multiverse, simp
         payloads = _payloads_for(specs)
         parallel = (len(payloads) > 1 and not live and not show_convergence
                     and not no_parallel and stock_optimizer)
-        if (pyramid or memetic_evolution) and not multiverse:
+        if pyramid and not multiverse:
             from surrogate_polish import solve_pyramid_candidates
             if not quiet:
                 click.echo(f"Solving {len(payloads)} survivor candidates in parallel (ProcessPoolExecutor)...")
@@ -1621,94 +1628,6 @@ def main(ctx, config, waypoints, output, gui, gui_port, doctor, multiverse, simp
     is_rescue = False
     while batch:
         solved, histories = _solve_batch(batch)
-
-        if recombine_segments and len(solved) > 1 and not multiverse and not is_rescue:
-            from surrogate_polish import recombine_candidate_segments
-            from reachability_engine import CompiledReachabilityEngine
-            validator_cls, robot_config_cls = _ensure_jax_classes()
-            jax_cfg = robot_config_cls(robot_cfg)
-            immrax_val = validator_cls(jax_cfg, control_dt=control_dt, propagation=propagation)
-            rec_engine = CompiledReachabilityEngine(immrax_val)
-
-            base_kw = {
-                "accuracy_weight": accuracy_weight,
-                "stop_waypoint_indices": all_stop_indices,
-                "waypoint_events": waypoint_events,
-                "force_weight": force_weight,
-                "per_segment_dt": True,
-            }
-            if not quiet:
-                click.echo("Running Segment-Wise Recombination Splicer (Chimera Crossover)...")
-            chimera_samples, chimera_stats, recomb_rep = recombine_candidate_segments(
-                solved, wps, robot_cfg, rec_engine,
-                stop_waypoint_indices=all_stop_indices,
-                accuracy_weight=accuracy_weight,
-                force_weight=force_weight,
-                solve_kwargs=base_kw,
-                max_polish_iters=250,
-            )
-            if chimera_samples and chimera_stats and recomb_rep.get("recombined"):
-                if not quiet:
-                    click.echo(
-                        f"  Synthesized Chimera trajectory (contributors: {recomb_rep['unique_contributors']}, "
-                        f"polished in {recomb_rep['polish_iters']} iters, duration={recomb_rep['duration_s']:.3f} s)."
-                    )
-                solved.append((chimera_samples, chimera_stats))
-                histories.append([])
-                batch.append({
-                    "guess_style": "chimera_recombined",
-                    "guess": "chimera",
-                    "per_segment_dt": True,
-                    "accuracy_weight": accuracy_weight,
-                })
-            else:
-                if not quiet:
-                    click.echo(f"  Recombination notice: {recomb_rep.get('reason', 'unknown')}")
-
-        if memetic_evolution and len(solved) > 1 and not multiverse and not is_rescue:
-            from surrogate_polish import run_memetic_evolution
-            from reachability_engine import CompiledReachabilityEngine
-            validator_cls, robot_config_cls = _ensure_jax_classes()
-            jax_cfg = robot_config_cls(robot_cfg)
-            immrax_val = validator_cls(jax_cfg, control_dt=control_dt, propagation=propagation)
-            mem_engine = CompiledReachabilityEngine(immrax_val)
-
-            base_kw = {
-                "accuracy_weight": accuracy_weight,
-                "stop_waypoint_indices": all_stop_indices,
-                "waypoint_events": waypoint_events,
-                "force_weight": force_weight,
-                "per_segment_dt": True,
-            }
-            if not quiet:
-                click.echo(f"Running Memetic Evolution ({generations} generations, population={population_size})...")
-            champ_samples, champ_stats, evo_report = run_memetic_evolution(
-                solved, wps, robot_cfg, mem_engine,
-                num_generations=generations,
-                population_size=population_size,
-                stop_waypoint_indices=all_stop_indices,
-                accuracy_weight=accuracy_weight,
-                force_weight=force_weight,
-                solve_kwargs=base_kw,
-                max_polish_iters=150,
-                max_workers=workers if not no_parallel else 1,
-                verbose=not quiet,
-            )
-            if champ_samples and champ_stats:
-                if not quiet:
-                    click.echo(
-                        f"  Memetic Evolution completed: Champion duration={champ_stats.get('memetic_evolution', {}).get('champion_duration', 0.0):.3f} s "
-                        f"(score={champ_stats.get('memetic_evolution', {}).get('champion_score', 0.0):.3f}, "
-                        f"origin '{champ_stats.get('memetic_evolution', {}).get('champion_tag', '')}')."
-                    )
-                solved.append((champ_samples, champ_stats))
-                histories.append([])
-                batch.append({
-                    "guess_style": "memetic_champion",
-                    "guess": "memetic",
-                    "per_segment_dt": True,
-                    "accuracy_weight": accuracy_weight,
-                })
 
         for cand_idx, (spec, solve_result) in enumerate(zip(batch, solved)):
             curr_accuracy_weight = spec["accuracy_weight"]
@@ -1972,9 +1891,9 @@ def main(ctx, config, waypoints, output, gui, gui_port, doctor, multiverse, simp
         # set itself produced nothing that passed.
         primary = [a for a in all_attempts if not a.get("rescue")]
         rescue = [a for a in all_attempts if a.get("rescue")]
-        best, passed_any = _select_attempt(primary, prefer_duration=bool(surrogate_polish or pyramid or memetic_evolution or unified))
+        best, passed_any = _select_attempt(primary, prefer_duration=bool(surrogate_polish or pyramid or unified))
         if not passed_any and rescue:
-            rescue_best, rescue_passed = _select_attempt(rescue, prefer_duration=bool(surrogate_polish or pyramid or memetic_evolution or unified))
+            rescue_best, rescue_passed = _select_attempt(rescue, prefer_duration=bool(surrogate_polish or pyramid or unified))
             if rescue_passed or best is None:
                 best, passed_any = rescue_best, rescue_passed
         if best is None:

@@ -744,6 +744,14 @@ class TestDeprecatedCliFlags(unittest.TestCase):
         result = self.runner.invoke(self.main.main, ["-w", "examples/example_straight.json", "--uniform-dt"])
         self.assertIn("Warning: --uniform-dt is deprecated", result.output)
 
+    def test_recombine_segments_emits_deprecation_warning(self):
+        result = self.runner.invoke(self.main.main, ["-w", "examples/example_straight.json", "--recombine-segments"])
+        self.assertIn("Warning: --recombine-segments is deprecated", result.output)
+
+    def test_memetic_evolution_emits_deprecation_warning(self):
+        result = self.runner.invoke(self.main.main, ["-w", "examples/example_straight.json", "--memetic-evolution"])
+        self.assertIn("Warning: --memetic-evolution is deprecated", result.output)
+
     def test_help_shows_deprecated_tags(self):
         result = self.runner.invoke(self.main.main, ["--help"])
         self.assertEqual(result.exit_code, 0)
@@ -752,6 +760,7 @@ class TestDeprecatedCliFlags(unittest.TestCase):
         self.assertIn("(Deprecated: relied on legacy multiverse", result.output)
         self.assertIn("(Deprecated: 80 ms invariant mesh eliminates", result.output)
         self.assertIn("(Deprecated: equal-duration dt severely", result.output)
+        self.assertIn("(Deprecated: superseded by analytical", result.output)
         self.assertIn("--unified / --no-unified", result.output)
 
 if __name__ == "__main__":
