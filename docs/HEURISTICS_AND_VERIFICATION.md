@@ -1,14 +1,14 @@
 # Path Planning Heuristics and Verification Strategy
 
 **Status:** 2026-10-19. Describes the working tree as measured on this date.
-**Scope:** every path-planning heuristic in the repository, the verification chain that judges its output, and an explicit ledger of the strategies that did not work.
+**Scope:** every path-planning heuristic in the repository and the verification chain that judges its output. The two research records have their own files: [`STRATEGY_LEDGER.md`](STRATEGY_LEDGER.md) (the strategies that did not work) and [`RESEARCH_AGENDA.md`](RESEARCH_AGENDA.md) (the open questions).
 **Audience:** anyone who wants to improve the planner, the validator, or both.
 
 > **Archive note.** Raw logs and experiment scripts referenced below live in the `archive/research-2026-10` tag, not in the product tree. Retrieve a file with `git show archive/research-2026-10:<path>`; see [`ARCHIVE.md`](ARCHIVE.md).
 >
 > **How to read the module references.** The runtime moved into the `overboard/` package after this
-> document was written, so a bare `optimizer.py`, `main.py`, `validator.py`, `immrax_validator.py`,
-> `robot_model.py`, `digital_twin.py`, `frontier_seed.py` or `unified_planner.py` names the file that
+> document was written, so a bare `overboard/core/optimizer.py`, `overboard/main.py`, `overboard/verification/validator.py`, `overboard/verification/immrax_validator.py`,
+> `overboard/models/robot_model.py`, `overboard/sysid/digital_twin.py`, `overboard/core/frontier_seed.py` or `overboard/core/unified_planner.py` names the file that
 > now lives under `overboard/core/`, `overboard/`, `overboard/verification/`, `overboard/models/`,
 > `overboard/sysid/`, `overboard/core/` and `overboard/core/`. Every `file:line` is the line in the
 > tree as measured on 2026-10-19, not in today's file. The measurements are the record; the tree is
@@ -20,23 +20,41 @@
 
 ## Findings at a glance
 
-1. **The heuristic layer is small.** Five deterministic seeds, two timing models, a candidate set, and a selection rule. There is **no geometric path family** anywhere in the tree — no splines, clothoids, béziers or quintics — and the objective has no term that prefers one path over another. It has three terms that price the *motion* (the duration, the wheel jerk and, optionally, the wheel force), and the passing candidates are ranked by a 5-part fitness score in seconds ([7.2](#72-the-5-part-path-fitness-score)).
+1. **The heuristic layer is small.** Three analytical frontier candidates (the default), or five deterministic seeds and two timing models (the stock set), a candidate set, and a selection rule. There is **no geometric path family** anywhere in the tree — no splines, clothoids, béziers or quintics — and the objective has no term that prefers one path over another. It has three terms that price the *motion* (the duration, the wheel jerk and, optionally, the wheel force), and the passing candidates are ranked by a 5-part fitness score in seconds ([7.2](#72-the-5-part-path-fitness-score)) - or, on the default path, by the shortest duration ([7.3](#73-the-selection-rule)).
 2. **The seeds do not rescue the baseline often, but they do win on speed.** Over the 60-candidate matrix the `baseline` seed is the fastest passing candidate in 1 of the 7 cells that produce a trajectory at all; a non-baseline seed wins the other 6. The baseline fails in 9 of the 12 cells, and **four** of them are rescued by another seed: first4 under both timing models, the complex mission under equal-duration, and the events mission under per-segment. In the other 5 — the S-curve and the stops mission, under both models — no seed passes either.
 3. **The tracking gate is the binding constraint; the reachability envelope never binds.** Of 34 failing candidates, 28 failed on the 5 mm tracking gate and 11 on motor force. **Zero** failed on the forward-integration check — it went with the self-consistent collocation — and **zero** on the 2 cm envelope threshold. The largest envelope measured anywhere was 1.72 cm.
 4. **Two of the six example missions still produce no output at all.** The S-curve and the stops mission fail **every candidate** in the full sweep — 0 of 9 each, across both timing models and the whole accuracy-weight grid. Their best tracking errors are 1.27 cm and 0.75 cm against a 0.50 cm gate. The self-consistent collocation removed the plan's own deviation from the picture, and what is left of the error is the reference's velocity half ([RQ-A finding F8](research/RQ-A_tracking_error.md)).
 5. **The timing model is a bigger lever than any seed, but not on every path.** Per-segment timing is 1.9x faster on the complex mission (4.812 s against 9.249 s) and it is what makes the events mission solvable at all; on the two paths whose segments are short and even (first4, the stops mission) the equal-duration model is the faster one. The seeds changed the outcome on 3 missions; the timing model on 1. The per-segment model also had to be made legitimate at the waypoints the robot drives through (KI-024, [5.5](#55-where-the-time-allocation-may-change-ki-024)); the matrix in [Section 9](#9-measured-heuristic-comparison) was re-measured after that change.
 6. **The accuracy weight is the cheapest lever of all.** On the first-four-waypoints mission, the *same* `baseline` seed fails at weight 0 (it misses the motor-force limit by 0.006 N) and passes at weight 0.001 (0.26 cm tracking). The sweep grid is the only candidate-set change that has ever produced a new best trajectory, and it works because it adds a genuinely different parameter.
-7. **The Multi-Verse pipeline was dead weight; it is repaired, and it is archived.** Its JAX-refined guess used to converge to 8.1473 s against the trivial baseline's 6.0677 s. Four defects were behind that - the refinement moved the waypoints, the JAX cost graded a different motion than IPOPT produces, the intervals were hard-coded, and the refined timing was discarded - and with them fixed the probe wins (4.617 s against 6.049 s) and the pipeline is reproducible. But measured over 30 missions as a *seed provider*, the refined seed is **not** better than the stock seeds (it is faster on 2 of the 9 missions where both pass, slower on 6) and it **rescues nothing**; it is a cheaper way to reach the stock set's speed on some missions (KI-004). It now lives only under `overboard/legacy/` and has no CLI entry point.
-8. **The measurement base is six hand-written paths.** The random benchmark that was supposed to supply a mission suite is fixed (KI-015), and a mission-suite harness exists under [`research/`](../../research/). The six paths are still what [Section 9](#9-measured-heuristic-comparison) quotes; the wider suite is measured in `docs/research/pq_b/`.
-9. **Twelve research questions are listed in Part IV**, ordered so that the cheapest decisive experiment comes first. The first two are measurements, not experiments.
+7. **The Multi-Verse pipeline was dead weight; it is repaired, and it is archived.** Its JAX-refined guess used to converge to 8.1473 s against the trivial baseline's 6.0677 s. Four defects were behind that - the refinement moved the waypoints, the JAX cost graded a different motion than IPOPT produces, the intervals were hard-coded, and the refined timing was discarded - and with them fixed the probe wins (4.617 s against 6.049 s) and the pipeline is reproducible. But measured over 30 missions as a *seed provider*, the refined seed is **not** better than the stock seeds (it is faster on 2 of the 9 missions where both pass, slower on 6) and it **rescues nothing**; it is a cheaper way to reach the stock set's speed on some missions (KI-004). It has been removed from the tree (git tag `archive/legacy-2026-10`) and has no CLI entry point.
+8. **The measurement base is six hand-written paths.** The random benchmark that was supposed to supply a mission suite is fixed (KI-015), and a mission-suite harness exists under [`research/`](../research/). The six paths are still what [Section 9](#9-measured-heuristic-comparison) quotes; the wider suite is measured in `docs/research/pq_b/`.
+9. **Twelve research questions are listed in [`RESEARCH_AGENDA.md`](RESEARCH_AGENDA.md)**, ordered so that the cheapest decisive experiment comes first. The first two are measurements, not experiments.
 10. **RQ-A is done, and it reorders the agenda.** [`docs/research/RQ-A_tracking_error.md`](research/RQ-A_tracking_error.md) identifies why the tracking gate binds: the optimizer's collocation, the controller's linear reference and the plant's integration are three different discretisations of the same trajectory, and on a curved path they disagree by about a centimetre. The optimizer's half of that disagreement is closed - the self-consistent collocation is the default ([5.7](#57-the-collocation-where-a-sample-is-placed)) - and the reference's half is not. The tracking error is **not** an uncertainty problem and **not** a physical tracking problem. Fix the discretisation before reaching for reachability in the objective. RQ-A also finds that with a *calibrated* model the binding gate flips to the **envelope**, because the measured actuator-gain band widens the reachable set.
 
 > **Read RQ-A before changing the tracking gate, the reference interpolation, or the optimizer's kinematics.** It contains the measurements, the refuted hypotheses, and the four instrument bugs that produced convincing nonsense along the way.
+>
+> **Which planner these findings describe.** The numbers below are the **stock** candidate set - the five seeds of the `--no-unified` path - measured on the tree of 2026-10-20. The default path is the 3-Pillar unified engine with the three frontier candidates ([1.1](#11-the-default-system-the-3-pillar-unified-engine)); its own measurements are in [19.6](STRATEGY_LEDGER.md#196-the-3-pillar-unified-trajectory-engine---unified-the-default-path) and in `docs/OPTIMAL_CONTROL_DERIVATION.md`.
 
 ---
 
+## How to use this document
+
+| If you want to | Read |
+|---|---|
+| know what the planner does today | [Part I](#part-i--the-path-planning-heuristic-landscape), sections 1-7 |
+| know what the gates are and what they mean | [Part II](#part-ii--the-verification-strategy), sections 10-15 |
+| know what the measured comparison says | [Section 9](#9-measured-heuristic-comparison) |
+| know what was tried and failed, and why | [`STRATEGY_LEDGER.md`](STRATEGY_LEDGER.md) (Part III) |
+| know what is still open | [`RESEARCH_AGENDA.md`](RESEARCH_AGENDA.md) (Part IV) |
+| find a symbol | [Appendix B](#appendix-b--where-things-live) |
+
+The ledger and the agenda are the research record: they are not needed to use the planner, and
+no strategy in the ledger is to be re-litigated without new evidence.
+
 ## Table of contents
 
+  - [Findings at a glance](#findings-at-a-glance)
+  - [How to use this document](#how-to-use-this-document)
 - [Part 0 — Orientation](#part-0--orientation)
   - [0.1 What this document is](#01-what-this-document-is)
   - [0.2 Scope, authority and how to read a citation](#02-scope-authority-and-how-to-read-a-citation)
@@ -46,7 +64,7 @@
   - [1. Two heuristic systems](#1-two-heuristic-systems)
   - [2. What is not in the tree](#2-what-is-not-in-the-tree)
   - [3. The default path, end to end](#3-the-default-path-end-to-end)
-  - [4. The seed heuristics](#4-the-seed-heuristics)
+  - [4. The stock seed heuristics (`--no-unified`)](#4-the-stock-seed-heuristics---no-unified)
   - [5. The timing models](#5-the-timing-models)
   - [6. Candidate set construction](#6-candidate-set-construction)
   - [7. Scoring and selection](#7-scoring-and-selection)
@@ -59,25 +77,18 @@
   - [13. The system identification loop](#13-the-system-identification-loop)
   - [14. What each layer proves and does not prove](#14-what-each-layer-proves-and-does-not-prove)
   - [15. Test coverage map](#15-test-coverage-map)
-- [Part III — The failed strategy ledger](#part-iii--the-failed-strategy-ledger)
-  - [16. How to read the ledger](#16-how-to-read-the-ledger)
-  - [17. Ledger: seed heuristics](#17-ledger-seed-heuristics)
-  - [18. Ledger: timing models](#18-ledger-timing-models)
-  - [19. Ledger: candidate set strategies](#19-ledger-candidate-set-strategies)
-    - [19.1 The sweep grid](#191-the-sweep-grid)
-    - [19.2 Multi-start as a quality claim](#192-multi-start-as-a-quality-claim)
-    - [19.3 The presets](#193-the-presets)
-    - [19.4 The 44-Gene Starting-Value Genome & Memetic Evolution](#194-the-44-gene-starting-value-genome--memetic-evolution)
-    - [19.5 Deterministic Homotopy Dispatch & Kinematic Velocity Profiling](#195-deterministic-homotopy-dispatch--kinematic-velocity-profiling)
-  - [20. Ledger: archived Multi-Verse internals](#20-ledger-archived-multi-verse-internals)
-  - [21. Ledger: validation and tooling](#21-ledger-validation-and-tooling)
-  - [22. Ledger: silent and unlogged behaviour](#22-ledger-silent-and-unlogged-behaviour)
-  - [23. Cross-cutting lessons](#23-cross-cutting-lessons)
-- [Part IV — Research agenda](#part-iv--research-agenda)
-  - [24. The open questions](#24-the-open-questions)
-  - [25. How to report a result](#25-how-to-report-a-result)
+- [Part III–IV — the research record, in their own documents](#part-iiiiv--the-research-record-in-their-own-documents)
+  - [STRATEGY_LEDGER.md — the failed strategy ledger](STRATEGY_LEDGER.md) (Part III, §16–§23)
+  - [RESEARCH_AGENDA.md — the research agenda](RESEARCH_AGENDA.md) (Part IV, §24–§25)
 - [Appendix A — Reproducing every table](#appendix-a--reproducing-every-table)
-- [Appendix B — Symbol index](#appendix-b--symbol-index)
+  - [A.1 The heuristic comparison matrix](#a1-the-heuristic-comparison-matrix)
+  - [A.2 The timing × accuracy-weight grid](#a2-the-timing--accuracy-weight-grid)
+  - [A.3 The seed comparison in one line](#a3-the-seed-comparison-in-one-line)
+  - [A.4 From Python, without the CLI](#a4-from-python-without-the-cli)
+  - [A.5 The reference solver table](#a5-the-reference-solver-table)
+  - [A.6 The validation pipeline only](#a6-the-validation-pipeline-only)
+  - [A.7 The test suite](#a7-the-test-suite)
+- [Appendix B — Where things live](#appendix-b--where-things-live)
 - [Appendix C — Known issue cross-reference](#appendix-c--known-issue-cross-reference)
 - [Appendix D — Glossary](#appendix-d--glossary)
 
@@ -98,13 +109,13 @@ Those two halves — *finding* the trajectory and *proving* it followable — ha
 
 Most of the engineering effort in this repository has gone into the second half. The first half is five deterministic seed styles, two timing models and a selection rule. Part I documents that first half in full, including the parts that do not work.
 
-The third half — **what was tried and failed** — is Part III. It exists because the obvious next move ("add a smarter path planner") has already been tried several times in this codebase, in several different forms, and each time it lost to the trivial baseline. Part III records those attempts, the measured evidence, and what would have to change for a retry to be worth anything. Part IV turns the ledger into concrete experiments.
+The third half — **what was tried and failed** — is [`STRATEGY_LEDGER.md`](STRATEGY_LEDGER.md). It exists because the obvious next move ("add a smarter path planner") has already been tried several times in this codebase, in several different forms, and each time it lost to the trivial baseline. The ledger records those attempts, the measured evidence, and what would have to change for a retry to be worth anything. [`RESEARCH_AGENDA.md`](RESEARCH_AGENDA.md) turns the ledger into concrete experiments.
 
 ## 0.2 Scope, authority and how to read a citation
 
 **The source is the authority.** Where this document and the code disagree, the code wins and this document is a bug. Every `file:line` citation was verified against the working tree on 2026-10-19; the tree is uncommitted work, so the line numbers are only meaningful for that snapshot.
 
-Citations use the form `path/file.py:LINE`. A symbol is written as `Class.method` when the class is unambiguous in that file.
+Citations use the form `path/file.py` (`LINE`). A symbol is written as `Class.method` when the class is unambiguous in that file.
 
 Two files hold most of the subject matter:
 
@@ -114,7 +125,7 @@ Two files hold most of the subject matter:
 | `overboard/main.py` | The CLI, the candidate set, the scoring, the selection and the export gate |
 | `overboard/verification/validator.py` | The CPU audit: forward integration, force/slip audit, metrics |
 | `overboard/verification/immrax_validator.py` | The closed-loop interval reachability check |
-| `overboard/legacy/` | The archived Multi-Verse pipeline, Reeds-Shepp bootstrap and JAX refiner (no shipped imports) |
+| (removed) | The Multi-Verse pipeline, the Reeds-Shepp bootstrap and the JAX refiner - git tag `archive/legacy-2026-10`, no shipped imports |
 | `overboard/models/robot_model.py` | The robot configuration and the shared force model |
 | `overboard/sysid/digital_twin.py` | The optional fitted plant |
 | `overboard/sysid/fit.py` | The host-side fitter |
@@ -141,7 +152,7 @@ Angles are radians everywhere in the source. Millimetres appear only in the Pybr
 
 Two kinds of numbers appear here, and they are always marked:
 
-- **Measured 2026-10-19** — produced by the sweep in [Section 9](#9-measured-heuristic-comparison) against this tree. The raw logs are in `docs/measurements/2026-10-19/`, and the exact commands are in [Appendix A](#appendix-a--reproducing-every-table).
+- **Measured 2026-10-19** — produced by the sweep in [Section 9](#9-measured-heuristic-comparison) against this tree. The raw logs are in `archive/research-2026-10:docs/measurements/2026-10-19/`, and the exact commands are in [Appendix A](#appendix-a--reproducing-every-table).
 - **Quoted** — copied from an earlier run, with the source document and date given. These are historical and may not reproduce exactly.
 
 **Provenance.** The sweep in [Section 9](#9-measured-heuristic-comparison) was run against this tree state:
@@ -170,33 +181,56 @@ Environment: Windows 11, Python 3.12.10, `casadi`, `jax`, `immrax`, `jaxopt`, `r
 
 The repository contains two entirely separate planning heuristics. They share the robot model and the validator. They do not share the candidate set, the scoring, or the seeds.
 
-### 1.1 The default system: simple CasADi solver
+### 1.1 The default system: the 3-Pillar unified engine
 
-**Entry point:** `main.py` → `TrajectoryOptimizer.solve` (`optimizer.py:17`).
+**Entry point:** `overboard/main.py` → `UnifiedPathEngine` (`overboard/core/unified_planner.py`) → `TrajectoryOptimizer.solve` (`overboard/core/optimizer.py`).
 
 ```
 waypoints
    │
-   ├─ seed          : optimizer.py:499  _build_initial_guess   (5 styles)
-   ├─ timing model  : optimizer.py:176  one dt, or one dt per segment
-   ├─ NLP solve     : optimizer.py:148  _solve_once  (IPOPT, max_iter 5000)
-   ├─ format        : optimizer.py:677  format_output
+   ├─ mesh          : unified_planner.py  compute_invariant_mesh_samples  (10-18 per segment, 50 ms tick span)
+   ├─ seed          : frontier_seed.py     generate_frontier_seed          (3 styles: sprint / sweeper / exploratory)
+   ├─ timing model  : per segment, always
+   ├─ objective     : cost_metric "discretization" + linear epigraph force bounds
+   ├─ NLP solve     : optimizer.py         _solve_once  (IPOPT, max_iter 150)
+   ├─ format        : optimizer.py         format_output
    │
-   ├─ CPU audit     : validator.py:321  validate_samples
-   ├─ Immrax        : immrax_validator.py:873  validate_trajectory
-   ├─ scoring       : main.py:1106      per-candidate tube / tracking / ok
-   ├─ selection     : main.py:92        _select_attempt
-   └─ export gate   : main.py:272       _export_block_reason
+   ├─ CPU audit     : validator.py         validate_samples
+   ├─ Immrax        : immrax_validator.py  validate_trajectory
+   ├─ scoring       : main.py              per-candidate tube / tracking / ok / fitness
+   ├─ selection     : main.py              _select_attempt   (shortest duration first - see 7.3)
+   └─ export gate   : main.py              _export_block_reason
 ```
 
-This is the default and only shipped path. The Multi-Verse system is archived under `overboard/legacy/`; no CLI flag selects it.
+This is the default path (`--unified` is on). The three frontier candidates are `frontier_sprint` (accuracy weight 0.001), `frontier_sweeper` (0.002) and `frontier_exploratory` (0.001), all per-segment timing; `--candidates N` truncates that list, and without `--validate` only the first one is solved. The derivation of the seeds is in [19.5](STRATEGY_LEDGER.md#195-the-kinetic-frontier-analytical-seed-generator--the-5-physical-principles) and of the engine in [19.6](STRATEGY_LEDGER.md#196-the-3-pillar-unified-trajectory-engine---unified-the-default-path).
+
+### 1.1b The stock path (`--no-unified`)
+
+**Entry point:** `overboard/main.py` → `TrajectoryOptimizer.solve` (`overboard/core/optimizer.py`).
+
+```
+waypoints
+   │
+   ├─ seed          : optimizer.py  _build_initial_guess   (5 styles: baseline, rolling, bow_left, bow_right, turn_first)
+   ├─ timing model  : optimizer.py  one dt, or one dt per segment
+   ├─ NLP solve     : optimizer.py  _solve_once  (IPOPT, max_iter 5000)
+   ├─ format        : optimizer.py  format_output
+   │
+   ├─ CPU audit     : validator.py         validate_samples
+   ├─ Immrax        : immrax_validator.py  validate_trajectory
+   ├─ scoring       : main.py              per-candidate tube / tracking / ok / fitness
+   ├─ selection     : overboard/main.py    _select_attempt   (fastest first - see 7.3)
+   └─ export gate   : main.py              _export_block_reason
+```
+
+This is the path the measurements in [Section 9](#9-measured-heuristic-comparison) describe. `--no-unified` (alias `--simple`) selects it, and so do `--uniform-dt`, `--per-segment-dt` and `--sweep`, which are deprecated and turn the unified engine off. The Multi-Verse system has been removed (git tag `archive/legacy-2026-10`); no CLI flag selects it.
 
 ### 1.2 The archived system: Multi-Verse
 
-The five-phase Multi-Verse pipeline is archived under `overboard/legacy/` and
+The five-phase Multi-Verse pipeline was removed from the tree (git tag `archive/legacy-2026-10`) and
 has no CLI entry point. It was a seed provider, not a better planner; the
 measured conclusion is in [Section 8](#8-the-archived-multi-verse-path) and
-[Section 20](#20-ledger-archived-multi-verse-internals).
+[Section 20](STRATEGY_LEDGER.md#20-ledger-archived-multi-verse-internals).
 
 ## 2. What is not in the tree
 
@@ -204,11 +238,11 @@ This is the list a newcomer most needs, because it defines the whole research sp
 
 | Missing | Consequence |
 |---|---|
-| **Any geometric path family.** No splines, clothoids, béziers, quintics, Dubins or Elford paths. | The only path primitive in the shipped planner is a straight line between waypoints (`optimizer.py:551` `_guess_point`). Reeds-Shepp exists only in the archived Multi-Verse bootstrap (`overboard/legacy/path_planning.py`), and only when both segment endpoints have a heading. |
+| **Any geometric path family.** No splines, clothoids, béziers, quintics, Dubins or Elford paths. | The only path primitive in the shipped planner is a straight line between waypoints (`overboard/core/optimizer.py` `_guess_point`). Reeds-Shepp existed only in the archived Multi-Verse bootstrap (`archive/legacy-2026-10:overboard/legacy/path_planning.py`), and only when both segment endpoints have a heading. |
 | **Obstacle or field geometry.** No walls, no mat boundaries, no zone constraints. | The robot is assumed to reach every waypoint in a straight line through space. |
-| **A geometric term in the objective.** The objective is duration plus an optional jerk penalty (`optimizer.py:214-...`). | The optimizer has no idea what the path *looks* like. It is pushed along by the integration constraints and the endpoint equalities. Two paths of the same length and the same smoothness are indistinguishable to it. This is the root cause of many entries in Part III. |
-| **Topology search.** No search over forward/reverse/point-turn combinations per segment. | The reverse and point-turn topologies exist only inside the archived JAX candidate generator (`overboard/legacy/jax_optimizer.py:61-66`), which never reaches the shipped solver. |
-| **Multi-start beyond five seeds.** | Five deterministic seeds, all from the same straight-line geometry. |
+| **A geometric term in the objective.** The objective is duration plus an optional jerk penalty (`overboard/core/optimizer.py`, `_compute_cost`). | The optimizer has no idea what the path *looks* like. It is pushed along by the integration constraints and the endpoint equalities. Two paths of the same length and the same smoothness are indistinguishable to it. This is the root cause of many entries in [`STRATEGY_LEDGER.md`](STRATEGY_LEDGER.md) (Part III). |
+| **Topology search.** No search over forward/reverse/point-turn combinations per segment. | The reverse and point-turn topologies existed only inside the archived JAX candidate generator (`archive/legacy-2026-10:overboard/legacy/jax_optimizer.py`), which never reached the shipped solver. |
+| **Multi-start beyond the frontier triad.** | The default path solves three frontier candidates (sprint, sweeper, exploratory); the stock path (`--no-unified`) solves five deterministic seeds, all from the same straight-line geometry. |
 | **A reachability term.** Reachability is computed *after* the solve. | The optimizer cannot know that a path it is about to find will fail the envelope gate. See [Section 14](#14-what-each-layer-proves-and-does-not-prove). |
 | **Motor or odometry dynamics in the optimizer.** | The optimizer is kinematic. The plant is modelled only in the validator. |
 
@@ -216,21 +250,21 @@ This is the list a newcomer most needs, because it defines the whole research sp
 
 ### 3.1 The candidate loop
 
-`main.py` builds a candidate list, solves each candidate independently, validates each one, scores each one, and picks one.
+`overboard/main.py` builds a candidate list, solves each candidate independently, validates each one, scores each one, and picks one.
 
 ```python
-# main.py:1000-1001
+# overboard/main.py
 use_validation = HAS_JAX and validate
 specs_to_solve = candidate_specs if use_validation else candidate_specs[:1]
 ```
 
-**Without `--validate`, only candidate 1 is solved.** Candidate 1 is always equal-duration `baseline`. This is deliberate: without the validator there is no way to tell whether a different candidate is better, so there is no reason to spend the time.
+**Without `--validate`, only candidate 1 is solved.** On the default path that is `frontier_sprint`; on the stock path it is equal-duration `baseline`. This is deliberate: without the validator there is no way to tell whether a different candidate is better, so there is no reason to spend the time.
 
-**With `--validate`,** `--candidates N` (default 2, maximum 5) candidates are solved. Each candidate is an independent `(seed, timing model, accuracy weight)` triple.
+**With `--validate`,** the candidates are solved and compared. On the default path the set is the three frontier candidates, truncated to `--candidates N` (the flag itself has no upper bound; `N < 3` shortens the triad). On the stock path each candidate is an independent `(seed, timing model, accuracy weight)` triple, and `--candidates N` says how many of them are solved.
 
 ### 3.2 Solve
 
-Each candidate is solved in its own NLP. With `--candidates N` and N > 1, the candidates are solved in worker processes (`main.py:222` `_solve_candidates`), with BLAS pinned to one thread per worker (`main.py:120-121`). The trajectories are identical to a sequential run; `tests/test_cli_ux.py:195` (`TestParallelCandidates`) asserts this.
+Each candidate is solved in its own NLP. With more than one candidate, they are solved in worker processes (`overboard/main.py`, `_solve_candidates`), with BLAS pinned to one thread per worker. The trajectories are identical to a sequential run; `tests/test_cli_ux.py` (`TestParallelCandidates`) asserts this.
 
 Three things force the solve to stay sequential, because they need the solver in the main process:
 
@@ -251,27 +285,31 @@ Every candidate goes through the full gate chain in [Part II](#part-ii--the-veri
 - `duration` — the trajectory duration,
 - `cost` — the solver's objective value.
 
-Then `_select_attempt` (`main.py:92`) picks one. See [Section 7](#7-scoring-and-selection).
+Then `_select_attempt` (`overboard/main.py`) picks one - the **shortest passing candidate** on the default path, the **lowest fitness score** on the stock path. See [Section 7](#7-scoring-and-selection) and [7.3](#73-the-selection-rule).
 
 ### 3.4 Export
 
-The export gate (`main.py:272`) blocks the write if the solver did not converge, or if `--validate` was requested and the selected candidate did not pass. On a blocked export, **nothing is written**: no `.traj`, no controller JSON, no Python module, no `_stats.json`. A pre-existing file at the output path is left untouched.
+The export gate (`overboard/main.py`) blocks the write if the solver did not converge, or if `--validate` was requested and the selected candidate did not pass. On a blocked export, **nothing is written**: no `.traj`, no controller JSON, no Python module, no `_stats.json`. A pre-existing file at the output path is left untouched.
 
-## 4. The seed heuristics
+## 4. The stock seed heuristics (`--no-unified`)
 
-The five seeds are declared in one line (`optimizer.py:8`):
+The default path uses the three **frontier** seeds of [1.1](#11-the-default-system-the-3-pillar-unified-engine); the five seeds below are the stock set, selected with `--no-unified`. They are declared in one line (`overboard/core/optimizer.py`):
+
+```
+GUESS_STYLES = ("baseline", "rolling", "bow_left", "bow_right", "turn_first")
+```
 
 ```python
 GUESS_STYLES = ("baseline", "rolling", "bow_left", "bow_right", "turn_first")
 ```
 
-They are built by `_build_initial_guess` (`optimizer.py:499`). The header comment at `optimizer.py:6-7` states the contract:
+They are built by `_build_initial_guess` (`overboard/core/optimizer.py`). The header comment there states the contract:
 
 > Distinct deterministic initial guesses for candidate generation. They are only guesses: IPOPT still enforces every waypoint, stop, and force limit.
 
 ### 4.1 The shared baseline geometry
 
-All five seeds start from the same geometry, produced by `_guess_point` (`optimizer.py:551`). For each sample at fraction `frac` along segment `i`:
+All five seeds start from the same geometry, produced by `_guess_point` (`overboard/core/optimizer.py`). For each sample at fraction `frac` along segment `i`:
 
 - **Position** is a straight-line interpolation between the two waypoints: `p1 + frac * (p2 - p1)`.
 - **Heading** depends on which endpoint headings are known:
@@ -285,86 +323,30 @@ All five seeds start from the same geometry, produced by `_guess_point` (`optimi
 
 The wheel speeds start at zero for every seed. The **initial interval** is not flat: it is proportional to the segment's length (PQ-B's Q2, finding F9), so every segment is allotted time in proportion to the distance it has to cover. The total is the same as the old flat guess - `0.1 s` per interval over the whole path - and each segment's share is spread over its own samples, so `dt_i = (0.1 * total_intervals) * (L_i / L) / s_i`, clipped to `[0.01, 1.0] s` (`_build_initial_guess`). The measured trade-off is the one PQ-B measured: it converges **more slowly** than the flat guess (40 iterations against 25) and finds a **faster trajectory** on 18 of 32 missions, so it changes which local optimum the solver reaches, not how fast it gets there.
 
-**Invariant:** the samples that sit on a waypoint are exactly on the waypoint. The seed never moves a constrained waypoint. `tests/test_optimizer.py:295` asserts this for all five styles, and also asserts that all five styles are mutually distinct.
+**Invariant:** the samples that sit on a waypoint are exactly on the waypoint. The seed never moves a constrained waypoint. `tests/test_optimizer.py` asserts this for all five styles, and also asserts that all five styles are mutually distinct.
 
-### 4.2 `baseline`
+### 4.2 The five seeds
 
-The geometry above, unchanged. Zero wheel speeds, flat `dt`.
+| Seed | Mechanism | Intent | Weakness |
+|---|---|---|---|
+| `baseline` | the shared geometry, unchanged: zero wheel speeds | the simplest feasible-ish starting point; the historical behaviour of the solver and the reference the others are measured against | the guess is kinematically poor - a straight line between two waypoints with different headings is not a path a differential-drive robot can follow, so IPOPT starts far from the feasible region |
+| `rolling` | `_set_rolling_speeds` back-differences the guessed positions into `v` and `omega`, converts them to wheel speeds, clips them to `±max_linear_speed` and forces zero at the ends and at every stop | IPOPT starts *moving*: a seed with zero wheel speeds sits where the integration constraints and the "start and end at rest" equalities pull in opposite directions | the speeds follow the straight-line geometry, so they are wrong wherever the path must curve - for a sharp turn the guess says "drive fast straight ahead" |
+| `bow_left` / `bow_right` | `_offset_segment_interiors` pushes the interior samples sideways along the segment's normal by `0.5 * L * tan(|dtheta| / 4)` (the circular-arc sagitta, capped at `0.35 * L`) times a parabolic bump that is zero at both waypoints | "so IPOPT starts in an arc-shaped basin": a corner-cutting straight line is not a path the robot can hold | the bow is one parabolic bump, not an arc; it cannot follow a path that curves twice, and the cap binds on a sharp turn |
+| `turn_first` | `_rotate_before_driving` turns in place on the segments whose heading change cannot be driven as an arc at the robot's minimum radius (the threshold is `2 * asin(L / 2 r_min)` for a short segment, 0.4 rad otherwise), then drives | for a sharp turn a differential-drive robot has two options - arc through the corner, or turn on the spot and then drive - and the seed picks one explicitly | it commits to a topology with no evidence about which one is right, and with a single sample in the segment it keeps the baseline geometry |
 
-**Intent:** the simplest possible feasible-ish starting point. It is the historical behaviour of the solver and the reference all other seeds are measured against.
+The seeds are cheap: every one of them is one pass over the samples, so the whole set costs nothing.
 
-**Cost:** zero.
+**Known result:** the seeds are *not* uniformly worse than the baseline. On the complex mission under equal-duration timing all four non-baseline seeds converge to **slower and wider** paths (8.12-8.66 s, 1.52-1.75 cm envelope, 0.31-0.45 cm tracking) than the baseline (6.068 s / 1.19 cm / 0.30 cm) - and three of the four pass, `bow_left` being the one that fails, on the motor force (0.007 N). Under per-segment timing on `example_mission_first4`, `bow_right` is the **selected** candidate at 1.663 s, ahead of the baseline at 1.833 s, while `bow_left` and `turn_first` fail there on the motor force (0.071 N and 0.008 N). See [Section 9](#9-measured-heuristic-comparison).
 
-**Weakness:** the guess is kinematically poor. The straight line between two waypoints with different headings is not a path a differential-drive robot can follow, so IPOPT starts far from the feasible region and has to do the real work.
-
-### 4.3 `rolling`
-
-Baseline geometry, then `_set_rolling_speeds` (`optimizer.py:641`) fills in wheel speeds from the guessed motion:
-
-- Backward-difference the guessed positions to get `v` and `omega` at `dt = 0.1`.
-- Convert to wheel speeds: `vl = v - omega * track/2`, `vr = v + omega * track/2`.
-- Clip to `±max_linear_speed(apply_headroom=True)`.
-- Force zero at the first sample, the last sample, and at every declared stop waypoint.
-
-**Intent:** IPOPT starts *moving*. A seed with zero wheel speeds sits at a point where the integration constraints and the "start and end at rest" equality constraints pull in opposite directions; a moving seed gives the solver a direction.
-
-**Cost:** one pass over the samples. Negligible.
-
-**Weakness:** the speeds are implied by the straight-line geometry, so they are wrong wherever the real path must curve. For a sharp turn the guess says "drive fast straight ahead", which is the opposite of what the path needs.
-
-### 4.4 `bow_left` and `bow_right`
-
-`_offset_segment_interiors` (`optimizer.py:586`) pushes the *interior* samples of each segment sideways along the segment's left normal:
-
-```
-amplitude = 0.5 * L * tan(|dtheta| / 4)           # the circular-arc sagitta
-amplitude = min(amplitude, 0.35 * L)              # metres
-bump(frac) = 4 * frac * (1 - frac)               # zero at both waypoints
-offset = sign * normal * amplitude * bump(frac)
-```
-
-The amplitude is the **sagitta of the circular arc** that connects the two waypoints with the turn `dtheta` the segment asks for, so the guess bows as much as the arc it is imitating. A segment with no turn keeps the old flat rule (`min(0.10 * L, 0.03)`).
-
-The bump is parabolic: zero at both waypoints, maximum in the middle. `bow_left` uses `sign = +1`, `bow_right` uses `sign = -1`.
-
-**Intent:** "so IPOPT starts in an arc-shaped basin" (`optimizer.py:616`). A straight line between two waypoints with different headings is a *corner-cutting* path, and it is not one a robot can hold. Bowing the interior samples to one side turns the guess into a curve that at least resembles the arc the robot will have to drive.
-
-**Cost:** one pass over the samples.
-
-**Weakness:** the bow is a single bump, not an arc: it is zero at both waypoints and parabolic in between, so it approximates the arc's shape rather than reproducing it. The amplitude is capped at 35 % of the segment, which binds on a sharp turn, and the bump cannot follow a path that curves twice. The amplitude is now *related* to the geometry it approximates, which is what the flat 10 % rule was not.
-
-### 4.5 `turn_first`
-
-`_rotate_before_driving` changes the *topology* of the guess on the segments whose heading change is too sharp to be driven as an arc at the robot's own minimum radius. The threshold is derived from the track width `r_min` and the segment's length `L`:
-
-```
-ratio = L / (2 * r_min)
-threshold = max(0.2, 2 * asin(ratio))   if ratio < 1   (the segment is short)
-threshold = 0.4                        otherwise
-```
-
-`2 * asin(ratio)` is the turn an arc of radius `r_min` subtends over that segment, so a turn smaller than that can be driven as an arc and does not need a turn on the spot. A segment longer than `2 * r_min` falls back to the old 0.4 rad constant.
-
-- The first `spin_samples = max(1, round(0.30 * s))` samples hold the position at `p1` and rotate the heading from the start heading to the end heading — a turn in place.
-- The remaining samples drive straight to `p2` with a constant `theta_end`.
-
-**Intent:** for a sharp turn, a differential-drive robot has two options: arc through the corner (slow, wide) or turn on the spot and then drive (fast, but it consumes the segment's length). The seed picks one of them explicitly.
-
-**Cost:** one pass over the samples.
-
-**Weakness:** it commits to a topology with no evidence about which one is right. The threshold now comes from the robot's geometry, but only for a short segment; a long one still uses the flat 0.4 rad constant. With `s_i <= 1` the seed keeps the baseline geometry instead, because one interval cannot hold both a spin and a drive.
-
-**Known result:** the seeds are *not* uniformly worse than the baseline. On the complex mission under equal-duration timing all four non-baseline seeds converge to **slower and wider** paths (8.12–8.66 s, 1.52–1.75 cm envelope, 0.31–0.45 cm tracking) than the baseline (6.068 s / 1.19 cm / 0.30 cm) — and three of the four pass, `bow_left` being the one that fails, on the motor force (0.007 N). Under per-segment timing on `example_mission_first4`, `bow_right` is the **selected** candidate at 1.663 s, ahead of the baseline at 1.833 s, while `bow_left` and `turn_first` fail there on the motor force (0.071 N and 0.008 N). See [Section 9](#9-measured-heuristic-comparison).
-
-### 4.6 Seed summary
+### 4.3 Seed summary
 
 | Seed | Mechanism | Code | Cost | What it biases | Measured outcome (2026-10-20) |
 |---|---|---|---|---|---|
-| `baseline` | straight line + heading blend, zero speed | `optimizer.py:551` | ~0 | nothing | Selected on 2 of the 6 missions; **fails** the tracking gate on the complex mission under per-segment timing and the tracking gate on events/equal-duration |
-| `rolling` | + back-differenced wheel speeds | `optimizer.py:641` | ~0 | "start moving" | Selected on the events mission (4.415 s) and on first4 under the full sweep (1.796 s) — the only mission where equal-duration timing produces no passing candidate at all |
-| `bow_left` | + parabolic sideways bump, +side | `optimizer.py:586` | ~0 | arc-shaped basin | Indistinguishable from the others on the straight path; fails the force gate on first4/per-segment by 0.071 N |
-| `bow_right` | + parabolic sideways bump, −side | `optimizer.py:586` | ~0 | opposite arc basin | The fastest *passing* per-segment candidate on first4 (1.663 s); fails the tracking gate on the complex mission |
-| `turn_first` | turn in place, then drive | `optimizer.py:608` | ~0 | turn-on-the-spot topology | Fails the force gate on first4/per-segment by 0.008 N; fastest non-baseline seed on the complex mission under equal-duration timing (8.118 s) but still fails |
+| `baseline` | straight line + heading blend, zero speed | `overboard/core/optimizer.py` | ~0 | nothing | Selected on 2 of the 6 missions; **fails** the tracking gate on the complex mission under per-segment timing and the tracking gate on events/equal-duration |
+| `rolling` | + back-differenced wheel speeds | `overboard/core/optimizer.py` | ~0 | "start moving" | Selected on the events mission (4.415 s) and on first4 under the full sweep (1.796 s) — the only mission where equal-duration timing produces no passing candidate at all |
+| `bow_left` | + parabolic sideways bump, +side | `overboard/core/optimizer.py` | ~0 | arc-shaped basin | Indistinguishable from the others on the straight path; fails the force gate on first4/per-segment by 0.071 N |
+| `bow_right` | + parabolic sideways bump, −side | `overboard/core/optimizer.py` | ~0 | opposite arc basin | The fastest *passing* per-segment candidate on first4 (1.663 s); fails the tracking gate on the complex mission |
+| `turn_first` | turn in place, then drive | `overboard/core/optimizer.py` | ~0 | turn-on-the-spot topology | Fails the force gate on first4/per-segment by 0.008 N; fastest non-baseline seed on the complex mission under equal-duration timing (8.118 s) but still fails |
 
 **The pattern:** a non-baseline seed wins by *escaping a gate*, not by finding a better optimum. On first4/per-segment the baseline passes at 1.833 s but `bow_right` finds a faster solution at 1.663 s, while `bow_left` and `turn_first` miss the force gate by 0.071 N and 0.008 N. On events/per-segment every seed now passes within a millisecond of the others. The seeds are insurance against one seed's convergence, not a search.
 
@@ -374,7 +356,7 @@ A second, orthogonal axis multiplies the five seeds into the candidate set: the 
 
 ### 5.1 Equal-duration (`per_segment_dt = False`)
 
-One scalar `dt` for the whole path (`optimizer.py:179`). Total time is `dt * (N - 1)`.
+One scalar `dt` for the whole path (`overboard/core/optimizer.py`). Total time is `dt * (N - 1)`.
 
 Because the interval is shared and the segments do not have the same number of samples, one shared `dt` does **not** mean every segment takes the same time any more: a segment's duration is `s_i * dt`, and the sample counts follow the arc length, so the long segments get more time. The model is still "one time step for the whole path" in spirit - the samples are all the same distance apart in time - but it is no longer "every segment is allotted the same duration".
 
@@ -409,13 +391,13 @@ The normalisation matters. Without it, the raw acceleration jump is proportional
 
 ### 5.4 Why the two models are not peers
 
-`main.py:135-139` states it, and the measured behaviour confirms it: on an uneven 1.0 m + 0.2 m path, equal-duration timing forces the short 0.2 m segment to take the same time as the long one. That is a large artificial penalty, and it is why the equal-duration candidate is often much slower than the per-segment one on paths with unequal segments.
+`overboard/main.py` states it, and the measured behaviour confirms it: on an uneven 1.0 m + 0.2 m path, equal-duration timing forces the short 0.2 m segment to take the same time as the long one. That is a large artificial penalty, and it is why the equal-duration candidate is often much slower than the per-segment one on paths with unequal segments.
 
-The consequence for the candidate set: **the default set mixes the two modes**, because they answer different questions. Equal-duration is the safe, historically validated option; per-segment is the faster, more general one that sometimes fails the tracking gate. Validation picks between them.
+The consequence for the candidate set: **the stock set mixes the two modes**, because they answer different questions. Equal-duration is the safe, historically validated option; per-segment is the faster, more general one that sometimes fails the tracking gate. Validation picks between them. The default (unified) path is per-segment only - it is the general model, and the equal-duration branch exists there for the measured comparison, not as a candidate.
 
 ### 5.5 Where the time allocation may change (KI-024)
 
-The per-segment model gives every waypoint segment its own interval, so the time scale can change anywhere. That is only legitimate where the state at the waypoint is fully determined, and the rule is now written down in one place (`TrajectoryOptimizer.merge_conditions`, `optimizer.py`):
+The per-segment model gives every waypoint segment its own interval, so the time scale can change anywhere. That is only legitimate where the state at the waypoint is fully determined, and the rule is now written down in one place (`TrajectoryOptimizer.merge_conditions`, `overboard/core/optimizer.py`):
 
 | waypoint | what the two pieces must agree on | timing | force profile |
 |---|---|---|---|
@@ -522,12 +504,33 @@ The per-wheel force limit is a `max` over the wheel's share of the longitudinal 
 
 ## 6. Candidate set construction
 
-`_candidate_specs` (`main.py:124`) is the whole story.
+There are two candidate sets, and the default is the first one.
 
-### 6.1 The `auto` mode (default)
+### 6.1 The frontier triad (default)
 
 ```python
-# main.py:160-173
+# overboard/main.py, with --unified
+specs_to_solve = [
+    {"accuracy_weight": 0.001, "guess_style": "frontier_sprint",     "per_segment_dt": True, "cost_metric": "discretization", "epigraph_constraints": True},
+    {"accuracy_weight": 0.002, "guess_style": "frontier_sweeper",    "per_segment_dt": True, "cost_metric": "discretization", "epigraph_constraints": True},
+    {"accuracy_weight": 0.001, "guess_style": "frontier_exploratory","per_segment_dt": True, "cost_metric": "discretization", "epigraph_constraints": True},
+]
+```
+
+| Candidate | Seed | Weight | Timing | Metric |
+|---|---|---:|---|---|
+| 1 | `frontier_sprint` | 0.001 | per-segment | discretization |
+| 2 | `frontier_sweeper` | 0.002 | per-segment | discretization |
+| 3 | `frontier_exploratory` | 0.001 | per-segment | discretization |
+
+`--candidates N` truncates the list when `N < 3`; an explicit `--accuracy-weight` overrides the three weights. The sample count defaults to the engine's invariant mesh (10-18 samples per segment, a 50 ms tick span) unless `--samples` says otherwise.
+
+### 6.2 The stock set (`--no-unified`)
+
+`_candidate_specs` (`overboard/main.py`) builds the stock set: a seed and a timing model per candidate, cycling through the two timing models and the five seeds.
+
+```python
+# overboard/main.py
 modes = [False, True]     # equal-duration, per-segment
 style = GUESS_STYLES[(k // len(modes)) % len(GUESS_STYLES)]
 specs.append({"accuracy_weight": base, "guess_style": style,
@@ -542,23 +545,21 @@ specs.append({"accuracy_weight": base, "guess_style": style,
 | 4 | `rolling` | per-segment |
 | 5 | `bow_left` | equal-duration |
 
-With the default `--candidates 2`, the set is exactly `baseline/equal-duration` and `baseline/per-segment`.
+With the default `--candidates 2`, the set is exactly `baseline/equal-duration` and `baseline/per-segment`. This is the set the measurements in [Section 9](#9-measured-heuristic-comparison) describe.
 
-### 6.2 The forced modes
+`--uniform-dt` and `--per-segment-dt` fix `modes` to a single entry. The seed still rotates, so `--uniform-dt --candidates 5` solves all five seeds under equal-duration timing - the cleanest way to compare the seeds against each other. Both flags turn the unified engine off.
 
-`--uniform-dt` and `--per-segment-dt` (`main.py:707-713`) fix `modes` to a single entry. The seed still rotates, so `--uniform-dt --candidates 5` solves all five seeds under equal-duration timing — this is the cleanest way to compare the seeds against each other.
+### 6.3 The sweep grid (deprecated)
 
-### 6.3 The sweep grid
-
-`--sweep` (`main.py:724`) adds the timing-mode × accuracy-weight grid:
+`--sweep` adds the timing-mode × accuracy-weight grid:
 
 ```python
-SWEEP_WEIGHTS = (0.0, 0.001, 0.002, 0.005, 0.01)    # main.py:116
+SWEEP_WEIGHTS = (0.0, 0.001, 0.002, 0.005, 0.01)    # overboard/main.py
 ```
 
-The grid uses the `baseline` seed only, and it **adds** candidates — it never removes the default ones (`main.py:175-195`), so a sweep can only ever offer more options. A combination already in the set is not solved twice.
+The grid uses the `baseline` seed only, and it **adds** candidates - it never removes the default ones, so a sweep can only ever offer more options. A combination already in the set is not solved twice.
 
-The rationale for the weight ladder is in the comment at `main.py:109-115`: the weight trades time against wheel-jerk discipline, and the best value depends on the path. A mission with long straight segments wants a low weight; an uneven path wants a little more.
+The rationale for the weight ladder is in the comment in `overboard/main.py`: the weight trades time against wheel-jerk discipline, and the best value depends on the path. A mission with long straight segments wants a low weight; an uneven path wants a little more. The flag is **deprecated**: it turns the unified engine off, and the invariant mesh in the default path removed the need for a manual grid.
 
 ### 6.4 The archived ladder
 
@@ -569,7 +570,7 @@ the 6.07 s one stayed bounded. Do not reintroduce it.
 
 ### 6.5 Presets
 
-`PRESETS` (`main.py:55`) fills in options the user did not set. Explicit flags always win (`main.py:419` `_apply_preset`).
+`PRESETS` (`overboard/main.py`) fills in options the user did not set. Explicit flags always win (`_apply_preset`).
 
 | Preset | samples | accuracy weight | candidates | validate | export |
 |---|---|---|---|---|---|
@@ -583,10 +584,9 @@ the 6.07 s one stayed bounded. Do not reintroduce it.
 
 ### 7.1 The per-candidate score
 
-After the Immrax run, `main.py:1106-1140` computes the score:
+After the Immrax run, `overboard/main.py` computes the score:
 
 ```python
-# main.py:1111-1125
 for i in range(len(samples_data)):
     wp_idx = i // samples
     local_threshold = waypoint_thresholds.get(wp_idx, 0.02)   # 2 cm for transit
@@ -605,12 +605,11 @@ The envelope radius is the half-diagonal of the axis-aligned bounding box of the
 Then:
 
 ```python
-# main.py:1130-1140
 attempt_record["ok"] = (converged and not failed_threshold and immrax_report['passed'])
 attempt_record["violation"] = max_vio_val if failed_threshold else (tracking if tracking > 0.005 else 0)
 ```
 
-The CPU audit (`validator.py:321`) runs on **every** candidate, not only on the winner, so a candidate that clears Immrax but breaks the force, slip or integration limits cannot block a later candidate that passes everything.
+The CPU audit (`overboard/verification/validator.py`) runs on **every** candidate, not only on the winner, so a candidate that clears Immrax but breaks the force, slip or integration limits cannot block a later candidate that passes everything.
 
 ### 7.2 The 5-part path fitness score
 
@@ -629,12 +628,15 @@ The weights are in seconds, so they say what each defect is worth: 1 mm of sprea
 ### 7.3 The selection rule
 
 ```python
-def _select_attempt(attempts):
+def _select_attempt(attempts, prefer_duration=False):
     candidates = [a for a in attempts if a.get("converged", False)]   # KI-001
     if not candidates:
         return None, False
     passing = [a for a in candidates if a["ok"]]
     if passing:
+        if prefer_duration:
+            return min(passing, key=lambda a: (a.get("duration", a["cost"]),
+                                                a.get("tube", float("inf")))), True
         if any(a.get("fitness") is not None and math.isfinite(float(a["fitness"]))
                for a in passing):
             return min(passing, key=lambda a: (float(a.get("fitness", float("inf"))),
@@ -648,16 +650,19 @@ def _select_attempt(attempts):
 In words:
 
 1. **Non-converged candidates are never eligible.** (KI-001)
-2. Among the passing candidates, **the lowest fitness score wins** ([7.2](#72-the-5-part-path-fitness-score)); the envelope and then the duration break ties. The old rule - the smallest envelope, then the shortest duration - is still the fallback for a run where no fitness was scored. The `--surrogate-polish` pipeline asks for a third variant, the **gate-certified minimum time**: the shortest duration first, then the smallest envelope, with the fitness score not consulted at all.
-3. If none pass, the converged candidate with the **smallest quantified violation** wins, and `passed_any` is `False` — so the export is still blocked. The fallback exists to pick the most useful candidate to *report*, not to ship.
+2. Among the passing candidates, the rule depends on the path:
+   - **the default path** (`--unified`, and also `--surrogate-polish` and `--pyramid`) sets `prefer_duration`: **the shortest duration wins**, and the envelope breaks ties. This is the *gate-certified minimum time* the unified engine was built for.
+   - **the stock path** (`--no-unified`) ranks by the **lowest 5-part fitness score** ([7.2](#72-the-5-part-path-fitness-score)), with the envelope and then the duration breaking ties.
+   - if no fitness was scored at all, the fallback is the smallest envelope, then the shortest duration.
+3. If none pass, the converged candidate with the **smallest quantified violation** wins, and `passed_any` is `False` - so the export is still blocked. The fallback exists to pick the most useful candidate to *report*, not to ship.
 
-**What the rule used to be, and why it changed.** The rule was `min(tube, then duration)`, and PQ-B's Q10 measured it: five candidate rules picked the same trajectory on every mission, because the envelope is almost a proxy for the duration (`corr(duration, envelope) = +0.97`, and the tube grows with the clock through the backlash term). The fitness score replaces it because it asks a different question - not "which plan is narrowest" but "which plan's defects are worth the least time" - and the two can disagree: a plan with a wider tube at the stops but a shorter run can win.
+**What the rule used to be, and why it changed.** The rule was `min(tube, then duration)`, and PQ-B's Q10 measured it: five candidate rules picked the same trajectory on every mission, because the envelope is almost a proxy for the duration (`corr(duration, envelope) = +0.97`, and the tube grows with the clock through the backlash term). The fitness score replaces it because it asks a different question - not "which plan is narrowest" but "which plan's defects are worth the least time" - and the two can disagree: a plan with a wider tube at the stops but a shorter run can win. The unified path then went one step further and asked for the shortest plan that passes at all, because its candidates are all built to be fast.
 
-`tests/test_regressions.py:103` (`TestAttemptSelection`) guards the rule that a failed attempt is never preferred over a passing one.
+`tests/test_regressions.py` (`TestAttemptSelection`) guards the rule that a failed attempt is never preferred over a passing one.
 
 ### 7.4 The report
 
-`_emit_validation_report` (`main.py:376`) prints one machine-readable line:
+`_emit_validation_report` (`overboard/main.py`) prints one machine-readable line:
 
 ```text
 ##OVERBOARD-VALIDATION## {"selected": 1, "candidates": [ ... ]}
@@ -667,23 +672,23 @@ Each candidate carries `style`, `timing`, `duration_s`, `envelope_cm`, `tracking
 
 ## 8. The archived Multi-Verse path
 
-The Multi-Verse pipeline is archived under `overboard/legacy/` and has no CLI
+The Multi-Verse pipeline was removed from the tree (git tag `archive/legacy-2026-10`) and has no CLI
 entry point or candidate path. Its five phases (bootstrap, kinematic profile,
 critic, JAX refinement, polish and refine probe) are preserved there with the
-archived `path_planning.py` and `jax_optimizer.py`; nothing in the shipped
-planner imports them. The measured lesson is in [20.1](#201-the-jax-refinement)
-and [20.2](#202-the-refine-probe): the pipeline was a seed provider, not a
+archived `archive/legacy-2026-10:overboard/legacy/path_planning.py` and `archive/legacy-2026-10:overboard/legacy/jax_optimizer.py`; nothing in the shipped
+planner imports them. The measured lesson is in [20.1](STRATEGY_LEDGER.md#201-the-jax-refinement)
+and [20.2](STRATEGY_LEDGER.md#202-the-refine-probe): the pipeline was a seed provider, not a
 better planner.
 
 ## 9. Measured heuristic comparison
 
-**Measured 2026-10-20**, against the tree with the arc-length sample layout, the self-consistent collocation on by default (KI-026, KI-051, KI-052) and the consolidated firmware (KI-028) in place. 60 candidate solves - 6 missions x 2 timing models x 5 seeds - plus the timing-mode x accuracy-weight grid. The raw logs are in `docs/measurements/2026-10-20-variable-samples/`, and the exact commands are in [Appendix A](#appendix-a--reproducing-every-table). The provenance (source hashes, environment, test state) is in [S0.4](#04-measurement-conventions).
+**Measured 2026-10-20**, against the tree with the arc-length sample layout, the self-consistent collocation on by default (KI-026, KI-051, KI-052) and the consolidated firmware (KI-028) in place. 60 candidate solves - 6 missions x 2 timing models x 5 seeds - plus the timing-mode x accuracy-weight grid. The raw logs are in `archive/research-2026-10:docs/measurements/2026-10-20-variable-samples/`, and the exact commands are in [Appendix A](#appendix-a--reproducing-every-table). The provenance (source hashes, environment, test state) is in [S0.4](#04-measurement-conventions).
 
-**These numbers describe the shipped planner**, and they are **not comparable** with the 2026-10-20-post-ki028 evidence, which was taken with the trapezoidal collocation and a uniform sample count. The changes and what they cost are in [5.7](#57-the-collocation-where-a-sample-is-placed), [5.8](#58-the-sample-layout-how-many-samples-a-segment-gets) and [7.2](#72-the-5-part-path-fitness-score); the measurement that produced this section is in `docs/measurements/2026-10-20-variable-samples/`, and the runner takes the tree's fingerprint before and after the run, so a run whose tree changed underneath it is refused rather than quoted.
+**These numbers describe the stock planner** - the `--no-unified` candidate set, measured before the 3-Pillar unified engine became the default. They are still the right record for the seeds, the timing models and the gates, and the unified engine's own numbers are in [19.6](STRATEGY_LEDGER.md#196-the-3-pillar-unified-trajectory-engine---unified-the-default-path) and in `docs/OPTIMAL_CONTROL_DERIVATION.md`. They are **not comparable** with the 2026-10-20-post-ki028 evidence, which was taken with the trapezoidal collocation and a uniform sample count. The changes and what they cost are in [5.7](#57-the-collocation-where-a-sample-is-placed), [5.8](#58-the-sample-layout-how-many-samples-a-segment-gets) and [7.2](#72-the-5-part-path-fitness-score); the measurement that produced this section is in `archive/research-2026-10:docs/measurements/2026-10-20-variable-samples/`, and the runner takes the tree's fingerprint before and after the run, so a run whose tree changed underneath it is refused rather than quoted.
 
-**The "Selected" column is the fitness score's choice**, not the envelope's ([7.3](#73-the-selection-rule)): among the candidates that pass, the one with the lowest 5-part fitness score wins, with the envelope and the duration as tie-breakers.
+**The "Selected" column is the fitness score's choice**, not the envelope's ([7.3](#73-the-selection-rule)): among the candidates that pass, the one with the lowest 5-part fitness score wins, with the envelope and the duration as tie-breakers. That is the **stock** set's rule - this matrix is the stock set's measurement (see the note above).
 
-**The tables in this section are generated**, not typed in: `python docs/research/rq_a/sync_tables.py` rewrites them from the measurement JSON and `--check` verifies that every number still matches.
+**The tables in this section are generated**, not typed in: `archive/research-2026-10:docs/research/rq_a/sync_tables.py` rewrites them from the measurement JSON and `--check` verifies that every number still matches.
 
 ### 9.1 Method
 
@@ -771,7 +776,7 @@ Re-measured after the merge conditions went in (KI-024). The per-segment model n
 
 ### 9.4 Table C — what the selector chose
 
-The rule is `min(tube, then duration)` among the passing candidates (`main.py:102`).
+The rule is `min(tube, then duration)` among the passing candidates (`overboard/main.py`).
 
 | Mission | Equal-duration | Per-segment | Note |
 |---|---|---|---|
@@ -834,7 +839,7 @@ Run with `--per-segment-dt --sweep`, so the grid adds the `baseline` seed at fiv
 
 ### 9.6 Table E — the full sweep: what the tool can actually deliver
 
-The default candidate set plus the timing-mode x accuracy-weight grid, both timing modes: **13 candidates per mission, 78 in total**. This is `--candidates 5 --sweep`, the most thorough configuration the CLI offers.
+The stock candidate set plus the timing-mode x accuracy-weight grid, both timing modes: **13 candidates per mission, 78 in total**. This is `--no-unified --candidates 5 --sweep`, the most thorough configuration the stock path offers.
 
 | Mission | Wall | Passing | Selected | Duration s | Envelope cm | Tracking cm | Fastest passing |
 |---|---:|---:|---|---:|---:|---:|---|
@@ -881,25 +886,25 @@ The two models are not peers because the **sample count is not uniform any more*
 A candidate must clear every gate below. The order matters: cheap and categorical checks first, so a solver failure is reported as a solver failure and not as a tracking error.
 
 ```text
- G0  solver convergence            main.py:1057, main.py:274
+ G0  solver convergence            overboard/main.py  (stats["converged"])
       |
- G1  CPU audit                     validator.py:321
-      |  - forward integration @ 1 ms RK4     validator.py:7
-      |  - per-wheel force / slip audit       validator.py:122
-      |  - metrics                            validator.py:212
+ G1  CPU audit                     overboard/verification/validator.py  validate_samples
+      |  - forward integration @ 1 ms RK4        forward_integrate
+      |  - per-wheel force / slip audit          audit_constraints
+      |  - metrics                               compute_metrics
       |
- G2  final waypoint check          validator.py:300
-      |  2 cm position, 2 cm heading
+ G2  final waypoint check          overboard/verification/validator.py  check_final_waypoint
+      |  2 cm position, 0.02 rad heading
       |
- G3  Immrax reachability           immrax_validator.py:873
+ G3  Immrax reachability           overboard/verification/immrax_validator.py  validate_trajectory
       |  - motor force, per-wheel slip, wheel speed
       |  - closed-loop tracking error <= 5 mm
       |  - reachability envelope
       |
- G4  local envelope threshold      main.py:1111-1125
+ G4  local envelope threshold      overboard/main.py  _segment_limit
       |  2 cm transit, 0.5 cm precision_mode, or an explicit error_threshold
       |
- G5  export gate                   main.py:272
+ G5  export gate                   overboard/main.py  _export_block_reason
       |  - not converged  -> block
       |  - --validate and not passed -> block
       |  - blocked -> nothing is written, exit code 1
@@ -911,13 +916,13 @@ A candidate must clear every gate below. The order matters: cheap and categorica
 
 ### 10.2 G1 — The CPU audit
 
-`validate_samples` (`validator.py:321`) runs three things:
+`validate_samples` (`overboard/verification/validator.py`) runs three things:
 
-- **`forward_integrate`** (`validator.py:7`) re-integrates the planned wheel speeds with RK4 at 1 ms and compares against the planned samples. It rejects empty and non-monotone time vectors and returns `inf` errors instead of crashing.
-- **`audit_constraints`** (`validator.py:122`) checks, per sample: the per-wheel motor force against the velocity-dependent limit, the per-wheel slip against the per-wheel normal force, the legacy total traction, and the wheel speed.
-- **`compute_metrics`** (`validator.py:212`) collects duration, path length, speeds, accelerations, jerk (computed on midpoint spacing, so it is layout-independent — KI-022), tortuosity, chattering and force utilisation.
+- **`forward_integrate`** (`overboard/verification/validator.py`) re-integrates the planned wheel speeds with RK4 at 1 ms and compares against the planned samples. It rejects empty and non-monotone time vectors and returns `inf` errors instead of crashing.
+- **`audit_constraints`** (`overboard/verification/validator.py`) checks, per sample: the per-wheel motor force against the velocity-dependent limit, the per-wheel slip against the per-wheel normal force, the legacy total traction, and the wheel speed.
+- **`compute_metrics`** (`overboard/verification/validator.py`) collects duration, path length, speeds, accelerations, jerk (computed on midpoint spacing, so it is layout-independent — KI-022), tortuosity, chattering and force utilisation.
 
-The gate (`validator.py:332-338`):
+The gate (`overboard/verification/validator.py`):
 
 ```python
 ok = (errors["max_pos_error_m"] < 0.01
@@ -929,13 +934,13 @@ ok = (errors["max_pos_error_m"] < 0.01
 
 ### 10.3 G2 — The final waypoint check
 
-`check_final_waypoint` (`validator.py:300`) is the second line of defence: the exported trajectory must actually reach its last waypoint, within 2 cm of position and 2 cm of heading (`validator.py:302-303`). This one runs **even without `--validate`** (`main.py` calls it on the selected candidate before writing).
+`check_final_waypoint` (`overboard/verification/validator.py`) is the second line of defence: the exported trajectory must actually reach its last waypoint, within 2 cm of position and 2 cm of heading (`overboard/verification/validator.py`). This one runs **even without `--validate`** (`overboard/main.py` calls it on the selected candidate before writing).
 
 ### 10.4 G3 — Immrax reachability
 
-`ImmraxValidator.validate_trajectory` (`immrax_validator.py:873`) simulates the closed loop with interval arithmetic. Details in [Section 12](#12-controller-and-plant-parity).
+`ImmraxValidator.validate_trajectory` (`overboard/verification/immrax_validator.py`) simulates the closed loop with interval arithmetic. Details in [Section 12](#12-controller-and-plant-parity).
 
-**The tube is the width of a *model*, so the model is part of the number.** The reachability is computed by one of two **propagations** (`immrax_validator.py`, `PROPAGATION`), and every candidate in the `##OVERBOARD-VALIDATION##` line names the one that produced its envelope:
+**The tube is the width of a *model*, so the model is part of the number.** The reachability is computed by one of two **propagations** (`overboard/verification/immrax_validator.py`, `PROPAGATION`), and every candidate in the `##OVERBOARD-VALIDATION##` line names the one that produced its envelope:
 
 | propagation | what it embeds | what the tube bounds |
 |---|---|---|
@@ -946,7 +951,7 @@ The tick propagation needs a Jacobian inclusion: with the natural extension the 
 
 Two rules come with it. **The controller must not unpack the pose**: `x, y, theta = current_pose` is the JAX `unstack` primitive, Immrax's natural inclusion has no rule for it, and the tick map dies with "unstack not in inclusion_registry" — so the pose is read by indexing, which compiles to `slice`+`squeeze` and gives the same number. And **an envelope is never read without its model**: the report, the studio's validation note and the studio's chip tooltip all name the propagation, the same rule as `envelope_truncated`.
 
-The physical pass condition (`immrax_validator.py:969-976`):
+The physical pass condition (`overboard/verification/immrax_validator.py`):
 
 ```python
 is_physically_safe = (
@@ -965,9 +970,9 @@ Per sample, the envelope radius is compared to the local threshold. The threshol
 
 | Waypoint kind | Threshold | Source |
 |---|---|---|
-| Transit (default) | 2 cm | `main.py:_segment_limit` |
-| `precision_mode: true` | 0.5 cm | `main.py:_load_waypoints` |
-| Explicit `error_threshold` | the user's value | `main.py:_load_waypoints` |
+| Transit (default) | 2 cm | `overboard/main.py` (`_segment_limit`) |
+| `precision_mode: true` | 0.5 cm | `overboard/main.py` (`_load_waypoints`) |
+| Explicit `error_threshold` | the user's value | `overboard/main.py` (`_load_waypoints`) |
 
 **The limit belongs to the way *into* the waypoint.** A waypoint's limit governs the segment that ends at it - the approach - and the segment that starts there falls back to it when the next waypoint declares none. So a waypoint marked as a precision one is held to its tight limit on the way the robot arrives, which is what the operator asked for, and the final waypoint's limit governs the last segment instead of being dropped (KI-034).
 
@@ -976,7 +981,7 @@ A sample whose envelope is marked `unknown` also fails — that is how a diverge
 ### 10.6 G5 — The export gate
 
 ```python
-# main.py:272-278
+# overboard/main.py, _export_block_reason
 def _export_block_reason(stats, validate, attempt_passed):
     if not stats.get("converged", False):
         return "solver did not converge"
@@ -993,27 +998,27 @@ Every number in the gate chain, in one place.
 
 | # | Threshold | Value | Where | What it means |
 |---|---|---|---|---|
-| 1 | Motor force violation | < 1e-3 N | `immrax_validator.py:527` | worst-case per-wheel force over the motor limit |
-| 2 | Per-wheel slip (left, right) | < 1e-3 N | `immrax_validator.py:528-529` | per-wheel traction violation over the limit |
-| 3 | Closed-loop tracking error | ≤ 5 mm | `immrax_validator.py:443`, checked at `:530` | max distance between the true pose and the reference. **Position only** — the heading error is reported separately (`max_heading_error_rad`) but not gated, because the heading behaviour is not yet calibrated (KI-020, RQ-A OQ4) |
-| 4 | Wheel-speed violation | ≤ 1e-6 m/s | `immrax_validator.py:531` | commanded speed over the limit |
-| 5 | Envelope divergence radius | > 50 mm ⇒ diverged | `immrax_validator.py:764-765` | the interval tube has grown past the point where it means anything; the sample is marked `unknown` |
-| 6 | Transit envelope radius | ≤ 2 cm | `main.py:1114` | per-sample reachability half-diagonal |
-| 7 | `precision_mode` envelope radius | ≤ 0.5 cm | `main.py:_load_waypoints` | tight waypoints, on the way in |
-| 8 | Explicit `error_threshold` | user value | `main.py:_load_waypoints` | per-waypoint override, on the way in |
-| 9 | Forward-integration position error | < 1 cm | `validator.py:333` | RK4 re-integration vs. the plan |
-| 10 | Forward-integration final error | < 1 cm | `validator.py:334` | same, at the end |
-| 11 | Violating samples | 0 | `validator.py:335` | motor/traction limit hits |
-| 12 | Slip points | 0 | `validator.py:336` | per-wheel slip events |
-| 13 | Speed violation | < 1e-6 m/s | `validator.py:337` | wheel speed over the limit |
-| 14 | Final waypoint position | ≤ 2 cm | `validator.py:302` | the plan must arrive |
-| 15 | Final waypoint heading | ≤ 2 cm (0.02 rad) | `validator.py:302` | the plan must arrive pointing the right way |
-| 16 | IPOPT iterations | ≤ 5000 | `optimizer.py` solver options | `max_iter`; the **warm** pass in fast-polish is budgeted to 200, and the cold pass that follows it is not |
+| 1 | Motor force violation | < 1e-3 N | `overboard/verification/immrax_validator.py` | worst-case per-wheel force over the motor limit |
+| 2 | Per-wheel slip (left, right) | < 1e-3 N | `overboard/verification/immrax_validator.py` | per-wheel traction violation over the limit |
+| 3 | Closed-loop tracking error | ≤ 5 mm | `overboard/verification/immrax_validator.py`, checked at `:530` | max distance between the true pose and the reference. **Position only** — the heading error is reported separately (`max_heading_error_rad`) but not gated, because the heading behaviour is not yet calibrated (KI-020, RQ-A OQ4) |
+| 4 | Wheel-speed violation | ≤ 1e-6 m/s | `overboard/verification/immrax_validator.py` | commanded speed over the limit |
+| 5 | Envelope divergence radius | > 50 mm ⇒ diverged | `overboard/verification/immrax_validator.py` | the interval tube has grown past the point where it means anything; the sample is marked `unknown` |
+| 6 | Transit envelope radius | ≤ 2 cm | `overboard/main.py` | per-sample reachability half-diagonal |
+| 7 | `precision_mode` envelope radius | ≤ 0.5 cm | `overboard/main.py` (`_load_waypoints`) | tight waypoints, on the way in |
+| 8 | Explicit `error_threshold` | user value | `overboard/main.py` (`_load_waypoints`) | per-waypoint override, on the way in |
+| 9 | Forward-integration position error | < 1 cm | `overboard/verification/validator.py` | RK4 re-integration vs. the plan |
+| 10 | Forward-integration final error | < 1 cm | `overboard/verification/validator.py` | same, at the end |
+| 11 | Violating samples | 0 | `overboard/verification/validator.py` | motor/traction limit hits |
+| 12 | Slip points | 0 | `overboard/verification/validator.py` | per-wheel slip events |
+| 13 | Speed violation | < 1e-6 m/s | `overboard/verification/validator.py` | wheel speed over the limit |
+| 14 | Final waypoint position | ≤ 2 cm | `overboard/verification/validator.py` | the plan must arrive |
+| 15 | Final waypoint heading | ≤ 2 cm (0.02 rad) | `overboard/verification/validator.py` | the plan must arrive pointing the right way |
+| 16 | IPOPT iterations | ≤ 5000 | `overboard/core/optimizer.py` solver options | `max_iter`; the **warm** pass in fast-polish is budgeted to 200, and the cold pass that follows it is not |
 | 17 | IPOPT tolerance | 1e-2 | solver options | `tol` and `constr_viol_tol`, deliberately loose for interactive use |
 
 ## 11. The uncertainty model
 
-`RobotConfig.uncertainties` (`robot_model.py:116-133`) holds seven intervals. They are what Immrax propagates.
+`RobotConfig.uncertainties` (`overboard/models/robot_model.py`) holds seven intervals. They are what Immrax propagates.
 
 | Interval | Default | Declared in `examples/fll_choreo.json` | Meaning |
 |---|---|---|---|
@@ -1027,9 +1032,9 @@ Every number in the gate chain, in one place.
 
 Three things to keep in mind:
 
-1. **Both bounds matter.** Immrax takes an `Interval(w_lower, w_upper)`; passing a plain array makes Immrax treat the values as constants, and only the lower bound would then have any effect (KI-003). `tests/test_regressions.py:607` (`TestReachabilityEnvelope`) guards this.
+1. **Both bounds matter.** Immrax takes an `Interval(w_lower, w_upper)`; passing a plain array makes Immrax treat the values as constants, and only the lower bound would then have any effect (KI-003). `tests/test_regressions.py` (`TestReachabilityEnvelope`) guards this.
 2. **The declared ranges are test assumptions.** They were narrowed to make the example missions behave, not measured from the robot. A narrow `cof` interval makes the envelope small; it does not make the robot accurate.
-3. **The optimizer and the validator share one force model.** `wheel_normal_forces` (`robot_model.py:10`) is the single implementation of the weight transfer — lateral only, no front/rear split (a two-wheel robot has none) — and it is called from the optimizer, the CPU audit, the JAX model and the Immrax check (KI-010). The optimizer additionally uses the declared worst case for the coefficient of friction, the torque headroom, the wheel radius, the track width and the inertia (`robot_model.py:183` `get_robust_force_params`).
+3. **The optimizer and the validator share one force model.** `wheel_normal_forces` (`overboard/models/robot_model.py`) is the single implementation of the weight transfer — lateral only, no front/rear split (a two-wheel robot has none) — and it is called from the optimizer, the CPU audit, the JAX model and the Immrax check (KI-010). The optimizer additionally uses the declared worst case for the coefficient of friction, the torque headroom, the wheel radius, the track width and the inertia (`overboard/models/robot_model.py` `get_robust_force_params`).
 
 ## 12. Controller and plant parity
 
@@ -1037,16 +1042,16 @@ The value of the reachability check is that it simulates roughly what the robot 
 
 | Aspect | Validator | Deployed runtime | Parity |
 |---|---|---|---|
-| Control period | 20 ms (`immrax_validator.py:42`) | 20 ms `drive()` tick | **yes** |
-| Plant integration | 4 × 5 ms substeps (`immrax_validator.py:43`) | — | mirrors the firmware's own substepping |
-| Reference | linear interpolation of `x, y, heading, v, omega` plus the precomputed Ramsete gain `sqrt(omega^2 + b*v^2)` (`immrax_validator.py:46`) | `ramsete.py` | **yes** |
-| Heading unwrapping | `unroll_trajectory_headings` (`immrax_validator.py:14`) | — | prevents the ±π wrap |
-| Controller | `RamseteController` (`immrax_validator.py:233`), `b = 2.0`, `zeta = 0.7` | `ramsete.py` | **yes** |
-| Command quantisation | whole mm/s and deg/s when `quantize=True` (`immrax_validator.py:265`) | `DriveBase` rounding | **yes** (KI-021) |
+| Control period | 20 ms (`overboard/verification/immrax_validator.py`) | 20 ms `drive()` tick | **yes** |
+| Plant integration | 4 × 5 ms substeps (`overboard/verification/immrax_validator.py`) | — | mirrors the firmware's own substepping |
+| Reference | linear interpolation of `x, y, heading, v, omega` plus the precomputed Ramsete gain `sqrt(omega^2 + b*v^2)` (`overboard/verification/immrax_validator.py`) | `ramsete.py` | **yes** |
+| Heading unwrapping | `unroll_trajectory_headings` (`overboard/verification/immrax_validator.py`) | — | prevents the ±π wrap |
+| Controller | `RamseteController` (`overboard/verification/immrax_validator.py`), `b = 2.0`, `zeta = 0.7` | `ramsete.py` | **yes** |
+| Command quantisation | whole mm/s and deg/s when `quantize=True` (`overboard/verification/immrax_validator.py`) | `DriveBase` rounding | **yes** (KI-021) |
 | Firmware's own copies | — | **one**: `ramsete.py` holds the odometry, the Ramsete maths, the limiter and the loop; `ramsete_fast.py` delegates to it and `ramsete_compact.py` delegates to `ramsete_compact_events.py` | **yes** - a second copy cannot drift (KI-028) |
-| Traction limit in the limiter | per wheel, with the lateral weight transfer (`robot_model.py:9` `wheel_normal_forces`) | per wheel, same formula (`pybricks_code/ramsete.py`, `KinematicLimiter`) | **yes** (KI-010) |
-| Plant, default | `RobotOpenLoop` (`immrax_validator.py:92`): commanded wheel speed → motion. The gear backlash is a **position** uncertainty carried in the reachable set, not a velocity offset (KI-025) | - | partial |
-| Plant, fitted | `DigitalTwinOpenLoop` (`immrax_validator.py:153`): 5-state `[x, y, heading, vl_actual, vr_actual]` with a first-order lag, `tau >= 0.01 s` | — | partial |
+| Traction limit in the limiter | per wheel, with the lateral weight transfer (`overboard/models/robot_model.py` `wheel_normal_forces`) | per wheel, same formula (`pybricks_code/ramsete.py`, `KinematicLimiter`) | **yes** (KI-010) |
+| Plant, default | `RobotOpenLoop` (`overboard/verification/immrax_validator.py`): commanded wheel speed → motion. The gear backlash is a **position** uncertainty carried in the reachable set, not a velocity offset (KI-025) | - | partial |
+| Plant, fitted | `DigitalTwinOpenLoop` (`overboard/verification/immrax_validator.py`): 5-state `[x, y, heading, vl_actual, vr_actual]` with a first-order lag, `tau >= 0.01 s` | — | partial |
 
 **What the default plant does not model:** the DriveBase PID, motor electrical and mechanical time constants, encoder and gyro odometry error, wheel-slip dynamics, interaction forces, and battery sag beyond the declared torque-headroom interval.
 
@@ -1080,9 +1085,9 @@ Two constraints on the interval mode: the natural inclusion does not support `ab
 
 ### 13.2 What the fitter produces
 
-`sysid_fit.py` produces `sysid_fit.json` with:
+`overboard/sysid/fit.py` produces `sysid_fit.json` with:
 
-- `actuator.straight` / `actuator.turn` — gain, time constant and delay from a grid search over delay ∈ [0, 0.12] s and tau ∈ [0.01, 0.50] s (`sysid_fit.py:296`), plus a 95th-percentile acceleration limit;
+- `actuator.straight` / `actuator.turn` — gain, time constant and delay from a grid search over delay ∈ [0, 0.12] s and tau ∈ [0.01, 0.50] s (`overboard/sysid/fit.py`), plus a 95th-percentile acceleration limit;
 - `sensors` — gyro z bias and standard deviation, accelerometer biases;
 - `odometry` — distance scale, heading scale, braking slip ratio;
 - `backlash` — the reversal delay;
@@ -1128,534 +1133,23 @@ The **chirp tests are held out of the fit** and are the only genuinely independe
 | `tests/test_sysid_compare.py` | The comparator: the envelope verdict, the waypoint mapping, the run ids |
 | `tests/test_gui_server.py` | The studio server and one real solve, including that a failed solve writes no artifact |
 
-**Coverage gap.** `tests/test_optimizer.py` contains a `TestBenchmarkDryRun` class (benchmark dry-run behaviour) that is **not registered in `run_tests.py`**, so it never runs. It is not in the `run_tests.py` class list (`run_tests.py:84-129`).
+**Coverage gap.** `tests/test_optimizer.py` contains a `TestBenchmarkDryRun` class (benchmark dry-run behaviour) that is **not registered in `run_tests.py`**, so it never runs. It is not in the `run_tests.py` class list (`run_tests.py`).
 
 ---
 
-# Part III — The failed strategy ledger
-
-## 16. How to read the ledger
-
-Each entry has the same fields:
-
-| Field | Meaning |
-|---|---|
-| **Strategy** | What was tried, in one line |
-| **Mechanism** | How it was implemented, with the code |
-| **Why it was tried** | The hypothesis behind it |
-| **Outcome** | What actually happened |
-| **Evidence** | The measured numbers |
-| **Status** | dead / partial / dormant / open |
-| **What would revive it** | The concrete change that makes a retry worthwhile |
-
-"Dormant" means the code is present and correct but nothing reaches it. "Dead" means the code exists but its result is discarded. "Partial" means it works for some paths.
-
-## 17. Ledger: seed heuristics
-
-### 17.1 The four non-baseline seeds
-
-| Field | Value |
-|---|---|
-| **Strategy** | Replace the trivial straight-line seed with a structured one: rolling speeds, a sideways bow, or a turn-in-place topology |
-| **Mechanism** | `optimizer.py:641` (`rolling`), `optimizer.py:586` (`bow_left` / `bow_right`), `optimizer.py:608` (`turn_first`) |
-| **Why it was tried** | A better starting point should find a better local optimum: fewer iterations, a shorter trajectory, a tighter envelope |
-| **Outcome** | **They never find a better optimum. They do often find one that passes.** As a *quality* lever they are dead: on the complex mission all four are 2–2.6 s slower and 0.3–0.5 cm wider than the baseline. As a *gate-escape* lever they are alive: the baseline failed 8 of the 12 (mission, timing model) cells and a non-baseline seed rescued 2 of them, and on the events mission they are the only candidates that pass at the default weight |
-| **Evidence** | Complex mission, equal-duration: the baseline passes at **6.068 s / 1.19 cm / 0.30 cm**; `rolling` 8.377 s / 1.68 cm / 0.45 cm, `bow_left` 8.634 s / 1.75 cm / 0.41 cm, `bow_right` 8.662 s / 1.71 cm / 0.41 cm, `turn_first` 8.118 s / 1.52 cm / 0.31 cm — three pass and `bow_left` fails on the motor force (0.007 N). First4, per-segment: the baseline is not the fastest — `bow_right` is, at **1.663 s** against the baseline's 1.833 s, and it is the selected candidate, while `bow_left` and `turn_first` fail there on the motor force (0.071 N and 0.008 N). Events: under per-segment timing all five seeds pass at 4.415–4.416 s, while under equal-duration timing all five fail (0.65–0.68 cm of tracking error). See [Section 9](#9-measured-heuristic-comparison) |
-| **Status** | **partial** — dead as a quality lever, alive as a gate-escape lever |
-| **What would revive it as a quality lever** | A seed that changes the *geometry* of the path, not just its sampling. The current seeds perturb a straight line; the optimizer then walks the line back to the straight line, because the objective has no term that prefers a curve ([Section 2](#2-what-is-not-in-the-tree)). Until then, expect them to keep buying gate escapes rather than speed |
-
-### 17.2 `turn_first`'s 0.4 rad threshold
-
-| Field | Value |
-|---|---|
-| **Strategy** | Switch to a turn-on-the-spot topology only when the heading change is large enough |
-| **Mechanism** | `optimizer.py:623`, `abs(delta) < 0.4` skips the segment |
-| **Outcome** | The threshold is a hard-coded constant with no derivation. A 23° turn gets the turn-on-the-spot topology; a 22° turn does not. There is no measurement behind the number |
-| **Status** | dormant |
-| **What would revive it** | Derive the threshold from the robot: the smallest turn that cannot be driven as an arc within the segment's length at the speed limit. Then measure whether the derived value beats the constant |
-
-### 17.3 The bow amplitude
-
-| Field | Value |
-|---|---|
-| **Strategy** | Bow the interior samples sideways so IPOPT starts in an "arc-shaped basin" |
-| **Mechanism** | `optimizer.py:599`, `amplitude = min(0.10 * length, 0.03)` |
-| **Outcome** | The amplitude is uncorrelated with the turn angle. On a 90° turn over 1 m it bows 3 cm — a slight curve, not a quarter circle. On a 10° turn over 2 m it bows the same 3 cm — a large relative deviation |
-| **Status** | dormant |
-| **What would revive it** | Compute the bow from the turn: the circular arc that connects the two endpoints with the given headings, then sample it. That is a real path family, not a nudge — see Q1 in [Part IV](#24-the-open-questions) |
-
-## 18. Ledger: timing models
-
-### 18.1 Equal-duration timing treated as a peer of per-segment
-
-| Field | Value |
-|---|---|
-| **Strategy** | Offer both timing models as candidates and let validation choose |
-| **Mechanism** | `main.py:160-173`, the `auto` mode |
-| **Why it was tried** | The two models answer different questions; the validator should pick |
-| **Outcome** | **It works, but the framing is wrong.** Equal-duration is not a peer — it is a legacy special case that imposes a large artificial penalty on paths with unequal segment lengths, because one shared `dt` forces every segment to take the same time |
-| **Evidence** | On a 1.0 m + 0.2 m path at `accuracy_weight = 0.005`: per-segment **2.784 s / 0.32 cm**, equal-duration **4.456 s / 0.37 cm**. On the complex mission at weight 0: per-segment 4.650 s but 0.43 cm tracking and a 0.074 N force overshoot, equal-duration 6.068 s / 1.19 cm / 0.30 cm passing |
-| **Status** | open (the framing is still wrong) |
-| **What would revive it** | Make per-segment the default and keep equal-duration only as a compatibility mode. The candidate machinery is already in place |
-
-### 18.2 Per-segment timing at `accuracy_weight = 0`
-
-| Field | Value |
-|---|---|
-| **Strategy** | Pure time-optimal per-segment timing |
-| **Mechanism** | `--per-segment-dt -a 0` |
-| **Outcome** | **Rejected by the CPU force gate and the tracking gate** on the uneven test path, and by the 5 mm tracking gate (0.84 cm) plus a 0.074 N motor-force overshoot on the complex mission |
-| **Evidence** | Uneven path: per-segment 2.710 s / 0.32 cm, but it fails the Immrax and CPU gates, so the equal-duration candidate (4.463 s / 0.35 cm) is selected instead. Complex mission: per-segment 4.650 s / 1.00 cm envelope but 0.84 cm tracking, above the 5 mm gate |
-| **Status** | open |
-| **What would revive it** | Either a force headroom that the optimizer and the auditor agree on (the optimizer uses the declared worst case; the auditor uses the same model, but the *selection* compares a 0.074 N overshoot against a whole second of travel), or a reachability term in the objective so the solver avoids the fast-but-untrackable region itself |
-
-### 18.3 Tying the time base across a waypoint the robot drives through
-
-| Field | Value |
-|---|---|
-| **Strategy** | Make the timing free only at the legitimate boundaries: tie `dt` across every waypoint the robot does not stop at, so a "piece" is the run of segments between two stop-and-pinned-heading points |
-| **Mechanism** | Either `dt[j-1] == dt[j]` as an extra NLP constraint, or one `dt` variable per piece |
-| **Why it was tried** | It is the literal reading of "the time allocation must not change where the path runs through smoothly" |
-| **Outcome** | **Rejected.** The equality constraints are redundant and wreck IPOPT's conditioning (the complex mission converged in 79 iterations to a 7.85 s point with a 0.0035 N force violation, against 1557 iterations and 6.068 s for the equal-duration model). The one-variable-per-piece form is better conditioned but no better in outcome: 7.86 s on the complex mission |
-| **Evidence** | The deeper reason is the *sample layout*, not the timing. Every piece gets the same number of samples, so tying `dt` gives every piece the same *time* regardless of its length, and the robot has to change speed at the interior waypoint. A 1.2 m straight line solved as one piece with 20 samples takes 2.702 s with no path excess; the same line with an interior waypoint and one shared `dt` takes 4.463 s and weaves 19.9 mm |
-| **Status** | rejected; the requirement it was meant to serve is met instead by the force-continuity constraint ([5.5](#55-where-the-time-allocation-may-change-ki-024)) |
-| **What would revive it** | A sample layout that follows the arc length, so a shared `dt` already gives a constant-speed traversal. That changes the sample count and the sample-to-waypoint mapping, so it is a separate change |
-
-### 18.4 The removed accuracy-weight ladder
-
-| Field | Value |
-|---|---|
-| **Strategy** | Retry the solve with a higher `accuracy_weight` when the first attempt fails |
-| **Mechanism** | Was `accuracy_weight += 2.0`; removed from the shipped path and archived with Multi-Verse |
-| **Why it was tried** | A higher weight buys smoothness, which was assumed to buy tracking |
-| **Outcome** | **Removed.** The old ladder "silently traded speed for a bound that could get worse (longer trajectories accumulate more uncertainty)". On the complex mission the slow 17.1 s candidate **diverged**, while the 6.07 s one stayed bounded |
-| **Status** | dead; no shipped code path uses it |
-| **What would revive it** | Only with a *reason* to expect the retry to help. If the failure mode were "the path is too jerky for the controller", a weight ladder would be the right tool. It is not that failure mode today |
-
-## 19. Ledger: candidate set strategies
-
-### 19.1 The sweep grid
-
-| Field | Value |
-|---|---|
-| **Strategy** | Add the timing-mode × accuracy-weight grid on top of the default candidates |
-| **Mechanism** | `main.py:175-195`, `SWEEP_WEIGHTS` at `main.py:116` |
-| **Why it was tried** | The best weight depends on the path, and the default set only tries one |
-| **Outcome** | **It works, and it is the only candidate-set strategy that has ever produced a new best trajectory.** It can only add candidates, never remove them, so it cannot make things worse — it just costs more solves and more validation passes |
-| **Evidence (measured 2026-10-20)** | `example_mission_first4`: the default candidate-1 result is 2.176 s; the grid's `baseline` per-segment at weight 0 passes at 1.833 s, and `bow_right` per-segment at weight 0 is faster still at **1.663 s** — 23.5 % faster — and is the selected candidate. `example_with_events`: the default set now produces a passing candidate under per-segment timing (4.416 s), where the equal-duration `baseline` still misses the tracking gate at 0.68 cm. `example_complex_mission`: the grid adds passing `baseline` **equal-duration** candidates at weights 0.001 (7.049 s), 0.002 (7.080 s), 0.005 (7.208 s) and 0.01 (9.323 s), but the equal-duration baseline at weight 0 (6.068 s) is still selected, so the complex mission is unchanged; every per-segment candidate in the grid fails the tracking gate (0.67–0.91 cm) |
-| **Status** | **live** (opt-in, off by default) |
-| **What would revive it** | Nothing; it should probably become the default for the missions where it wins. The measurement to make next is Q6: whether the weight is a real accuracy proxy, because right now it is a lottery with five tickets |
-
-### 19.2 Multi-start as a quality claim
-
-| Field | Value |
-|---|---|
-| **Strategy** | Solve more candidates and take the best |
-| **Mechanism** | `--candidates N`, `main.py:222` |
-| **Outcome** | The *mechanism* works. With the current seed set it buys **gate insurance**, not speed: the winning candidate is the fastest *passing* one, and the extra seeds are what make a passing candidate exist at all on two of the six missions. It never produced the fastest trajectory |
-| **Evidence** | The `baseline` seed failed on 8 of the 12 (mission, timing model) cells; a non-baseline seed passed in 2 of those. On first4/per-segment `bow_right` is the fastest candidate (1.663 s) and passes, while the baseline is 1.833 s. On events/per-segment the baseline now passes at 4.416 s and the seeds are all within a millisecond of it |
-| **Status** | live; the *reason* it is live was mislabelled until now |
-| **What would revive it** | A candidate set whose members are genuinely different *paths*, not just different samplings of the same path. Then multi-start becomes a search, and the cost of a ticket goes up from "insurance" to "exploration". See Q1 |
-
-### 19.3 The presets
-
-| Field | Value |
-|---|---|
-| **Strategy** | Three canned configurations | 
-| **Outcome** | `fast` and `balanced` both leave `--validate` off, so they solve **one** candidate. `safe` is the only preset that turns the gate on. A user reaching for `fast` gets no safety guarantee and no documentation of that |
-| **Status** | live, under-documented |
-| **What would revive it** | Make the presets state their guarantees in their names, or make `fast` still validate |
-
-### 19.4 The 44-Gene Starting-Value Genome & Memetic Evolution
-
-| Field | Value |
-|---|---|
-| **Strategy** | Evolve the starting-seed macro-parameters (`dt_mults`, `apex_offsets`, `theta_biases`, `speed_scales`) across generations of mutation and crossover with parallel IPOPT local-search polishes (`run_memetic_evolution` archived in `legacy/evolutionary_research/genetic_algorithm.py`) |
-| **Mechanism** | An evolutionary algorithm models robot trajectories as discrete chromosomes of segment timings and spatial state sequences. Offspring undergo creep mutation and macro-homotopy mutation, followed by fast warm-start IPOPT polishing |
-| **Why it was tried** | To escape bad local minima by discovering globally optimal driving lines (late apexes, customized segment time distributions) without hand-crafting heuristic shapes |
-| **Outcome** | **Succeeded in discovering the optimal racing line (+20.66% speedup), but superseded by deterministic generation.** On `example_complex_mission.json`: the stock baseline produced 6.907 s (0.72 cm tracking); the 31-gene genome at 8 generations achieved 5.691 s (0.50 cm tracking); and the 44-gene champion at 12 generations hit **5.417 s and 0.49 cm (4.9 mm)** tracking error, breaking through the 5 mm gate. However, benchmark logging (`output_memetic/memetic_scores.json`) revealed that the winning candidate was actually generated at **Generation 0** (`seed_4` at 5.514 s) by the initial 10-candidate pyramid homotopy bank. Subsequent generations of stochastic evolution (25.8 s of wall-clock time and dozens of IPOPT solves) failed to improve upon Generation 0 |
-| **Key Insight** | The 44-gene GA succeeded because it converged on three deterministic physical principles: (1) pushing the apex outward on turns (late apex), (2) giving tight turns more $\Delta t$ and straights less $\Delta t$, and (3) aligning unpinned waypoint headings tangent to the curve. These geometric choices do not require stochastic exploration; they can be calculated directly in $< 2\text{ ms}$ |
-| **Status** | **Superseded by Deterministic Homotopy Dispatch (19.5)** |
-
-### 19.5 The Kinetic Frontier Analytical Seed Generator & The 5 Physical Principles
-
-| Field | Value |
-|---|---|
-| **Strategy** | Replace stochastic genetic search with an analytical seed generator (`frontier_seed.py`) encoding the 5 physical principles uncovered by phase portrait diagnostics and the 50-generation marathon |
-| **Mechanism** | `frontier_seed.py` (`generate_frontier_seed`, `generate_canonical_seeds`), integrated into `TrajectoryOptimizer._build_initial_guess` via `GUESS_STYLES = (..., "frontier_sprint", "frontier_sweeper", "frontier_exploratory", "frontier_direct")` |
-| **The 5 Governing Principles** | 1. **Active Kinematic Hypotenuse:** $v(t) + \frac{W}{2}|\omega(t)| = v_{\max}$. In differential-drive, motor voltage saturation dominates tire friction by $2.5\times$. The optimal trajectory rides the $L_1$ actuator diamond boundary (one wheel at 100% saturation at all times) with analytical velocity profiling $v_{\text{frontier}}(\kappa) = \frac{v_{\text{wheel\_max}}}{1 + 0.5 B |\kappa|}$.<br>2. **Late-Apex Dynamic Law:** Asymmetric corner entry ($f_{\text{apex}} = 0.66\text{--}0.70$) enables deep trail-braking and early symmetric exit throttle ($0.3\text{ s}$ earlier full acceleration onto straights).<br>3. **Waypoint Momentum Preservation:** Maintains $0.65\text{--}0.75 \times v_{\max}$ through unpinned intermediate waypoints along a continuous energy arc.<br>4. **KKT Slack Barrier Equilibrium:** Balances right on the safety threshold ($4.3\text{--}4.5\text{ mm}$ tracking against the $5.0\text{ mm}$ gate).<br>5. **Multi-Modal Homotopy Triad:** Dispatches 3 canonical homotopies (`frontier_sprint`, `frontier_sweeper`, `frontier_exploratory`). |
-| **Measured Outcome (2026-10-20)** | **Shatters the 44-Gene Champion on the 10-waypoint complex mission:**<br>- **Stock Baseline:** $5.948\text{ s}$, $0.96\text{ cm}$ tracking, 200 iters (capped), $3.45\text{ s}$ wall (**FAIL**)<br>- **44-Gene GA Champion (12 Gens):** $5.417\text{ s}$, $0.49\text{ cm}$ ($4.9\text{ mm}$), 120 iters, $\approx 25\text{ s}$ wall (**PASS**)<br>- **Frontier Sprint Seed:** **$5.239\text{ s}$**, **$0.45\text{ cm}$ ($4.5\text{ mm}$)**, $1.17\text{ cm}$ envelope, **Score 5.239** (**PASS**)<br>- **Frontier Sweeper Seed:** **$5.237\text{ s}$**, **$0.44\text{ cm}$ ($4.4\text{ mm}$)**, $1.18\text{ cm}$ envelope, **101 iters**, **Score 5.237** (**PASS**)<br>- **Frontier Exploratory Seed:** **$5.233\text{ s}$**, **$0.43\text{ cm}$ ($4.3\text{ mm}$)**, $1.18\text{ cm}$ envelope, **Score 5.233** (**PASS**)<br>- **Seed Generation Overhead:** **$1.16\text{ ms}$** total for all 3 seeds |
-| **Status** | **Live** in `frontier_seed.py` and `optimizer.py` |
-
-### 19.6 The 3-Pillar Unified Trajectory Engine (`main.py --unified`, the default path)
-
-| Field | Value |
-|---|---|
-| **Strategy** | Condense the 9 physical principles into 3 unified engineering pillars, eliminating stochastic evolutionary loops while ensuring 100% deterministic gate certification across all competition paths |
-| **Mechanism** | `unified_planner.py` (`UnifiedPathEngine`), `main.py --unified`, tested by `tests/test_frontier_seed.py` and `tests/test_unified_planner.py` |
-| **The 3 Pillars** | **Pillar I: Asymmetric Transition Geometry** (Rule 2 Late-Apex Dynamic Law $f_{\text{apex}} = 0.68$, Rule 5 Homotopy Triad: Sprint, Sweeper, Exploratory, Rule 6 Clothoid Curvature Continuity).<br>**Pillar II: Composite Kinetic Velocity Envelope** (Rule 1 Active Kinematic Hypotenuse on $L_1$ polytope boundary, Rule 3 Waypoint Momentum Preservation $\ge 0.70 v_{\max}$, Rule 8 Dynamic Load Transfer $v_{\text{tip/slip}} = \sqrt{g B / (2 h_{\text{CG}} \|\kappa\|)}$, Rule 9 Pontryagin Threshold Braking for stops).<br>**Pillar III: Invariant Collocation Mesh & KKT Solver** (Rule 4 KKT Slack Barrier Equilibrium at $3.6\text{ mm}$, Rule 7 Invariant 80 ms Sampling Mesh $\ge 10$ nodes/segment, 4-node Gauss-Legendre self-consistent collocation, smooth linear epigraph bounds). |
-| **Measured Outcomes (2026-10-20)** | **100% Gate Certification Across the Benchmark Suite:**<br>- **`example_complex_mission.json`:** **$5.365\text{ s}$**, envelope **$1.16\text{ cm}$**, tracking error **$3.6\text{ mm}$** (vs $5.0\text{ mm}$ gate), max integration error **$0.45\text{ mm}$**, 0 violations. Smashes the 44-Gene Champion ($5.417\text{ s}$, $4.9\text{ mm}$) and stock baseline ($6.068\text{ s}$, $1.22\text{ cm}$).<br>- **`example_straight.json`:** **$2.270\text{ s}$**, envelope **$0.30\text{ cm}$**, 0 violations, max pos error $0.45\text{ mm}$.<br>- **`example_with_stops.json`:** **$5.105\text{ s}$**, envelope **$0.89\text{ cm}$**, 0 violations, max pos error $0.46\text{ mm}$.<br>- **`example_s_curve.json`:** **$3.602\text{ s}$**, envelope **$0.83\text{ cm}$**, 0 violations, max pos error $0.46\text{ mm}$.<br>- **Compute Overhead:** Triad analytical seed generation takes **$< 2.5\text{ ms}$**; parallel IPOPT solves converge in **$40\text{--}48\text{ iters}$** in $\approx 1.7\text{ s}$ per candidate. |
-| **Status** | **Default** in `unified_planner.py` and `main.py --unified`; `--no-unified` restores the stock candidate set |
-
-## 20. Ledger: archived Multi-Verse internals
-
-The Multi-Verse internals are archived under `overboard/legacy/` and are kept
-as history, not as a supported path. Do not reintroduce `--multiverse`,
-`--refine`, the Reeds-Shepp bootstrap, the critic, the JAX refinement or the
-refine probe without new evidence; the measured conclusion was that the
-pipeline rescued nothing over the stock candidate set.
-
-### 20.1 The JAX refinement
-
-**Hypothesis:** a JAX-refined geometric guess would beat the straight-line seeds.
-**Result:** after four defects were fixed, the probe could win on one mission,
-but over 30 missions the refined seed rescued nothing. The defect list and the
-measurements are in `archive/research-2026-10` (see
-[`ARCHIVE.md`](ARCHIVE.md)).
-**Mechanism (archived):** `overboard/legacy/jax_optimizer.py:52`
-`generate_candidates_jax`; `overboard/legacy/multiverse_optimizer.py:307-353`.
-
-### 20.2 The refine probe
-
-**Hypothesis:** a second cold solve from the refined trajectory would beat the
-primary solve by more than solver noise.
-**Result:** it did on one mission and not across the suite, so `--refine` was
-removed with the pipeline.
-**Mechanism (archived):** `overboard/legacy/multiverse_optimizer.py:454`
-`_global_solve`, `:487` `_probe_refined_guess`.
-
-## 21. Ledger: validation and tooling
-
-### 21.1 `--workers` / `--no-parallel` as a quality lever
-
-| Field | Value |
-|---|---|
-| **Strategy** | Solve candidates in parallel to make the planner faster and therefore able to try more |
-| **Mechanism** | `main.py:222`, `main.py:1024-1026` |
-| **Outcome** | The *speed* is real; the *quality* claim is not. The trajectories are identical to the sequential run. The flags are a wall-clock lever |
-| **Status** | live, but must not be described as a quality claim |
-| **What would revive it** | Nothing |
-
-### 21.2 Reachability as a post-hoc score
-
-| Field | Value |
-|---|---|
-| **Strategy** | Use the reachability envelope to choose between candidates |
-| **Mechanism** | `main.py:1130`, `main.py:102` |
-| **Outcome** | **It works as a selector and fails as a planner.** The gate rejects a trajectory that the optimizer produced without any way of knowing it would be rejected. The failed candidate is reported to a human, who must then decide what to change |
-| **Status** | partial (KI-020) |
-| **What would revive it** | Put a conservative envelope proxy in the objective (Q4) or feed the failing segment back into the solver (Q5) |
-
-### 21.3 The random benchmark mode
-
-| Field | Value |
-|---|---|
-| **Strategy** | Generate random missions and benchmark the planner on them |
-| **Mechanism** | `benchmark.py --mode random`; `RandomBenchmark` at `benchmark.py:380` |
-| **Outcome** | **Fixed** (KI-015). The suite generator unpacks `solve()`'s tuple, uses `examples/fll_choreo.json`, and solves every mission; the pipeline mode reads `stats["converged"]` and prints `FAILED`; the random mode validates against the config it actually used (`benchmarks/config_used.json`) and draws its waypoints as a random walk instead of independent uniform draws. A third defect surfaced while checking: the generator's `samples` parameter was shadowed by the solve result, so the *second* mission solved with the first mission's sample list as the sample count and died in the optimizer. `tests/test_random_suite.py` runs two missions and fails if either raises |
-| **Status** | **closed** |
-| **What would revive it** | Nothing. The mission suite it was supposed to supply now comes from `research/suite.py` and is measured by `research/harness.py` (Q8, answered in `docs/research/pq_b/FINDINGS.md`) |
-
-### 21.4 `sysid_solver.py`
-
-| Field | Value |
-|---|---|
-| **Strategy** | A pandas/JAX system identification solver with hardcoded CSV paths |
-| **Mechanism** | `sysid_solver.py` (1155 lines) |
-| **Outcome** | **Not wired into the CLI**, does not emit the current `sysid_fit.json` format, and its CSV paths are hardcoded. `sysid_fit.py` is the live path |
-| **Status** | **dead** (kept as a documented prototype, KI-018; the decision to delete or rewrite it is still open) |
-| **What would revive it** | Rewrite it against the current fit format, or delete it. It is the only unwired module left in the root |
-
-### 21.5 Interaction forces
-
-| Field | Value |
-|---|---|
-| **Strategy** | Read the `interactions` config block and inject the measured push/pull resistance into the dynamics |
-| **Mechanism** | `examples/fll_choreo.json:26` declares an empty `interactions` object; the optimizer does not read it. The design is in `Future_Plans.md` Part 3 Phase B |
-| **Outcome** | **Design only.** The measured force profiles do not exist yet (`Future_Plans.md` §1.2 describes the telemetry recorder that would produce them) |
-| **Status** | open, blocked on data |
-| **What would revive it** | Collect the interaction telemetry first. The design is sound; the data is missing |
-
-### 21.6 Braking slip
-
-| Field | Value |
-|---|---|
-| **Strategy** | Model that the wheels turn further than the robot travels while braking |
-| **Mechanism** | `digital_twin.py:126` `SlipFit`, `digital_twin.py:380` `brake_shortfall` |
-| **Outcome** | **Applied** by the fitted plant as a smooth grip factor (the default kinematic path is unchanged, because it has no fit to read it from) |
-| **Status** | partial |
-| **What would revive it** | The shortfall is wired into the five-state plant, and the effect is measured: on the complex mission with an illustrative actuator fit (50 ms lag, 2 % gain band) the envelope grows 1.11 cm and the tracking error 0.55 cm (`research/brake_slip_effect.py`). What is left is a fit measured on the robot, and the gates it would have to pass (KI-020) |
-
-## 22. Ledger: silent and unlogged behaviour
-
-These are not "strategies that failed" but behaviours that changed the results without being recorded where a reader would look.
-
-### 22.1 The per-segment timing model was a jerk-penalty loophole (KI-022)
-
-| Field | Value |
-|---|---|
-| **What happened** | The per-segment model was not held to the same wheel-jerk discipline as the equal-duration model. Because the raw acceleration jump scales with `jerk * dt`, a short-`dt` segment was charged `dt^2` less per unit of jerk, so per-segment timing could buy violent wheel motion nearly for free |
-| **Evidence** | The per-segment model reached **68.9 m/s³** of wheel jerk where the equal-duration model reached **9.5 m/s³** at the same weight |
-| **Fix** | The cost is now `dt_ref^2 * sum(J^2)` in both modes, with `dt_ref` the mean interval over the whole path (`optimizer.py:219`, `optimizer.py:484`) |
-| **Status** | fixed |
-
-### 22.2 The reachability tube lagged the reference by one sample (KI-019)
-
-| Field | Value |
-|---|---|
-| **What happened** | The tube was computed against a different reference than the one the controller follows, so the reported tracking error was optimistic by one sample |
-| **Fix** | The same linear reference and 20 ms sample-and-hold loop as `ramsete_fast.py`, with the plant integrated in 5 ms substeps (`immrax_validator.py:42-43`, `immrax_validator.py:46`) |
-| **Status** | fixed |
-
-### 22.3 The Immrax upper uncertainty bounds were ignored (KI-003)
-
-| Field | Value |
-|---|---|
-| **What happened** | `w_flat` was passed as a plain array, which Immrax treats as constants, so only the lower bounds affected the reachable set. Torque, backlash, track width, wheel radius and inertia were therefore never checked in the upper direction |
-| **Fix** | `Interval(w_lower, w_upper)` is passed instead (`immrax_validator.py:578`), and the physical parameters are wrapped as intervals too (`immrax_validator.py:456-458`) |
-| **Status** | fixed |
-
-### 22.4 A failed solve was exported as a success (KI-001) and `--validate` could not block output (KI-002)
-
-| Field | Value |
-|---|---|
-| **What happened** | `main.py` did not check `stats["converged"]`, and `passed_validation` was assigned but never read. If Immrax threw, the code set `passed_validation = True` and continued. A failed validation still wrote the trajectory and exited 0 |
-| **Evidence** | A solve from `(0,0,0)` to `(100,0,0)` returned `converged=False` and a trajectory that ended near `x = 20` instead of `x = 100` — written as a normal trajectory, and the separate validator still reported PASS |
-| **Fix** | The export gate (`main.py:272`) blocks both cases; a failed validation exits 1 and writes nothing |
-| **Status** | fixed |
-
-### 22.5 The weight-transfer math was wrong and the tools disagreed (KI-010)
-
-| Field | Value |
-|---|---|
-| **What happened** | The longitudinal term was subtracted from both wheels, and the optimizer and the validator used different formulas |
-| **Fix** | One shared `wheel_normal_forces` (`robot_model.py:10`), called from all four consumers. Lateral transfer only — a two-wheel robot has no front/rear split |
-| **Status** | fixed |
-
-## 23. Cross-cutting lessons
-
-Four lessons from the ledger, and they are the reason Part IV is shaped the way it is.
-
-**1. The baseline is hard to beat *on speed* because the objective does not care about the path.** The objective is duration plus a jerk penalty. It has no term for "the path is smooth in space", only "the wheels move smoothly in time". Two geometrically different paths of the same length and the same wheel jerk are indistinguishable to the optimizer. So a better *seed* only helps if it puts IPOPT in a basin that is better **by the objective** — and a bowed or turn-first guess is not, because the objective rewards the straight line it converges back to. Any seed improvement must either change the objective or exploit a genuine local minimum.
-
-**2. The seeds' real value is that they are cheap insurance against a gate, not a source of speed.** Measured over 60 candidates ([Section 9](#9-measured-heuristic-comparison)), the non-baseline seeds never produced the fastest trajectory. What they did produce was **passing** trajectories where the baseline failed: the selected candidate on two of the six missions, and the only passing set on the events mission. Because a solve costs about two seconds, buying four extra lottery tickets to escape a gate is a good trade. It should be described that way, not as an optimisation improvement.
-
-**3. Everything that changes the objective's shape is a bigger lever than anything that changes the starting point.** The timing model (KI-022) and the accuracy weight changed results by 25–40 %. The seeds changed the outcome on 2 of 6 missions and never improved the fastest duration. The research effort should follow that ratio.
-
-**4. The candidate set is a selection mechanism, not a search mechanism.** The candidate set works: it tries a handful of options and picks the one that passes. What it does not do is explore. The sweep grid was the only candidate-set change that ever produced a new best trajectory, and it worked because it added a genuinely different *parameter* (the weight), not a different *path*.
-
-**5. The measurement base is too narrow to support strong claims.** Everything in [Section 9](#9-measured-heuristic-comparison) rests on six example missions. The random benchmark that was supposed to provide a mission suite is fixed (KI-015) and the harness under [`research/`](../../research/) answers Q8 on 32 missions; what is still missing is a **re-run of that suite on the current tree**, because the numbers in `docs/research/pq_b/` predate KI-025 to KI-028. "The baseline wins the complex mission" might be a fact about the planner, or it might be a fact about that one path.
-
----
-
-# Part IV — Research agenda
-
-## 24. The open questions
-
-Each question has the current evidence, a hypothesis, and an experiment with a metric and a success criterion. The experiments are ordered so that the cheap, decisive ones come first.
-
-### Q1 — Does a curvature-continuous path family beat the straight-line seed?
-
-| | |
-|---|---|
-| **Question** | The seeds perturb a straight line. Would a seed built from a real path family — a circular arc, a clothoid, a β-spline through the waypoints — find better optima? |
-| **Current evidence** | All four structured seeds lose (17.1). The shipped tree contains no geometric path family at all ([Section 2](#2-what-is-not-in-the-tree)). Reeds-Shepp exists only in the archived Multi-Verse bootstrap, not as a shipped seed. |
-| **Hypothesis** | A seed whose geometry is *feasible for a differential-drive robot* (curvature continuous, reachable) starts IPOPT in a much better basin, and the resulting trajectory is both shorter and tighter. |
-| **Experiment** | 1. Implement a geometric path builder in the shipped package (`overboard/core/`): given two poses, produce a curvature-continuous path (Dubins for forward-only, Reeds-Shepp with a real turning radius, or a clothoid-spline for the general case). 2. Add a `guess_style` that uses it, with the timing profile from `_set_rolling_speeds`. 3. Add it to `GUESS_STYLES` and let the candidate set pick it up — no other change is needed. 4. Run the [Section 9](#9-measured-heuristic-comparison) matrix with the new seed added. |
-| **Metric** | Trajectory duration, envelope radius, tracking error, IPOPT iteration count, wall time. |
-| **Success criterion** | The new seed wins on at least 2 of the 6 missions *and* does not lose on the rest — i.e. it becomes the selected candidate somewhere. A seed that is sometimes better but usually worse is not useful, because it costs a solve. |
-| **Cost** | Medium. One new module, one new style, and the existing matrix. |
-| **Risk** | If the objective really is indifferent to geometry (lesson 23.1), this fails and the answer is "the seed is not the lever" — which is itself worth knowing. |
-
-### Q2 — Does a time-allocation warm start reduce iterations?
-
-| | |
-|---|---|
-| **Question** | Every seed starts with a flat `dt = 0.1 s` for every segment (`optimizer.py:543`). Would a segment-length-proportional allocation converge faster and better? |
-| **Current evidence** | The timing model is the single biggest lever measured so far (lesson 23.2), yet the *initial* time allocation is the crudest possible guess. |
-| **Hypothesis** | An initial `dt_i` proportional to the segment length (so every segment takes time proportional to its distance) starts IPOPT much closer to the time-optimal allocation, cutting iterations and possibly finding a better optimum. |
-| **Experiment** | 1. In `_build_initial_guess`, replace the flat `initial_dt` with `dt_i = clamp(k * length_i, 0.001, 1.0)`, with `k` chosen so the total matches the flat guess. 2. Solve the matrix and compare iteration counts and durations against the flat allocation. 3. Try a trapezoidal velocity profile along the baseline geometry as a second variant. |
-| **Metric** | IPOPT iterations, wall time, final duration, envelope. |
-| **Success criterion** | A material reduction in iterations (say > 20 %) with no regression in duration or envelope. |
-| **Cost** | Low. One function, one flag. |
-| **Note** | This is the cheapest experiment on this list, and it tests the same "the initial guess is not the lever" hypothesis from a different angle. |
-
-### Q3 — Is multi-start worth anything at all?
-
-| | |
-|---|---|
-| **Question** | The candidate set solves N trajectories and picks one. Is N > 1 buying anything, and if so what? |
-| **Current evidence** | Measured over 60 candidates: the non-baseline seeds produce the fastest **passing** trajectory in 4 of the 7 cells that produce one (first4 and complex under per-segment timing, both by 10 % or more, and the straight path, where all five seeds tie). What they reliably produce is **passing** trajectories where the baseline fails: the baseline failed 6 of the 12 (mission, timing model) cells and a non-baseline seed rescued exactly **one** of them (the complex mission under per-segment timing, where the baseline overshoots the motor-force limit by 0.074 N) |
-| **Hypothesis** | With the current seed set, `--candidates N` buys **gate insurance**: it multiplies the chance that at least one converged solution satisfies the force and tracking gates. It does not buy speed |
-| **Experiment** | 1. Instrument the selection: record the selected candidate's `guess_style`, the fastest candidate's `guess_style`, and the failing reasons per mission. 2. Compute, for each mission, whether the baseline alone would have produced a passing trajectory. 3. Repeat on a larger mission set (Q8) and report the insurance rate |
-| **Metric** | The fraction of missions where a non-baseline seed is the only source of a passing trajectory; the duration cost of that insurance |
-| **Success criterion** | A clear answer either way, and a cost figure: "one extra seed buys a passing trajectory on N % of missions, at M seconds per solve". If N is small, the candidate count should be cut and the budget spent on the sweep grid, which also wins (19.1) |
-| **Cost** | Low. The data is already in `attempt_record` (`main.py:1058-1059`). This is a measurement, not an experiment |
-| **Answer (2026-10-20)** | **The hypothesis is half right, and the other half is the opposite.** The insurance is real but small - **one mission in six** - and it comes from the **timing model**, not from a seed: the default set is two timing models of the baseline seed, and the seeds only enter from `--candidates 3` on. The seeds and the refined trajectory add **no** passes; what they buy is **speed** where they reach a different optimum (the complex mission: 6.068 s from the baseline, 5.395 s from a seed, 4.936 s from the refined guess). The measurement is in [`docs/measurements/2026-10-20/matrix/`](measurements/2026-10-20/matrix/): the analysis is `analyse_matrix.py` in that folder and that folder's README carries the summary. |
-
-### Q4 — Should reachability be an objective term?
-
-| | |
-|---|---|
-| **Question** | The planner produces trajectories that fail the envelope gate and hands them to a human (21.2). Can the envelope be approximated cheaply enough to put inside the objective? |
-| **Current evidence** | The reachability computation is an interval propagation over the closed loop — far too expensive for the inner NLP loop. But the *dominant* contributor to the envelope is usually the model uncertainty (backlash, wheel radius, track width) propagated over the path, not the tracking error. **RQ-A changes the priority:** the envelope is not what is failing. Across the 60-candidate matrix, zero candidates failed on the envelope threshold; 25 of the 29 failures cite the tracking gate, which RQ-A shows is a discretisation artefact rather than an uncertainty or tracking problem. An envelope term would not touch it |
-| **Hypothesis** | A differentiable, conservative proxy for the envelope — for example the accumulated uncertainty of the pose along the path, weighted by the local speed — captures most of the envelope growth and can be added as an objective term at a small cost in duration. |
-| **Experiment** | 1. Instrument the current validator to report which uncertainty component dominates the envelope at each sample. 2. Fit a cheap analytic proxy to that growth. 3. Add `w_envelope * proxy` to the objective. 4. Compare the envelope of the resulting trajectory against the current best. |
-| **Metric** | Envelope radius, duration, tracking error. |
-| **Success criterion** | A trajectory with a smaller envelope at a comparable duration — i.e. the gate passes *by design* rather than by selection. |
-| **Cost** | High. This is the biggest change in the list and it touches the objective, the solver and the validator. |
-| **Note (revised by RQ-A)** | **Do this second, not first.** The failing missions fail on the tracking gate, and the tracking gate is currently measuring a discretisation artefact, not robustness. Fix the discretisation first; otherwise the envelope term is being tuned against a moving baseline. See [RQ-A](research/RQ-A_tracking_error.md) |
-
-### Q5 — Should the critic feed back into the solver?
-
-| | |
-|---|---|
-| **Question** | The critic already identifies bad windows with six interpretable metrics (8.3). Can a flagged window be turned into a *seed* for a targeted re-solve, instead of being refined by a proxy cost function? |
-| **Current evidence** | The critic's output goes into the JAX refiner, which produces a guess that loses to the baseline (20.1). The metrics themselves are tested and are meaningful (`tests/test_critic_metrics.py`). |
-| **Hypothesis** | Using the critic to *select* which windows to re-solve with the real solver — rather than to refine them with a proxy — keeps the real objective in the loop and would fix the "proxy mismatch" failure mode of 20.1. |
-| **Experiment** | 1. After a solve, run the critic on the result. 2. For each flagged window, re-solve the *whole* path with that window constrained to a smooth continuation of its neighbours (or simply re-solve from the current solution as the warm start). 3. Measure the critic's metrics and the gate outcome before and after. 4. Compare against the current JAX refinement on the same windows. |
-| **Metric** | Critic metrics on the flagged windows, envelope, duration, iterations. |
-| **Success criterion** | The re-solve reduces the critic's metrics *and* keeps the trajectory passing the gate. |
-| **Cost** | Medium. |
-
-### Q6 — Does `accuracy_weight` actually buy accuracy?
-
-| | |
-|---|---|
-| **Question** | `--accuracy-weight` is documented as the plan-time proxy for tracking accuracy. Is it? |
-| **Current evidence** | The weight penalises wheel jerk. The tracking gate is 5 mm. Nobody has measured the relationship between the two. |
-| **Hypothesis** | Tracking error correlates with wheel jerk, but not linearly, and the correlation depends on the path. If so, the knob is real but path-dependent, and the sweep grid (19.1) is the right way to use it. |
-| **Experiment** | For one mission, sweep `accuracy_weight` over a wide range (0, 0.001, 0.002, 0.005, 0.01, 0.02, 0.05, 0.1) in *both* timing modes, and record the tracking error, the envelope, the duration and the peak wheel jerk for each. Plot them. |
-| **Metric** | Tracking error vs. weight; duration vs. weight; the knee of each curve. |
-| **Success criterion** | A measured, quotable relationship that can replace the "usually reduces jerk at the cost of a longer trajectory" hand-wave in `docs/EXAMPLES.md:615`. |
-| **Cost** | Low. The sweep machinery exists (`--sweep` uses the same weights). |
-| **Note** | Do this before Q4. If the jerk weight is not a good accuracy proxy, then an envelope term in the objective is not optional — it is mandatory. |
-
-### Q7 — Does sample density beat timing flexibility?
-
-| | |
-|---|---|
-| **Question** | Per-segment timing and higher sample density are two ways to give the solver more freedom. Which one pays? |
-| **Current evidence** | `--samples` (2–200) is untested against `--per-segment-dt`. The current candidate set varies the timing model but fixes the density. |
-| **Hypothesis** | At a fixed solve time, per-segment timing at low density beats uniform timing at high density, because it changes the *shape* of the solution rather than the resolution of it. |
-| **Experiment** | Fix a mission. Compare (uniform, n=10), (per-segment, n=10), (uniform, n=20), (per-segment, n=20), (uniform, n=40) at equal wall-clock budget. |
-| **Metric** | Duration, envelope, tracking, wall time, iterations. |
-| **Success criterion** | A clear ordering at equal wall time. |
-| **Cost** | Low. |
-
-### Q8 — Is the baseline's dominance an artefact of the example missions?
-
-| | |
-|---|---|
-| **Question** | Every conclusion in [Section 9](#9-measured-heuristic-comparison) rests on six hand-written example paths. Does the baseline still win on paths nobody designed for it? |
-| **Current evidence** | The random benchmark is fixed (21.3, KI-015) and the question has been answered on 32 missions in `docs/research/pq_b/FINDINGS.md`: the baseline has the **lowest** pass rate of the five seeds. The example missions are geometrically simple: short, mostly straight, few segments. And the answer is already nuanced on the six we have: the baseline is selected on 2 of 6, a non-baseline seed on 2 of 6 (one of them a tie), and 2 of 6 have no passing candidate at all under the most thorough configuration tried |
-| **Hypothesis** | On paths with many sharp turns, close waypoints, or segments whose optimal durations differ by an order of magnitude, the structured seeds *will* win more often, because the baseline's straight-line guess is then a poor approximation of anything |
-| **Experiment** | 1. Repair the random benchmark (`benchmark.py --mode random`): fix the config path, fix the `solve()` unpacking, and check `stats["converged"]` in pipeline mode. 2. Generate 50–100 random missions with a realistic waypoint distribution (segment lengths 0.2–2 m, heading changes 0–180°, optional stops and events). 3. Run the seed matrix on each. 4. Report the win rate per seed per timing mode, and the rate at which *no* candidate passes. |
-| **Metric** | Win rate per seed per timing mode; the distribution of the duration gap between the best and the baseline; the **no-pass rate** |
-| **Success criterion** | A win rate with a confidence interval. The no-pass rate is the more important number: on the six example missions, 2 of 6 have no passing candidate under the default set, and that is the number a mission suite needs to move |
-| **Cost** | Medium, and the repair is a prerequisite for the rest of the ledger to be trustworthy. **Do this first.** |
-
-### Q9 — What would make the validator a real digital twin?
-
-| | |
-|---|---|
-| **Question** | Which missing model component buys the most gate accuracy per unit of effort? |
-| **Current evidence** | KI-020 lists the gaps: motor transients, DriveBase PID, encoder/gyro odometry, wheel-slip dynamics, interaction forces. The fitted plant now adds the actuator gain, tau, delay, odometry scale, gyro bias, an acceleration limit and a braking shortfall |
-| **Hypothesis** | The single largest remaining error source is **odometry error feeding back into the controller**, because the deployed controller never sees the true pose. The fitted plant now models that belief (`_advance_belief`), which makes this testable |
-| **Experiment** | 1. Collect a real session with `overboard/sysid/collect.py`. 2. Fit it. 3. Compare the fitted validator's predicted poses against the measured poses with `sysid_compare.py`, and against the *default* kinematic validator. 4. Report which model predicts the measured poses better, and by how much |
-| **Metric** | Position and heading error at each measured stop, for the default model versus the fitted model versus the tape-measured truth. |
-| **Success criterion** | A measured, ranked list of which missing model component matters most. |
-| **Cost** | High — it needs hardware. **It is also the only way to turn any number in this document from a prediction into a measurement.** |
-| **Note (revised by RQ-A)** | This is still the right long-term work, but it is **not what is blocking the missions today.** RQ-A shows the tracking error is already ~100 % explained by the current model: it is the mismatch between the optimizer's discretisation, the reference interpolation and the plant's integration. Adding motor dynamics, odometry and slip will not move the number that rejects the S-curve and the stops mission. Q9 is about making the *envelope* honest; the tracking gate needs a different fix |
-
-### Q10 — Is "smallest envelope" the right selection objective?
-
-| | |
-|---|---|
-| **Question** | The selection rule is `min(tube, then duration)` (`main.py:102`). Is the envelope the right thing to minimise? |
-| **Current evidence** | The envelope is a conservative proxy that mixes uncertainty growth along the path with tracking error. Minimising it prefers slow, cautious trajectories, and it does not distinguish "the tube is wide because the robot went fast" from "the tube is wide because the robot drifted" |
-| **Hypothesis** | A better objective is the *maximum per-sample excess over the local threshold* (which is what actually fails the gate) combined with the duration, or the tracking error alone. Under that objective some currently-rejected candidates would pass, and the selected trajectory would often be faster |
-| **Experiment** | 1. Log, for every candidate in the matrix, the full score vector: tube, per-sample excess, tracking error, duration, peak jerk. 2. Re-run the selection offline under several candidate rules. 3. Compare how often each rule picks a passing candidate and how much time it loses |
-| **Metric** | Pass rate and selected duration under each rule. |
-| **Success criterion** | A rule that passes at least as often and selects a faster trajectory. |
-| **Cost** | Low. The scores are already computed; only the comparison rule changes. |
-| **Answer (2026-10-20)** | **The hypothesis is wrong on the tracking error, and the excess is not the lever either.** The envelope is almost a proxy for the **duration** (r = +0.97 over 204 candidates), so the current rule is "shortest run" in disguise. The tracking error is nearly independent of the duration (r = +0.35), so preferring it is **slower in 11 of the 21 groups** and faster in one. The per-sample excess agrees with the envelope on every mission here, because every segment limit is the default 2 cm. The only rule that is never worse is the **duration**: it differs from the current rule in 6 of the 21 groups and is faster in every one. The envelope never rejects a candidate either - 105 of 204 pass, and not one failed on the envelope threshold. The measurement is in [`docs/measurements/2026-10-20/matrix/`](measurements/2026-10-20/matrix/); the analysis is `analyse_matrix.py` in that folder, and every candidate now carries its score vector in the `##OVERBOARD-VALIDATION##` line, so a rule can be tried without solving again. |
-
-### Q11 — Should the executor be part of the planner?
-
-| | |
-|---|---|
-| **Question** | The validator simulates the deployed controller. Should the *plan* also account for the fact that the robot stops and re-accelerates at every stop, and that the DriveBase rounds the commands? |
-| **Current evidence** | The DriveBase limits and rounding were fixed once (KI-021) and the validator now quantises commands (`immrax_validator.py:265`). But the *optimizer* has no term for either |
-| **Hypothesis** | Modelling the executor's quantisation and acceleration limits inside the optimizer would remove a class of late-stage gate failures that no amount of seed or timing work can fix |
-| **Experiment** | Quantise the wheel speeds and the acceleration inside the optimizer's constraint set (or add a penalty for the quantisation error), and compare the gate outcome against the current model |
-| **Metric** | Gate pass rate, tracking error, duration. |
-| **Success criterion** | A measurable reduction in gate failures on missions that currently fail for tracking reasons. |
-| **Cost** | High. Quantisation inside an NLP is awkward — it is a step function. Start with the acceleration limit, which is smooth. |
-
-### Q12 — What should the Multi-Verse path become?
-
-| | |
-|---|---|
-| **Question** | Keep, fix or delete the five-phase pipeline? |
-| **Current evidence** | **Answered (KI-004).** The pipeline was repaired enough to measure as a seed provider, and the measurement said the stock seeds are the better buy: over 30 missions the refined seed rescued nothing. It is archived under `overboard/legacy/` with no CLI entry point. |
-| **Experiment** | Done; the raw records are in `archive/research-2026-10` (see [`ARCHIVE.md`](ARCHIVE.md)). |
-| **Metric** | Whether the pipeline's output wins as a candidate: duration, envelope, tracking, pass rate against the stock seed set. |
-| **Success criterion** | A decision, made on evidence. **Made**: archived, not shipped. |
-| **Cost** | Low. Do not revive it without a new reason; the next lever is the objective, not the search. |
-
-### 24.1 Suggested order
-
-```text
-  ---  DONE: RQ-A  the tracking gate's cause is identified. See
-                docs/research/RQ-A_tracking_error.md. It reorders Q4 and Q9.
-  ---  DONE: RQ-A's OQ1 and OQ2  the floor at fine sampling is the 20 ms
-                command hold, and the optimizer now has a self-consistent
-                collocation (KI-026, --self-consistent).
-  ---  DONE: Q3  the selection is instrumented and the insurance rate is
-                measured. See the matrix folder and its analyse_matrix.py.
-  ---  DONE: Q10 the selection rules are compared offline on the same
-                matrix. The envelope is a proxy for the duration.
-  ---  DONE: Q8  the random benchmark is repaired (KI-015) and the 32-mission
-                suite exists (research/suite.py).
-  ---  DONE: Q6  the weight ladder is measured: the weight is a real accuracy
-                proxy and a search, not a dial.
-  ---  DONE: Q2  the length-proportional warm start is measured: slower
-                convergence, faster trajectories on 18 of 32 missions.
-  ---  DONE: Q1  a Bezier path family is measured: a cheaper solve, not a
-                faster trajectory.
-  ---  DONE: Q7  the density sweep is measured: n = 10 is the sweet spot.
-  ---  DONE: Q12 the Multi-Verse path is archived (KI-004); measured as a
-                seed provider it rescued nothing against the stock seeds.
-  ---  ANSWERED: Q5  the critic flags every candidate, so it cannot filter;
-                its thresholds have to discriminate before it can.
-  Q4  reachability in the objective                          (large)
-  Q11 executor in the planner                                (large)
-  Q9  hardware-calibrated twin                               (needs hardware)
-```
-
-The RQ-A items came first because they were the *cause* of the gate failures that everything else is downstream of: 25 of the 29 failures in the 60-candidate matrix cite the tracking gate, and RQ-A shows it was measuring a discretisation artefact rather than the robot. KI-026 to KI-028 have landed, and the artefact is now small at the fine end (the S-curve at n=40: 0.98 → 0.27 cm) but not at the coarse end, where the plan's own deviation is the whole error and only the reference's velocity half ([RQ-A finding F8](research/RQ-A_tracking_error.md)) would remove it. **The 5 mm threshold still measures the discretisation more than it measures the robot**, so it must not be tuned to make missions pass.
-
-## 25. How to report a result
-
-Report back in this shape, so results are comparable across experiments.
-
-```text
-Experiment:      Q<n> - <one line>
-Tree state:      git rev-parse HEAD + the working-tree hash of the changed files
-Config:          examples/fll_choreo.json (or another, named)
-Missions:        <the mission files, and how they were generated>
-Baseline result: duration / envelope / tracking / iterations / wall
-New result:      duration / envelope / tracking / iterations / wall
-Delta:           <absolute and relative>
-Gate:            pass / fail, with the reason
-Reproduce:       the exact command
-Conclusion:      one sentence, and whether the success criterion was met
-```
-
-The tables in [Section 9](#9-measured-heuristic-comparison) are the baseline to beat. Any new candidate should be added to the matrix rather than measured on a mission of its own, because the interesting result is not "the new seed is fast" but "the new seed is fast *and* it wins somewhere".
-
----
+# Part III–IV — the research record, in their own documents
+
+The two parts that are not needed to use the planner have their own files now:
+
+- **[`STRATEGY_LEDGER.md`](STRATEGY_LEDGER.md)** — Part III, the failed-strategy ledger: every
+  strategy that was tried and did not work, with the measurement that retired it and what would
+  revive it. Do not re-litigate one of these without new evidence.
+- **[`RESEARCH_AGENDA.md`](RESEARCH_AGENDA.md)** — Part IV, the open questions, ordered so the
+  cheapest decisive experiment comes first.
+
+The section numbers are unchanged, so a citation like "§19.6" still points at the same text — in
+the other file now. The three files share one numbering, so reading them together is reading one
+document.
 
 # Appendix A — Reproducing every table
 
@@ -1731,144 +1225,58 @@ python -m unittest tests.test_jax_heuristics tests.test_jax_ramsete \
 
 ---
 
-# Appendix B — Symbol index
+# Appendix B — Where things live
 
-Every symbol this document mentions, with its location in the tree that was measured.
+The modules this document names, and what each one holds. The code is the
+authority on where a symbol lives; this map is here so a reader does not have
+to go looking.
 
-## `optimizer.py`
-
-| Symbol | Line | Role |
+| Module | Holds | The symbols this document names |
 |---|---|---|
-| `GUESS_STYLES` | 10 | The five seed names |
-| `TrajectoryOptimizer` | 24 | The optimizer |
-| `TrajectoryOptimizer.solve` | 86 | The public entry point; `guess_style`, `per_segment_dt`, `initial_guess`, `fast_polish` |
-| `TrajectoryOptimizer.guess_from_samples` | 353 | Rebuild a guess array from a sample list (used by the refine probe) |
-| `TrajectoryOptimizer._solve_once` | 373 | One IPOPT pass |
-| `interval_dt` | 418 | The interval length for interval `k` |
-| `dt` bounds | 461-462 | `dt_i` in `[0.001, 1.0]` |
-| `dt_ref` | 444, 575, 706 | The jerk normalising interval (KI-022) |
-| `TrajectoryOptimizer._compute_cost` | 684 | The objective |
-| `TrajectoryOptimizer._build_initial_guess` | 720 | The seed builder |
-| `TrajectoryOptimizer._guess_point` | 780 | The baseline geometry |
-| `TrajectoryOptimizer._offset_segment_interiors` | 806 | `bow_left` / `bow_right` |
-| bow amplitude | 829 | the circular-arc sagitta, `0.5 * L * tan(abs(dtheta) / 4)`, capped at `0.35 * L` |
-| `TrajectoryOptimizer._rotate_before_driving` | 841 | `turn_first` |
-| spin fraction / threshold | 873, 866-868 | `0.30 * s_i`, and the threshold from the track width |
-| `TrajectoryOptimizer._set_rolling_speeds` | 889 | `rolling` |
-| `TrajectoryOptimizer._sample_times` | 932 | Timestamps from the per-segment `dt` |
-| `TrajectoryOptimizer.format_output` | 953 | Samples with forces and events |
-
-## `main.py`
-
-| Symbol | Line | Role |
-|---|---|---|
-| `VALIDATION_MARKER` | 43 | The `##OVERBOARD-VALIDATION## ` prefix |
-| `HAS_JAX` | 56 | JAX + Immrax availability |
-| `ImmraxValidator`, `JAXRobotConfig` | 50, 51 | Module-level handles, patchable by tests |
-| `PRESETS` | 63 | `fast` / `balanced` / `safe` |
-| `_ensure_jax_classes` | 88 | The lazy import |
-| `_select_attempt` | 100 | The selection rule |
-| `CANDIDATE_WEIGHT_STEP` | 115 | The legacy ladder step |
-| `SWEEP_WEIGHTS` | 124 | The sweep grid |
-| `_THREAD_ENV_VARS` | 128 | The per-worker BLAS limits |
-| `_candidate_specs` | 193 | The candidate set |
-| `_solve_candidate_worker` | 317 | One candidate in a worker process |
-| `_solve_candidates` | 358 | The parallel solve |
-| `_export_block_reason` | 436 | The export gate |
-| `_immrax_failure_reasons` | 445 | Human-readable failures |
-| `_finite` | 467 | JSON-safe floats |
-| `_segment_report` | 536 | The per-segment breakdown |
-| `_emit_validation_report` | 608 | The machine-readable report |
-| `_cpu_failure_reasons` | 659 | The CPU audit failures |
-| `_apply_preset` | 682 | The presets |
-| `_load_waypoints` | 747 | The waypoint parser; thresholds at 527-535 |
-| `_print_summary` | 914 | The console table |
-| `main` | 1073 | The CLI |
-| the candidate loop | 1000-1167 | Solve → validate → score |
-| the local threshold | 1114 | 2 cm for transit |
-| the per-candidate score | 1130-1140 | `ok`, `violation`, `tube`, `tracking_m` |
-| the CPU audit per candidate | 1142-1152 | Runs on every candidate |
-| the selection | 1169-1172 | `_select_attempt` |
-| the export | 1218-1244 | The gate and the write |
-
-## `validator.py`
-
-| Symbol | Line | Role |
-|---|---|---|
-| `forward_integrate` | 7 | RK4 re-integration at 1 ms |
-| `audit_constraints` | 122 | Per-wheel force, slip, traction, speed |
-| `compute_metrics` | 211 | Duration, jerk, tortuosity, chattering |
-| `check_final_waypoint` | 299 | 2 cm / 0.02 rad |
-| `validate_samples` | 320 | The in-memory gate |
-| `validate_trajectory` | 347 | The CLI/report entry point |
-
-## `immrax_validator.py`
-
-| Symbol | Line | Role |
-|---|---|---|
-| `unroll_trajectory_headings` | 14 | The ±π fix |
-| `REACHABILITY_SUBSTEPS` | 38 | 20 |
-| `CONTROL_DT` | 59 | 0.02 s |
-| `PLANT_SUBSTEPS` | 60 | 4 |
-| `_interpolated_reference` | 207 | The linear reference + the Ramsete gain |
-| `RobotOpenLoop` | 264 | The default plant |
-| `DigitalTwinOpenLoop` | 334 | The fitted 5-state plant |
-| `MIN_TAU_S` | 352 | 0.01 s |
-| `RamseteController` | 496 | `b = 2.0`, `zeta = 0.7` |
-| `ClosedLoopRobotSystem` | 543 | The Immrax system |
-| `ImmraxValidator` | 737 | The validator |
-| `_advance_belief` | 717 | The robot's own pose estimate |
-| `validate_trajectory` | 980 | The entry point; `safety_threshold_m = 0.005` at 427 |
-| `check_sample_interval` | 1010 | The per-sample interval physics |
-| `compute_reachability` | 1273 | The interval propagation |
-| the divergence radius | 714 | 0.05 m |
-
-## `robot_model.py`
-
-| Symbol | Line | Role |
-|---|---|---|
-| `wheel_normal_forces` | 13 | The one weight-transfer model (imported from `drivetrain_physics.py`) |
-| `RobotConfig` | 28 | The config abstraction |
-| `uncertainties` | 216 | The seven intervals |
-| `get_max_force_at_velocity` | 425 | The motor curve |
-| `get_robust_force_params` | 519 | The worst case for the optimizer |
-| `DifferentialDriveModel` | 728 | The force model |
-| `get_max_wheel_force_symbolic` | 780 | The per-wheel limit |
-| `get_traction_limit_symbolic` | 802 | The per-wheel traction limit |
-| `check_constraints` | 825 | The CPU-side check |
-
-## `digital_twin.py`
-
-| Symbol | Line | Role |
-|---|---|---|
-| `ActuatorFit` | 56 | gain, tau, delay, accel limit |
-| `OdometryFit` | 82 | Distance and heading scale |
-| `SlipFit` | 101 | The braking shortfall |
-| `SensorFit` | 126 | The gyro and accel biases |
-| `DigitalTwinConfig` | 412 | The whole fitted model |
-| `actuator_gain_range` | 488 | The interval that goes into Immrax |
-| `brake_shortfall` | 602 | Loaded, reported, and applied by the fitted plant |
-| `load_sysid_fit` | 676 | The loader |
+| `overboard/main.py` | the CLI, the candidate set, the scoring, the selection, the export gate | `main`, `_candidate_specs`, `_select_attempt`, `_choose_attempt`, `_record_candidate`, `_score_attempt`, `_run_candidate_rounds`, `_export_block_reason`, `_emit_validation_report`, `_immrax_failure_reasons`, `_cpu_failure_reasons`, `_segment_limit`, `_segment_report`, `_load_waypoints`, `_apply_preset`, `_rescue_specs`, `PRESETS`, `SWEEP_WEIGHTS`, `VALIDATION_MARKER`, `HAS_JAX` |
+| `overboard/core/optimizer.py` | the CasADi/IPOPT optimizer and the five stock seeds | `TrajectoryOptimizer`, `solve`, `_solve_once`, `_compute_cost`, `_build_initial_guess`, `_guess_point`, `_offset_segment_interiors`, `_rotate_before_driving`, `_set_rolling_speeds`, `_sample_times`, `format_output`, `guess_from_samples`, `get_segment_sample_counts`, `get_adaptive_mesh_sample_counts`, `merge_conditions`, `GUESS_STYLES`, `CASADI_IPOPT_LOCK` |
+| `overboard/core/frontier_seed.py` | the analytical frontier seeds | `generate_frontier_seed`, `generate_canonical_seeds`, `compute_tangent_headings` |
+| `overboard/core/unified_planner.py` | the 3-Pillar unified engine | `UnifiedPathEngine`, `compute_invariant_mesh_samples`, `generate_seed`, `solve_candidate`, `plan` |
+| `overboard/core/surrogate_polish.py` | the 5-layer surrogate-to-truth pipeline | `generate_homotopy_bank`, `screen_candidates_jax`, `select_topological_representatives` |
+| `overboard/verification/validator.py` | the CPU audit | `forward_integrate`, `audit_constraints`, `compute_metrics`, `compute_path_fitness`, `check_final_waypoint`, `validate_samples`, `validate_trajectory` |
+| `overboard/verification/immrax_validator.py` | the closed-loop interval reachability check | `ImmraxValidator`, `validate_trajectory`, `compute_reachability`, `_interpolated_reference`, `RamseteController`, `RobotOpenLoop`, `DigitalTwinOpenLoop`, `ClosedLoopTickMap`, `PROPAGATION`, `PROPAGATIONS`, `CONTROL_DT`, `PLANT_SUBSTEPS` |
+| `overboard/verification/reachability_engine.py` | the compiled `jax.lax.scan` propagation | `CompiledReachabilityEngine`, `unroll_trajectory_headings` |
+| `overboard/models/robot_model.py` | the robot configuration and the shared force model | `RobotConfig`, `uncertainties`, `get_max_force_at_velocity`, `get_max_force_symbolic`, `get_robust_force_params`, `get_max_force_at_velocity_robust`, `get_max_force_symbolic_robust`, `max_linear_speed`, `no_load_wheel_speed_worst_case`, `apply_measured_motor`, `apply_sysid_fit`, `DifferentialDriveModel`, `get_dynamics`, `get_dynamics_symbolic`, `get_wheel_normal_forces`, `get_max_wheel_force_symbolic`, `get_traction_limit_symbolic`, `check_constraints` |
+| `overboard/models/drivetrain_physics.py` | the one weight-transfer model | `wheel_normal_forces`, `motor_force_at_velocity`, `traction_limits`, `CG_HEIGHT_M` |
+| `overboard/models/drivetrain.py` | the motor and drivetrain model | `brake_force`, `brake_deceleration` |
+| `overboard/models/jax_robot_model.py` | the JAX-differentiable model | `JAXRobotConfig`, `get_max_force_at_velocity`, `max_linear_speed` |
+| `overboard/models/jax_ramsete.py` | the JAX Ramsete controller | `JAXRamseteController`, `quantize_drive_command` |
+| `overboard/sysid/digital_twin.py` | the optional fitted plant | `DigitalTwinConfig`, `ActuatorFit`, `OdometryFit`, `SlipFit`, `SensorFit`, `actuator_gain_range`, `brake_shortfall`, `load_sysid_fit` |
+| `overboard/sysid/fit.py` | the host-side fitter | `parse_session`, `session_tests`, `write_sheet`, `sheet_to_poses`, `poses_from_hub_session`, `fit_session`, `repeat_statistics` |
+| `overboard/sysid/collect.py` | the collector and its one-command loop | `main` |
+| `overboard/sysid/compare.py` | plan against measured poses | `compare`, `load_trajectory_document` |
+| `overboard/deploy/export.py` | the Choreo and Pybricks writers | `resample_to_fixed_dt`, `write_controller_file`, `write_python_file`, `write_compact_python_file`, `encode_compact_trajectory` |
+| `overboard/deploy/hub_deploy.py` | the hub transport | `deploy`, `push_trajectory`, `HUB_CODE_DIR`, `HUB_MISSION_MODULE`, `HUB_RUNNER` |
+| `overboard/deploy/hub_ble.py` | BLE discovery | `find_hub`, `list_hubs` |
+| `overboard/gui_server.py` | the studio server | `Job`, `start_job`, `build_command`, `start_push`, `_validation_verdict` |
+| `overboard/viz/` | the plotting and the studio assets | `plotter`, `fields`, `mat_import`, `overboard/viz/studio.html`, `overboard/viz/studio.js`, `overboard/viz/studio.css`, `overboard/viz/report.js` |
+| (removed) | the Multi-Verse pipeline, the Reeds-Shepp bootstrap, the JAX refiner and the evolutionary research - git tag `archive/legacy-2026-10` | `multiverse_optimizer`, `jax_optimizer`, `path_planning` |
+| `pybricks_code/` | the firmware: the controller, the runner, the collector, the robot config | `ramsete.py`, `ramsete_fast.py`, `ramsete_compact.py`, `ramsete_compact_events.py`, `hub_runner.py`, `sysid_digital_twin.py`, `robot_config.py` |
 
 ---
 
 # Appendix C — Known issue cross-reference
 
-| KI | Area | One line | Where in this document |
+| KI | Area | One line | Where it is documented |
 |---|---|---|---|
-| KI-001 | Solver / output | A failed solve was exported as a success | [22.4](#224-a-failed-solve-was-exported-as-a-success-ki-001-and---validate-could-not-block-output-ki-002) |
-| KI-002 | Validation | `--validate` could not block output or the exit code | [22.4](#224-a-failed-solve-was-exported-as-a-success-ki-001-and---validate-could-not-block-output-ki-002) |
-| KI-003 | Safety | Immrax ignored the upper uncertainty bounds | [22.3](#223-the-immrax-upper-uncertainty-bounds-were-ignored-ki-003) |
-| KI-004 | Multi-Verse | The refinement had no effect on the final trajectory; measured as a seed provider it rescued nothing, and the pipeline is archived | [Section 8](#8-the-archived-multi-verse-path), [20.1](#201-the-jax-refinement), [20.2](#202-the-refine-probe), Q12 |
+| KI-001 | Solver / output | A failed solve was exported as a success | [22.4](STRATEGY_LEDGER.md#224-a-failed-solve-was-exported-as-a-success-ki-001-and---validate-could-not-block-output-ki-002) |
+| KI-002 | Validation | `--validate` could not block output or the exit code | [22.4](STRATEGY_LEDGER.md#224-a-failed-solve-was-exported-as-a-success-ki-001-and---validate-could-not-block-output-ki-002) |
+| KI-003 | Safety | Immrax ignored the upper uncertainty bounds | [22.3](STRATEGY_LEDGER.md#223-the-immrax-upper-uncertainty-bounds-were-ignored-ki-003) |
+| KI-004 | Multi-Verse | The refinement had no effect on the final trajectory; measured as a seed provider it rescued nothing, and the pipeline is archived | [Section 8](#8-the-archived-multi-verse-path), [20.1](STRATEGY_LEDGER.md#201-the-jax-refinement), [20.2](STRATEGY_LEDGER.md#202-the-refine-probe), Q12 |
 | KI-009 | Safety / config | The declared uncertainty ranges were ignored | [Section 11](#11-the-uncertainty-model) |
-| KI-010 | Physics | The weight-transfer math was wrong and the tools disagreed | [22.5](#225-the-weight-transfer-math-was-wrong-and-the-tools-disagreed-ki-010) |
+| KI-010 | Physics | The weight-transfer math was wrong and the tools disagreed | [22.5](STRATEGY_LEDGER.md#225-the-weight-transfer-math-was-wrong-and-the-tools-disagreed-ki-010) |
 | KI-014 | Safety model | The JAX Ramsete used a poor large-angle approximation | [Section 12](#12-controller-and-plant-parity) |
-| KI-015 | Benchmarks | ~~The random benchmark tools are broken~~ (fixed) | [21.3](#213-the-random-benchmark-mode), Q8 |
-| KI-018 | Maintenance | ~~Dead code, duplicates, generated files~~ (fixed) | [21.4](#214-sysidsolverpy), [20.4](#204-the-critics-config-block) |
-| KI-019 | Safety | The reachability tube lagged the reference by one sample | [22.2](#222-the-reachability-tube-lagged-the-reference-by-one-sample-ki-019) |
-| KI-020 | Digital twin | The validator is not a full twin; reachability is not an objective | [Section 14](#14-what-each-layer-proves-and-does-not-prove), [21.2](#212-reachability-as-a-post-hoc-score), Q4, Q9 |
+| KI-015 | Benchmarks | ~~The random benchmark tools are broken~~ (fixed) | [21.3](STRATEGY_LEDGER.md#213-the-random-benchmark-mode), Q8 |
+| KI-018 | Maintenance | ~~Dead code, duplicates, generated files~~ (fixed) | [21.4](STRATEGY_LEDGER.md#214-sysid_solverpy), [19.2](STRATEGY_LEDGER.md#192-multi-start-as-a-quality-claim) |
+| KI-019 | Safety | The reachability tube lagged the reference by one sample | [22.2](STRATEGY_LEDGER.md#222-the-reachability-tube-lagged-the-reference-by-one-sample-ki-019) |
+| KI-020 | Digital twin | The validator is not a full twin; reachability is not an objective | [Section 14](#14-what-each-layer-proves-and-does-not-prove), [21.2](STRATEGY_LEDGER.md#212-reachability-as-a-post-hoc-score), Q4, Q9 |
 | KI-021 | Robot runtime | The DriveBase capped the acceleration the plan asked for | [Section 12](#12-controller-and-plant-parity) |
-| KI-022 | Solver / timing | The per-segment timing model was a jerk-penalty loophole | [5.3](#53-the-jerk-discipline-ki-022), [22.1](#221-the-per-segment-timing-model-was-a-jerk-penalty-loophole-ki-022) |
+| KI-022 | Solver / timing | The per-segment timing model was a jerk-penalty loophole | [5.3](#53-the-jerk-discipline-ki-022), [22.1](STRATEGY_LEDGER.md#221-the-per-segment-timing-model-was-a-jerk-penalty-loophole-ki-022) |
 | KI-024 | Solver / timing | The timing model had no rule for where the time allocation may change | [5.5](#55-where-the-time-allocation-may-change-ki-024) |
 | KI-051 | CLI / solver | ~~`--self-consistent` was a no-op: the switch could not change the plan and the trapezoidal collocation could not be reached from the CLI~~ (fixed; the flag is two-way now) | [5.7](#57-the-collocation-where-a-sample-is-placed) |
 | KI-052 | CLI / solver | ~~The CLI and the library plan different trajectories for the same mission~~ (fixed; both default to the self-consistent rule now). The numbers in §9 were measured with the trapezoidal rule and have not been re-measured since | [5.7](#57-the-collocation-where-a-sample-is-placed), [9](#9-measured-heuristic-comparison) |
@@ -1893,4 +1301,3 @@ Every symbol this document mentions, with its location in the tree that was meas
 | **The baseline** | The `baseline` seed under equal-duration timing: the historical behaviour of the solver. |
 | **Digital twin** | The fitted five-state plant, loaded with `--sysid-fit`. Strictly, a *partial* twin: it models the actuator and the odometry, not the motor, the PID or the slip. |
 | **Model prediction** | Any number produced by the simulator. Not a hardware measurement. |
-

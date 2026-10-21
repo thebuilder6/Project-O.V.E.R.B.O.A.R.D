@@ -6,9 +6,9 @@
 
 This document describes the current implementation in the working tree. It replaces the earlier version, which mixed implemented code with aspirational designs and unreproducible performance numbers. The code, `KNOWN_ISSUES.md`, and the test suite are the authority if this document drifts again.
 
-> **Scope and safety status:** this is an offline desktop tool for one FLL differential-drive robot. The simple optimizer and safety gate work. The validation model is not yet a full digital twin, and some representative curved paths still fail the Immrax gate (KI-020). The old Multi-Verse pipeline is archived under `overboard/legacy/` and has no CLI entry point (KI-004). Only output that has passed `--validate` should be treated as safety-checked.
+> **Scope and safety status:** this is an offline desktop tool for one FLL differential-drive robot. The simple optimizer and safety gate work. The validation model is not yet a full digital twin, and some representative curved paths still fail the Immrax gate (KI-020). The old Multi-Verse pipeline was removed from the tree (git tag `archive/legacy-2026-10`) and has no CLI entry point (KI-004). Only output that has passed `--validate` should be treated as safety-checked.
 
-> **Companion document:** [`docs/HEURISTICS_AND_VERIFICATION.md`](HEURISTICS_AND_VERIFICATION.md) documents every path-planning heuristic in the tree, the full verification chain and what each layer does and does not prove, a ledger of the strategies that did not work, and a prioritised research agenda. Section 5 below summarises the validation chain; the companion document is the reference for the gate thresholds, the seed heuristics and the failed approaches.
+> **Companion document:** [`docs/HEURISTICS_AND_VERIFICATION.md`](HEURISTICS_AND_VERIFICATION.md) documents every path-planning heuristic in the tree, the full verification chain and what each layer does and does not prove. Its two research parts have their own files: [`docs/STRATEGY_LEDGER.md`](STRATEGY_LEDGER.md) (the strategies that did not work) and [`docs/RESEARCH_AGENDA.md`](RESEARCH_AGENDA.md) (the prioritised research agenda). Section 5 below summarises the validation chain; the companion document is the reference for the gate thresholds, the seed heuristics and the failed approaches.
 >
 > **Optimal control derivation:** [`docs/OPTIMAL_CONTROL_DERIVATION.md`](OPTIMAL_CONTROL_DERIVATION.md) documents the extraction of the 5 invariant differential-drive control laws from the 50-generation evolutionary search and the mathematical formulation of the analytical Kinetic Frontier seeds (`overboard/core/frontier_seed.py`).
 
@@ -28,7 +28,7 @@ The current tree contains uncommitted fixes for several safety and correctness i
 
 What is still incomplete:
 
-- The Multi-Verse pipeline is archived under `overboard/legacy/` and has no CLI entry point (KI-004). The unified planner is the default solve path; `--no-unified` restores the stock candidate set.
+- The Multi-Verse pipeline was removed from the tree (git tag `archive/legacy-2026-10`) and has no CLI entry point (KI-004). The unified planner is the default solve path; `--no-unified` restores the stock candidate set.
 - The validator is kinematic and has no motor, DriveBase, odometry, or slip dynamics (KI-020).
 - Whether a representative path passes the Immrax gate is a measurement that moves with the config and the planner (KI-020); the current pass/fail ledger is in `docs/HEURISTICS_AND_VERIFICATION.md`.
 - Convergence flags and some export edge cases remain open (KI-017). The random benchmarks work (KI-015).
@@ -41,6 +41,7 @@ What is still incomplete:
 
 | Module | Responsibility |
 |---|---|
+| `overboard/paths.py` | Every directory the tools need, resolved once |
 | `overboard/main.py` | CLI, waypoint/config loading, candidate loop, safety gate, export |
 | `overboard/models/robot_model.py` | Config parsing, motor curve, per-wheel normal/traction model, CPU force checks |
 | `overboard/models/drivetrain_physics.py` | Shared normal-force, cornering-ceiling, late-apex and Ramsete-gain maths |
@@ -49,14 +50,14 @@ What is still incomplete:
 | `overboard/core/frontier_seed.py` | Analytical Kinetic Frontier seed generator |
 | `overboard/core/unified_planner.py` | The 3-Pillar Unified Trajectory Engine (`UnifiedPathEngine`) |
 | `overboard/core/surrogate_polish.py` | The 5-layer surrogate-to-truth pipeline and the pyramid sieve |
-| `overboard/legacy/multiverse_optimizer.py` | Archived bootstrap/critic/JAX-refinement pipeline (`MasterTrajectoryOptimizer`); no CLI entry point |
+| (removed) | The bootstrap/critic/JAX-refinement pipeline (`MasterTrajectoryOptimizer`) - git tag `archive/legacy-2026-10`; no CLI entry point |
 | `overboard/verification/validator.py` | CPU forward integration, constraint audit, metrics, final-waypoint and sample gates |
 | `overboard/verification/immrax_validator.py` | Interval reachability with the deployed Ramsete structure, plus optional fitted plant |
 | `overboard/verification/reachability_engine.py` | The shared compiled reachability engine |
 | `overboard/sysid/digital_twin.py` | Loader/validation for `sysid_fit.json` actuator and odometry fits |
 | `overboard/models/jax_robot_model.py` | JAX configuration and force model |
 | `overboard/models/jax_ramsete.py` | JAX Ramsete parity and interval-friendly controller |
-| `overboard/legacy/jax_optimizer.py` | JAX candidate generation used by the archived pipeline |
+| (removed) | JAX candidate generation used by the archived pipeline - git tag `archive/legacy-2026-10` |
 | `overboard/sysid/fit.py` | Host-side fitter for digital-twin logs |
 | `overboard/sysid/collect.py`, `overboard/sysid/compare.py` | Hub SysId collector; planned-vs-measured stop/final pose report |
 | `overboard/deploy/export.py` | Fixed-timestep controller JSON, legacy Python, and packed-compact Python export |
@@ -367,7 +368,7 @@ The hardware calibration path is implemented but has not been validated on hardw
 
 ## 7. Archived Multi-Verse pipeline
 
-> The pipeline is archived under `overboard/legacy/` and has no CLI entry point. The five phases are documented phase by phase below as history. The ledger of Multi-Verse strategies that did not work (the degenerate Reeds-Shepp bootstrap, the unread config blocks, the dead `heuristic_wins` counter) is in [`docs/HEURISTICS_AND_VERIFICATION.md`](HEURISTICS_AND_VERIFICATION.md) §8 and §20.
+> The pipeline was removed from the tree (git tag `archive/legacy-2026-10`) and has no CLI entry point. The five phases are documented phase by phase below as history. The ledger of Multi-Verse strategies that did not work (the degenerate Reeds-Shepp bootstrap, the unread config blocks, the dead `heuristic_wins` counter) is in [`docs/HEURISTICS_AND_VERIFICATION.md`](HEURISTICS_AND_VERIFICATION.md) §8 and [`docs/STRATEGY_LEDGER.md`](STRATEGY_LEDGER.md) §20.
 
 `MasterTrajectoryOptimizer.solve` runs five phases and returns `(final_traj, stats)`.
 
@@ -458,7 +459,7 @@ Do not tune the 5 mm tracking or 2 cm envelope thresholds to one path. The strai
 
 The full option list is in `README.md` and `docs/CONFIGURATION.md`. Current truth:
 
-- The simple CasADi solver is the default backend; the 3-Pillar unified engine (`overboard/core/unified_planner.py`) is the default solve path, and `--no-unified` (alias `--simple`) restores the stock candidate set. The Multi-Verse pipeline is archived under `overboard/legacy/`.
+- The simple CasADi solver is the default backend; the 3-Pillar unified engine (`overboard/core/unified_planner.py`) is the default solve path, and `--no-unified` (alias `--simple`) restores the stock candidate set. The Multi-Verse pipeline was removed from the tree (git tag `archive/legacy-2026-10`).
 - `--validate` requires JAX/Immrax and gates output. `--candidates N` (default 2) selects among the unified frontier candidates, or the seed/timing combinations of the stock set.
 - `--sysid-fit sysid_fit.json` opts into the fitted five-state plant; it requires `--validate` or `--live`.
 - `--export-format controller|python|python-compact` writes optional outputs after the gate.
@@ -500,8 +501,10 @@ The solver records `iteration_history` in the default path: `--show-convergence`
 `python run_tests.py` with JAX installed:
 
 ```text
-657 tests run, 0 failures, 0 errors, 0 skipped
+671 tests run, 0 failures, 0 errors, 0 skipped
 ```
+
+(measured 2026-10-21; the count grows as tests are added - `run_tests.py` prints it)
 
 The three `TestRoboVibeConverter` cases skip when PyYAML is missing and pass when it is installed. The JAX-dependent modules are imported in a `try`; if JAX is missing, they are skipped rather than silently hidden behind a stale import (KI-007).
 
@@ -538,11 +541,11 @@ These are model predictions. There is no hardware tracking log in the repository
 
 ### 10.4 Multi-Verse comparison (archived)
 
-The pipeline benchmark in §7.6 produced identical final costs for simple and Multi-Verse, with 0.00 % improvement — that was the state before the repair, and it is why KI-004 was opened. The pipeline was later repaired and used as a **seed provider**, but measured over 30 missions the refined seed rescued nothing and was not better than the stock seeds. It is now archived under `overboard/legacy/` and has no CLI entry point.
+The pipeline benchmark in §7.6 produced identical final costs for simple and Multi-Verse, with 0.00 % improvement — that was the state before the repair, and it is why KI-004 was opened. The pipeline was later repaired and used as a **seed provider**, but measured over 30 missions the refined seed rescued nothing and was not better than the stock seeds. It was removed from the tree (git tag `archive/legacy-2026-10`) and has no CLI entry point.
 
 ### 10.5 Evolutionary discovery and analytical Kinetic Frontier seeds (research record)
 
-> **Research record.** This section documents how the analytical seeds were derived. The genetic search that produced it is archived under `overboard/legacy/evolutionary_research/` and no shipped module imports it; the numbers are from the runs of 2026-10-18/19, before the config was narrowed, and they do not describe what the current tree produces. The derivation and the 5 laws are still the reason `frontier_seed.py` looks the way it does.
+> **Research record.** This section documents how the analytical seeds were derived. The genetic search that produced it was removed from the tree (git tag `archive/legacy-2026-10`) and no shipped module imported it; the numbers are from the runs of 2026-10-18/19, before the config was narrowed, and they do not describe what the current tree produces. The derivation and the 5 laws are still the reason `frontier_seed.py` looks the way it does.
 
 To address non-convex local traps on complex multi-waypoint missions with unpinned approach headings, a **5-Pillar Multi-Island Genetic Algorithm** was deployed across 50 generations (1,200 IPOPT evaluations). The stochastic search uncovered significant performance gains over local gradient descent, yielding a **+19.2% to +20.7% speedup** on the 10-waypoint complex mission and **+5.23%** on the 180° S-Curve acrobatic reversal.
 
@@ -590,7 +593,7 @@ For the complete theoretical derivation and state-space formulations, see [`docs
 
 | ID | State | Impact |
 |---|---|---|
-| KI-004 | Archived | The Multi-Verse pipeline is archived under `overboard/legacy/`; it has no CLI entry point |
+| KI-004 | Deleted | The Multi-Verse pipeline was removed from the tree (git tag `archive/legacy-2026-10`); it has no CLI entry point |
 | KI-005 | Fixed | The live view that killed port owners is gone; the studio never takes a port |
 | KI-006 | Fixed | The optional stack lives in `requirements-optional.txt`; `install.bat` / `install.sh` set up both |
 | KI-011 | Fixed | The controller heading interpolation no longer crosses ±π the long way |
@@ -617,7 +620,7 @@ Priority order:
 6. **KI-015:** done - the random benchmarks use an explicit config and check convergence.
 7. **KI-017:** wire or remove the convergence flags and the Multi-Verse history.
 
-The path-planning side of this list — the seed heuristics, the timing models, the candidate set, the reachability objective, and the research agenda with a suggested order — is in [`docs/HEURISTICS_AND_VERIFICATION.md`](HEURISTICS_AND_VERIFICATION.md) Part IV.
+The path-planning side of this list — the seed heuristics, the timing models, the candidate set and the reachability objective — is in [`docs/HEURISTICS_AND_VERIFICATION.md`](HEURISTICS_AND_VERIFICATION.md); the research agenda with a suggested order is in [`docs/RESEARCH_AGENDA.md`](RESEARCH_AGENDA.md).
 
 ---
 

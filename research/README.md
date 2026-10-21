@@ -1,7 +1,7 @@
 # Research tooling
 
 Measurement code for the research agenda in
-`docs/HEURISTICS_AND_VERIFICATION.md` Part IV. **Nothing here is imported by
+`docs/RESEARCH_AGENDA.md`. **Nothing here is imported by
 the production code.** It measures the planner; it does not change it.
 
 The point of this directory is that every claim in the agenda currently rests
@@ -29,7 +29,7 @@ JSON record per candidate so the questions can be answered from data.
 
 The working tree is edited while a measurement runs (KI-024 landed mid-flight
 once, and KI-025 after a pin). Every run therefore happens against a pinned
-copy of the planner, the same convention `docs/research/rq_a` uses:
+copy of the planner, the same convention `archive/research-2026-10:docs/research/rq_a` uses:
 
 ```powershell
 robocopy . <pinned copy> /E /XD .git __pycache__ research

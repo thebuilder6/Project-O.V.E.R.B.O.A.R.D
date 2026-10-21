@@ -1,6 +1,6 @@
 # RQ-B — What can the robot's motor actually do, and how do we know?
 
-**Status:** the motor model is in place and its structure is confirmed against an independent simulator. The motor's numbers are now measured instead of declared. **One reference simulator defect was found** (see [Finding 3](#finding-3-the-reference-simulators-brake-mode-reverses-the-wheels)).
+**Status:** the motor model is in place and its structure is confirmed against an independent simulator. The motor's numbers are now measured instead of declared. **One reference simulator defect was found** (see [Finding 3](#finding-3--the-reference-simulators-brake-mode-reverses-the-wheels)).
 **Date:** 2026-10-20
 **Companion:** [`../HEURISTICS_AND_VERIFICATION.md`](../HEURISTICS_AND_VERIFICATION.md), [`../CALIBRATION_PROCEDURE.md`](../CALIBRATION_PROCEDURE.md), and KI-020 in [`../../KNOWN_ISSUES.md`](../../KNOWN_ISSUES.md).
 

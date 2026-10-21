@@ -5,11 +5,11 @@ A trajectory optimizer for LEGO differential-drive robots in FIRST LEGO League (
 *Working with an AI coding agent? `AGENTS.md` is the short index of the rules and commands; the documents below are the long form.*
 
 **📖 Technical documentation:** [docs/WHITEPAPER.md](docs/WHITEPAPER.md)
-**🔬 Heuristics and verification:** [docs/HEURISTICS_AND_VERIFICATION.md](docs/HEURISTICS_AND_VERIFICATION.md) — every path-planning heuristic, the full verification chain, the failed-strategy ledger, and the research agenda.
-**⚡ Optimal control derivation:** [docs/OPTIMAL_CONTROL_DERIVATION.md](docs/OPTIMAL_CONTROL_DERIVATION.md) — 5 invariant differential-drive control laws extracted from 50 generations of evolutionary search and the analytical Kinetic Frontier seeds (`overboard/core/frontier_seed.py`). *Historical: the evolutionary search is archived under `overboard/legacy/`.*
+**🔬 Heuristics and verification:** [docs/HEURISTICS_AND_VERIFICATION.md](docs/HEURISTICS_AND_VERIFICATION.md) — every path-planning heuristic and the full verification chain. Its research parts have their own files: [docs/STRATEGY_LEDGER.md](docs/STRATEGY_LEDGER.md) (the strategies that failed, and the measurement that retired each) and [docs/RESEARCH_AGENDA.md](docs/RESEARCH_AGENDA.md) (the open questions).
+**⚡ Optimal control derivation:** [docs/OPTIMAL_CONTROL_DERIVATION.md](docs/OPTIMAL_CONTROL_DERIVATION.md) — 5 invariant differential-drive control laws extracted from 50 generations of evolutionary search and the analytical Kinetic Frontier seeds (`overboard/core/frontier_seed.py`). *Historical: the evolutionary search was removed from the tree - it is in the git tag `archive/legacy-2026-10`.*
 **🖼️ Visual gallery:** [docs/VISUAL_GALLERY.md](docs/VISUAL_GALLERY.md) — gallery of state-space phase portraits, multi-shape manifolds, and multi-island convergence figures from the archived search.
 
-The audit items from KI-001 through KI-052 are resolved in the codebase, except the one still open (hardware calibration and digital-twin validation, KI-020); KI-004 is archived and KI-032 is mitigated (see [KNOWN_ISSUES.md](KNOWN_ISSUES.md)). The 3-Pillar unified planner is the default solve path; `--no-unified` restores the stock candidate set, and the old Multi-Verse pipeline is archived under `overboard/legacy/` and is not reachable from the CLI.
+The audit items from KI-001 through KI-052 are resolved in the codebase, except the one still open (hardware calibration and digital-twin validation, KI-020); KI-004 is deleted and KI-032 is mitigated (see [KNOWN_ISSUES.md](KNOWN_ISSUES.md)). The 3-Pillar unified planner is the default solve path; `--no-unified` restores the stock candidate set, and the old Multi-Verse pipeline was removed from the tree (git tag `archive/legacy-2026-10`) and is not reachable from the CLI.
 
 ## Start here (first time)
 
@@ -536,7 +536,7 @@ The simple optimizer solves a direct-collocation optimal-control problem:
    - Worst-case force bounds over the declared uncertainty ranges
 4. **Solve**: IPOPT finds a locally optimal trajectory. The result is converted to Choreo v3 samples.
 
-The 3-Pillar unified planner is the default path: it supplies the seeds and the collocation mesh, and `--no-unified` solves the stock candidate set directly with the same CasADi/IPOPT backend. The old Multi-Verse pipeline is archived under `overboard/legacy/` and has no CLI entry point.
+The 3-Pillar unified planner is the default path: it supplies the seeds and the collocation mesh, and `--no-unified` solves the stock candidate set directly with the same CasADi/IPOPT backend. The old Multi-Verse pipeline was removed from the tree (git tag `archive/legacy-2026-10`) and has no CLI entry point.
 
 ## Common Usage Patterns
 
@@ -594,7 +594,7 @@ By default the optimizer is purely time-optimal (`--accuracy-weight 0.0`). This 
 
 The exact tradeoff depends on the path and robot. Measure it on your own trajectory rather than relying on a fixed percentage.
 
-With `--validate`, the tradeoff is measured, not assumed: `--candidates N` (default 2) solves N candidates, validates and scores every one, and keeps the passing candidate with the lowest 5-part fitness score, with the envelope and the shortest trajectory breaking ties. The stock candidate set (`--no-unified`) combines initial-guess seeds with the timing mode: by default candidate 1 is equal-duration `baseline` (linear, zero-speed guess), candidate 2 is per-segment `baseline`, then the remaining seeds (`rolling`, `bow_left`, `bow_right`, `turn_first`) alternate modes. The default `--unified` path replaces that set with three frontier candidates (`frontier_sprint`, `frontier_sweeper`, `frontier_exploratory`, all per-segment at a low accuracy weight), and `--candidates` truncates that list. `--uniform-dt` or `--per-segment-dt` forces one mode. `--candidates 1` disables the comparison. A slower or differently shaped candidate that scores worse is discarded; nothing is escalated silently.
+With `--validate`, the tradeoff is measured, not assumed: `--candidates N` (default 2) solves N candidates, validates and scores every one, and keeps a passing one - the **fastest** on the default `--unified` path (the envelope breaks a duration tie), or the one with the **lowest 5-part fitness score** on the stock set (the envelope and the shortest trajectory break ties). The stock candidate set (`--no-unified`) combines initial-guess seeds with the timing mode: by default candidate 1 is equal-duration `baseline` (linear, zero-speed guess), candidate 2 is per-segment `baseline`, then the remaining seeds (`rolling`, `bow_left`, `bow_right`, `turn_first`) alternate modes. The default `--unified` path replaces that set with three frontier candidates (`frontier_sprint`, `frontier_sweeper`, `frontier_exploratory`, all per-segment at a low accuracy weight), and `--candidates` truncates that list. `--uniform-dt` or `--per-segment-dt` forces one mode. `--candidates 1` disables the comparison. A slower or differently shaped candidate that scores worse is discarded; nothing is escalated silently.
 
 The two timing modes are not peers. The equal-duration mode shares one `dt` across all segments, and because every segment has the same sample count, that also forces every segment to take the **same time**. On a path with unequal segment lengths the short segment inherits the long segment's duration, so the robot crawls through it and has to make the time back up with non-monotone wheel motion. The per-segment mode gives every segment its own duration and is the general model: setting every `dt_i` equal recovers the equal-duration solution exactly, and the per-segment optimum is never worse at the same weight. Both modes are held to the same wheel-jerk discipline, so `--accuracy-weight` means the same thing in either (KI-022).
 
@@ -671,9 +671,9 @@ With `--sysid-fit`, the Immrax plant switches from the default three-state kinem
 
 The final pose is also checked against the last waypoint. If any check fails, the CLI exits 1 and writes nothing.
 
-With `--validate`, `--candidates N` (default 2) solves N trajectories. With the stock candidate set, each candidate combines an initial-guess seed with a timing mode at the same `accuracy_weight`; the default `--unified` path uses its three frontier candidates instead. Every candidate is validated and CPU-audited; the selected one is the passing candidate with the lowest fitness score — a single number in seconds covering the reachability spread at the stops, the slip risk, the RMS wheel force, the tracking error and the run time — with the envelope and the shortest trajectory breaking ties. If none pass, the candidate closest to passing is selected for reporting but still blocked from export. Without `--validate`, only the first candidate is solved.
+With `--validate`, `--candidates N` (default 2) solves N trajectories. With the stock candidate set, each candidate combines an initial-guess seed with a timing mode at the same `accuracy_weight`; the default `--unified` path uses its three frontier candidates instead. Every candidate is validated and CPU-audited; the selected one is a passing candidate - the fastest on the default `--unified` path, or the one with the lowest fitness score on the stock set, where the score is a single number in seconds covering the reachability spread at the stops, the slip risk, the RMS wheel force, the tracking error and the run time (the envelope and the shortest trajectory break ties). If none pass, the candidate closest to passing is selected for reporting but still blocked from export. Without `--validate`, only the first candidate is solved.
 
-**Measured current examples** (model predictions, not hardware). All rows use the default two candidates unless stated: candidate 1 is equal-duration baseline, candidate 2 is per-segment baseline.
+**Measured current examples** (model predictions, not hardware). These rows are the **stock** set's measurement, taken before the unified engine became the default: two candidates, candidate 1 equal-duration baseline and candidate 2 per-segment baseline. Run the default path and the candidate table names the frontier candidates instead.
 
 | Case | Result |
 |---|---|
@@ -687,7 +687,7 @@ With `--validate`, `--candidates N` (default 2) solves N trajectories. With the 
 
 All of the failing commands exit 1 and write no output. This is the gate working, not a crash. These results use the narrowed `track_width_range` and `gear_backlash_m` in `examples/fll_choreo.json`; those are test assumptions, not measured hardware values. Without a hardware fit the validator is still kinematic; `--sysid-fit` adds the measured actuator/odometry model, but the thresholds are unchanged. See KI-020.
 
-The full gate chain, every threshold with its source line, the measured comparison of all five initial-guess seeds under both timing models (60 candidates, with the raw logs), the ledger of strategies that did not work, and the research agenda are in [docs/HEURISTICS_AND_VERIFICATION.md](docs/HEURISTICS_AND_VERIFICATION.md).
+The full gate chain, every threshold with its source line, and the measured comparison of all five initial-guess seeds under both timing models (60 candidates, with the raw logs) are in [docs/HEURISTICS_AND_VERIFICATION.md](docs/HEURISTICS_AND_VERIFICATION.md). The ledger of strategies that did not work is in [docs/STRATEGY_LEDGER.md](docs/STRATEGY_LEDGER.md), and the research agenda in [docs/RESEARCH_AGENDA.md](docs/RESEARCH_AGENDA.md).
 
 ## Controller Export
 
@@ -749,7 +749,9 @@ See [docs/trajectory_tools_research.md](docs/trajectory_tools_research.md) for c
 - **[docs/WHITEPAPER.md](docs/WHITEPAPER.md)**: Current-state technical description
 - **[docs/CALIBRATION_PROCEDURE.md](docs/CALIBRATION_PROCEDURE.md)**: The human procedure for calibrating a drivebase: the setup for each test, the measurement convention, the commands, and the troubleshooting
 - **[docs/SYSID_QUICKSTART.md](docs/SYSID_QUICKSTART.md)**: The short path from a session to a fitted model
-- **[docs/HEURISTICS_AND_VERIFICATION.md](docs/HEURISTICS_AND_VERIFICATION.md)**: Path-planning heuristics, the verification chain, the failed-strategy ledger, and the research agenda
+- **[docs/HEURISTICS_AND_VERIFICATION.md](docs/HEURISTICS_AND_VERIFICATION.md)**: Path-planning heuristics and the verification chain
+- **[docs/STRATEGY_LEDGER.md](docs/STRATEGY_LEDGER.md)**: the failed-strategy ledger - every approach that was tried, the measurement that retired it, and what would revive it
+- **[docs/RESEARCH_AGENDA.md](docs/RESEARCH_AGENDA.md)**: the research agenda - the open questions, cheapest decisive experiment first
 - **[docs/research/pq_b/FINDINGS.md](docs/research/pq_b/FINDINGS.md)**: The research agenda measured on 32 missions instead of six — which of its claims survive, and which do not
 - **[docs/ARCHIVE.md](docs/ARCHIVE.md)**: How to read the raw measurements and experiment scripts from the `archive/research-2026-10` tag
 - **[docs/research/RQ-A_tracking_error.md](docs/research/RQ-A_tracking_error.md)**: Why the closed-loop tracking gate fails: it is a discretisation mismatch, not a physical tracking error

@@ -6,7 +6,7 @@ This design shifts complex mathematical computation to the PC (host side), leavi
 >
 > - **Implemented:** robot-side digital-twin collector (`pybricks_code/sysid_digital_twin.py`) and host fitter (`overboard/sysid/fit.py`); the optional fitted plant (`overboard/sysid/digital_twin.py`) behind `python -m overboard.main --sysid-fit`, which applies the actuator gain, time constant, command delay, acceleration limit, odometry belief and braking shortfall; canonical/legacy/flat config parsing with declared uncertainty ranges; per-wheel force and traction limits; CPU + Immrax validation gate; controller JSON and Python export.
 > - **Partial:** the robot's own odometry is modelled as a *belief* inside the validator rather than as a plant state; motor current transients, DriveBase PID, slip under load and full slip dynamics are still missing.
-> - **Archived:** the JAX refinement and the Multi-Verse pipeline are under `overboard/legacy/` with no CLI entry point; measured as a seed provider the refined seed rescued nothing (KI-004).
+> - **Archived:** the JAX refinement and the Multi-Verse pipeline have been removed (git tag `archive/legacy-2026-10`) and have no CLI entry point; measured as a seed provider the refined seed rescued nothing (KI-004).
 > - **Not implemented:** interaction force injection (`interactions` is parsed only as data), full motor/DriveBase/odometry/slip dynamics, and reachability-driven optimization or a feedback loop into the planner. The validator is a post-solve gate and candidate score, not a full digital twin (KI-020).
 > - **Do not read this document as a claim that the robot currently guarantees zero slip.** The zero-slip target remains a design goal.
 

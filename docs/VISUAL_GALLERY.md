@@ -2,7 +2,7 @@
 
 > **Research record (2026-10).** This is the exhibition of an earlier phase of the project. Every
 > figure here was produced by the evolutionary search, which is archived under
-> `overboard/legacy/evolutionary_research/` and is not importable from the current tree. The plots
+> (git tag `archive/legacy-2026-10`) and is not importable from the current tree. The plots
 > cannot be regenerated from the working copy; check out the tag `archive/research-2026-10` to
 > re-run their producers. The numbers in the captions are the measurements from that campaign, not
 > current benchmark results - `benchmark.py` and `docs/HEURISTICS_AND_VERIFICATION.md` hold those.
@@ -27,7 +27,7 @@ Shows the robot tracing the linear boundary $|\omega| \le \frac{2}{W}(v_{\max} -
 ---
 
 ### 1.2 Kinetic Frontier Seed vs. GA vs. Stock Baseline
-Compares the analytical `frontier_sprint` seed ($1.29\text{ ms}$, 86 IPOPT iterations) against the 50-generation Centurion GA champion ($281\text{ s}$) and the stock rolling baseline. Produced by `overboard/legacy/evolutionary_research/compare_frontier_seeds.py`:
+Compares the analytical `frontier_sprint` seed ($1.29\text{ ms}$, 86 IPOPT iterations) against the 50-generation Centurion GA champion ($281\text{ s}$) and the stock rolling baseline. Produced by `archive/legacy-2026-10:overboard/legacy/evolutionary_research/compare_frontier_seeds.py`:
 
 ![Frontier Seeds vs GA vs Baseline](images/plot_frontier_vs_ga_comparison.png)
 

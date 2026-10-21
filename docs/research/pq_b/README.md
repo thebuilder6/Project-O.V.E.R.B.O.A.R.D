@@ -8,8 +8,9 @@ with `git show archive/research-2026-10:docs/measurements/...`.
 **Tree under test:** pinned; the hashes are in the archive tag alongside the
 raw records.
 
-**Companions:** [`../HEURISTICS_AND_VERIFICATION.md`](../HEURISTICS_AND_VERIFICATION.md)
-(the agenda this answers) and [`../RQ-A_tracking_error.md`](../RQ-A_tracking_error.md)
+**Companions:** [`../../RESEARCH_AGENDA.md`](../../RESEARCH_AGENDA.md)
+(the agenda this answers), [`../../HEURISTICS_AND_VERIFICATION.md`](../../HEURISTICS_AND_VERIFICATION.md)
+(the current-state reference) and [`../RQ-A_tracking_error.md`](../RQ-A_tracking_error.md)
 (why the tracking gate fails).
 
 ---

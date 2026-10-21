@@ -7,8 +7,9 @@ with `git show archive/research-2026-10:<path>` (see
 
 **Tree under test:** pinned; the hashes are in the archive tag.
 
-**Companions:** [`../HEURISTICS_AND_VERIFICATION.md`](../HEURISTICS_AND_VERIFICATION.md)
-(the agenda this answers) and [`../RQ-A_tracking_error.md`](../RQ-A_tracking_error.md)
+**Companions:** [`../../RESEARCH_AGENDA.md`](../../RESEARCH_AGENDA.md)
+(the agenda this answers), [`../../HEURISTICS_AND_VERIFICATION.md`](../../HEURISTICS_AND_VERIFICATION.md)
+(the current-state reference) and [`../RQ-A_tracking_error.md`](../RQ-A_tracking_error.md)
 (why the tracking gate fails).
 
 ---
@@ -384,7 +385,7 @@ and as a seed provider it gave **4.936 s** against the default two-candidate
 set's 6.068 s. But the full ten-candidate stock set gives 4.877 s there, and
 over 30 missions the refined seed rescued nothing. **Answer to Q12: a seed
 provider, not a second solver — and not worth shipping.** It was archived
-under `overboard/legacy/` with no CLI entry point (KI-004). The open part is
+in the git tag `archive/legacy-2026-10`, with no CLI entry point (KI-004). The open part is
 the objective: the pipeline's cost is duration plus a jerk term, so it buys
 speed with tracking accuracy, and the 5 mm gate rejects the trade.
 

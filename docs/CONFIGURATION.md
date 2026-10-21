@@ -115,7 +115,7 @@ Recognized ranges:
 
 ## Archived Multi-Verse parameters
 
-The old `multiverse` block is no longer read. The pipeline is archived under `overboard/legacy/` and has no CLI entry point; older configs that still carry the block are accepted and the block is ignored.
+The old `multiverse` block is no longer read. The pipeline has been removed (git tag `archive/legacy-2026-10`) and has no CLI entry point; older configs that still carry the block are accepted and the block is ignored.
 
 ## Waypoint file format
 
@@ -173,7 +173,7 @@ python -m overboard.main -c examples/fll_choreo.json -w examples/example_straigh
 - `-a, --accuracy-weight`: Smoothness/jerk weight (0 = time-optimal).
 - `--force-weight`: Soft wheel-force and traction-utilisation penalty in the NLP objective (0 = none, the default). Simple solver only; the hard per-wheel limits apply either way.
 - `--surrogate-polish`: Run the 5-layer surrogate-to-truth pipeline (the discretisation-aware metric, the linear epigraph force bounds, one warm thread pool, a compiled `jax.lax.scan` reachability engine, a differentiable Immrax polish, and a minimum-time selection). Off by default; the default path is the one the rest of this document describes.
-- `--candidates`: Candidates to solve and compare with `--validate` (default 2). With the stock (`--no-unified`) candidate set each candidate combines an initial-guess seed (`baseline`, `rolling`, `bow_left`, `bow_right`, `turn_first`) with a timing mode: by default candidate 1 is equal-duration baseline, candidate 2 is per-segment baseline, then the remaining seeds alternate. A passing candidate wins by the lowest fitness score (the envelope, then the shortest time, break ties); `1` disables the comparison.
+- `--candidates`: Candidates to solve and compare with `--validate` (default 2). On the default (unified) path the three frontier candidates (`frontier_sprint`, `frontier_sweeper`, `frontier_exploratory`) are solved and `N` shortens that list; the fastest passing one wins. With the stock (`--no-unified`) candidate set each candidate combines an initial-guess seed (`baseline`, `rolling`, `bow_left`, `bow_right`, `turn_first`) with a timing mode: by default candidate 1 is equal-duration baseline, candidate 2 is per-segment baseline, then the remaining seeds alternate, and a passing candidate wins by the lowest fitness score (the envelope, then the shortest time, break ties). `1` disables the comparison.
 - `--stop-waypoints "0,2,4"`: Comma-separated stop indices.
 - `--events "1:lower_arm,3:release"`: Comma-separated event mappings.
 - `--unified` / `--no-unified`: Run the 3-Pillar unified engine (the default) or the stock candidate set. `--simple` is an alias for `--no-unified`.

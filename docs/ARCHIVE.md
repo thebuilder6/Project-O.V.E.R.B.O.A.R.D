@@ -19,12 +19,17 @@ git ls-tree -r --name-only archive/research-2026-10 -- docs/measurements docs/re
 
 ## What stays in the product tree
 
+- `docs/HEURISTICS_AND_VERIFICATION.md` — the current-state reference: the heuristics, the
+  verification chain and the measured comparison.
+- `docs/STRATEGY_LEDGER.md` — the strategies that did not work, and the measurement that retired
+  each.
+- `docs/RESEARCH_AGENDA.md` — the open questions, cheapest decisive experiment first.
 - `docs/research/RQ-A_tracking_error.md` — why the tracking gate binds.
 - `docs/research/RQ-B_drivetrain_model.md` — the drivetrain model check.
 - `docs/research/pq_b/README.md` and `docs/research/pq_b/FINDINGS.md` — the measured
   research-agenda answers.
 - `research/` — the measurement harness, random suite, robot randomizer and
   the independent cross-check, kept as developer tools.
-- `overboard/legacy/` — the archived Multi-Verse pipeline, Reeds-Shepp
-  bootstrap, JAX refiner and the older research prototypes. No shipped module
-  imports it.
+- The Multi-Verse pipeline, the Reeds-Shepp bootstrap, the JAX refiner and the
+  older research prototypes were removed from the tree; they are in the git tag
+  `archive/legacy-2026-10`. No shipped module imported them.

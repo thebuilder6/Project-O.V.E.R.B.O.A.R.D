@@ -2,7 +2,7 @@
 
 > **Research record (2026-10).** This is the derivation behind [`frontier_seed.py`](../overboard/core/frontier_seed.py):
 > how the analytical control laws the planner ships today were extracted from a stochastic search.
-> The search itself is archived under `overboard/legacy/evolutionary_research/` and nothing shipped
+> The search itself was removed from the tree (git tag `archive/legacy-2026-10`) and nothing shipped
 > imports it, so the GA columns below cannot be re-run from the current tree; the numbers are the
 > ones that campaign produced. The analytical laws and the unified engine are live code.
 
@@ -79,7 +79,7 @@ By distilling these five principles into closed-form equations in [`frontier_see
 Two earlier GA runs appear in this document: the 50-generation, 5-pillar "Centurion" search in the
 table, and a shorter 44-gene, 12-generation run ($5.417\text{ s}$) quoted in the conclusion. They are
 different campaigns, not two readings of one. Both are archived; the figures below were produced by
-`overboard/legacy/evolutionary_research/compare_frontier_seeds.py`.
+`archive/legacy-2026-10:overboard/legacy/evolutionary_research/compare_frontier_seeds.py`.
 
 ![Frontier Seeds vs GA vs Baseline](images/plot_frontier_vs_ga_comparison.png)
 

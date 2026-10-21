@@ -1,7 +1,7 @@
 """Offline analysis of a measurement run.
 
 Reads the JSONL the harness writes and answers the questions in
-``docs/HEURISTICS_AND_VERIFICATION.md`` Part IV from data.
+``docs/RESEARCH_AGENDA.md`` from data.
 
 Usage::
 
