@@ -909,6 +909,17 @@ class TestStudioHelpers(unittest.TestCase):
         command = gui_server.build_command(*base, {"best_effort": True})
         self.assertNotIn("--best-effort", command)
 
+    def test_the_accuracy_limit_is_passed_through_only_with_validation(self):
+        base = (Path("."), Path("c.json"), Path("w.json"), Path("o.traj"))
+        command = gui_server.build_command(
+            *base, {"validate": True, "envelope_limit": 0.03})
+        self.assertIn("--envelope-limit 0.03",
+                      " ".join(str(part) for part in command))
+
+        # The limit only means something to the validator.
+        command = gui_server.build_command(*base, {"envelope_limit": 0.03})
+        self.assertNotIn("--envelope-limit", command)
+
     def test_the_candidate_comparison_is_always_requested(self):
         command = gui_server.build_command(
             Path("jobs"), Path("c.json"), Path("w.json"), Path("o.traj"),

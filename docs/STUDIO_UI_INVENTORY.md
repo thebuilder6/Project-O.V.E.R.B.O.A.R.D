@@ -24,7 +24,7 @@ removed).
 
 **Three columns, two of them tabbed.** The left column is what you set, the canvas is the work, the right column is what you read. Each side column is a strip of tabs over one panel, so a column holds one topic at a time.
 
-The page carries **155 element ids**: **80 controls with an id** (36 buttons, 37 inputs, 7 selects), of which 8 are the tab buttons themselves. Twelve regions are filled in at run time:
+The page carries **156 element ids**: **81 controls with an id** (36 buttons, 38 inputs, 7 selects), of which 8 are the tab buttons themselves. Twelve regions are filled in at run time:
 
 | Generated region | Element id | Where |
 |---|---|---|
@@ -165,7 +165,7 @@ The page carries **155 element ids**: **80 controls with an id** (36 buttons, 37
 
 | Control | What it does |
 |---|---|
-| **fast / balanced / safe** (radio cards) | A preset fills in the options the user did not set. fast: one candidate, no validation, plant propagation - seconds. balanced: the defaults (a candidate count only compares when validation is on) - seconds. safe: the comparison - three candidates, validation, the closed-loop tick map, the gradient polish; the three frontier paths are drawn together and the operator may export the one they pick. safe costs minutes: the reachability check, not the solve, is the time. |
+| **fast / balanced / safe** (radio cards) | A preset fills in the options the user did not set. fast: one candidate, no validation, plant propagation - seconds. balanced: the defaults (a candidate count only compares when validation is on) - seconds. safe: the comparison - three candidates, validation, the closed-loop tick map; the three frontier paths are drawn together and the operator may export the one they pick. safe costs minutes: the reachability check, not the solve, is the time. |
 | **Options** (details) | The rest of the solve options, below. |
 | **Samples per segment** | 2 to 200. Disabled while the automatic mesh is on, because the number is then not used. |
 | **Auto invariant mesh (80 ms)** | Ticked by default: `-n` is left off the command, so the 3-Pillar engine sizes the invariant 80 ms mesh from the path. Unticking it sends the number in **Samples per segment**. |
@@ -176,6 +176,7 @@ The page carries **155 element ids**: **80 controls with an id** (36 buttons, 37
 | **Export format** | None / controller JSON / Python / Python compact. |
 | **Controller timestep** | The export's sample interval. |
 | **Validate before export** | The gate; needs JAX. |
+| **Accuracy limit (cm)** | How far the reachable set may spread around the plan at any sample (`--envelope-limit`, default 2 cm, 0.1-5 cm). A waypoint's error threshold still wins. Disabled unless validation is on, and sent only with `--validate`. The limit is absolute, so a long path can fail for being long; declaring the mission's real tolerance is what it is for (KI-054). |
 | **Keep the best path when validation fails** | Ticked by default: adds `--best-effort` next to `--validate`, so a run whose only failure is an accuracy excess (envelope or tracking) exports the best candidate and draws it on the field, marked failed. A force, slip, integration or convergence failure still blocks, and the push stays gated on the verdict. |
 | **Fast polish** | The budgeted solve. |
 | **Gradient sensitivity polish** | The post-solve gradient polish (`--polish`); needs JAX. |
@@ -204,7 +205,7 @@ Canvas contents: the mat, the grid, the mission models, the earlier runs, the pa
 | *facts* | Duration, path, peak wheel speed, samples, max envelope, solve (wall), the time against the top-speed ideal, the field. |
 | *solve diff* | "vs. the previous solve: 0.27 s slower, the path 48 mm longer." |
 | *collisions* | Where the plan met a mission model. |
-| **Validation detail** (details) | The explainer, the candidate chips, the pick button, the per-segment table, the note, and the **Try** buttons. A chip names its seed by its physical role - Sprint, Sweeper, Exploratory - and a rescue seed is a dashed amber chip (🛟 Rescue). Every solved candidate's path is on the field (`--candidates-out`), the clicked chip's path drawn stronger, so the comparison is visible and not only tabulated. The pick button (`Solve again and export: ...`) appears when the clicked candidate passed but is not the exported one: it re-solves with that candidate pinned (`--pick-candidate`), and the CLI refuses it if it no longer passes. The table carries, per segment, the envelope, the limit, the drift, and the three discretization mechanisms in mm (sagitta, heading mismatch, 20 ms hold lag). The **Try** buttons are the levers the numbers point at: the closed-loop tick map for an envelope failure, the gradient polish for a tracking error just over the gate, a soft force weight of 0.005 for a force or slip failure, and a weight of 0.001 for a rough profile. Each pulls its lever and solves again. |
+| **Validation detail** (details) | The explainer, the candidate chips, the pick button, the per-segment table, the note, and the **Try** buttons. A chip names its seed by its physical role - Sprint, Sweeper, Exploratory - and a rescue seed is a dashed amber chip (🛟 Rescue). Every solved candidate's path is on the field (`--candidates-out`), the clicked chip's path drawn stronger, so the comparison is visible and not only tabulated. A path appears the moment its solve finishes, before its check and before the rescue round, so a validated run is not a blank field for its minutes; the chips and the table arrive with the report, when the run ends. The pick button (`Solve again and export: ...`) appears when the clicked candidate passed but is not the exported one: it re-solves with that candidate pinned (`--pick-candidate`), and the CLI refuses it if it no longer passes. The table carries, per segment, the envelope, the limit, the drift, and the three discretization mechanisms in mm (sagitta, heading mismatch, 20 ms hold lag). The **Try** buttons are the levers the numbers point at: the closed-loop tick map for an envelope failure, the gradient polish for a tracking error just over the gate, a soft force weight of 0.005 for a force or slip failure, and a weight of 0.001 for a rough profile. Each pulls its lever and solves again. |
 | **Mission report** | The report of the last solve, as a file. |
 | *downloads* | The trajectory, the controller, the Python module, the stats, the session, and the report. |
 | **Mission report** | Writes the one-page report next to the trajectory and opens it: the mission, the robot and the result on one printable page. |

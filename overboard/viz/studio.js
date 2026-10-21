@@ -529,6 +529,9 @@ function applyOptionsToForm(options) {
         el('opt-propagation').value = options.propagation === 'tick' ? 'tick' : 'plant';
     }
     if (options.validate !== undefined) el('opt-validate').checked = options.validate;
+    if (options.envelope_limit !== undefined) {
+        el('opt-envelope-limit').value = Number(options.envelope_limit) * 100;
+    }
     if (options.fast_polish !== undefined) el('opt-fast-polish').checked = options.fast_polish;
     if (options.polish !== undefined) el('opt-polish').checked = Boolean(options.polish);
     if (options.export_format !== undefined) el('opt-export').value = options.export_format;
@@ -2932,6 +2935,11 @@ function updateCandidatesHint() {
     candidates.title = validate.checked
         ? 'Every candidate is solved and checked.'
         : 'Candidates are only compared when validation is on.';
+    const limit = el('opt-envelope-limit');
+    limit.disabled = !validate.checked;
+    limit.title = validate.checked
+        ? 'How far the reachable set may spread around the plan. A waypoint error threshold still wins.'
+        : 'The accuracy limit is only applied by validation.';
 }
 
 /* The manual samples field only means something when the automatic mesh is
@@ -2958,6 +2966,8 @@ function collectOptions() {
         force_weight: Number(el('opt-force-weight').value),
         propagation: el('opt-propagation').value,
         validate: el('opt-validate').checked,
+        /* The page asks in cm, the command line takes metres. */
+        envelope_limit: Number(el('opt-envelope-limit').value) / 100,
         /* A failed validation still has a plan worth looking at: the best
            candidate is exported and marked failed instead of leaving the
            field empty. The server only forwards this with --validate, and
@@ -4600,7 +4610,7 @@ el('opt-validate').addEventListener('change', () => {
 });
 
 ['opt-samples', 'opt-accuracy', 'opt-candidates', 'opt-export', 'opt-controller-dt',
- 'opt-force-weight', 'opt-propagation', 'opt-polish']
+ 'opt-force-weight', 'opt-propagation', 'opt-polish', 'opt-envelope-limit']
     .forEach((id) => el(id).addEventListener('change', () => {
         updateCandidatesHint();
         syncPresetRadio();

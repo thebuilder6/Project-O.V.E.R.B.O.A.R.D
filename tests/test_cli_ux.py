@@ -514,6 +514,35 @@ class TestValidationReport(unittest.TestCase):
         self.assertNotEqual(result.exit_code, 0)
         self.assertIn("--best-effort needs --validate", result.output)
 
+    def test_the_accuracy_limit_is_configurable_and_recorded(self):
+        """The budget is a declaration: 4.2 cm fails at 2 cm, passes at 5 cm."""
+
+        class _MediumImmrax(self._WideImmrax):
+            def validate_trajectory(self, samples, *ranges, **kwargs):
+                report = super().validate_trajectory(samples, *ranges, **kwargs)
+                report["reachability"]["envelope"] = [{
+                    "x_min": s["x"] - 0.03, "x_max": s["x"] + 0.03,
+                    "y_min": s["y"] - 0.03, "y_max": s["y"] + 0.03,
+                } for s in samples]
+                return report
+
+        failed, data = self._invoke([], validator=_MediumImmrax)
+        self.assertNotEqual(failed.exit_code, 0, failed.output)
+        self.assertIsNone(data)
+
+        passed, data = self._invoke(["--envelope-limit", "0.05"],
+                                    validator=_MediumImmrax)
+        self.assertEqual(passed.exit_code, 0, passed.output)
+        self.assertTrue(data["validation"]["passed"])
+        self.assertAlmostEqual(data["validation"]["envelope_limit_m"], 0.05)
+
+        marker = [line for line in passed.output.splitlines()
+                  if line.startswith(self.main.VALIDATION_MARKER)]
+        payload = json.loads(marker[0][len(self.main.VALIDATION_MARKER):])
+        self.assertAlmostEqual(payload["envelope_limit_m"], 0.05)
+        self.assertAlmostEqual(payload["candidates"][0]["segments"][0]["limit_m"],
+                               0.05)
+
     def test_every_candidate_carries_its_score_vector(self):
         """The selection rule can be re-run offline on these numbers.
 
@@ -784,6 +813,20 @@ class TestCandidateComparison(unittest.TestCase):
             self.assertIn(candidate["style"], ("frontier_sprint", "frontier_sweeper",
                                                "frontier_exploratory"))
 
+    def test_a_progress_write_carries_the_path_before_the_verdict(self):
+        """The reader polls this file mid-run, so it is never half written."""
+        import overboard.main as main
+        with tempfile.TemporaryDirectory() as tmp:
+            comparison = os.path.join(tmp, "candidates.json")
+            attempts = [{"guess_style": "frontier_sprint", "converged": True,
+                         "samples": [{"t": 0.0, "x": 0.1, "y": 0.2}]}]
+            main._write_candidates(comparison, attempts, None, quiet=True)
+            with open(comparison, "r", encoding="utf-8") as handle:
+                payload = json.load(handle)
+            self.assertIsNone(payload["selected"])
+            self.assertEqual(payload["candidates"][0]["samples"][0]["x"], 0.1)
+            self.assertEqual(sorted(os.listdir(tmp)), ["candidates.json"])
+
     def test_a_candidate_that_failed_cannot_be_picked(self):
         """The rule is overridden by a human, never suspended."""
         import click
@@ -853,6 +896,33 @@ class TestStudioEntryPoints(unittest.TestCase):
         self.assertEqual(options["export_format"], "controller")
         self.assertTrue(options["fast_polish"])
         self.assertEqual(options["sysid_fit"], "fit.json")
+        self.assertTrue(options["auto_mesh"])
+        self.assertFalse(options["polish"])
+
+    def _studio_options_for(self, argv):
+        seen = {}
+        with patch("overboard.gui_server.run_studio",
+                   side_effect=lambda **kwargs: seen.update(kwargs)):
+            result = self.runner.invoke(self.main.main, argv)
+        self.assertEqual(result.exit_code, 0, result.output)
+        return seen["options"]
+
+    def test_an_explicit_sample_count_reaches_the_studio(self):
+        """-n has to beat the studio's automatic mesh."""
+        options = self._studio_options_for(["--gui", "-n", "20"])
+        self.assertEqual(options["samples"], 20)
+        self.assertFalse(options["auto_mesh"])
+
+    def test_the_studio_keeps_the_automatic_mesh_by_default(self):
+        options = self._studio_options_for(["--gui"])
+        self.assertTrue(options["auto_mesh"])
+        self.assertFalse(options["polish"])
+
+    def test_a_preset_is_the_same_run_in_the_studio(self):
+        """A preset's own sample count reaches the solve, not the mesh."""
+        options = self._studio_options_for(["--gui", "--preset", "fast"])
+        self.assertEqual(options["samples"], self.main.PRESETS["fast"]["samples"])
+        self.assertFalse(options["auto_mesh"])
 
 
 

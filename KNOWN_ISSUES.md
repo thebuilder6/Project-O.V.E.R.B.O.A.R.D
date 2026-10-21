@@ -4,7 +4,7 @@ Last reviewed: 2026-10-21
 
 Scope: whole repository, reviewed as a single-user, offline desktop tool for one FLL robot. This is not a multi-user or server-scale review.
 
-Status: KI-001 through KI-003, KI-005 through KI-019, KI-021 through KI-031, KI-033 through KI-044, KI-045, KI-046, KI-047 through KI-053 are **fixed**. KI-032 is **mitigated** (test cache). KI-004 is **deleted** (the Multi-Verse pipeline was removed; archived in git tag `archive/legacy-2026-10`). Open: KI-020 (hardware calibration & digital twin validation).
+Status: KI-001 through KI-003, KI-005 through KI-019, KI-021 through KI-031, KI-033 through KI-044, KI-045, KI-046, KI-047 through KI-053 are **fixed**. KI-032 is **mitigated** (test cache). KI-004 is **deleted** (the Multi-Verse pipeline was removed; archived in git tag `archive/legacy-2026-10`). Open: KI-020 (hardware calibration & digital twin validation), KI-054 (the envelope gate's absolute limit is a duration gate).
 
 How to use this list: refer to an item by its ID, for example "fix KI-003". The **Quick triage** table is the index - read that, then open the entry you are working on. The entries are now short records: what was wrong, what changed, and which files carry the fix. The long narrative each entry used to carry is in the git history - this file before the 2026-10-21 pruning - so `git log -p KNOWN_ISSUES.md` reads any entry in full.
 
@@ -69,6 +69,7 @@ How to use this list: refer to an item by its ID, for example "fix KI-003". The 
 | KI-051 | P2 | CLI / solver | ~~`--self-consistent` is a no-op: the switch cannot change the plan and the trapezoidal collocation cannot be reached from the CLI~~ (fixed; switch is two-way `--self-consistent/--no-self-consistent` and default True) |
 | KI-052 | P2 | CLI / solver | ~~The CLI and the library plan different trajectories for the same mission: the CLI was self-consistent by default, the library was not~~ (fixed; both default to the self-consistent rule now) |
 | KI-053 | P2 | Physics / safety model | ~~The interval force model passed an interval through unchanged, so a signed velocity could produce a negative force bound~~ (fixed) |
+| KI-054 | P1 | Validation | The envelope gate compares an absolute radius against a tube that grows with path length, so a long path fails for being long and a failure usually has no remedy but a better model |
 
 ## Open
 
@@ -85,6 +86,36 @@ How to use this list: refer to an item by its ID, for example "fix KI-003". The 
 **Fix:** Collect and fit in one command with `python -m overboard.sysid.collect --conn ble --profile examples/drivebase_profile.example.json`: it pushes the logger, captures the session as it arrives, converts the hub's `POSE` lines to `poses.csv`, and writes `sysid_fit.json`. The poses are the hub's own odometry, so the distance and heading scale of the fit have no ground truth and stay at 1.0 until someone measures the robot with a tape and replaces those rows; the actuator part of the fit does not need a measurement. The written procedure is `docs/CALIBRATION_PROCEDURE.md`: the operator drives the robot through the collector tests, measures the end pose of the five that need a tape, and fills in a measurement sheet keyed by test name. `python -m overboard.sysid.fit <session.csv> --from-sheet <sheet> --out-poses poses.csv` turns that sheet into the measured poses, so the order the tests ran in does not matter and a skipped test is reported instead of guessed. The sheet is also fitted directly (`--sheet`), so there is no intermediate pose file, and it is written as a form in a browser (`--write-form`, `sheet_form.py`) so the operator types the numbers instead of editing a spreadsheet; the studio has the same form on the server. The same thing step by step: push the logger and capture its session with `python -m overboard.deploy.hub_deploy pybricks_code/sysid_digital_twin.py --out session.csv` (or run it from the Pybricks IDE), record the stop/final poses in `poses.csv`, fit the logs with `sysid_fit.py --profile examples/drivebase_profile.example.json`, and pass the result with `main.py --sysid-fit sysid_fit.json --validate`. Compare the planned trajectory with the measured poses using `sysid_compare.py`; it prints position/heading errors and whether each measured pose is inside the reachability envelope, and it accepts a plain predicted-pose CSV and a drivebase profile. The pushed run gives the same comparison without hand-editing: `main.py --push-hub --hub-log session.log`, then `sysid_fit.py --from-hub-session session.log --out-poses poses.csv --run-id <id>`, then `sysid_compare.py output.traj poses.csv --run-id <id>`. Extend the plant to integrated odometry and a braking-slip state only after that comparison. The post-solve choice is made: `--candidates` scores several solutions (seed/timing combinations with `--simple`, accuracy-weight variants on the Multi-Verse path) and picks the passing one with the lowest envelope (then the shortest). Extend it to a hard constraint or differentiable proxy only if the candidate set cannot find a passing path. Do not tune the 5 mm/2 cm thresholds or b/zeta to one path.
 
 **Workaround:** Use the straight example as a parity smoke test; treat predictions for curved/high-speed paths as uncalibrated until hardware logs are available. `examples/fll_choreo.json` now declares physical-looking ranges instead of the old clamped ones (track width ±1.5 mm, wheel radius ±1 mm, backlash 0.2-0.8 mm, COF 0.95 ±10 %), but they are still assumptions, not measured hardware values - run the SysId loop before calling them calibrated. Because a wide range makes the open-loop `plant` tube exceed the 2 cm gate on a curved path, validation of the examples needs `--propagation tick`; the `safe` preset (CLI and studio) selects it.
+
+### KI-054 — The envelope gate is an absolute radius on a cumulative tube
+
+**Status:** Open. The limit is configurable now (`--envelope-limit`) and a failing run can be inspected (`--best-effort`), but the gate itself is unchanged: a pass still means "inside the declared uncertainty for the whole run".
+
+**Files:** `overboard/main.py` (`_segment_limit`, `_score_attempt`, `_segment_report`, `_emit_validation_report`), `overboard/gui_server.py`, `overboard/viz/studio.html`, `overboard/viz/studio.js`, `docs/HEURISTICS_AND_VERIFICATION.md`, `tests/test_cli_ux.py`, `tests/test_gui_server.py`
+
+**Problem:** The gate compares each sample's reachability radius with 2 cm (`DEFAULT_ENVELOPE_LIMIT_M`). Under the default `plant` propagation the tube is open-loop, so it widens with elapsed time and travelled distance: the limit is a duration budget in disguise. The same control law that passes at 2 s fails at 4 s, not because it is less accurate per metre but because the tube had more time to spread. The default is also not a mission requirement - it is the number that applies when the operator declared nothing.
+
+**Evidence:** S-curve example with the widened `fll_choreo` ranges, `--validate --candidates 1 -n 10`, `plant`: the first segment reaches 0.99 cm at 1.9 s (passes), the second 4.81 cm at 3.7 s (fails), with the same geometry in both halves; tracking is 1.01 cm and over its 0.5 cm gate too. All six candidates - the front triad and the rescue seeds - failed, so the run exited 1 and wrote nothing. Across the 204-candidate matrix the envelope correlates with duration at r = +0.97 (`docs/RESEARCH_AGENDA.md`, the selection-rule answer).
+
+**Why it was not fixed by rescaling:** the error budget is physical, not proportional. 4.8 cm off after 3.7 s is 4.8 cm from the mission model; dividing that by the path length would forgive exactly the error that misses a mission. The ranges behind the tube are declared, not measured (KI-020), so a threshold chosen until a path passes is tuned against a model that is not the robot. The propagation also cuts the tube off at 5 cm (`diverged`, KI-049), so no limit above 5 cm can be measured at all - that is why the knob stops there.
+
+**Fix (what exists now):**
+
+- `--envelope-limit METRES` (default 0.02, range 0.001-0.05) sets the run-wide default. A waypoint's `error_threshold` still overrides it, and `precision_mode` still pins 0.5 cm, so the local declaration always wins.
+- The value in force is recorded, so a verdict is never read without the budget it used: `envelope_limit_m` in the `##OVERBOARD-VALIDATION##` payload, `limit_m` per segment, and `validation: {passed: true, envelope_limit_m}` in the `.traj` root and `_stats.json`. A `--best-effort` file carries `{passed: false, best_effort: true, max_excess_m, reasons, segments}` instead.
+- The studio has an **Accuracy limit (cm)** field, disabled unless validation is on; it forwards `--envelope-limit` only with `--validate`, and the server rejects a value outside 0.1-5 cm.
+- `--best-effort` shows that path marked failed, so an accuracy excess no longer means an empty field.
+
+**Workaround - what to do when it fails.** There are four levers, and none of them is in the solver:
+
+1. **Set the limit to the mission's real tolerance** - how far the robot may be off before it misses the model it is going to touch. That number comes from the field, not from what makes the run pass.
+2. **Declare `error_threshold` on the waypoints that need it**, instead of one number for the whole path.
+3. **Use `--propagation tick`**: the closed-loop tube contracts where the open-loop one spreads, which is a model fix rather than a budget change (2-10x slower).
+4. **Measure the robot** (KI-020): narrower declared ranges shrink the tube everywhere. This is the only lever that makes the prediction truer.
+
+If none of those is available, the run does not know that the plan is accurate enough, and `--best-effort` is for inspection, not approval.
+
+**The smarter rule, not built:** compare the tube against the mission's tolerance per sample - the clearance to the nearest mission model or wall - which needs a field model the planner does not have. Until then a per-waypoint `error_threshold` is the manual form of that rule, and the 2 cm default is a placeholder, not a requirement.
 
 ## Mitigated
 

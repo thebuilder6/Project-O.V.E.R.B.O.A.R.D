@@ -532,6 +532,7 @@ python -m overboard.main -c examples/fll_choreo.json -w waypoints.json -o missio
 - `--benchmark`: Quality/telemetry stats after the export gate
 - `--validate`: CPU + Immrax gate
 - `--best-effort`: with `--validate`, keep the best path when the only failure is an accuracy excess, marked failed (force, slip, integration and convergence still block)
+- `--envelope-limit M`: Envelope budget per sample (default 0.02, max 0.05); a waypoint `error_threshold` still wins, and the value used is recorded in the report and the file (KI-054)
 - `--iteration-history PATH`: Write the solver's iteration history to JSON; the studio plots it
 - `--workers`/`--no-parallel` are not quality controls in the current tree
 

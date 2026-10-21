@@ -408,7 +408,18 @@ def _finite(value):
     return value
 
 
-def _segment_limit(thresholds, index, default=0.02):
+# How far the reachable set may spread around the plan at any sample, in
+# metres, when neither the run nor a waypoint declares one. The tube is
+# propagated open-loop by default, so this is effectively a duration budget:
+# a long path can fail for being long (KI-054). A waypoint's
+# `error_threshold` overrides it; `--envelope-limit` sets the run-wide value.
+DEFAULT_ENVELOPE_LIMIT_M = 0.02
+# The propagation cuts the tube off at this radius (KI-049), so a looser
+# limit could never be measured, let alone failed.
+MAX_ENVELOPE_LIMIT_M = 0.05
+
+
+def _segment_limit(thresholds, index, default=DEFAULT_ENVELOPE_LIMIT_M):
     """The envelope limit for one waypoint segment.
 
     A waypoint's limit is the limit for the way *into* it: the robot has to
@@ -467,7 +478,7 @@ def _waypoint_of(bounds, index):
 
 
 def _segment_report(samples_data, samples_per_segment, thresholds, immrax_report, cpu_summary,
-                    segment_samples=None):
+                    segment_samples=None, default_limit=DEFAULT_ENVELOPE_LIMIT_M):
     """Per-segment validation detail: envelope radius, local limit, violations.
 
     The gate checks sample i against the threshold of the waypoint whose
@@ -525,7 +536,7 @@ def _segment_report(samples_data, samples_per_segment, thresholds, immrax_report
     for index in range(n_segments):
         start = starts[index]
         stop = stops[index]
-        limit = _segment_limit(thresholds, index)
+        limit = _segment_limit(thresholds, index, default_limit)
         radius = 0.0
         for i in range(start, stop):
             env = envelopes[i] if i < len(envelopes) else None
@@ -549,7 +560,7 @@ def _segment_report(samples_data, samples_per_segment, thresholds, immrax_report
 
 
 def _emit_validation_report(attempts, selected_index, propagation=None,
-                            best_effort=False):
+                            best_effort=False, envelope_limit=None):
     """Print the machine-readable validation summary.
 
     Every candidate carries its score vector: the duration, the reachability
@@ -603,6 +614,9 @@ def _emit_validation_report(attempts, selected_index, propagation=None,
         })
     payload = {"selected": selected_index, "candidates": candidates,
                "propagation": propagation,
+               # The run-wide default the gate applied. A verdict depends on
+               # it, so it is never left implicit (KI-054).
+               "envelope_limit_m": _finite(envelope_limit),
                # True when a failed candidate was exported anyway, so the
                # studio can say "failed, shown" instead of "not checked".
                "best_effort": bool(best_effort)}
@@ -637,12 +651,20 @@ def _candidate_summary(attempts, selected_index):
 
 
 def _write_candidates(path, attempts, selected_index, quiet):
-    """Write the candidate comparison, when the caller asked for it."""
+    """Write the candidate comparison, when the caller asked for it.
+
+    Written through a temporary file and renamed, because a reader (the
+    studio) polls it while the run is still going: a half-written path list
+    is not a comparison. ``selected_index`` is None for a progress write,
+    before the rule has chosen.
+    """
     if not path:
         return
     payload = _candidate_summary(attempts, selected_index)
-    with open(path, "w", encoding="utf-8") as handle:
+    temporary = f"{path}.tmp"
+    with open(temporary, "w", encoding="utf-8") as handle:
         json.dump(payload, handle)
+    os.replace(temporary, path)
     if not quiet:
         click.echo(f"  wrote {len(payload['candidates'])} candidates to {path}")
 
@@ -683,10 +705,12 @@ def _apply_preset(ctx, preset, values):
 
 def _studio_options(samples, accuracy_weight, candidates, dt_mode, validate,
                     export_format, controller_dt, fast_polish, sysid_fit=None,
-                    hub_conn=None, hub_name=None, propagation="plant"):
+                    hub_conn=None, hub_name=None, propagation="plant",
+                    auto_mesh=True, polish=False):
     """The options the studio starts with, so a run in the studio is the same run."""
     return {
         "samples": samples,
+        "auto_mesh": auto_mesh,
         "accuracy_weight": accuracy_weight,
         "candidates": candidates,
         "timing": dt_mode,
@@ -695,6 +719,7 @@ def _studio_options(samples, accuracy_weight, candidates, dt_mode, validate,
         "controller_dt": controller_dt,
         "fast_polish": fast_polish,
         "propagation": propagation,
+        "polish": polish,
         "sysid_fit": sysid_fit,
         "hub_conn": hub_conn,
         "hub_name": hub_name,
@@ -953,6 +978,7 @@ class _ScoreContext:
     propagation: str
     control_dt: float
     quiet: bool
+    envelope_limit: float = DEFAULT_ENVELOPE_LIMIT_M
 
 
 def _record_candidate(spec, solve_result, cand_idx, batch_len, histories, *,
@@ -1067,7 +1093,8 @@ def _score_attempt(attempt_record, ctx):
         else:
             s_val = samples[0] if isinstance(samples, (list, tuple, np.ndarray)) else samples
             wp_idx = i // max(1, int(s_val))
-        local_threshold = _segment_limit(ctx.waypoint_thresholds, wp_idx)
+        local_threshold = _segment_limit(ctx.waypoint_thresholds, wp_idx,
+                                        ctx.envelope_limit)
 
         env = samples_data[i].get('reachability_envelope', {})
         if env:
@@ -1186,7 +1213,8 @@ def _score_attempt(attempt_record, ctx):
     # Per-segment detail, so a failure can be pinned to a part of the path.
     attempt_record["segments"] = _segment_report(
         samples_data, samples, ctx.waypoint_thresholds, immrax_report,
-        cpu_summary, segment_samples=stats.get("segment_samples"))
+        cpu_summary, segment_samples=stats.get("segment_samples"),
+        default_limit=ctx.envelope_limit)
 
     if not ctx.quiet:
         score = ("envelope diverged" if attempt_record["diverged"]
@@ -1206,13 +1234,17 @@ def _score_attempt(attempt_record, ctx):
 
 
 def _run_candidates(specs_to_solve, solve_ctx, score_ctx, *,
-                     accuracy_weight, use_validation, quiet):
+                     accuracy_weight, use_validation, quiet, progress=None):
     """Solve the candidate set, then the fallback seeds if nothing usable came out.
 
     The planner's own candidates come first. If they produced nothing usable
     - no candidate passed the gates, or (without validation) none converged -
     the fallback seeds are tried once, in priority order (KI-048). The rescue
     costs nothing when the plan works.
+
+    ``progress`` is called with the attempts so far, once as each candidate
+    leaves the solver and once when its check returns, so a caller that draws
+    can show the path while the reachability check is still running.
     """
     attempts = []
     batch = list(specs_to_solve)
@@ -1226,8 +1258,12 @@ def _run_candidates(specs_to_solve, solve_ctx, score_ctx, *,
                 spec, solve_result, cand_idx, len(batch), histories,
                 is_rescue=is_fallback, quiet=quiet)
             attempts.append(record)
+            if progress is not None:
+                progress(attempts)
             if _score_attempt(record, score_ctx):
                 break
+            if progress is not None:
+                progress(attempts)
 
         # Did the run produce something usable? With validation that means a
         # candidate that passed every gate; without it, a candidate that
@@ -1550,6 +1586,14 @@ def _render(output, samples_data, wps, optimizer, all_attempts, selected_index, 
                    'only failure is an accuracy excess (envelope or tracking), and '
                    'mark the trajectory as failed. Motor force, wheel slip, a '
                    'diverged tube or a non-converged solve still block export.')
+@click.option('--envelope-limit', default=DEFAULT_ENVELOPE_LIMIT_M,
+              type=click.FloatRange(min=0.001, max=MAX_ENVELOPE_LIMIT_M),
+              help='How far the reachable set may spread around the plan at any '
+                   'sample, in metres (default 0.02 = 2 cm). A waypoint '
+                   'error_threshold overrides it. The accuracy the mission '
+                   'needs, not a number to make a run pass: the value in force '
+                   'is written into the validation report and the trajectory. '
+                   'Capped at 0.05, where the tube is cut off.')
 @click.option('--sysid-fit', type=click.Path(exists=True, dir_okay=False), default=None,
               help='Optional sysid_fit.json digital-twin fit (requires --validate).')
 @click.option('--export-format', type=click.Choice(['none', 'controller', 'python', 'python-compact'], case_sensitive=False),
@@ -1612,7 +1656,8 @@ def main(ctx, config, waypoints, output, gui, gui_port, doctor, preset,
          samples, accuracy_weight, force_weight, candidates, pick_candidate,
          stop_waypoints, events,
          no_parallel, workers, fast_polish, polish, validate, best_effort,
-         sysid_fit, export_format, controller_dt, control_dt, propagation, benchmark,
+         envelope_limit, sysid_fit, export_format, controller_dt, control_dt,
+         propagation, benchmark,
          push_hub, hub_conn, hub_name, hub_log,
          plot, animate, iteration_history, candidates_out,
          verbose, quiet):
@@ -1668,8 +1713,8 @@ def main(ctx, config, waypoints, output, gui, gui_port, doctor, preset,
             "there has to be one.")
 
     # The timing model is the planner's: one interval per waypoint segment.
-    # The flags that used to choose it are deprecated and ignored, so the
-    # label and the studio option say what the plan actually does.
+    # The flags that used to choose it were removed, so the label and the
+    # studio option say what the plan actually does.
     dt_mode = TIMING_MODEL
 
     if gui:
@@ -1677,13 +1722,20 @@ def main(ctx, config, waypoints, output, gui, gui_port, doctor, preset,
             raise click.ClickException(
                 "--gui cannot be combined with --plot or --animate."
             )
+        # The studio's automatic mesh is its default; an explicit -n or a
+        # preset's sample count has to reach the solve instead of being
+        # overridden by it.
+        source = ctx.get_parameter_source("samples")
+        samples_set = source is not None and source.name not in ("DEFAULT", "DEFAULT_MAP")
         from overboard.gui_server import run_studio
         run_studio(config_path=config, waypoints_path=waypoints,
                    port=gui_port, presets=PRESETS, auto_solve=False,
                    options=_studio_options(samples, accuracy_weight, candidates,
                                            dt_mode, validate, export_format,
                                            controller_dt, fast_polish, sysid_fit,
-                                           hub_conn, hub_name, propagation))
+                                           hub_conn, hub_name, propagation,
+                                           auto_mesh=not samples_set and preset is None,
+                                           polish=polish))
         return
 
     config_data, robot_cfg = _load_config(config)
@@ -1890,11 +1942,14 @@ def main(ctx, config, waypoints, output, gui, gui_port, doctor, preset,
         propagation=propagation,
         control_dt=control_dt,
         quiet=quiet,
+        envelope_limit=float(envelope_limit),
     )
     all_attempts = _run_candidates(
         specs_to_solve, solve_ctx, score_ctx,
         accuracy_weight=accuracy_weight,
-        use_validation=use_validation, quiet=quiet)
+        use_validation=use_validation, quiet=quiet,
+        progress=(lambda made: _write_candidates(candidates_out, made, None, True))
+        if candidates_out else None)
 
     (samples_data, stats, attempt_passed, best_reasons, selected_tube,
      selected_index) = _choose_attempt(
@@ -1914,11 +1969,18 @@ def main(ctx, config, waypoints, output, gui, gui_port, doctor, preset,
             + "). The path is written for inspection and is not approved "
             "for the hub.", fg="red", bold=True)
 
+    if validate and attempt_passed:
+        # The pass depends on the limit, so the file records the limit it
+        # passed; a trajectory read later is not silent about its budget.
+        stats["validation"] = {"passed": True,
+                               "envelope_limit_m": float(envelope_limit)}
+
     if use_validation:
         # The studio reads this to show which part of the path failed.
         _emit_validation_report(all_attempts, selected_index,
                                 propagation=propagation,
-                                best_effort=best_effort_export)
+                                best_effort=best_effort_export,
+                                envelope_limit=envelope_limit)
     # Every candidate, paths included, for a tool that draws the comparison.
     # Diagnostics, so it is written before the export gate: a failed run is
     # exactly when the operator wants to see what the candidates did.
