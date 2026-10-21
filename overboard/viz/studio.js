@@ -3913,7 +3913,15 @@ async function saveMission() {
         const committed = result.commit
             ? ` (commit ${result.commit.slice(0, 7)})`
             : '';
-        toast(`Saved missions/${result.name}.json${committed}`);
+        /* A save that did not become a commit is not in the history. Say so:
+           the file is on disk, but the version the operator can go back to
+           is not. */
+        if (result.commit_error) {
+            toast(`Saved missions/${result.name}.json - NOT in the history: `
+                + 'git failed', true);
+        } else {
+            toast(`Saved missions/${result.name}.json${committed}`);
+        }
         await loadExamples();
     } catch (err) {
         toast(err.message, true);

@@ -984,6 +984,41 @@ class TestStudioHelpers(unittest.TestCase):
                     server.shutdown()
                     server.server_close()
 
+    def test_a_failed_commit_is_reported_not_hidden(self):
+        """The mission is saved, but the studio says the history lost it."""
+        real_git = gui_server._git
+
+        def flaky_git(args, cwd):
+            if "commit" in args:
+                return False, "fatal: index.lock exists"
+            return real_git(args, cwd)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            missions = Path(tmp)
+            with patch.object(gui_server, "MISSIONS_DIR", missions), \
+                    patch.object(gui_server, "_git", flaky_git):
+                server = gui_server.create_server(0, {}, {})
+                thread = threading.Thread(target=server.serve_forever, daemon=True)
+                thread.start()
+                base = f"http://127.0.0.1:{server.server_address[1]}"
+                try:
+                    status, saved = _request(f"{base}/api/missions", method="POST", payload={
+                        "name": "commit failure",
+                        "waypoints": [{"x": 0.0, "y": 0.0}, {"x": 1.0, "y": 0.0}],
+                    })
+                finally:
+                    server.shutdown()
+                    server.server_close()
+
+            # The mission itself is saved either way.
+            self.assertTrue((missions / "commit-failure.json").is_file())
+
+        self.assertEqual(status, 200)
+        # No commit, but the reason is there: a silent None would leave the
+        # operator believing the mission is in the history.
+        self.assertIsNone(saved["commit"])
+        self.assertIn("index.lock", saved["commit_error"])
+
 
 class TestValidationVerdict(unittest.TestCase):
     """The server reads the validator's verdict back from the solve's output.

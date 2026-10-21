@@ -1149,18 +1149,38 @@ def ensure_mission_repo():
 
 
 def commit_mission(name, message):
-    """Commit a saved mission. Returns the commit id, or None."""
+    """Commit a saved mission. Returns (commit id, error text).
+
+    Git is tried twice: a locked index or a busy machine is transient, and a
+    lost commit is a lost history. The mission file is saved either way, so
+    a failure is reported on the console and in the response, not raised.
+    """
+    commit, error = "", ""
+    for attempt in range(2):
+        commit, error = _commit_mission_once(name, message)
+        if commit:
+            return commit, ""
+        if attempt == 0:
+            time.sleep(0.3)
+    print(f"Studio could not commit the mission '{name}': {error.strip()}")
+    return None, error.strip()
+
+
+def _commit_mission_once(name, message):
+    """One attempt at the commit. Returns (commit id, error text)."""
     if not ensure_mission_repo():
-        return None
-    ok, _ = _git(["add", "--", f"{name}.json"], MISSIONS_DIR)
+        return None, "the missions folder is not a git repository"
+    ok, output = _git(["add", "--", f"{name}.json"], MISSIONS_DIR)
     if not ok:
-        return None
+        return None, output
     ok, output = _git(_GIT_IDENTITY + ["commit", "-q", "-m", message], MISSIONS_DIR)
     if not ok:
         # Nothing changed, or git is unhappy: the file is still saved.
-        return None
+        return None, output
     ok, head = _git(["rev-parse", "HEAD"], MISSIONS_DIR)
-    return head.strip() if ok else None
+    if not ok:
+        return None, head
+    return head.strip(), ""
 
 
 def mission_history(name):
@@ -1857,9 +1877,15 @@ class StudioHandler(BaseHTTPRequestHandler):
         with open(path, "w", encoding="utf-8") as handle:
             json.dump(waypoints, handle, indent=1)
         # Every save is a commit, so the mission has a history.
-        commit = commit_mission(name, payload.get("message") or f"Mission {name}")
-        return self._json(200, {"name": name, "path": str(path), "commit": commit,
-                                "history": mission_history(name)})
+        commit, commit_error = commit_mission(
+            name, payload.get("message") or f"Mission {name}")
+        response = {"name": name, "path": str(path), "commit": commit,
+                    "history": mission_history(name)}
+        if commit_error:
+            # The mission is saved, but it is not in the history. The studio
+            # says so instead of pretending the save is a commit.
+            response["commit_error"] = commit_error
+        return self._json(200, response)
 
     def _mission_history(self):
         query = urlparse(self.path).query
