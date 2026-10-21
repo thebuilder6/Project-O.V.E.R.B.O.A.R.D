@@ -107,10 +107,13 @@ class TestAttemptSelection(unittest.TestCase):
 
     @staticmethod
     def attempt(name, cost, ok=False, violation=float("inf"), converged=True,
-                tube=float("inf"), duration=float("inf")):
-        return {"samples": name, "stats": {}, "cost": cost,
-                "ok": ok, "violation": violation, "converged": converged,
-                "tube": tube, "duration": duration}
+                tube=float("inf"), duration=float("inf"), fitness=None):
+        record = {"samples": name, "stats": {}, "cost": cost,
+                  "ok": ok, "violation": violation, "converged": converged,
+                  "tube": tube, "duration": duration}
+        if fitness is not None:
+            record["fitness"] = fitness
+        return record
 
     def setUp(self):
         from overboard.main import _select_attempt
@@ -176,6 +179,43 @@ class TestAttemptSelection(unittest.TestCase):
         ])
         self.assertIsNone(best)
         self.assertFalse(passed_any)
+
+    def test_the_unified_path_takes_the_fastest_passing_candidate(self):
+        """The default path ranks the passing candidates by duration first.
+
+        The stock set ranks them by the 5-part fitness score; the unified
+        path (and the surrogate-polish and pyramid engines) take the fastest
+        one, with the envelope as the tie-breaker.
+        """
+        slow = self.attempt("slow", 20.0, ok=True, tube=0.005, duration=9.0)
+        fast = self.attempt("fast", 10.0, ok=True, tube=0.010, duration=6.0)
+        best, passed_any = self.select([slow, fast], prefer_duration=True)
+        self.assertTrue(passed_any)
+        self.assertEqual(best["samples"], "fast")
+
+    def test_the_unified_path_breaks_a_duration_tie_with_the_envelope(self):
+        wide = self.attempt("wide", 10.0, ok=True, tube=0.010, duration=6.0)
+        tight = self.attempt("tight", 20.0, ok=True, tube=0.008, duration=6.0)
+        best, _ = self.select([wide, tight], prefer_duration=True)
+        self.assertEqual(best["samples"], "tight")
+
+    def test_the_stock_set_takes_the_lowest_fitness_score(self):
+        """The fitness score is the rule on the stock set, even when slower."""
+        slow = self.attempt("slow", 20.0, ok=True, tube=0.010, duration=9.0,
+                            fitness=1.0)
+        fast = self.attempt("fast", 10.0, ok=True, tube=0.005, duration=6.0,
+                            fitness=2.0)
+        best, _ = self.select([slow, fast])
+        self.assertEqual(best["samples"], "slow")
+
+    def test_a_failing_candidate_is_never_the_fastest_one(self):
+        """Duration only ranks the candidates that passed every gate."""
+        failed = self.attempt("failed", 10.0, ok=False, tube=0.001,
+                              duration=2.0, violation=0.05)
+        passed = self.attempt("passed", 20.0, ok=True, tube=0.010, duration=9.0)
+        best, passed_any = self.select([failed, passed], prefer_duration=True)
+        self.assertTrue(passed_any)
+        self.assertEqual(best["samples"], "passed")
 
 
 class TestCandidateSpecs(unittest.TestCase):
