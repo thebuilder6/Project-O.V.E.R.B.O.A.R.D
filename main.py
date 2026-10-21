@@ -999,9 +999,9 @@ def _print_summary(output, samples_data, robot_cfg, validate, attempt_passed, tu
 @click.option('--doctor', is_flag=True,
               help='Check the install, dependencies, examples and ports, then exit.')
 @click.option('--multiverse', is_flag=True,
-              help='Use the experimental Multi-Verse pipeline instead of the simple solver (needs JAX).')
+              help='(Deprecated: superseded by --unified) Use legacy Multi-Verse pipeline in legacy/.')
 @click.option('--simple', is_flag=True,
-              help='Deprecated: the simple CasADi solver is now the default.')
+              help='(Deprecated: CasADi is already standard) Standard CasADi optimizer.')
 @click.option('--preset', type=click.Choice(['fast', 'balanced', 'safe'], case_sensitive=False),
               default=None,
               help='Named starting point. fast: 1 candidate, no validation. '
@@ -1034,9 +1034,8 @@ def _print_summary(output, samples_data, robot_cfg, validate, attempt_passed, tu
               help='Force each waypoint segment to have its own sample interval (simple solver only). '
                    'This is the general timing model. By default candidates mix both modes.')
 @click.option('--uniform-dt', is_flag=True,
-              help='Force one shared sample interval across all segments (simple solver only). '
-                   'This makes every waypoint segment take the SAME time, so a path with '
-                   'unequal segment lengths is slow. By default candidates mix both modes.')
+              help='(Deprecated: equal-duration dt severely penalizes variable-length segments) '
+                   'Force one shared sample interval across all segments.')
 @click.option('--no-parallel', is_flag=True,
               help='Solve the candidates in this process instead of in worker processes, and '
                    'disable the parallel Multi-Verse refinement (no effect on the result).')
@@ -1048,20 +1047,17 @@ def _print_summary(output, samples_data, robot_cfg, validate, attempt_passed, tu
                    'with a cold pass. Missions that solve inside the budget return the same '
                    'trajectory as before.')
 @click.option('--sweep', is_flag=True,
-              help='Search the timing model and the accuracy weight for the fastest trajectory that '
-                   'passes the gates (simple solver only). Adds candidates to the set instead of '
-                   'replacing them, so it costs more solves and more validation passes.')
+              help='(Deprecated: 80 ms invariant mesh eliminates manual grid sweep) '
+                   'Search the timing model and accuracy weight grid.')
 @click.option('--self-consistent/--no-self-consistent', default=True,
               help='Plan a self-consistent trajectory: the samples are placed on the path the '
                    'trajectory\'s own (v, omega) profile traces, so the headings are its tangents '
                    '(simple solver only). On by default (KI-026).')
 @click.option('--refine', is_flag=True,
-              help='Add the Multi-Verse pipeline\'s refined trajectory as a candidate (simple '
-                   'solver only, needs JAX). The pipeline is used as a seed provider: its '
-                   'refinement hands the solver a path through every waypoint with a per-segment '
-                   'interval, and the solver does the magnitudes.')
-@click.option('--unified', is_flag=True, default=False,
-              help='Run the 3-Pillar Unified Trajectory Engine: '
+              help='(Deprecated: relied on legacy multiverse pipeline) '
+                   'Add the Multi-Verse pipeline\'s refined trajectory as a candidate.')
+@click.option('--unified/--no-unified', default=True,
+              help='Run the 3-Pillar Unified Trajectory Engine (default: on): '
                    'Kinetic Frontier Seeds + 80 ms Invariant Mesh + '
                    'Discretization-Consistent Collocation.')
 @click.option('--surrogate-polish', is_flag=True,
@@ -1175,9 +1171,32 @@ def main(ctx, config, waypoints, output, gui, gui_port, doctor, multiverse, simp
         )
     if simple and not quiet:
         click.secho(
-            "Note: --simple is now the default. Use --multiverse for the experimental pipeline.",
+            "Note: --simple is deprecated; CasADi is already standard.",
             fg="yellow",
         )
+    if multiverse and not quiet:
+        click.secho(
+            "Warning: --multiverse is deprecated and superseded by --unified (legacy pipeline in legacy/).",
+            fg="yellow",
+        )
+    if refine and not quiet:
+        click.secho(
+            "Warning: --refine is deprecated (relied on legacy multiverse pipeline).",
+            fg="yellow",
+        )
+    if sweep and not quiet:
+        click.secho(
+            "Warning: --sweep is deprecated (80 ms invariant mesh eliminates manual grid sweep).",
+            fg="yellow",
+        )
+    if uniform_dt and not quiet:
+        click.secho(
+            "Warning: --uniform-dt is deprecated (equal-duration dt penalizes variable-length segments; per-segment dt is standard).",
+            fg="yellow",
+        )
+    if ctx.get_parameter_source('unified') == click.core.ParameterSource.DEFAULT:
+        if simple or uniform_dt or sweep or refine or multiverse:
+            unified = False
     if per_segment_dt and uniform_dt:
         raise click.ClickException(
             "--per-segment-dt and --uniform-dt are mutually exclusive."
@@ -1444,12 +1463,16 @@ def main(ctx, config, waypoints, output, gui, gui_port, doctor, multiverse, simp
         from unified_planner import UnifiedPathEngine
         engine = UnifiedPathEngine(robot_cfg)
         mesh_samples = engine.compute_invariant_mesh_samples(wps)
-        samples = mesh_samples
+        if ctx.get_parameter_source('samples') == click.core.ParameterSource.DEFAULT and preset is None:
+            samples = mesh_samples
         specs_to_solve = [
             {"accuracy_weight": 0.001, "guess_style": "frontier_sprint", "per_segment_dt": True, "cost_metric": "discretization", "epigraph_constraints": True},
             {"accuracy_weight": 0.002, "guess_style": "frontier_sweeper", "per_segment_dt": True, "cost_metric": "discretization", "epigraph_constraints": True},
             {"accuracy_weight": 0.001, "guess_style": "frontier_exploratory", "per_segment_dt": True, "cost_metric": "discretization", "epigraph_constraints": True},
         ]
+        if ctx.get_parameter_source('accuracy_weight') != click.core.ParameterSource.DEFAULT:
+            for s in specs_to_solve:
+                s['accuracy_weight'] = float(accuracy_weight)
         if candidates is not None and candidates < len(specs_to_solve):
             specs_to_solve = specs_to_solve[:max(1, int(candidates))]
         if not use_validation:
@@ -1459,11 +1482,11 @@ def main(ctx, config, waypoints, output, gui, gui_port, doctor, multiverse, simp
         if not HAS_JAX:
             raise click.ClickException(f"--pyramid/--memetic-evolution requires JAX. {JAX_HINT}")
         from surrogate_polish import (
-            CompiledReachabilityEngine,
             generate_homotopy_bank,
             screen_candidates_jax,
             select_topological_representatives,
         )
+        from reachability_engine import CompiledReachabilityEngine
         validator_cls, robot_config_cls = _ensure_jax_classes()
         jax_cfg = robot_config_cls(robot_cfg)
         immrax_val = validator_cls(jax_cfg, control_dt=control_dt, propagation=propagation)
@@ -1600,7 +1623,8 @@ def main(ctx, config, waypoints, output, gui, gui_port, doctor, multiverse, simp
         solved, histories = _solve_batch(batch)
 
         if recombine_segments and len(solved) > 1 and not multiverse and not is_rescue:
-            from surrogate_polish import recombine_candidate_segments, CompiledReachabilityEngine
+            from surrogate_polish import recombine_candidate_segments
+            from reachability_engine import CompiledReachabilityEngine
             validator_cls, robot_config_cls = _ensure_jax_classes()
             jax_cfg = robot_config_cls(robot_cfg)
             immrax_val = validator_cls(jax_cfg, control_dt=control_dt, propagation=propagation)
@@ -1642,7 +1666,8 @@ def main(ctx, config, waypoints, output, gui, gui_port, doctor, multiverse, simp
                     click.echo(f"  Recombination notice: {recomb_rep.get('reason', 'unknown')}")
 
         if memetic_evolution and len(solved) > 1 and not multiverse and not is_rescue:
-            from surrogate_polish import run_memetic_evolution, CompiledReachabilityEngine
+            from surrogate_polish import run_memetic_evolution
+            from reachability_engine import CompiledReachabilityEngine
             validator_cls, robot_config_cls = _ensure_jax_classes()
             jax_cfg = robot_config_cls(robot_cfg)
             immrax_val = validator_cls(jax_cfg, control_dt=control_dt, propagation=propagation)
@@ -1709,7 +1734,7 @@ def main(ctx, config, waypoints, output, gui, gui_port, doctor, multiverse, simp
             # The gate and the segment report have to use the optimizer's own
             # table, or a waypoint's threshold is applied to the wrong
             # samples.
-            waypoint_bounds = _waypoint_boundaries(stats.get("segment_samples"))
+            waypoint_bounds = _waypoint_boundaries(stats.get("segment_samples") or (samples if isinstance(samples, (list, tuple, np.ndarray)) else None))
 
             # Track this candidate. A non-converged candidate is never eligible for export (KI-001).
             attempt_record = {
@@ -1807,7 +1832,8 @@ def main(ctx, config, waypoints, output, gui, gui_port, doctor, multiverse, simp
                 if waypoint_bounds:
                     wp_idx = _waypoint_of(waypoint_bounds, i)
                 else:
-                    wp_idx = i // samples
+                    s_val = samples[0] if isinstance(samples, (list, tuple, np.ndarray)) else samples
+                    wp_idx = i // max(1, int(s_val))
                 local_threshold = _segment_limit(waypoint_thresholds, wp_idx)
 
                 # Check envelope radius (max error)

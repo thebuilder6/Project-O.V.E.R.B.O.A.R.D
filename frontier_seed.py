@@ -30,6 +30,20 @@ from robot_model import (
 _asymmetric_late_apex_bump = asymmetric_late_apex_bump
 
 
+# Canonical initial-guess styles supported across both CasADi and Unified pipelines
+GUESS_STYLES = (
+    "baseline",
+    "rolling",
+    "bow_left",
+    "bow_right",
+    "turn_first",
+    "frontier_sprint",
+    "frontier_sweeper",
+    "frontier_exploratory",
+    "frontier_direct",
+)
+
+
 def compute_tangent_headings(
     waypoints: List[Tuple[float, float, Optional[float]]],
 ) -> List[float]:
@@ -99,23 +113,115 @@ def generate_frontier_seed(
     mu = float(getattr(robot_config, "cof", 0.6))
     g = 9.81
 
-    # Style-specific tuning parameters from the 50-generation marathon
-    if style == "sprint":
+    # Style-specific tuning parameters from the 50-generation marathon & analytical principles
+    fixed_sign = 0.0
+    turn_first_mode = False
+    zero_velocity = False
+
+    clean_style = style
+    if clean_style.startswith("frontier_"):
+        clean_style = clean_style.replace("frontier_", "")
+        if clean_style == "racing":
+            clean_style = "sprint"
+        elif clean_style == "direct":
+            clean_style = "direct_chord"
+
+    if clean_style == "baseline":
+        lengths = []
+        for i in range(num_segments):
+            p1 = waypoints[i]
+            p2 = waypoints[i + 1]
+            lengths.append(float(math.hypot(p2[0] - p1[0], p2[1] - p1[1])))
+        total_length = sum(lengths)
+        total_intervals = sum(seg_samples)
+        total_time_budget = 0.1 * total_intervals
+        initial_dts = np.zeros(num_segments, dtype=float)
+        if total_length > 1e-6:
+            for i in range(num_segments):
+                seg_time = total_time_budget * (lengths[i] / total_length)
+                initial_dts[i] = float(np.clip(seg_time / max(1, seg_samples[i]), 0.01, 1.0))
+        else:
+            initial_dts.fill(0.1)
+
+        states = []
+        for i in range(num_segments):
+            p1 = waypoints[i]
+            p2 = waypoints[i + 1]
+            s_i = seg_samples[i]
+            count = s_i if i < num_segments - 1 else s_i + 1
+            for j in range(count):
+                frac = j / s_i
+                x = p1[0] + (p2[0] - p1[0]) * frac
+                y = p1[1] + (p2[1] - p1[1]) * frac
+                if p1[2] is not None and p2[2] is not None:
+                    diff = angle_diff(p2[2], p1[2])
+                    theta = p1[2] + diff * frac
+                elif p1[2] is not None:
+                    path_dir = math.atan2(p2[1] - p1[1], p2[0] - p1[0])
+                    diff = angle_diff(path_dir, p1[2])
+                    theta = p1[2] + diff * frac
+                elif p2[2] is not None:
+                    path_dir = math.atan2(p2[1] - p1[1], p2[0] - p1[0])
+                    diff = angle_diff(p2[2], path_dir)
+                    theta = path_dir + diff * frac
+                else:
+                    if i + 2 < len(waypoints):
+                        p3 = waypoints[i + 2]
+                        dir_to_p2 = math.atan2(p2[1] - p1[1], p2[0] - p1[0])
+                        dir_to_p3 = math.atan2(p3[1] - p1[1], p3[0] - p1[0])
+                        delta = angle_diff(dir_to_p3, dir_to_p2)
+                        theta = dir_to_p2 + delta * frac
+                    else:
+                        theta = math.atan2(p2[1] - p1[1], p2[0] - p1[0])
+                states.append([x, y, theta, 0.0, 0.0])
+        states = np.array(states, dtype=float)
+        return np.concatenate([initial_dts, states.flatten()])
+
+    if clean_style == "sprint":
         u_peak = 0.70
         apex_mult = 1.0
         accel_scale = 0.95
         momentum_frac = 0.72
-    elif style == "sweeper":
+    elif clean_style == "sweeper":
         u_peak = 0.65
         apex_mult = 0.90
         accel_scale = 0.80
         momentum_frac = 0.68
-    elif style == "exploratory":
+    elif clean_style == "exploratory":
         u_peak = 0.66
         apex_mult = 1.25
         accel_scale = 0.85
         momentum_frac = 0.70
-    else:  # direct_chord
+    elif clean_style == "bow_left":
+        u_peak = 0.66
+        apex_mult = 1.10
+        accel_scale = 0.85
+        momentum_frac = 0.68
+        fixed_sign = 1.0
+    elif clean_style == "bow_right":
+        u_peak = 0.66
+        apex_mult = 1.10
+        accel_scale = 0.85
+        momentum_frac = 0.68
+        fixed_sign = -1.0
+    elif clean_style == "turn_first":
+        u_peak = 0.50
+        apex_mult = 0.0
+        accel_scale = 0.85
+        momentum_frac = 0.55
+        turn_first_mode = True
+    elif clean_style == "rolling":
+        u_peak = 0.50
+        apex_mult = 0.0
+        accel_scale = 0.80
+        momentum_frac = 0.60
+    elif clean_style == "baseline":
+        u_peak = 0.50
+        apex_mult = 0.0
+        accel_scale = 0.80
+        momentum_frac = 0.0
+        zero_velocity = True
+    else:  # direct_chord, direct
         u_peak = 0.50
         apex_mult = 0.0
         accel_scale = 0.90
@@ -154,7 +260,9 @@ def generate_frontier_seed(
 
         # Apex offset calculation
         apex_amp = 0.0
-        if apex_mult > 0.0 and L > 0.05:
+        if fixed_sign != 0.0 and L > 0.01:
+            apex_amp = fixed_sign * min(0.20 * L, 0.08) * apex_mult
+        elif apex_mult > 0.0 and L > 0.05:
             if i + 2 < len(waypoints):
                 p3 = waypoints[i + 2]
                 next_chord = math.atan2(p3[1] - p2[1], p3[0] - p2[0])
@@ -178,7 +286,17 @@ def generate_frontier_seed(
             bump = bumps[j]
             px = p1[0] + dx * u + nx * apex_amp * bump
             py = p1[1] + dy * u + ny * apex_amp * bump
-            th = th1 + dth * u
+
+            if turn_first_mode and s_i > 1:
+                if j == 0:
+                    th = th1
+                elif j == 1:
+                    th = chord_angle
+                else:
+                    target_th = th2 if (waypoints[i + 1][2] is not None and j == count - 1) else chord_angle
+                    th = target_th
+            else:
+                th = th1 + dth * u
 
             points_x.append(px)
             points_y.append(py)
@@ -202,11 +320,13 @@ def generate_frontier_seed(
     ds = np.hypot(dx_diff, dy_diff)
     ds = np.maximum(ds, 1e-5)
 
-    tangent_headings = np.zeros(N, dtype=float)
-    tangent_headings[:-1] = np.arctan2(dy_diff, dx_diff)
-    tangent_headings[-1] = tangent_headings[-2] if N > 1 else wp_headings[-1]
-
-    headings = np.unwrap(tangent_headings)
+    if turn_first_mode:
+        headings = np.copy(nominal_thetas)
+    else:
+        tangent_headings = np.zeros(N, dtype=float)
+        tangent_headings[:-1] = np.arctan2(dy_diff, dx_diff)
+        tangent_headings[-1] = tangent_headings[-2] if N > 1 else wp_headings[-1]
+        headings = np.unwrap(tangent_headings)
     for i, idx in enumerate(wp_indices):
         if idx < N and waypoints[i][2] is not None:
             target_th = float(waypoints[i][2])
@@ -272,13 +392,38 @@ def generate_frontier_seed(
                 vl[k_stop] = vr[k_stop] = 0.0
 
     # 6. Physical Segment Timing dt_i
-    dt_samples = ds / np.maximum(0.5 * (v_profile[:-1] + v_profile[1:]), 0.01)
-    initial_dts = np.zeros(num_segments, dtype=float)
-    for i in range(num_segments):
-        k_start = wp_indices[i]
-        k_end = wp_indices[i + 1]
-        seg_dts = dt_samples[k_start:k_end]
-        initial_dts[i] = float(np.clip(np.mean(seg_dts), 0.01, 1.0))
+    if zero_velocity:
+        vl = np.zeros(N, dtype=float)
+        vr = np.zeros(N, dtype=float)
+        lengths = [float(math.hypot(waypoints[k + 1][0] - waypoints[k][0], waypoints[k + 1][1] - waypoints[k][1])) for k in range(num_segments)]
+        tot_len = sum(lengths)
+        tot_time = 0.1 * sum(seg_samples)
+        initial_dts = np.zeros(num_segments, dtype=float)
+        if tot_len > 1e-6:
+            for k in range(num_segments):
+                seg_t = tot_time * (lengths[k] / tot_len)
+                initial_dts[k] = float(np.clip(seg_t / max(1, seg_samples[k]), 0.01, 1.0))
+        else:
+            initial_dts.fill(0.1)
+    elif clean_style == "rolling":
+        lengths = [float(math.hypot(waypoints[k + 1][0] - waypoints[k][0], waypoints[k + 1][1] - waypoints[k][1])) for k in range(num_segments)]
+        tot_len = sum(lengths)
+        tot_time = 0.1 * sum(seg_samples)
+        initial_dts = np.zeros(num_segments, dtype=float)
+        if tot_len > 1e-6:
+            for k in range(num_segments):
+                seg_t = tot_time * (lengths[k] / tot_len)
+                initial_dts[k] = float(np.clip(seg_t / max(1, seg_samples[k]), 0.01, 1.0))
+        else:
+            initial_dts.fill(0.1)
+    else:
+        dt_samples = ds / np.maximum(0.5 * (v_profile[:-1] + v_profile[1:]), 0.01)
+        initial_dts = np.zeros(num_segments, dtype=float)
+        for i in range(num_segments):
+            k_start = wp_indices[i]
+            k_end = wp_indices[i + 1]
+            seg_dts = dt_samples[k_start:k_end]
+            initial_dts[i] = float(np.clip(np.mean(seg_dts), 0.01, 1.0))
 
     # 7. Assemble Full State Array [N, 5]
     states = np.zeros((N, 5), dtype=float)

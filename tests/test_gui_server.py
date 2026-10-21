@@ -854,17 +854,20 @@ class TestStudioHelpers(unittest.TestCase):
         self.assertNotIn("--uniform-dt", joined)
         self.assertNotIn("--per-segment-dt", joined)
 
-    def test_command_does_not_enable_unified_by_default(self):
+    def test_command_leaves_unified_to_the_cli_default(self):
         command = gui_server.build_command(
             Path("."), Path("c.json"), Path("w.json"), Path("o.traj"),
             {"samples": 10})
-        self.assertNotIn("--unified", " ".join(str(part) for part in command))
+        self.assertNotIn("--unified", command)
+        self.assertNotIn("--no-unified", command)
 
-    def test_unified_is_passed_through_only_when_asked(self):
-        command = gui_server.build_command(
-            Path("."), Path("c.json"), Path("w.json"), Path("o.traj"),
-            {"samples": 10, "unified": True})
-        self.assertIn("--unified", " ".join(str(part) for part in command))
+    def test_unified_can_be_turned_on_and_off_explicitly(self):
+        base = (Path("."), Path("c.json"), Path("w.json"), Path("o.traj"))
+        command = gui_server.build_command(*base, {"samples": 10, "unified": True})
+        self.assertIn("--unified", command)
+
+        command = gui_server.build_command(*base, {"samples": 10, "unified": False})
+        self.assertIn("--no-unified", command)
 
     def test_fast_polish_is_passed_through(self):
         command = gui_server.build_command(

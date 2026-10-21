@@ -1,28 +1,19 @@
 import math
 import threading
+import warnings
 import time
 from typing import List, Dict, Tuple, Any, Optional, Union, Sequence
 import numpy as np
 import casadi as ca
 from robot_model import RobotConfig, DifferentialDriveModel, CG_HEIGHT_M, wheel_normal_forces, diff_drive_fk, diff_drive_ik, diff_drive_wheel_forces, angle_diff, wrap_angle, asymmetric_late_apex_bump
 
+# The canonical guess styles live in the seed provider; re-export them here so
+# the optimizer and its callers keep one list.
+from frontier_seed import GUESS_STYLES
+
 # MUMPS inside CasADi/IPOPT is not re-entrant across OS threads on Windows;
 # serialize the C++ MUMPS call to guarantee thread-safe solves repository-wide.
 CASADI_SOLVE_LOCK = threading.RLock()
-
-# Distinct deterministic initial guesses for candidate generation. They are
-# only guesses: IPOPT still enforces every waypoint, stop, and force limit.
-GUESS_STYLES = (
-    "baseline",
-    "rolling",
-    "bow_left",
-    "bow_right",
-    "turn_first",
-    "frontier_sprint",
-    "frontier_sweeper",
-    "frontier_exploratory",
-    "frontier_direct",
-)
 
 # Gauss-Legendre nodes and weights on [-1, 1] for the self-consistent
 # collocation. Four nodes integrate one interval's velocity profile to
@@ -960,75 +951,21 @@ class TrajectoryOptimizer:
         if style not in GUESS_STYLES:
             raise ValueError(f"Unknown guess_style {style!r}; expected one of {GUESS_STYLES}")
 
-        if style.startswith("frontier_"):
-            from frontier_seed import generate_frontier_seed
-            f_style = style.replace("frontier_", "")
-            if f_style == "racing":
-                f_style = "sprint"
-            elif f_style == "direct":
-                f_style = "direct_chord"
-            return generate_frontier_seed(
-                waypoints=waypoints,
-                segment_samples=num_samples_per_segment,
-                robot_config=self.config,
-                stop_waypoint_indices=stop_waypoint_indices,
-                style=f_style,
+        if style in ("bow_left", "bow_right", "turn_first"):
+            warnings.warn(
+                f"guess_style '{style}' is deprecated; initial guesses are unified through frontier_seed.",
+                DeprecationWarning,
+                stacklevel=2,
             )
 
-        num_segments = len(waypoints) - 1
-        if isinstance(num_samples_per_segment, (list, tuple, np.ndarray)):
-            segment_samples = [int(s) for s in num_samples_per_segment]
-        else:
-            segment_samples = [int(num_samples_per_segment)] * num_segments
-
-        lengths = []
-        for i in range(num_segments):
-            p1 = waypoints[i]
-            p2 = waypoints[i + 1]
-            lengths.append(float(np.hypot(p2[0] - p1[0], p2[1] - p1[1])))
-        total_length = sum(lengths)
-
-        # Initial dt: length-proportional (Q2 / F9)
-        total_intervals = sum(segment_samples)
-        total_time_budget = 0.1 * total_intervals
-        initial_dts = np.zeros(num_segments, dtype=float)
-        if total_length > 1e-6:
-            for i in range(num_segments):
-                seg_time = total_time_budget * (lengths[i] / total_length)
-                initial_dts[i] = float(np.clip(seg_time / max(1, segment_samples[i]), 0.01, 1.0))
-        else:
-            initial_dts.fill(0.1)
-
-        states = []
-        for i in range(num_segments):
-            p1 = waypoints[i]
-            p2 = waypoints[i + 1]
-            s_i = segment_samples[i]
-            count = s_i if i < num_segments - 1 else s_i + 1
-            for j in range(count):
-                frac = j / s_i
-                x, y, theta = self._guess_point(waypoints, i, p1, p2, frac)
-                states.append([x, y, theta, 0.0, 0.0])
-
-        states = np.array(states, dtype=float)
-        if states.shape != (N, 5):
-            raise ValueError(f"Initial guess shape {states.shape} does not match {(N, 5)}")
-
-        if style == "bow_left":
-            self._offset_segment_interiors(states, waypoints, segment_samples, left=True)
-        elif style == "bow_right":
-            self._offset_segment_interiors(states, waypoints, segment_samples, left=False)
-        elif style == "turn_first":
-            self._rotate_before_driving(states, waypoints, segment_samples)
-
-        if style != "baseline":
-            self._set_rolling_speeds(states, initial_dts, stop_waypoint_indices, segment_samples)
-
-        guess = np.concatenate([
-            initial_dts,
-            states.flatten(),
-        ])
-        return guess
+        from frontier_seed import generate_frontier_seed
+        return generate_frontier_seed(
+            waypoints=waypoints,
+            segment_samples=num_samples_per_segment,
+            robot_config=self.config,
+            stop_waypoint_indices=stop_waypoint_indices,
+            style=style,
+        )
 
     @staticmethod
     def _guess_point(waypoints, i, p1, p2, frac):

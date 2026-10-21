@@ -663,5 +663,44 @@ class TestStudioEntryPoints(unittest.TestCase):
         self.assertEqual(options["sysid_fit"], "fit.json")
 
 
+
+class TestDeprecatedCliFlags(unittest.TestCase):
+    """Verification of thin deprecation notices for superseded flags."""
+
+    def setUp(self):
+        import main
+        self.main = main
+        self.runner = CliRunner()
+
+    def test_simple_emits_deprecation_warning(self):
+        result = self.runner.invoke(self.main.main, ["-w", "examples/example_straight.json", "--simple"])
+        self.assertIn("Note: --simple is deprecated; CasADi is already standard.", result.output)
+
+    def test_multiverse_emits_deprecation_warning(self):
+        result = self.runner.invoke(self.main.main, ["-w", "examples/example_straight.json", "--multiverse"])
+        self.assertIn("Warning: --multiverse is deprecated and superseded by --unified (legacy pipeline in legacy/).", result.output)
+
+    def test_refine_emits_deprecation_warning(self):
+        result = self.runner.invoke(self.main.main, ["-w", "examples/example_straight.json", "--refine"])
+        self.assertIn("Warning: --refine is deprecated", result.output)
+
+    def test_sweep_emits_deprecation_warning(self):
+        result = self.runner.invoke(self.main.main, ["-w", "examples/example_straight.json", "--sweep"])
+        self.assertIn("Warning: --sweep is deprecated", result.output)
+
+    def test_uniform_dt_emits_deprecation_warning(self):
+        result = self.runner.invoke(self.main.main, ["-w", "examples/example_straight.json", "--uniform-dt"])
+        self.assertIn("Warning: --uniform-dt is deprecated", result.output)
+
+    def test_help_shows_deprecated_tags(self):
+        result = self.runner.invoke(self.main.main, ["--help"])
+        self.assertEqual(result.exit_code, 0)
+        self.assertIn("(Deprecated: superseded by --unified)", result.output)
+        self.assertIn("(Deprecated: CasADi is already standard)", result.output)
+        self.assertIn("(Deprecated: relied on legacy multiverse", result.output)
+        self.assertIn("(Deprecated: 80 ms invariant mesh eliminates", result.output)
+        self.assertIn("(Deprecated: equal-duration dt severely", result.output)
+        self.assertIn("--unified / --no-unified", result.output)
+
 if __name__ == "__main__":
     unittest.main()

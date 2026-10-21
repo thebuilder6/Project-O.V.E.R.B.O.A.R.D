@@ -1370,7 +1370,7 @@ Each entry has the same fields:
 | **Measured Outcome (2026-10-20)** | **Shatters the 44-Gene Champion on the 10-waypoint complex mission:**<br>- **Stock Baseline:** $5.948\text{ s}$, $0.96\text{ cm}$ tracking, 200 iters (capped), $3.45\text{ s}$ wall (**FAIL**)<br>- **44-Gene GA Champion (12 Gens):** $5.417\text{ s}$, $0.49\text{ cm}$ ($4.9\text{ mm}$), 120 iters, $\approx 25\text{ s}$ wall (**PASS**)<br>- **Frontier Sprint Seed:** **$5.239\text{ s}$**, **$0.45\text{ cm}$ ($4.5\text{ mm}$)**, $1.17\text{ cm}$ envelope, **Score 5.239** (**PASS**)<br>- **Frontier Sweeper Seed:** **$5.237\text{ s}$**, **$0.44\text{ cm}$ ($4.4\text{ mm}$)**, $1.18\text{ cm}$ envelope, **101 iters**, **Score 5.237** (**PASS**)<br>- **Frontier Exploratory Seed:** **$5.233\text{ s}$**, **$0.43\text{ cm}$ ($4.3\text{ mm}$)**, $1.18\text{ cm}$ envelope, **Score 5.233** (**PASS**)<br>- **Seed Generation Overhead:** **$1.16\text{ ms}$** total for all 3 seeds |
 | **Status** | **Live** in `frontier_seed.py` and `optimizer.py` |
 
-### 19.6 The 3-Pillar Unified Trajectory Engine (`main.py --unified`)
+### 19.6 The 3-Pillar Unified Trajectory Engine (`main.py --unified`, the default path)
 
 | Field | Value |
 |---|---|
@@ -1378,7 +1378,7 @@ Each entry has the same fields:
 | **Mechanism** | `unified_planner.py` (`UnifiedPathEngine`), `main.py --unified`, tested by `tests/test_frontier_seed.py` and `tests/test_unified_planner.py` |
 | **The 3 Pillars** | **Pillar I: Asymmetric Transition Geometry** (Rule 2 Late-Apex Dynamic Law $f_{\text{apex}} = 0.68$, Rule 5 Homotopy Triad: Sprint, Sweeper, Exploratory, Rule 6 Clothoid Curvature Continuity).<br>**Pillar II: Composite Kinetic Velocity Envelope** (Rule 1 Active Kinematic Hypotenuse on $L_1$ polytope boundary, Rule 3 Waypoint Momentum Preservation $\ge 0.70 v_{\max}$, Rule 8 Dynamic Load Transfer $v_{\text{tip/slip}} = \sqrt{g B / (2 h_{\text{CG}} \|\kappa\|)}$, Rule 9 Pontryagin Threshold Braking for stops).<br>**Pillar III: Invariant Collocation Mesh & KKT Solver** (Rule 4 KKT Slack Barrier Equilibrium at $3.6\text{ mm}$, Rule 7 Invariant 80 ms Sampling Mesh $\ge 10$ nodes/segment, 4-node Gauss-Legendre self-consistent collocation, smooth linear epigraph bounds). |
 | **Measured Outcomes (2026-10-20)** | **100% Gate Certification Across the Benchmark Suite:**<br>- **`example_complex_mission.json`:** **$5.365\text{ s}$**, envelope **$1.16\text{ cm}$**, tracking error **$3.6\text{ mm}$** (vs $5.0\text{ mm}$ gate), max integration error **$0.45\text{ mm}$**, 0 violations. Smashes the 44-Gene Champion ($5.417\text{ s}$, $4.9\text{ mm}$) and stock baseline ($6.068\text{ s}$, $1.22\text{ cm}$).<br>- **`example_straight.json`:** **$2.270\text{ s}$**, envelope **$0.30\text{ cm}$**, 0 violations, max pos error $0.45\text{ mm}$.<br>- **`example_with_stops.json`:** **$5.105\text{ s}$**, envelope **$0.89\text{ cm}$**, 0 violations, max pos error $0.46\text{ mm}$.<br>- **`example_s_curve.json`:** **$3.602\text{ s}$**, envelope **$0.83\text{ cm}$**, 0 violations, max pos error $0.46\text{ mm}$.<br>- **Compute Overhead:** Triad analytical seed generation takes **$< 2.5\text{ ms}$**; parallel IPOPT solves converge in **$40\text{--}48\text{ iters}$** in $\approx 1.7\text{ s}$ per candidate. |
-| **Status** | **Live** in `unified_planner.py` and `main.py --unified` |
+| **Status** | **Default** in `unified_planner.py` and `main.py --unified`; `--no-unified` restores the stock candidate set |
 
 ## 20. Ledger: Multi-Verse internals
 

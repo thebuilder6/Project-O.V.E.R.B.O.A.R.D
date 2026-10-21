@@ -6,7 +6,7 @@ Scope: whole repository, reviewed as a single-user, offline desktop tool for one
 
 Status: KI-001 through KI-003, KI-005 through KI-019, KI-021 through KI-031, KI-033 through KI-044, KI-045, KI-046, KI-047 through KI-052 are **fixed**. KI-032 is **mitigated** (test cache). KI-004 is **repaired as seed provider**. Open: KI-020 (hardware calibration & digital twin validation).
 
-How to use this list: refer to an item by its ID, for example “fix KI-003”.
+How to use this list: refer to an item by its ID, for example “fix KI-003”. The **Quick triage** table is the index - read that, then open the entry you are working on; the sections below it are the history of each item, not required reading.
 
 ## Quick triage
 

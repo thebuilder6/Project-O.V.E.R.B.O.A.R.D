@@ -2,6 +2,8 @@
 
 A trajectory optimizer for LEGO differential-drive robots in FIRST LEGO League (FLL). It generates time-optimal, physically constrained trajectories with CasADi + IPOPT, validates them before export, and ships a matching Pybricks Ramsete controller.
 
+*Working with an AI coding agent? `AGENTS.md` is the short index of the rules and commands; the documents below are the long form.*
+
 **📖 Technical documentation:** [docs/WHITEPAPER.md](docs/WHITEPAPER.md)
 **🔬 Heuristics and verification:** [docs/HEURISTICS_AND_VERIFICATION.md](docs/HEURISTICS_AND_VERIFICATION.md) — every path-planning heuristic, the full verification chain, the failed-strategy ledger, and the research agenda.
 **⚡ Optimal control derivation:** [docs/OPTIMAL_CONTROL_DERIVATION.md](docs/OPTIMAL_CONTROL_DERIVATION.md) — 5 invariant differential-drive control laws extracted from 50 generations of evolutionary search and the analytical Kinetic Frontier seeds (`frontier_seed.py`).
