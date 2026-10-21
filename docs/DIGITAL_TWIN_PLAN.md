@@ -8,7 +8,7 @@ before, and a plan with data is as faithful as the measurement allows.
 
 ## The data contract
 
-`sysid_fit.py` already writes every parameter the plant needs. They were
+`overboard/sysid/fit.py` already writes every parameter the plant needs. They were
 parsed and ignored; the plant and the belief now consume them.
 
 | Fit block | Field | Consumed by | What it models |

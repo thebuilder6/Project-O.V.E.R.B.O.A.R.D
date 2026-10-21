@@ -1,12 +1,14 @@
-# API Documentation: validator.py and export.py
+# API Documentation: overboard/verification and overboard/deploy
 
 Trajectory validation, safety gating, and controller export utilities.
 
 ---
 
-# validator.py
+# `overboard/verification/validator.py`
 
-The CPU validator is the first line of defense. `main.py` runs `validate_samples` before writing any output (KI-002). Immrax reachability is a separate check in `immrax_validator.py`.
+The CPU validator is the first line of defense. `overboard/main.py` runs `validate_samples` before
+writing any output (KI-002). Immrax reachability is a separate check in
+`overboard/verification/immrax_validator.py` (see the last section).
 
 ## `forward_integrate(samples, robot_cfg, fine_dt=0.001)`
 
@@ -51,7 +53,7 @@ Re-evaluates motor, traction, slip, and wheel-speed limits at every sample.
 | `right_wheel_slip` | Max right wheel slip force (N) |
 | `traction_total` | Max legacy total-traction violation (N) |
 | `max_wheel_speed_m_s` | Maximum absolute wheel speed |
-| `wheel_speed_limit_m_s` | `v_max_rad_s * min(wheel_radius_range)` |
+| `wheel_speed_limit_m_s` | `RobotConfig.no_load_wheel_speed_worst_case()`: `v_max_rad_s * min(wheel_radius_range) / gearing`, no headroom (KI-035) |
 | `speed_violation_m_s` | Max speed over the limit (0 if none) |
 | `left_normal_force` | Mean left normal force (N) |
 | `right_normal_force` | Mean right normal force (N) |
@@ -171,17 +173,20 @@ CLI-style validation entry point. Loads the `.traj` and config, runs `validate_s
 
 **Output**
 
-The report includes metrics, constraint audit, wheel-speed limit, slip details, forward-integration errors, and a final-waypoint check when `waypoints` is supplied. It prints `PASS` or `WARN`, but the `WARN` text is advisory in this function. The CLI gate is the Immrax candidate check plus `validate_samples` and `check_final_waypoint` in `main.py`.
+The report includes metrics, constraint audit, wheel-speed limit, slip details, forward-integration
+errors, and a final-waypoint check when `waypoints` is supplied. It prints `PASS` or `WARN`, but the
+`WARN` text is advisory in this function. The CLI gate is the Immrax candidate check plus
+`validate_samples` and `check_final_waypoint` in `overboard/main.py`.
 
 **Usage**
 
 ```bash
-python validator.py output.traj examples/fll_choreo.json
+python -m overboard.verification.validator output.traj examples/fll_choreo.json
 ```
 
 ---
 
-# export.py
+# `overboard/deploy/export.py`
 
 ## `resample_to_fixed_dt(samples, target_dt=0.02, track_width=0.0965)`
 
@@ -215,7 +220,7 @@ Returns a JSON-serializable controller profile:
 Loads a `.traj` file, resamples it, and writes the controller profile JSON. Prints the sample count and timestep.
 
 ```python
-from export import write_controller_file
+from overboard.deploy.export import write_controller_file
 
 write_controller_file(
     "output.traj",
@@ -235,7 +240,7 @@ Loads a `.traj` file and writes a Python module containing:
 The config is parsed through `RobotConfig`, so canonical, legacy, and flat trajectory configs all produce the same physical values. The output is not a Choreo file and does not include the `robot` wrapper.
 
 ```python
-from export import write_python_file
+from overboard.deploy.export import write_python_file
 
 write_python_file("output.traj", "trajectory.py")
 ```
@@ -246,7 +251,8 @@ CLI equivalent:
 python -m overboard.main -c examples/fll_choreo.json -w waypoints.json -o output.traj --export-format python
 ```
 
-With `compact=True`, `write_python_file` calls `write_compact_python_file` instead. The generated module contains a packed `samples` bytes object, a `config` dictionary, and an `events` tuple. The blob is a 4-byte little-endian header (`<HH` version, count) followed by 24 bytes per sample (`<6f` t, x, y, heading, v, omega). `ramsete_compact.py` and `ramsete_compact_events.py` decode this format directly; the legacy controllers expect the list format.
+With `compact=True`, `write_python_file` calls `write_compact_python_file` instead. The generated module contains a packed `samples` bytes object, a `config` dictionary, and an `events` tuple. The blob is a 4-byte little-endian header (`<HH` version, count) followed by 24 bytes per sample (`<6f` t, x, y, heading, v, omega). `ramsete_compact.py` and `ramsete_compact_events.py` decode this format directly; the other
+controllers expect the list format. The compact module is what `hub_runner.py` deploys.
 
 ```bash
 python -m overboard.main -c examples/fll_choreo.json -w waypoints.json -o output.traj --export-format python-compact
@@ -254,9 +260,78 @@ python -m overboard.main -c examples/fll_choreo.json -w waypoints.json -o output
 
 `encode_compact_trajectory(samples)` returns `(blob, events)`. It rejects missing or non-finite fields and values that do not fit in float32. `write_compact_python_file(input_traj_file, output_file)` performs the same load/write path as the CLI.
 
-## `digital_twin.load_sysid_fit(path)`
+---
 
-Loads and validates the optional `sysid_fit.json` produced by `sysid_fit.py`, returning a `DigitalTwinConfig`. The fit is separate from `robot_model`'s robot config. `ImmraxValidator` consumes it through `--sysid-fit`; the default kinematic plant is unchanged when no fit is supplied. The current integration uses the straight-line actuator gain range, first-order time constant, command delay, and odometry distance/heading scales. Braking slip is loaded and reported but not applied yet because the plant has no braking state (KI-020). The optional `drivebase` block (name, wheel radius, track width) is preserved in `DigitalTwinConfig.drivebase` and `summary()`; `main.py` warns when it differs from the robot config, but it does not override the validator geometry.
+# `overboard/verification/immrax_validator.py`
+
+## `PROPAGATION` / `PROPAGATIONS`
+
+The module constant `PROPAGATION` (default `"plant"`) names the reachability model, and
+`PROPAGATIONS` holds the two names `"plant"` and `"tick"`. `--propagation` and
+`ImmraxValidator(propagation=...)` select one; every candidate carries the model it used, so an
+envelope is never read without it.
+
+- **plant** (default): the plant is embedded and propagated, and the controller is evaluated
+  *outside* the tube at its midpoint, with the command held for a tick. The tube is that of an
+  open-loop plant driven by a recorded command.
+- **tick**: one control tick of the closed loop is embedded as a discrete map, controller
+  inside, and the map is propagated once per tick. Its Jacobian carries the feedback term, so
+  the tube contracts the way the robot's does. It needs the mixed-Jacobian inclusion (the natural
+  extension explodes) and costs 2-3x (`jac`) to 7-10x (`mjac`) the validation time.
+
+`docs/research/RQ-A_tracking_error.md` holds the measurement behind the choice.
+
+## `ImmraxValidator(config, ramsete_b=2.0, ramsete_zeta=0.7, control_dt=0.02, feedback_mode="nominal", digital_twin=None, propagation=None, ...)`
+
+Wraps `JAXRobotConfig`. `feedback_mode="nominal"` feeds the interval midpoint to the controller
+(the deployed robot reacts to its best estimate); `"interval"` evaluates the controller inclusion
+on the whole interval and diverges on long fast paths. The remaining arguments select the
+inclusions and the digital-twin options, and default to module constants so a run is reproducible.
+
+## `validate_trajectory(samples, cof_range, torque_margin_range, backlash_range, track_width_range=None, wheel_radius_range=None, inertia_range=None, safety_threshold_m=0.005)`
+
+Interval audit of every sample: motor force, per-wheel slip and wheel speed, with the stall torque
+read from the config (`--sysid-fit` is what fills it with the measured number). Returns the
+`passed` verdict and the reasons it failed, which `overboard/main.py` folds into the candidate's
+record.
+
+## `compute_reachability(samples, backlash_range, track_width_range, wheel_radius_range, cof_range, torque_margin_range, inertia_range, legacy_debug_loop=None)`
+
+Propagates the reachable tube sample to sample and returns:
+
+- `envelope` (per sample: `x_min/x_max`, `y_min/y_max`, `theta_min/theta_max`, tracking and heading
+  error, and `unknown` when the tube could not be computed)
+- `max_error_m`, `max_tracking_error_m`, `rms_tracking_error_m`, `max_heading_error_rad`,
+  `rms_heading_error_rad`, `max_envelope_radius_m`
+- `diverged` and `envelope_truncated`
+- `propagation`, the model that produced it
+
+The compiled `jax.lax.scan` path in `overboard/verification/reachability_engine.py` is the
+shipped one; `legacy_debug_loop=True` keeps the older Python while-loop for A/B measurements. With
+fewer than two samples, or with non-monotone timestamps, the report is `inf`/`diverged` rather than
+empty, so a failed solve never reads as a clean tube.
+
+## The digital twin
+
+`ImmraxValidator` takes an optional `DigitalTwinConfig` (`overboard/sysid/digital_twin.py`,
+`load_sysid_fit(path)`, fed by `--sysid-fit`) describing how the *deployed* controller and
+DriveBase respond, as opposed to `RobotConfig`'s description of the physical robot. A plan without
+a fit behaves exactly as before; every mechanism is inert unless the fit supplies its parameter.
+What the plant applies:
+
+- the straight-line steady-state wheel-speed gain range,
+- the first-order actuator time constant and the command delay,
+- an acceleration limit on the wheel speed,
+- the robot's own odometry belief (distance/heading scale and gyro bias) fed to the controller, so
+  the controller reacts to its estimate instead of the true pose,
+- the braking shortfall: while braking, the wheels turn further than the robot travels, so the
+  truth covers less ground than the encoders report. The factor is a smooth function of the
+  commanded speed, because Immrax's natural inclusion cannot compare or select.
+
+The optional `drivebase` block (name, wheel radius, track width) is preserved in
+`DigitalTwinConfig.drivebase` and `summary()`; `overboard/main.py` warns when it differs from the
+robot config, but it does not override the validator geometry. What is still missing is KI-020's
+list; `docs/DIGITAL_TWIN_PLAN.md` tracks it.
 
 ---
 
@@ -265,5 +340,7 @@ Loads and validates the optional `sysid_fit.json` produced by `sysid_fit.py`, re
 - A failed solve is never exported (KI-001).
 - With `--validate`, a failed CPU audit, Immrax reachability check, or final-waypoint check blocks the `.traj`, controller, Python file, and stats file (KI-002).
 - Without `--validate`, output is exploratory and has not passed the Immrax gate.
-- `--sysid-fit sysid_fit.json` opts into a five-state actuator/odometry model. The default kinematic model is unchanged when omitted; braking slip is loaded/reported but not applied yet (KI-020).
+- `--sysid-fit sysid_fit.json` opts into the measured actuator/odometry model (gain, time
+  constant, delay, acceleration limit, odometry belief, braking shortfall). The default kinematic
+  model is unchanged when it is omitted (KI-020).
 - `--export-format python-compact` writes the packed module used by `ramsete_compact.py` and `ramsete_compact_events.py`, not the legacy list format.

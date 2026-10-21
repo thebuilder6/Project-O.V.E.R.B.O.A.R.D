@@ -1,10 +1,13 @@
-# API Documentation: robot_model.py
+# API Documentation: overboard/models/robot_model.py
 
 Robot configuration parsing, motor/traction limits, and differential-drive force calculations shared by the optimizer, CPU validator, JAX model, and Immrax.
 
 ## Module constant
 
 - `CG_HEIGHT_M = 0.05` (m): Center-of-mass height used by every weight-transfer calculation.
+  Along with `wheel_normal_forces`, it is defined in `overboard/models/drivetrain_physics.py`
+  and re-exported by `overboard/models/robot_model.py`, so the optimizer, CPU validator,
+  JAX model and Immrax all import the one copy (KI-009).
 
 ## `wheel_normal_forces(mass, g, h_cg, track_width, centripetal_accel)`
 
@@ -78,7 +81,11 @@ The canonical and legacy key names are normalized (`track_width`/`differentialTr
 | `initial_y_m` | `(-0.005, 0.005)` |
 | `initial_theta_rad` | `(-1.0 deg, 1.0 deg)` |
 
-`t_max_range` is parsed and stored, but the current optimizer, CPU validator, and Immrax path use `t_max_nm` plus `torque_headroom`; the JAX interval helper has an unused `use_intervals` branch that would read it.
+`t_max_range` is parsed and stored, and the sysid fit writes it back (`apply_sysid_fit`).
+The optimizer, CPU validator and Immrax path bound the motor with `t_max_nm` and
+`torque_headroom` instead. The JAX model does read `t_max_range`, but only behind
+`use_intervals=True` (`get_max_force_at_velocity`, `check_constraints`), which no shipped
+path passes.
 
 ### Force-limit methods
 
@@ -100,7 +107,9 @@ CasADi version. It uses `sqrt(omega**2 + 1e-8)` as a smooth absolute value and `
 
 #### `max_linear_speed(apply_headroom=True) -> float`
 
-`v_max_rad_s * wheel_radius * (speed_headroom if apply_headroom else 1.0)`.
+`v_max_rad_s * wheel_radius / gearing * (speed_headroom if apply_headroom else 1.0)`.
+The gearing divide matches the force model, which compares `(v / wheel_radius) * gearing`
+with `v_max_rad_s` (KI-035).
 
 #### `get_robust_force_params() -> tuple[float, float, float]`
 
@@ -116,12 +125,22 @@ CasADi version of the robust limit.
 
 ### Calibration and Hardware Sync
 
+#### `apply_measured_motor(t_max_nm=None, t_max_range=None, no_load_speed_rad_s=None) -> dict`
+
+Replaces the declared motor numbers with measured ones and returns what changed (empty when
+nothing was applied). `no_load_speed_rad_s` is read at the motor; the wheel's no-load speed
+divides it by `gearing`. Unless the config pinned `t_max_range` itself, the derived range follows
+the measured stall torque. Because the optimizer, CPU audit, Immrax validator and exported
+controller all read this one config, a measured motor no longer lets a plan satisfy its own
+constraint and still trip the validator (KI-010).
+
 #### `apply_sysid_fit(twin) -> dict`
 
 Performs a full merge of a digital-twin fit (`DigitalTwinConfig` or `dict`) into `RobotConfig`:
 - Updates effective `wheel_radius` (scaled by measured odometry `distance_scale`).
 - Updates effective `track_width` (scaled by measured odometry `heading_scale`).
-- Updates motor curve (`t_max_nm`, `v_max_rad_s`, and derived/measured `t_max_range`).
+- Updates motor curve (`t_max_nm`, `v_max_rad_s`, and derived/measured `t_max_range`) by
+  delegating to `apply_measured_motor`.
 - Updates `gear_backlash_m` from calibrated backlash tests.
 - Updates `rolling_resistance` from braking slip tests.
 - Updates 95% confidence intervals for actuator gain and heading drift.
@@ -198,7 +217,7 @@ With `apply_headroom=True`, the motor limits use the declared worst-case ranges.
 ## Usage example
 
 ```python
-from robot_model import RobotConfig, DifferentialDriveModel
+from overboard.models.robot_model import RobotConfig, DifferentialDriveModel
 
 config = RobotConfig({
     "robot": {

@@ -1,5 +1,14 @@
 # Master Visual Gallery: Optimal Control & Evolutionary Discovery
 
+> **Research record (2026-10).** This is the exhibition of an earlier phase of the project. Every
+> figure here was produced by the evolutionary search, which is archived under
+> `overboard/legacy/evolutionary_research/` and is not importable from the current tree. The plots
+> cannot be regenerated from the working copy; check out the tag `archive/research-2026-10` to
+> re-run their producers. The numbers in the captions are the measurements from that campaign, not
+> current benchmark results - `benchmark.py` and `docs/HEURISTICS_AND_VERIFICATION.md` hold those.
+> The analytical laws these plots illustrate are still what the default planner uses; see
+> `docs/OPTIMAL_CONTROL_DERIVATION.md`.
+
 This document serves as the permanent repository exhibition of all diagnostic visualizations, state-space phase portraits, geometric manifold studies, and algorithm benchmarks developed across the project.
 
 ---
@@ -18,7 +27,7 @@ Shows the robot tracing the linear boundary $|\omega| \le \frac{2}{W}(v_{\max} -
 ---
 
 ### 1.2 Kinetic Frontier Seed vs. GA vs. Stock Baseline
-Compares the analytical `frontier_sprint` seed ($1.29\text{ ms}$, 86 IPOPT iterations) against the 50-generation Centurion GA champion ($281\text{ s}$) and the stock rolling baseline:
+Compares the analytical `frontier_sprint` seed ($1.29\text{ ms}$, 86 IPOPT iterations) against the 50-generation Centurion GA champion ($281\text{ s}$) and the stock rolling baseline. Produced by `overboard/legacy/evolutionary_research/compare_frontier_seeds.py`:
 
 ![Frontier Seeds vs GA vs Baseline](images/plot_frontier_vs_ga_comparison.png)
 
@@ -96,6 +105,7 @@ Demonstrates continuous clothoid transitions and bounding of lateral G-forces be
 
 ## 4. Companion Documents & Technical Context
 
-* 📄 **Technical Whitepaper**: [`WHITEPAPER.md`](WHITEPAPER.md) (Section 10.5 covers the complete benchmark and physical derivations).
+* 📄 **Technical Whitepaper**: [`WHITEPAPER.md`](WHITEPAPER.md) (§10.5 is the research record of this
+  campaign; §10.1-10.3 are the current test and example measurements).
 * 📄 **Optimal Control Derivation**: [`OPTIMAL_CONTROL_DERIVATION.md`](OPTIMAL_CONTROL_DERIVATION.md) (Mathematical formulation of the 5 invariant differential-drive control laws).
 * 📄 **Heuristics & Verification**: [`HEURISTICS_AND_VERIFICATION.md`](HEURISTICS_AND_VERIFICATION.md) (Complete gate chain, interval reachability, and validation hierarchy).

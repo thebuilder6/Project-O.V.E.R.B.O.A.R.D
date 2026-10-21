@@ -1,7 +1,9 @@
 # Studio UI Inventory
 
 **Status:** 2026-10-20, after the structural rebuild. A complete list of every control, readout and generated element in the browser studio, so the next change starts from a list rather than from the page.
-**Scope:** `viz/studio.html`, `viz/studio.js`, `viz/studio.css`. The studio is the only browser UI (the WebSocket live view was removed).
+**Scope:** `overboard/viz/studio.html`, `overboard/viz/studio.js`, `overboard/viz/studio.css`
+(served by `overboard/gui_server.py`). The studio is the only browser UI (the WebSocket live view was
+removed).
 
 ---
 
@@ -22,7 +24,7 @@
 
 **Three columns, two of them tabbed.** The left column is what you set, the canvas is the work, the right column is what you read. Each side column is a strip of tabs over one panel, so a column holds one topic at a time.
 
-The page carries **150 element ids**: **76 controls with an id** (36 buttons, 33 inputs, 7 selects), of which 8 are the tab buttons themselves. Nine regions are filled in at run time:
+The page carries **150 element ids**: **76 controls with an id** (36 buttons, 33 inputs, 7 selects), of which 8 are the tab buttons themselves. Eleven regions are filled in at run time:
 
 | Generated region | Element id | Where |
 |---|---|---|
@@ -171,7 +173,7 @@ The page carries **150 element ids**: **76 controls with an id** (36 buttons, 33
 | **Validate before export** | The gate; needs JAX. |
 | **Fast polish** | The budgeted solve. |
 | **Self-consistent** | Samples on the path's own profile. Ticked by default, like the command line's; unticking it is `--no-self-consistent`. |
-| **Sweep** | The timing-model x weight grid; ten solves. |
+| **Sweep** | The timing-model x weight grid; ten solves. The command line marks `--sweep` deprecated, and it turns the unified engine off, so this runs the stock candidate set. |
 
 ## Field canvas
 
@@ -258,7 +260,7 @@ The keys are ignored while a text field has the focus, so typing a heading does 
 | A plot | One entry in `PLOTS`: a key, a label and a build function. The tab strip and the drawing both come from it. |
 | Something on the field | Draw it, then add one entry to `CANVAS_LEGEND` so the key stays right. |
 | A control | Markup with an id, and the id in the script. The inventory test fails until this document names it. |
-| A section in the report | A block in `viz/report.js`. The report is built from the numbers the Result tab shows, so it cannot disagree with the studio. |
+| A section in the report | A block in `overboard/viz/report.js`. The report is built from the numbers the Result tab shows, so it cannot disagree with the studio. |
 
 `tests/test_studio_inventory.py` checks the document against the page: no dangling id lookups, the quoted counts are the real counts, every button in the page has a row here, and every generated region is named. A control added to the studio fails the test until this document is updated.
 

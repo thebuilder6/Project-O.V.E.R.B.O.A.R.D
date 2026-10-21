@@ -1,8 +1,19 @@
 # Trajectory Optimization: Tools & Research Reference
 
-*Context: FLL differential-drive path optimizer. The current implementation uses CasADi and IPOPT with trapezoidal direct collocation; it no longer uses SLSQP or scipy.minimize.*
+*Context: FLL differential-drive path optimizer. The current implementation uses CasADi and IPOPT
+with direct collocation. The position rule integrates with four-node Gauss-Legendre along the
+integrated heading by default (`--self-consistent`; `--no-self-consistent` restores the
+trapezoidal rule - KI-026, KI-051, KI-052). It no longer uses SLSQP or scipy.minimize.*
 
-> **Current status (2026-10-20):** time-optimal solving, the jerk/accuracy weight, CPU validation, Immrax reachability, stops/events, and controller export are implemented. The Multi-Verse refinement and its JAX seed provider are archived under `overboard/legacy/` with no CLI entry point (KI-004). An optional fitted actuator/odometry plant (`sysid_digital_twin.py` + `sysid_fit.py` + `--sysid-fit`) exists, but the validator is not yet a full digital twin (KI-020). See `KNOWN_ISSUES.md` and `docs/WHITEPAPER.md` for the measured state.
+> **Current status (2026-10):** time-optimal solving, the jerk/accuracy weight, CPU validation, Immrax
+> reachability, stops/events, and controller export are implemented. The default solve path is the
+> 3-Pillar unified engine (`--unified`, `--no-unified` for the stock candidate set). The Multi-Verse
+> refinement and its JAX seed provider are archived under `overboard/legacy/` with no CLI entry point
+> and nothing shipped imports them (KI-004). An optional fitted actuator/odometry plant
+> (`overboard/sysid/digital_twin.py` + `overboard/sysid/fit.py` + `--sysid-fit`) exists and models
+> actuator gain/tau/delay, an acceleration limit, the robot's own odometry belief and braking slip,
+> but the validator is still not a full digital twin (KI-020). See `KNOWN_ISSUES.md` and
+> `docs/WHITEPAPER.md` for the measured state.
 
 ---
 
@@ -17,7 +28,11 @@ The optimizer minimizes trajectory duration while enforcing wheel-speed, motor-f
 
 A plan that is fastest on paper can still overshoot a waypoint or arrive at the wrong heading. The open question is how to encode tracking accuracy in the optimization objective without giving up too much time.
 
-The current tree uses an optional jerk penalty (`--accuracy-weight`) as the plan-time proxy, then checks the result with a CPU audit and Immrax reachability. With `--validate`, `--candidates` solves and scores several trajectories and selects a passing one by envelope (KI-020); reachability is not yet an objective term.
+The current tree uses an optional jerk penalty (`--accuracy-weight`) as the plan-time proxy, then
+checks the result with a CPU audit and Immrax reachability. With `--validate`, every candidate is
+solved and scored, and the best *passing* one is selected by its 5-part path fitness score (stop
+spread, slip risk, RMS wheel force, tracking error, run time); envelope and duration break ties.
+Reachability is still a gate and not an objective term.
 
 ---
 
@@ -87,20 +102,31 @@ The current tree uses an optional jerk penalty (`--accuracy-weight`) as the plan
 |---|---|
 | Jerk penalty | `--accuracy-weight` adds smoothed wheel-acceleration differences to the objective. |
 | Motor/traction margin | Declared `torque_headroom`, `speed_headroom`, and uncertainty ranges. |
-| Per-wheel slip check | `validator.audit_constraints` and the Immrax interval check. |
+| Per-wheel slip check | `overboard/verification/validator.py::audit_constraints` and the Immrax interval check. |
 | Tracking proxy | Immrax closed-loop Ramsete reachability; post-solve gate and candidate score. |
-| Final-pose check | `check_final_waypoint` at 2 cm position / 2 cm heading tolerance. |
+| Final-pose check | `check_final_waypoint` at 2 cm position / 0.02 rad heading tolerance. |
 | Controller | Fixed 20 ms sample-and-hold export; Pybricks Ramsete runtime. |
 
-The validation thresholds (5 mm tracking, 2 cm envelope) are model checks, not hardware guarantees. Do not widen them to make a specific path pass; calibrate the model first (KI-020).
+The validation thresholds are model checks, not hardware guarantees: 5 mm on the closed-loop tracking
+error, and a per-waypoint envelope limit that defaults to 2 cm and tightens to 5 mm for a waypoint
+marked `precision_mode` (or whatever `error_threshold` declares). Do not widen them to make a
+specific path pass; calibrate the model first (KI-020).
 
 ---
 
 ## Recommended Next Steps
 
-1. **Calibrate the digital twin (KI-020).** Record hardware logs with `pybricks_code/sysid_digital_twin.py`, measure the stop/final poses, fit with `sysid_fit.py`, and compare the fitted validator with those poses. Then add integrated odometry, DriveBase response, and slip models. Keep the current gate strict until then.
-2. **Make the objective answer the gate.** The Multi-Verse seed provider is repaired (KI-004) but buys speed with tracking accuracy, because its cost is duration plus a jerk term. The same lever as reachability in the objective.
-3. **Fix the install path (KI-006).** Done: the optional packages live in `requirements-optional.txt`, `install.bat` / `install.sh` set up both, and `main.py --doctor` reports what is missing.
+1. **Calibrate the digital twin (KI-020).** Record hardware logs with
+   `pybricks_code/sysid_digital_twin.py`, measure the stop/final poses, fit with
+   `python -m overboard.sysid.fit`, and compare the fitted validator with those poses. Then close
+   KI-020's remaining gaps (motor transients, DriveBase PID, full slip dynamics). Keep the current
+   gate strict until then.
+2. **Make the objective answer the gate.** The Multi-Verse seed provider that used to do this is
+   archived (KI-004); the live analytical seeds are in `overboard/core/frontier_seed.py`, and the
+   unified engine's frontier candidates bias the solve toward one region of the homotopy. Biasing a
+   seed buys speed with tracking accuracy, because the cost is duration plus a jerk term. Putting
+   reachability itself in the objective is the open lever.
+3. **Fix the install path (KI-006).** Done: the optional packages live in `requirements-optional.txt`, `install.bat` / `install.sh` set up both, and `python -m overboard.main --doctor` reports what is missing.
 4. **Finish export/runtime edge cases (KI-011, KI-012).** Done: the headings unwrap across ±π and the final event fires.
 5. **Make benchmarks trustworthy (KI-015).** Done: the pipeline mode checks convergence, the config is explicit, and the random suite generator solves every mission.
 

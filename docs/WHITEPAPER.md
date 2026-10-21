@@ -10,7 +10,7 @@ This document describes the current implementation in the working tree. It repla
 
 > **Companion document:** [`docs/HEURISTICS_AND_VERIFICATION.md`](HEURISTICS_AND_VERIFICATION.md) documents every path-planning heuristic in the tree, the full verification chain and what each layer does and does not prove, a ledger of the strategies that did not work, and a prioritised research agenda. Section 5 below summarises the validation chain; the companion document is the reference for the gate thresholds, the seed heuristics and the failed approaches.
 >
-> **Optimal control derivation:** [`docs/OPTIMAL_CONTROL_DERIVATION.md`](OPTIMAL_CONTROL_DERIVATION.md) documents the extraction of the 5 invariant differential-drive control laws from the 50-generation evolutionary search and the mathematical formulation of the analytical Kinetic Frontier seeds (`frontier_seed.py`).
+> **Optimal control derivation:** [`docs/OPTIMAL_CONTROL_DERIVATION.md`](OPTIMAL_CONTROL_DERIVATION.md) documents the extraction of the 5 invariant differential-drive control laws from the 50-generation evolutionary search and the mathematical formulation of the analytical Kinetic Frontier seeds (`overboard/core/frontier_seed.py`).
 
 ---
 
@@ -28,9 +28,9 @@ The current tree contains uncommitted fixes for several safety and correctness i
 
 What is still incomplete:
 
-- The Multi-Verse pipeline is archived under `overboard/legacy/` and has no CLI entry point (KI-004). The unified planner is the only solve path.
+- The Multi-Verse pipeline is archived under `overboard/legacy/` and has no CLI entry point (KI-004). The unified planner is the default solve path; `--no-unified` restores the stock candidate set.
 - The validator is kinematic and has no motor, DriveBase, odometry, or slip dynamics (KI-020).
-- Under the narrowed test ranges in `examples/fll_choreo.json`, the straight and complex-mission examples pass; the S-curve, stops, and events examples still fail.
+- Whether a representative path passes the Immrax gate is a measurement that moves with the config and the planner (KI-020); the current pass/fail ledger is in `docs/HEURISTICS_AND_VERIFICATION.md`.
 - Convergence flags and some export edge cases remain open (KI-017). The random benchmarks work (KI-015).
 
 ---
@@ -41,32 +41,37 @@ What is still incomplete:
 
 | Module | Responsibility |
 |---|---|
-| `main.py` | CLI, waypoint/config loading, candidate loop, safety gate, export |
-| `robot_model.py` | Config parsing, motor curve, per-wheel normal/traction model, CPU force checks |
-| `optimizer.py` | CasADi/IPOPT trajectory optimizer (`TrajectoryOptimizer`) |
+| `overboard/main.py` | CLI, waypoint/config loading, candidate loop, safety gate, export |
+| `overboard/models/robot_model.py` | Config parsing, motor curve, per-wheel normal/traction model, CPU force checks |
+| `overboard/models/drivetrain_physics.py` | Shared normal-force, cornering-ceiling, late-apex and Ramsete-gain maths |
+| `overboard/models/drivetrain.py` | Drivetrain model behind the cross-check and the fitted plant |
+| `overboard/core/optimizer.py` | CasADi/IPOPT trajectory optimizer (`TrajectoryOptimizer`) |
+| `overboard/core/frontier_seed.py` | Analytical Kinetic Frontier seed generator |
+| `overboard/core/unified_planner.py` | The 3-Pillar Unified Trajectory Engine (`UnifiedPathEngine`) |
+| `overboard/core/surrogate_polish.py` | The 5-layer surrogate-to-truth pipeline and the pyramid sieve |
 | `overboard/legacy/multiverse_optimizer.py` | Archived bootstrap/critic/JAX-refinement pipeline (`MasterTrajectoryOptimizer`); no CLI entry point |
-| `validator.py` | CPU forward integration, constraint audit, metrics, final-waypoint and sample gates |
-| `immrax_validator.py` | Interval reachability with the deployed Ramsete structure, plus optional fitted plant |
-| `digital_twin.py` | Loader/validation for `sysid_fit.json` actuator and odometry fits |
-| `jax_robot_model.py` | JAX configuration and force model |
-| `jax_ramsete.py` | JAX Ramsete parity and interval-friendly controller |
+| `overboard/verification/validator.py` | CPU forward integration, constraint audit, metrics, final-waypoint and sample gates |
+| `overboard/verification/immrax_validator.py` | Interval reachability with the deployed Ramsete structure, plus optional fitted plant |
+| `overboard/verification/reachability_engine.py` | The shared compiled reachability engine |
+| `overboard/sysid/digital_twin.py` | Loader/validation for `sysid_fit.json` actuator and odometry fits |
+| `overboard/models/jax_robot_model.py` | JAX configuration and force model |
+| `overboard/models/jax_ramsete.py` | JAX Ramsete parity and interval-friendly controller |
 | `overboard/legacy/jax_optimizer.py` | JAX candidate generation used by the archived pipeline |
-| `sysid_fit.py` | Host-side fitter for digital-twin logs |
-| `sysid_compare.py` | Planned-vs-measured stop/final pose report |
-| `export.py` | Fixed-timestep controller JSON, legacy Python, and packed-compact Python export |
-| `gui_server.py`, `viz/studio.*` | Browser studio: mission editor, solve jobs, artifact download |
-| `gui_server.py`, `viz/studio.*` | Browser studio: mission editing, solve jobs, artifact download |
-| `diagnostics.py` | Environment report behind `--doctor` and the studio health check |
-| `convergence_plotter.py`, `plotter.py`, `animated_plotter.py` | Visualization |
+| `overboard/sysid/fit.py` | Host-side fitter for digital-twin logs |
+| `overboard/sysid/collect.py`, `overboard/sysid/compare.py` | Hub SysId collector; planned-vs-measured stop/final pose report |
+| `overboard/deploy/export.py` | Fixed-timestep controller JSON, legacy Python, and packed-compact Python export |
+| `overboard/gui_server.py`, `overboard/viz/studio.*` | Browser studio: mission editor, solve jobs, artifact download |
+| `overboard/diagnostics.py` | Environment report behind `--doctor` and the studio health check |
+| `overboard/viz/convergence_plotter.py`, `overboard/viz/plotter.py`, `overboard/viz/animated_plotter.py`, `overboard/viz/fields.py` | Visualization and field geometry |
 | `pybricks_code/` | Robot-side firmware, fast/reference/compact controllers, missions, digital-twin log collector |
 
 ### 2.2 CLI flow
 
 1. Parse the robot config and waypoints.
-2. Select `TrajectoryOptimizer` (the only solver).
+2. Select `TrajectoryOptimizer` as the backend and, unless `--no-unified` is given, the 3-Pillar engine on top of it.
 3. Solve the first candidate.
 4. With `--validate`, run Immrax reachability on that candidate and score its envelope.
-5. With `--validate`, repeat for the remaining `--candidates` trajectories (default 2, max 5). With the simple solver each candidate combines an initial-guess seed (`baseline`, `rolling`, `bow_left`, `bow_right`, `turn_first`) with a timing mode: by default candidate 1 is equal-duration baseline, candidate 2 is per-segment baseline, then the remaining seeds alternate. Select the passing converged candidate with the lowest 5-part path fitness score (the envelope, then the shortest duration, break ties); otherwise keep the converged one closest to passing for reporting.
+5. With `--validate`, repeat for the remaining `--candidates` trajectories (default 2). With the stock set each candidate combines an initial-guess seed (`baseline`, `rolling`, `bow_left`, `bow_right`, `turn_first`) with a timing mode: by default candidate 1 is equal-duration baseline, candidate 2 is per-segment baseline, then the remaining seeds alternate. Select the passing converged candidate with the lowest 5-part path fitness score (the envelope, then the shortest duration, break ties); otherwise keep the converged one closest to passing for reporting.
 6. Check the final waypoint, and with `--validate`, run the CPU `validate_samples` gate.
 7. Write the trajectory, then optional stats/controller/legacy-Python/compact-Python exports, then plots.
 
@@ -226,7 +231,7 @@ y_{k+1}     = y_k + integral_0^dt v(s)*sin(theta(s)) ds
 
 IPOPT is configured with `max_iter=5000`, `tol=1e-2`, `constr_viol_tol=1e-2`, adaptive barrier strategy, limited-memory Hessian, and warm-start options. These tolerances are deliberately loose enough for interactive use; the validator is the final authority.
 
-On failure, `TrajectoryOptimizer.solve` still returns a best-effort sample list from `opti.debug`, but sets `stats["converged"] = False`. `main.py` excludes that solve from export (KI-001).
+On failure, `TrajectoryOptimizer.solve` still returns a best-effort sample list from `opti.debug`, but sets `stats["converged"] = False`. `overboard/main.py` excludes that solve from export (KI-001).
 
 ### 4.5 Limitations
 
@@ -259,7 +264,7 @@ Validation has three layers.
 - zero slip points
 - `speed_violation_m_s < 1e-6`
 
-`main.py` also calls `check_final_waypoint` with a 2 cm position tolerance and 2 cm heading tolerance. The final pose check runs even without `--validate`.
+`overboard/main.py` also calls `check_final_waypoint` with a 2 cm position tolerance and 2 cm heading tolerance. The final pose check runs even without `--validate`.
 
 ### 5.2 Immrax reachability
 
@@ -269,13 +274,13 @@ Validation has three layers.
 - **Controller:** `JAXRamseteController`; the nominal feedback path normalizes heading error to `[-π, π]`. The interval path uses unrolled headings and an interval-friendly polynomial because Immrax's natural inclusion does not support `abs`, `where`, `mod`, `sinc`, or `atan2`.
 - **Timing:** 20 ms control ticks; the command is held for the tick and the plant is integrated in four 5 ms substeps.
 - **Plant:** kinematic differential drive with a smooth backlash model. There is no motor time constant, current limit, DriveBase PID, encoder/gyro odometry, or slip dynamics in the default model.
-- **Optional measured model:** `--sysid-fit sysid_fit.json` switches to a five-state plant (pose plus actual wheel speeds). It applies the fitted straight-line actuator gain interval, first-order time constant, command delay, and odometry scale to feedback. Braking slip is loaded and reported but not applied yet because the plant has no braking state. The default kinematic path is unchanged when the flag is omitted.
+- **Optional measured model:** `--sysid-fit sysid_fit.json` switches to a five-state plant (pose plus actual wheel speeds). It applies the fitted straight-line actuator gain interval, first-order time constant, command delay, odometry scale and the measured braking shortfall (a reduction in grip proportional to the braking fraction) to the plant. The default kinematic path is unchanged when the flag is omitted.
 - **Uncertainty:** cof, torque headroom, backlash, track width, wheel radius, inertia, and the optional straight-line actuator gain are intervals. Both bounds matter (KI-003). Feedback uses the midpoint of the interval state in the default `nominal` mode; the more conservative `interval` mode is available but diverges on long fast paths.
 - **Outputs:** max motor/slip/speed violation, tracking error, envelope radius, and a pass flag.
 
 The envelope is the axis-aligned bounding box of the reachable set. The planner checks its radius against a local threshold: 2 cm for transit samples by default, 0.5 cm for `precision_mode` waypoints, or an explicit `error_threshold`. Tracking error is checked separately at 0.5 cm.
 
-The gate is a post-solve check. With `--validate`, `main.py` solves `--candidates` trajectories (default 2, max 5), validates each one, and selects the passing candidate with the lowest **5-part path fitness score**: the reachability spread at the stops and the final waypoint (200 s/m), the slip risk above a 70 % utilisation dead-zone (8 s), the RMS wheel force against the stall force (0.5 s), the tracking error (80 s/m) and the run time (1 s/s). The weights are in seconds, so the score reads as the time the plan's defects are worth, and lower is better. The envelope and the duration break ties. With the simple solver, the candidates combine initial-guess seeds (`baseline`, `rolling`, `bow_left`, `bow_right`, `turn_first`) with the uniform or per-segment timing mode; the default alternates modes. The CPU audit runs on every candidate, not only the selected one. If none pass, it selects the closest candidate for reporting but still blocks export. Reachability is not a term or constraint in the optimizer (KI-020).
+The gate is a post-solve check. With `--validate`, `overboard/main.py` solves `--candidates` trajectories (default 2), validates each one, and selects the passing candidate with the lowest **5-part path fitness score**: the reachability spread at the stops and the final waypoint (200 s/m), the slip risk above a 70 % utilisation dead-zone (8 s), the RMS wheel force against the stall force (0.5 s), the tracking error (80 s/m) and the run time (1 s/s). The weights are in seconds, so the score reads as the time the plan's defects are worth, and lower is better. The envelope and the duration break ties. With the simple solver, the candidates combine initial-guess seeds (`baseline`, `rolling`, `bow_left`, `bow_right`, `turn_first`) with the uniform or per-segment timing mode; the default alternates modes. The CPU audit runs on every candidate, not only the selected one. If none pass, it selects the closest candidate for reporting but still blocks export. Reachability is not a term or constraint in the optimizer (KI-020).
 
 The default candidate set mixes both timing modes, and the CPU audit runs on every candidate so a partial pass cannot block a later fully passing one. The two modes are not peers: the equal-duration mode shares one `dt` across all segments, which because every segment has the same sample count also forces every segment to take the SAME time, so on a path with unequal segment lengths the short segment inherits the long segment's duration. The per-segment mode is the general model, and both are held to the same wheel-jerk discipline so `accuracy_weight` means the same thing in either (KI-022). The per-segment mode also holds the wheel force profile continuous through every waypoint the robot does not stop at, which is what makes a change of time scale at such a point legitimate (KI-024). Measured on 2026-10-19: an uneven 1.0 m + 0.2 m path passes all gates with per-segment at `accuracy_weight=0.005` in 2.784 s with envelope 0.32 cm, tracking 0.36 cm and peak wheel jerk 9.52 m/s³, versus 4.456 s / 0.37 cm / 0.36 cm / 9.52 m/s³ for the equal-duration mode at the same weight, so selection keeps the per-segment winner. At `accuracy_weight=0`, per-segment is 2.710 s / 0.32 cm but fails the Immrax and CPU gates, so selection falls back to the equal-duration candidate (4.463 s / 0.35 cm). On the complex mission at `accuracy_weight=0`, per-segment is faster (4.650 s, envelope 1.00 cm) but its tracking is 0.84 cm and its motor force is 0.074 N over the limit, so it is rejected; the equal-duration 6.068 s / 1.22 cm / 0.49 cm candidate passes and wins. `--uniform-dt` forces the equal-duration-only behavior and `--per-segment-dt` forces per-segment timing.
 
@@ -346,11 +351,11 @@ Pathing missions call `ramsete_fast` with its defaults, `b = 2.0`, `zeta = 0.7`;
 
 ### 6.2 JAX parity
 
-`jax_ramsete.py` mirrors the deployed math, including the precomputed gain and shortest-angle heading error. The interval path cannot use `abs`, `where`, `mod`, `sinc`, or `atan2`, so it uses unrolled headings and a degree-6 Chebyshev polynomial for `sinc` with maximum error below `2.5e-9` on `[-π, π]`. A randomized parity test compares the JAX command with a direct transcription of `ramsete_fast.py`, including ±π crossings (KI-014).
+`overboard/models/jax_ramsete.py` mirrors the deployed math, including the precomputed gain and shortest-angle heading error. The interval path cannot use `abs`, `where`, `mod`, `sinc`, or `atan2`, so it uses unrolled headings and a degree-6 Chebyshev polynomial for `sinc` with maximum error below `2.5e-9` on `[-π, π]`. A randomized parity test compares the JAX command with a direct transcription of `ramsete_fast.py`, including ±π crossings (KI-014).
 
 The nominal feedback path also mirrors the deployed `DriveBase.drive()` boundary: `quantize_drive_command` rounds the commanded linear speed to whole mm/s and the turn rate to whole deg/s, exactly like the firmware, before the command is split into wheel speeds. The interval inclusion path leaves that rounding off, because Immrax cannot include those operations and dropping the rounding is the conservative direction.
 
-The hardware calibration path is implemented but has not been validated on hardware. `pybricks_code/sysid_digital_twin.py` collects raw encoder/IMU, step, chirp, odometry, stopping, and held-out replay logs without changing `ramsete_fast.py`; `sysid_fit.py` fits first-order actuator response, odometry scale, static gyro bias, and a bounded braking-slip estimate; `--sysid-fit` feeds the measured actuator/odometry fit to Immrax. The 5 mm tracking and 2 cm envelope thresholds stay unchanged until measured logs are available (KI-020).
+The hardware calibration path is implemented but has not been validated on hardware. `pybricks_code/sysid_digital_twin.py` collects raw encoder/IMU, step, chirp, odometry, stopping, and held-out replay logs without changing `ramsete_fast.py`; `python -m overboard.sysid.fit` fits first-order actuator response, odometry scale, static gyro bias, and a bounded braking-slip estimate; `--sysid-fit` feeds the measured actuator/odometry fit to Immrax. The 5 mm tracking and 2 cm envelope thresholds stay unchanged until measured logs are available (KI-020).
 
 ### 6.3 Export and runtime edge cases
 
@@ -406,7 +411,7 @@ This phase updates `global_traj`. The `stomp_variants`, `stomp_noise`, and `teb_
 
 ### 7.6 Measured effect
 
-A 3-waypoint pipeline benchmark (`python benchmark.py --mode pipeline --config examples/fll_choreo.json`) produced:
+A 3-waypoint pipeline benchmark (`python benchmark.py --mode pipeline --config examples/fll_choreo.json`) produced, on the tree of 2026-10-19, before the pipeline was archived:
 
 ```text
 Simple CasADi     solve = 0.1076 s   trajectory = 6.7614 s
@@ -415,7 +420,7 @@ Cost improvement: 0.00 %
 JAX refine phase: 0.0115 s
 ```
 
-This is the expected consequence of KI-004. The simple solver is the default until the initial-guess path is wired.
+This is the expected consequence of KI-004, and it is kept as the record of why the pipeline was archived. The benchmark no longer has a Multi-Verse arm: `benchmark.py --mode pipeline` solves `TrajectoryOptimizer` only. The default solve path is now the 3-Pillar unified engine.
 
 ---
 
@@ -423,13 +428,12 @@ This is the expected consequence of KI-004. The simple solver is the default unt
 
 ### 8.1 Robot-side logger
 
-`pybricks_code/sysid_digital_twin.py` is the current robot-side collector. It runs raw encoder/IMU, step, chirp, odometry, stopping, and held-out replay tests, and logs outside `ramsete_fast.py` so the controller keeps its memory and timing profile. `pybricks_code/sysid_data_logger.py` is the older logger and covers a narrower set of tests.
+`pybricks_code/sysid_digital_twin.py` is the current robot-side collector. It runs raw encoder/IMU, step, chirp, odometry, stopping, and held-out replay tests, and logs outside `ramsete_fast.py` so the controller keeps its memory and timing profile. `pybricks_code/archive/sysid_data_logger.py` is the older logger and covers a narrower set of tests.
 
 ### 8.2 PC-side fitter and optional plant
 
-`sysid_fit.py` parses the `TEST_START`/`TEST_END` blocks from a console capture, fits first-order actuator response, odometry scale, static gyro bias, and a bounded braking-slip estimate, then writes `sysid_fit.json`. It accepts a minimal drivebase profile (`wheel_radius_m`, optional `track_width_m`, with Pybricks-style `wheel_diameter_mm`/`axle_track_mm` aliases) or a full robot config, so the host workflow is not tied to one drivebase. `digital_twin.py` validates that file, and `main.py --sysid-fit sysid_fit.json --validate` switches Immrax to the fitted five-state plant. The default kinematic model is unchanged when the flag is omitted. `sysid_compare.py` prints the planned-vs-measured pose error for the measured stops and says whether each measured pose is inside the trajectory's reachability envelope. It can also read a plain predicted-pose CSV and accepts `--profile` for geometry checks, so it does not depend on the optimizer's `.traj` format.
+`overboard/sysid/fit.py` parses the `TEST_START`/`TEST_END` blocks from a console capture, fits first-order actuator response, odometry scale, static gyro bias, and a bounded braking-slip estimate, then writes `sysid_fit.json`. It accepts a minimal drivebase profile (`wheel_radius_m`, optional `track_width_m`, with Pybricks-style `wheel_diameter_mm`/`axle_track_mm` aliases) or a full robot config, so the host workflow is not tied to one drivebase. `overboard/sysid/digital_twin.py` validates that file, and `python -m overboard.main --sysid-fit sysid_fit.json --validate` switches Immrax to the fitted five-state plant. The default kinematic model is unchanged when the flag is omitted. `python -m overboard.sysid.compare` prints the planned-vs-measured pose error for the measured stops and says whether each measured pose is inside the trajectory's reachability envelope. It can also read a plain predicted-pose CSV and accepts `--profile` for geometry checks, so it does not depend on the optimizer's `.traj` format.
 
-`sysid_solver.py` is an older standalone pandas/JAX script with hardcoded sample CSV paths. It is not wired into the CLI and does not emit the current fit format. Treat it as a prototype, not the active SysId path.
 
 ### 8.3 Interaction forces
 
@@ -439,8 +443,8 @@ The config schema reserves an `interactions` object, but the optimizer does not 
 
 To close KI-020:
 
-1. Collect hardware logs from `ramsete_fast.py` with `sysid_digital_twin.py`, measure the stop/final poses, and fit them with `sysid_fit.py`.
-2. Compare the planned trajectory and fitted validator with the measured poses using `sysid_compare.py`, then add integrated odometry and the remaining motor/DriveBase/slip dynamics.
+1. Collect hardware logs from `ramsete_fast.py` with `sysid_digital_twin.py`, measure the stop/final poses, and fit them with `python -m overboard.sysid.fit`.
+2. Compare the planned trajectory and fitted validator with the measured poses using `python -m overboard.sysid.compare`, then add integrated odometry and the remaining motor/DriveBase/slip dynamics.
 3. Decide whether to promote the existing reachability candidate score to a hard constraint or a differentiable proxy in the optimizer.
 4. Add interaction-force windows to the dynamics only after the force profiles are measured.
 
@@ -454,25 +458,25 @@ Do not tune the 5 mm tracking or 2 cm envelope thresholds to one path. The strai
 
 The full option list is in `README.md` and `docs/CONFIGURATION.md`. Current truth:
 
-- The simple CasADi optimizer is the only solver; `--simple` is a deprecated alias. The Multi-Verse pipeline is archived under `overboard/legacy/`.
-- `--validate` requires JAX/Immrax and gates output. `--candidates N` (default 2, max 5) selects among seed/timing combinations with the simple solver, or accuracy-weight variants on the Multi-Verse path.
-- `--sysid-fit sysid_fit.json` opts into the fitted five-state plant; it requires `--validate`.
+- The simple CasADi solver is the default backend; the 3-Pillar unified engine (`overboard/core/unified_planner.py`) is the default solve path, and `--no-unified` (alias `--simple`) restores the stock candidate set. The Multi-Verse pipeline is archived under `overboard/legacy/`.
+- `--validate` requires JAX/Immrax and gates output. `--candidates N` (default 2) selects among the unified frontier candidates, or the seed/timing combinations of the stock set.
+- `--sysid-fit sysid_fit.json` opts into the fitted five-state plant; it requires `--validate` or `--live`.
 - `--export-format controller|python|python-compact` writes optional outputs after the gate.
 - `--per-segment-dt` forces per-segment intervals and `--uniform-dt` forces one shared interval; both are only valid with the simple solver. By default candidates mix both.
 - `--benchmark` writes `<output>_stats.json` after the gate.
 - `--plot`, `--animate`, `--gui` and `--live` are blocking.
 - `--workers` and `--no-parallel` do not affect the final result (KI-004).
-- `--convergence-animate` and `--convergence-output` are parsed but unused (KI-017).
+- `--iteration-history PATH` writes the solver's iteration history to JSON, which is what the studio's convergence plot reads.
 
 ### 9.2 Browser studio
 
-`gui_server.py` serves `viz/studio.html` on `127.0.0.1:8000` and runs the command line in a subprocess, so the export gate and the validation rules are the same as on the terminal. The studio draws the mission, edits the robot, shows the per-segment validation detail and downloads the artifacts.
+`overboard/gui_server.py` serves `overboard/viz/studio.html` on `127.0.0.1:8000` and runs the command line in a subprocess, so the export gate and the validation rules are the same as on the terminal. The studio draws the mission, edits the robot, shows the per-segment validation detail and downloads the artifacts.
 
 The earlier WebSocket live view (`live_visualizer.py`, `viz/index.html`) was removed: it was a second, CDN-dependent user interface for the same job, and it could take a port from another program (KI-005, KI-016). `--live` now opens the studio on the given mission and solves it there.
 
 ### 9.3 Convergence
 
-The simple optimizer records `iteration_history` when `--show-convergence` is set. `MasterTrajectoryOptimizer` declares the field but never fills it, so `--show-convergence` does nothing in default mode. The animate/output flags are unused in all modes (KI-017).
+The solver records `iteration_history` in the default path: `--show-convergence` plots it, and `--iteration-history PATH` writes the same history to JSON for the studio. (The archived `MasterTrajectoryOptimizer` declared the field but never filled it; the `--convergence-animate`/`--convergence-output` flags it needed were removed in KI-017.)
 
 ### 9.4 Benchmarks
 
@@ -496,14 +500,10 @@ The simple optimizer records `iteration_history` when `--show-convergence` is se
 `python run_tests.py` with JAX installed:
 
 ```text
-Ran 161 tests
-Successes: 161
-Failures: 0
-Errors: 0
-Skipped: 0
+656 tests run, 0 failures, 0 errors, 3 skipped
 ```
 
-The JAX-dependent modules are imported in a `try`; if JAX is missing, they are skipped rather than silently hidden behind a stale import (KI-007).
+The three skips are the `TestRoboVibeConverter` cases, which need PyYAML. The JAX-dependent modules are imported in a `try`; if JAX is missing, they are skipped rather than silently hidden behind a stale import (KI-007).
 
 ### 10.2 Straight example
 
@@ -521,9 +521,11 @@ python -m overboard.main -c examples/fll_choreo.json \
 - Final-waypoint error: 0.000003 m
 - Result: PASS
 
-### 10.3 Curved and mission examples
+### 10.3 Curved and mission examples (2026-10-19 measurement, superseded)
 
-The S-curve, stops, and events examples converge but fail the Immrax gate and produce no output with `--validate`. The complex mission passes under the current narrowed test ranges. All values below use the default two candidates (equal-duration baseline, then per-segment baseline):
+> **Record, not current status.** The table below is the measurement that opened the KI-020 tracking-gate finding: the S-curve, stops and events examples converge but failed the Immrax gate under the stock candidate set of that day. §5.3 is the newer measurement of the same missions and the two disagree because the planner, the config and the default engine changed between them. Keep this table as the comparison and read the pass/fail ledger in `docs/HEURISTICS_AND_VERIFICATION.md` for the current numbers.
+
+The values below use the stock two candidates (equal-duration baseline, then per-segment baseline):
 
 | Example | Selected time | Result |
 |---|---:|---|
@@ -538,7 +540,9 @@ These are model predictions. There is no hardware tracking log in the repository
 
 The pipeline benchmark in §7.6 produced identical final costs for simple and Multi-Verse, with 0.00 % improvement — that was the state before the repair, and it is why KI-004 was opened. The pipeline was later repaired and used as a **seed provider**, but measured over 30 missions the refined seed rescued nothing and was not better than the stock seeds. It is now archived under `overboard/legacy/` and has no CLI entry point.
 
-### 10.5 Evolutionary discovery and analytical Kinetic Frontier seeds
+### 10.5 Evolutionary discovery and analytical Kinetic Frontier seeds (research record)
+
+> **Research record.** This section documents how the analytical seeds were derived. The genetic search that produced it is archived under `overboard/legacy/evolutionary_research/` and no shipped module imports it; the numbers are from the runs of 2026-10-18/19, before the config was narrowed, and they do not describe what the current tree produces. The derivation and the 5 laws are still the reason `frontier_seed.py` looks the way it does.
 
 To address non-convex local traps on complex multi-waypoint missions with unpinned approach headings, a **5-Pillar Multi-Island Genetic Algorithm** was deployed across 50 generations (1,200 IPOPT evaluations). The stochastic search uncovered significant performance gains over local gradient descent, yielding a **+19.2% to +20.7% speedup** on the 10-waypoint complex mission and **+5.23%** on the 180° S-Curve acrobatic reversal.
 
@@ -557,8 +561,8 @@ Mining the top-performing evolutionary genomes across the multi-island topology 
 4. **KKT Slack Barrier Equilibrium**: Riding the $4.8\text{ mm}$ boundary of the $5.0\text{ mm}$ Immrax physical tracking gate trades excess tracking margin for longitudinal speed.
 5. **Multi-Modal Homotopy Triad**: Three distinct local attractors emerge naturally: `sprint` (maximum lateral acceleration, shortest time), `sweeper` (continuous curvature, low wheel jerk), and `exploratory` (wider clearance margin).
 
-#### Analytical Kinetic Frontier seeds (`frontier_seed.py`)
-Rather than paying a 280-second evolutionary computation budget for every run, these five principles were codified into closed-form mathematical equations in `frontier_seed.py`. The resulting seeds generate in **$< 1.5\text{ ms}$** and seed IPOPT directly into the global optimum basin.
+#### Analytical Kinetic Frontier seeds (`overboard/core/frontier_seed.py`)
+Rather than paying a 280-second evolutionary computation budget for every run, these five principles were codified into closed-form mathematical equations in `overboard/core/frontier_seed.py`. The resulting seeds generate in **$< 1.5\text{ ms}$** and seed IPOPT directly into the global optimum basin.
 
 #### Quantitative benchmark on complex mission (`examples/example_complex_mission.json`)
 
@@ -672,25 +676,33 @@ The path-planning side of this list — the seed heuristics, the timing models, 
 -n, --samples INTEGER          samples per segment
 -a, --accuracy-weight FLOAT    smoothness/jerk weight
 --candidates INTEGER RANGE     candidates to solve and compare with --validate
-                              (default 2, max 5; seed/timing combinations with
-                              the simple solver, accuracy-weight variants
-                              otherwise)
+                              (default 2; seed/timing combinations in the
+                              stock set, the three frontier candidates in
+                              the unified one)
 --stop-waypoints TEXT          comma-separated stop indices
 --events TEXT                  comma-separated index:event pairs
---simple                       deprecated: the simple solver is the default
+--unified / --no-unified       the 3-Pillar engine (default) or the stock set
+--simple                       alias for --no-unified
 --per-segment-dt               force per-segment intervals; simple solver only
---uniform-dt                   force one shared interval; simple solver only
+--uniform-dt                   force one shared interval; deprecated
 --no-parallel                  solve candidates in this process
 --workers INTEGER              worker processes for parallel candidates
 --validate / --no-validate     CPU + Immrax gate; requires JAX
 --sysid-fit PATH               optional fitted actuator/odometry model
-                              (requires --validate)
+                              (requires --validate or --live)
 --export-format                none | controller | python | python-compact
 --controller-dt FLOAT          controller timestep
 --benchmark                    write <output>_stats.json
 --plot / --animate             blocking visualization
 --live                         blocking studio on this mission, then solves it
---show-convergence             simple-optimizer convergence plot
+--show-convergence             convergence plot
+--iteration-history PATH       write the iteration history to JSON
+--control-dt FLOAT             the control period the validator models
+--propagation [plant|tick]     the reachability model the gate uses
+--pyramid, --pyramid-candidates, --h-adaptive
+                              the JAX screen-then-refine pyramid (off by default)
+--surrogate-polish             the 5-layer surrogate-to-truth pipeline
+--force-weight FLOAT           price wheel-force utilisation in the objective
 --convergence-mode             parallel | best | layered
 -v, --verbose                  show solver internals
 -q, --quiet                    suppress progress output
@@ -730,13 +742,14 @@ The controller exporter adds `v` and resamples to a fixed `dt`. `--validate` may
 
 | API | Purpose |
 |---|---|
-| `TrajectoryOptimizer.solve(...) -> (samples, stats)` | Simple CasADi/IPOPT solve |
-| `MasterTrajectoryOptimizer.solve(...) -> (samples, stats)` | Multi-Verse pipeline |
-| `RobotConfig(config_dict)` | Normalize canonical/legacy/flat config |
+| `overboard.core.optimizer.TrajectoryOptimizer.solve(...) -> (samples, stats)` | CasADi/IPOPT solve (the backend for every path) |
+| `overboard.core.unified_planner.UnifiedPathEngine.plan(...)` | 3-Pillar mesh and frontier candidates (the default path) |
+| `overboard.legacy.multiverse_optimizer.MasterTrajectoryOptimizer.solve(...)` | Archived Multi-Verse pipeline; no CLI entry point |
+| `overboard.models.robot_model.RobotConfig(config_dict)` | Normalize canonical/legacy/flat config |
 | `DifferentialDriveModel.check_constraints(...) -> dict` | CPU force/slip audit |
-| `validator.forward_integrate(...) -> (integrated, errors)` | 1 ms RK4 verification |
-| `validator.validate_samples(...) -> dict` | In-memory CPU gate |
-| `validator.validate_trajectory(...) -> (metrics, audit, errors)` | Human-readable report |
-| `ImmraxValidator.validate_trajectory(...) -> dict` | Closed-loop interval reachability |
-| `export.write_controller_file(...)` | Fixed-timestep controller JSON |
-| `export.write_python_file(...)` | Python module with config + samples |
+| `overboard.verification.validator.forward_integrate(...) -> (integrated, errors)` | 1 ms RK4 verification |
+| `overboard.verification.validator.validate_samples(...) -> dict` | In-memory CPU gate |
+| `overboard.verification.validator.validate_trajectory(...) -> (metrics, audit, errors)` | Human-readable report |
+| `overboard.verification.immrax_validator.ImmraxValidator.validate_trajectory(...) -> dict` | Closed-loop interval reachability |
+| `overboard.deploy.export.write_controller_file(...)` | Fixed-timestep controller JSON |
+| `overboard.deploy.export.write_python_file(...)` | Python module with config + samples |

@@ -1,6 +1,12 @@
 # Deriving Optimal Control from Genetic Algorithms: The Kinetic Frontier
 
-This document details how empirical discoveries from high-generation stochastic evolutionary searches (the **5-Pillar Multi-Island Genetic Algorithm**) led directly to the formulation of analytical optimal control laws for differential-drive mobile robots, formalized in [`frontier_seed.py`](../frontier_seed.py).
+> **Research record (2026-10).** This is the derivation behind [`frontier_seed.py`](../overboard/core/frontier_seed.py):
+> how the analytical control laws the planner ships today were extracted from a stochastic search.
+> The search itself is archived under `overboard/legacy/evolutionary_research/` and nothing shipped
+> imports it, so the GA columns below cannot be re-run from the current tree; the numbers are the
+> ones that campaign produced. The analytical laws and the unified engine are live code.
+
+This document details how empirical discoveries from high-generation stochastic evolutionary searches (the **5-Pillar Multi-Island Genetic Algorithm**) led directly to the formulation of analytical optimal control laws for differential-drive mobile robots, formalized in [`frontier_seed.py`](../overboard/core/frontier_seed.py).
 
 ---
 
@@ -59,16 +65,21 @@ The solution landscape possesses three distinct local attractors:
 
 ## 3. Kinetic Frontier Seeds vs. GA Benchmark
 
-By distilling these five principles into closed-form equations in [`frontier_seed.py`](../frontier_seed.py), analytical seeds are generated in **$< 1.5\text{ ms}$** without running multi-minute stochastic searches.
+By distilling these five principles into closed-form equations in [`frontier_seed.py`](../overboard/core/frontier_seed.py), analytical seeds are generated in **$< 1.5\text{ ms}$** without running multi-minute stochastic searches.
 
 ### Quantitative Comparison on 10-Waypoint Complex Mission (`examples/example_complex_mission.json`):
 
 | Strategy | Seed Gen Time | IPOPT Iters | Solve Time | Trajectory Duration | Tracking Error | Gate Status |
 | :--- | :---: | :---: | :---: | :---: | :---: | :---: |
 | **Stock Baseline (`rolling`)** | $0.87\text{ ms}$ | 150 | $3.01\text{ s}$ | $6.743\text{ s}$ | $1.10\text{ cm}$ | ❌ Fail ($> 5.0\text{ mm}$) |
-| **50-Gen GA Centurion Champion** | $281,000\text{ ms}$ | 1,200 evals | $281.0\text{ s}$ | $5.572\text{ s}$ | **$0.48\text{ cm}$** | ✅ Pass |
+| **50-Gen GA Centurion Champion** (archived) | $281,000\text{ ms}$ | 1,200 evals | $281.0\text{ s}$ | $5.572\text{ s}$ | **$0.48\text{ cm}$** | ✅ Pass |
 | **Frontier Sprint Seed** | **$1.29\text{ ms}$** | **86** | **$1.89\text{ s}$** | **$5.452\text{ s}$** | **$0.49\text{ cm}$** | ✅ **Pass** |
-| **Unified 3-Pillar Engine (`--unified`)** | **$2.51\text{ ms}$** | **43** | **$1.72\text{ s}$** | **$5.365\text{ s}$** | **$0.36\text{ cm}$ (3.6 mm)** | ✅ **CERTIFIED PASS** |
+| **Unified 3-Pillar Engine** (the default solve path) | **$2.51\text{ ms}$** | **43** | **$1.72\text{ s}$** | **$5.365\text{ s}$** | **$0.36\text{ cm}$ (3.6 mm)** | ✅ **Pass** |
+
+Two earlier GA runs appear in this document: the 50-generation, 5-pillar "Centurion" search in the
+table, and a shorter 44-gene, 12-generation run ($5.417\text{ s}$) quoted in the conclusion. They are
+different campaigns, not two readings of one. Both are archived; the figures below were produced by
+`overboard/legacy/evolutionary_research/compare_frontier_seeds.py`.
 
 ![Frontier Seeds vs GA vs Baseline](images/plot_frontier_vs_ga_comparison.png)
 
@@ -76,7 +87,9 @@ By distilling these five principles into closed-form equations in [`frontier_see
 
 ## 4. The 3-Pillar Unified Engine: Mathematical Foundations
 
-The 3-Pillar Unified Trajectory Engine (`unified_planner.py` & `main.py --unified`) embeds the analytical rules directly into collocation and non-linear programming (NLP):
+The 3-Pillar Unified Trajectory Engine (`overboard/core/unified_planner.py`, selected by `--unified`,
+which is the default) embeds the analytical rules directly into collocation and non-linear
+programming (NLP):
 
 ### Pillar I: Asymmetric Transition Geometry
 1. **Asymmetric Late-Apex Bump**:
@@ -113,4 +126,8 @@ $$v_{\text{ceiling}}(\kappa) = \min\left(v_{\text{wheel\_max}}, \; \frac{v_{\tex
    yields $\frac{d^2}{dx^2} \equiv 0$ everywhere, accelerating Newton convergence from 150 iterations down to 43 iterations.
 
 ### Conclusion
-The analytical 3-Pillar Unified Trajectory Engine achieves **$5.365\text{ s}$** duration, **$3.6\text{ mm}$ tracking error**, and **$1.16\text{ cm}$ envelope** on the benchmark complex mission, beating both the stock baseline ($6.068\text{ s}$) and the 44-gene GA champion ($5.417\text{ s}$) while guaranteeing 100% gate certification across all competition paths in $< 2\text{ seconds}$.
+The analytical 3-Pillar Unified Trajectory Engine achieved **$5.365\text{ s}$** duration, **$3.6\text{ mm}$
+tracking error**, and **$1.16\text{ cm}$ envelope** on the benchmark complex mission, beating both the
+stock baseline ($6.068\text{ s}$) and the 44-gene GA champion ($5.417\text{ s}$). Those are one
+measurement on one mission. Whether a plan passes the gates is decided per run by the validator, and
+`docs/HEURISTICS_AND_VERIFICATION.md` is where the pass rates and their evidence live.

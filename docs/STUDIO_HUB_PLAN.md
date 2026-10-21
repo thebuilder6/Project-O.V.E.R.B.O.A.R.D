@@ -1,6 +1,8 @@
 # Pushing a Trajectory to the Hub from the Studio
 
-**Status:** 2026-10-20. Phases 1 to 3 are implemented and tested; the push has never been run against a real hub. Phase 4 (the compare/fit loop) is not built.
+**Status:** 2026-10-20. All four phases are implemented and tested; the push has never been run against a
+real hub. The plan is kept because it records why the push is shaped the way it is, and because the
+first real push still has to confirm the conventions in [Section 7](#7-gotchas).
 **Scope:** the browser studio's "push to hub" feature, and how it ties the mission files, the robot-side code and the sysid loop together.
 **Audience:** anyone implementing it, and anyone changing the hub path afterwards.
 
@@ -62,7 +64,7 @@ The studio currently stops at "download the controller and flash it by hand". Th
    measured pose on the canvas, next to the plan   |
           |                                        |
           v                                        |
-   compare (sysid_compare)  /  fit (sysid_fit) ---'
+   compare (overboard.sysid.compare) / fit (overboard.sysid.fit) ---'
 ```
 
 The phases in [Section 6](#6-the-phases) build it in that order.
@@ -75,19 +77,19 @@ Everything below is in the tree today. The feature is mostly a matter of wiring 
 
 | Piece | Where | Notes |
 |---|---|---|
-| Write the packed mission | `export.write_compact_python_file(traj, path)` | Writes `samples`, `config` and `events` as a MicroPython module. |
-| Push a program and capture its output | `hub_deploy.deploy(script, connection, name, wait, print_output, stream_path)` | `stream_path` writes the console output **as it arrives**, so a dropped link costs the last test. |
+| Write the packed mission | `overboard/deploy/export.py::write_compact_python_file(traj, path)` | Writes `samples`, `config` and `events` as a MicroPython module. |
+| Push a program and capture its output | `overboard/deploy/hub_deploy.py::deploy(script, connection, name, wait, print_output, stream_path)` | `stream_path` writes the console output **as it arrives**, so a dropped link costs the last test. |
 | The hub entry point | `pybricks_code/hub_runner.py` | Imports the trajectory from `hub_mission.py` and the hardware from `robot_config.py`; runs `ramsete_compact_events.follow_trajectory`; prints `POSE,x_m,y_m,heading_deg` and `EVENT,name`. |
-| The command-line push | `main.py --push-hub` → `_push_to_hub()` | Writes `pybricks_code/hub_mission.py`, deploys `hub_runner.py`, optionally saves the session with `--hub-log`. |
-| Session → measured poses | `sysid_fit.poses_from_hub_session(lines)` → rows + event names | The rows are the `run_id,stop,x_m,y_m,heading_deg` CSV the fitter and the comparator read. |
-| Plan vs. measured | `sysid_compare.compare(traj_path, poses_path, ...)` → a report dict | The same rows and the "inside the envelope?" check the command line prints. |
-| The studio's job model | `gui_server.py` (`Job`, `start_job`, `build_command`) | A subprocess, a log tail, artifacts, a cancel, and one job at a time. |
+| The command-line push | `overboard/main.py --push-hub` → `_push_to_hub()` | Writes `pybricks_code/hub_mission.py`, deploys `hub_runner.py`, optionally saves the session with `--hub-log`. |
+| Session → measured poses | `overboard/sysid/fit.py::poses_from_hub_session(lines)` → rows + event names | The rows are the `run_id,stop,x_m,y_m,heading_deg` CSV the fitter and the comparator read. |
+| Plan vs. measured | `overboard/sysid/compare.py::compare(traj_path, poses_path, ...)` → a report dict | The same rows and the "inside the envelope?" check the command line prints. |
+| The studio's job model | `overboard/gui_server.py` (`Job`, `start_job`, `build_command`) | A subprocess, a log tail, artifacts, a cancel, and one job at a time. |
 
 ## 3. The gap
 
 Three things are missing.
 
-1. **There is no way to push a trajectory that already exists.** `main.py --push-hub` re-solves first. The studio has the approved trajectory in the job directory, and re-solving is both slow and not necessarily the same trajectory.
+1. **There is no way to push a trajectory that already exists.** `overboard/main.py --push-hub` re-solves first. The studio has the approved trajectory in the job directory, and re-solving is both slow and not necessarily the same trajectory.
 2. **Nothing shows the robot's result against the plan.** The `POSE` line is parsed by the sysid tools, but a person driving the robot cannot see "the plan ended here, the robot ended 4 mm to the left" anywhere.
 3. **Nothing checks the plan against the robot's own files** before the robot drives: the event names the robot has actions for, and the wheel size the robot actually has.
 
@@ -99,10 +101,11 @@ Three things are missing.
 
 Move the push out of `main.py` so the command line and the studio share one path.
 
-In `hub_deploy.py`:
+In `overboard/deploy/hub_deploy.py` (`parents[2]` because the module is two levels below the repo
+root):
 
 ```python
-HUB_CODE_DIR = Path(__file__).resolve().parent / "pybricks_code"
+HUB_CODE_DIR = Path(__file__).resolve().parents[2] / "pybricks_code"
 HUB_MISSION_MODULE = HUB_CODE_DIR / "hub_mission.py"
 HUB_RUNNER = HUB_CODE_DIR / "hub_runner.py"
 
@@ -114,7 +117,7 @@ def push_trajectory(traj_file, connection="ble", name=None, log_path=None):
     to pybricks_code/hub_mission.py, which is where hub_runner.py imports it
     from; the push carries both files.
     """
-    from export import write_compact_python_file
+    from overboard.deploy.export import write_compact_python_file
 
     write_compact_python_file(traj_file, str(HUB_MISSION_MODULE))
     lines = deploy(str(HUB_RUNNER), connection=connection, name=name,
@@ -122,14 +125,14 @@ def push_trajectory(traj_file, connection="ble", name=None, log_path=None):
     return lines
 ```
 
-`hub_deploy.py` also gains a command-line mode so the studio can run it as a
+`hub_deploy.py` also has a command-line mode so the studio can run it as a
 subprocess (which is what makes cancel work):
 
 ```bash
 python -m overboard.deploy.hub_deploy --trajectory output.traj --conn ble --name HUB --out session.csv
 ```
 
-`main.py --push-hub` then calls `push_trajectory` instead of doing the two steps
+`overboard/main.py --push-hub` calls `push_trajectory` instead of doing the two steps
 itself, so there is one push path in the tree.
 
 ### 4.2 The push as a studio job
@@ -225,18 +228,18 @@ The studio compares them and, on a mismatch, **warns** (D4) with a one-click
 The fit is the part of the loop that turns "the robot did not end where the plan
 said" into a better plan.
 
-- **Compare**: `sysid_compare.compare(traj, poses.csv)` on the plan and the
+- **Compare**: `overboard/sysid/compare.py::compare(traj, poses.csv)` on the plan and the
   session. The studio shows the same table the command line prints: the measured
   and predicted pose per stop, the position and heading error, and whether the
   measured pose is inside the reachability envelope.
-- **Fit**: after a push, "fit this session" runs `sysid_fit` over the session
+- **Fit**: after a push, "fit this session" runs `overboard/sysid/fit.py` over the session
   and writes `sysid_fit.json`. The next solve passes `--sysid-fit`, so the
   validator plans against the measured model instead of the nominal one.
 - **Honesty**: the poses from a pushed run are the hub's own odometry, so the
   distance scale, the heading scale and the brake slip of the fit carry no
   information and stay at their defaults. Only the actuator part (gain, time
   constant, command delay, backlash) is calibrated. The studio must say this, the
-  way `sysid_collect.py` does, or it looks like calibration when it is the robot
+  way `overboard/sysid/collect.py` does, or it looks like calibration when it is the robot
   agreeing with itself.
 
 ---
@@ -248,7 +251,7 @@ said" into a better plan.
 | **1. The push** | `hub_deploy.push_trajectory` + the `--trajectory` mode; `main.py --push-hub` uses it; the studio's push job, button and streamed console output. | M | **Done** |
 | **2. The result** | Parse the `POSE`/`EVENT` lines; the measured marker on the canvas; the error; the event list; the session written next to the mission. | M | **Done** |
 | **3. The robot code** | The event checklist; the geometry warning with its one-click fix. | S–M | **Done** |
-| **4. The loop** | The compare report in the studio; the measured model; the calibration wizard. | M | Designed in [CALIBRATION_STUDIO_PLAN.md](CALIBRATION_STUDIO_PLAN.md); not built |
+| **4. The loop** | The compare report in the studio; the measured model; the calibration wizard. | M | **Done** (designed in [CALIBRATION_STUDIO_PLAN.md](CALIBRATION_STUDIO_PLAN.md)) |
 
 What is built today:
 
@@ -271,7 +274,9 @@ What is built today:
   `AXLE_TRACK_MM` give the geometry warning with its one-click fix.
 
 Phases 1 and 2 are the feature. Phase 3 is what makes it safe to press the
-button. Phase 4 is what makes it a loop instead of a one-off.
+button. Phase 4 is what makes it a loop instead of a one-off: the Run tab's comparison
+against the plan, the Robot tab's measured model, and the calibration wizard
+(`POST /api/calibration/collect`, `/api/calibration/sheet`, `/api/calibration/fit`).
 
 ---
 
@@ -296,7 +301,7 @@ button. Phase 4 is what makes it a loop instead of a one-off.
 
 ## 8. Deferred
 
-- **The button-press SysId loop** (`sysid_collect.py`): the operator presses the
+- **The button-press SysId loop** (`overboard/sysid/collect.py`): the operator presses the
   hub button between tests. It is a different interaction from watching a
   trajectory drive, and it belongs in its own phase (D3).
 - **A live pose stream.** The hub prints one pose at the end; a robot that

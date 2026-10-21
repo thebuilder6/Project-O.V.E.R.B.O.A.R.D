@@ -1,7 +1,7 @@
 # 3D Simulator Mode and Interactive Mission Elements
 
 **Status:** Far stretch goal / design proposal (2026-10-20). Not started.
-**Scope:** Adding an interactive 3D WebGL (Three.js + Rapier3D Wasm) simulation mode into the browser studio (`viz/studio.html`), importing real LEGO CAD models (LDraw / BrickLink Studio) for robots and competition missions, and simulating articulated mission mechanisms as interactable physical elements.
+**Scope:** Adding an interactive 3D WebGL (Three.js + Rapier3D Wasm) simulation mode into the browser studio (`overboard/viz/studio.html`), importing real LEGO CAD models (LDraw / BrickLink Studio) for robots and competition missions, and simulating articulated mission mechanisms as interactable physical elements.
 **Audience:** Anyone extending the browser studio, adding 3D visualization, or modeling physical robot-mission interactions.
 
 > **Read this first.** The core of OVERBOARD is mathematical trajectory planning (CasADi + IPOPT) and formal reachability validation (JAX + Immrax interval arithmetic). A 3D physics simulator does **not** replace interval validation: interval reachability mathematically guarantees that tracking errors stay bounded across parameter uncertainty, whereas rigid-body simulation tests a single nominal run with contact mechanics. 3D simulation serves as an intuitive digital twin: validating tool clearances, visualizing physical push/actuation dynamics, and verifying that robot attachments physically trigger mission mechanisms.
@@ -44,7 +44,7 @@ These decisions guide the design and ensure the 3D simulator stays cleanly decou
 
 ## 1. Motivation & Context
 
-OVERBOARD currently computes optimal trajectories and audits them against 2D polygonal footprints (`fields/*.json` via `fields.py`). While 2D bounding boxes detect if the chassis hits a mission base, they cannot answer:
+OVERBOARD currently computes optimal trajectories and audits them against 2D polygonal footprints (`fields/*.json` via `overboard/viz/fields.py`). While 2D bounding boxes detect if the chassis hits a mission base, they cannot answer:
 1. **Vertical clearance:** Does an overhanging arm or antenna clip an elevated mission element?
 2. **Mechanism interaction:** Does the robot's front bumper or motorized attachment actually flip the rock (M03), push the toggle lever (M02), or drop the restoration keystone (M13)?
 3. **Contact reaction forces:** Does pushing a heavy model cause wheel slip or drivebase stall? (This directly connects to the future interaction force profiles described in [Future_Plans.md](../Future_Plans.md)).
@@ -114,7 +114,7 @@ interface MissionElement {
 The 3D simulator runs directly in the browser studio without external plugins:
 
 ```
-[ Studio Tabs: Mission | Robot | Field | Solve | 3D Sim ]
+[ Studio: left Mission | Robot | Field | Solve   right Result | Waypoint | Plots | Run | 3D Sim ]
                                 │
                                 ▼
                    [ Three.js WebGL Viewport ]
@@ -138,7 +138,7 @@ The 3D simulator runs directly in the browser studio without external plugins:
 ## 5. The Phases
 
 ### Phase 1: 3D Field Viewport & Visual Inspection
-* Add a `3D View` tab to the right-hand panel of `viz/studio.html`.
+* Add a `3D View` tab to the right-hand strip of `overboard/viz/studio.html` (beside Result, Waypoint, Plots and Run), lazy-loaded so the rest of the studio pays nothing for it.
 * Render the competition table (interior 2362 × 1143 mm), border walls, and mat texture using Three.js with OrbitControls.
 * Render static 3D mission models loaded from LDraw (`.ldr`) or BrickLink Studio (`.io`) at their designated coordinates.
 * Display the planned trajectory as a 3D ribbon with color-coded speed profiles.
