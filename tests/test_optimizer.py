@@ -1292,7 +1292,9 @@ class TestPathFitnessScoring(unittest.TestCase):
         ]
         best, passed = self.select(attempts)
         self.assertTrue(passed)
-        self.assertEqual(best["samples"], "A")
+        # The two plans take the same time, so the envelope decides - the
+        # fitness score is reported, but it does not choose.
+        self.assertEqual(best["samples"], "B")
 
 
 if __name__ == "__main__":

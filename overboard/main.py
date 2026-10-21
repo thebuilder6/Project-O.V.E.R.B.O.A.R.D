@@ -102,44 +102,34 @@ def _ensure_jax_classes():
     return ImmraxValidator, JAXRobotConfig
 
 
-def _select_attempt(attempts, prefer_duration: bool = False):
-    """Choose the candidate to export: a passing converged attempt with the
-    lowest 5-part time-equivalent fitness score (when fitness is scored), or
-    smallest reachability envelope then shortest duration as tie-breakers.
-    When prefer_duration=True (Layer 5 Gate-Certified Selection), passing
-    candidates are ranked by shortest duration first, then smallest envelope.
-    Otherwise the converged attempt with the smallest quantified violation.
-    Non-converged attempts are never eligible (KI-001)."""
+def _select_attempt(attempts):
+    """Choose the candidate to export: the passing attempt with the shortest
+    duration, the reachability envelope breaking a tie.
+
+    The 5-part fitness score is reported for every candidate, so the rule
+    can be re-run offline, but it does not decide: the planner is
+    time-optimal, so the shortest passing plan is the one that ships. If
+    nothing passed, the converged attempt with the smallest quantified
+    violation wins, and `passed_any` is False - so the export is still
+    blocked. Non-converged attempts are never eligible (KI-001)."""
     candidates = [a for a in attempts if a.get("converged", False)]
     if not candidates:
         return None, False
     passing = [a for a in candidates if a["ok"]]
     if passing:
-        if prefer_duration:
-            return min(
-                passing,
-                key=lambda a: (
-                    a.get("duration", a["cost"]),
-                    a.get("tube", float("inf")),
-                ),
-            ), True
-        if any(
-            a.get("fitness") is not None and math.isfinite(float(a["fitness"]))
-            for a in passing
-        ):
-            return min(
-                passing,
-                key=lambda a: (
-                    float(a.get("fitness", float("inf"))),
-                    a.get("tube", float("inf")),
-                    a.get("duration", a["cost"]),
-                ),
-            ), True
-        return min(passing, key=lambda a: (a.get("tube", float("inf")),
-                                           a.get("duration", a["cost"]))), True
+        return min(
+            passing,
+            key=lambda a: (
+                a.get("duration", a["cost"]),
+                a.get("tube", float("inf")),
+            ),
+        ), True
     return min(candidates, key=lambda a: (a["violation"], a["cost"])), False
 
 
+
+# The timing model the planner uses: one interval per waypoint segment.
+TIMING_MODEL = "per-segment"
 
 # The fallback seeds, in the order they are tried when the planner's own
 # candidates produce nothing usable (KI-048). The order is the priority: the
@@ -1182,7 +1172,7 @@ def _polish_candidates(solved, ctx):
     return polished
 
 
-def _choose_attempt(all_attempts, *, validate, prefer_duration, quiet, samples):
+def _choose_attempt(all_attempts, *, validate, quiet, samples):
     """Pick the attempt to export and print the candidate table.
 
     Returns ``(samples_data, stats, passed, reasons, tube, selected_index)``.
@@ -1193,7 +1183,7 @@ def _choose_attempt(all_attempts, *, validate, prefer_duration, quiet, samples):
         # passing. A fallback candidate is insurance: it is only in the list
         # when the planner's own candidates produced nothing that passed
         # (KI-048), so it cannot win over a passing one.
-        best, passed_any = _select_attempt(all_attempts, prefer_duration=prefer_duration)
+        best, passed_any = _select_attempt(all_attempts)
         if best is None:
             raise click.ClickException(
                 f"Solver did not converge on any of the {len(all_attempts)} "
@@ -1392,9 +1382,9 @@ def _render(output, samples_data, wps, optimizer, all_attempts, selected_index, 
               help='Comma-separated waypoint:event pairs (e.g., "2:lower_arm,5:release").')
 
 # --- Optimizer Strategy ---
-@click.option('--per-segment-dt', is_flag=True,
-              help='Force each waypoint segment to have its own sample interval. '
-                   'This is the general timing model, and the one the planner uses.')
+@click.option('--per-segment-dt', is_flag=True, hidden=True,
+              help='(Deprecated: the planner always uses the per-segment model.) '
+                   'Accepted and ignored.')
 @click.option('--uniform-dt', is_flag=True, hidden=True,
               help='(Deprecated: equal-duration dt severely penalizes variable-length segments) '
                    'Force one shared sample interval across all segments.')
@@ -1536,9 +1526,11 @@ def main(ctx, config, waypoints, output, gui, gui_port, doctor, simple, preset,
             "Warning: --uniform-dt is deprecated (equal-duration dt penalizes variable-length segments; per-segment dt is standard).",
             fg="yellow",
         )
-    if per_segment_dt and uniform_dt:
-        raise click.ClickException(
-            "--per-segment-dt and --uniform-dt are mutually exclusive."
+    if per_segment_dt and not quiet:
+        click.secho(
+            "Warning: --per-segment-dt is deprecated (the planner always uses "
+            "the per-segment model); the flag is ignored.",
+            fg="yellow",
         )
     if polish and not HAS_JAX:
         raise click.ClickException(f"--polish needs JAX and Immrax. {JAX_HINT}")
@@ -1569,7 +1561,10 @@ def main(ctx, config, waypoints, output, gui, gui_port, doctor, simple, preset,
             f"--validate needs JAX and Immrax. {JAX_HINT}"
         )
 
-    dt_mode = "uniform" if uniform_dt else "per-segment"
+    # The timing model is the planner's: one interval per waypoint segment.
+    # The flags that used to choose it are deprecated and ignored, so the
+    # label and the studio option say what the plan actually does.
+    dt_mode = TIMING_MODEL
 
     if gui:
         if plot or animate:
@@ -1711,7 +1706,8 @@ def main(ctx, config, waypoints, output, gui, gui_port, doctor, simple, preset,
 
     # Choose optimizer
     if not quiet:
-        click.echo("Using the simple CasADi optimizer")
+        click.echo("Using the 3-Pillar Unified Trajectory Engine "
+                   "(CasADi/IPOPT backend)")
     optimizer = TrajectoryOptimizer(robot_cfg)
 
     wps, waypoint_events, waypoint_thresholds, json_stop_indices = _load_waypoints(waypoints)
@@ -1723,14 +1719,11 @@ def main(ctx, config, waypoints, output, gui, gui_port, doctor, simple, preset,
     all_stop_indices = sorted(set(stop_indices + json_stop_indices))
 
     if not quiet:
-        # The two modes are not peers: uniform dt forces every waypoint segment
-        # to take the SAME time, so a path with unequal segment lengths pays
-        # for the long one on every segment. Per-segment dt lets each segment
-        # have its own duration and is the general model (KI-022).
-        dt_label = {
-            "uniform": "equal-duration segments (legacy)",
-            "per-segment": "per-segment dt",
-        }[dt_mode]
+        # Per-segment dt lets each segment have its own duration, and it is
+        # the general model: the equal-duration mode forces every segment to
+        # take the SAME time, which a path with unequal segment lengths pays
+        # for on every segment (KI-022).
+        dt_label = "per-segment dt"
         click.echo(
             f"Solving {len(wps)} waypoints (samples={samples}, "
             f"accuracy_weight={accuracy_weight}, candidates={max(1, candidates)}, "
@@ -1800,9 +1793,7 @@ def main(ctx, config, waypoints, output, gui, gui_port, doctor, simple, preset,
 
     (samples_data, stats, attempt_passed, best_reasons, selected_tube,
      selected_index) = _choose_attempt(
-        all_attempts, validate=validate,
-        prefer_duration=True,
-        quiet=quiet, samples=samples)
+        all_attempts, validate=validate, quiet=quiet, samples=samples)
 
     if use_validation:
         # The studio reads this to show which part of the path failed.
