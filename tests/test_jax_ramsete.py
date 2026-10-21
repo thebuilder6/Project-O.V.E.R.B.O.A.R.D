@@ -122,13 +122,16 @@ class TestJAXRamsete(unittest.TestCase):
         dh = (s1["heading"] - s0["heading"] + math.pi) % (2 * math.pi) - math.pi
         ref_omega = dh / (s1["t"] - s0["t"])
 
+        dt_seg = s1["t"] - s0["t"]
         for frac in (0.0, 0.25, 0.5, 1.0):
             ref = _interpolated_reference(
-                s0, s1, s1["t"] - s0["t"], track_width, frac, b)
+                s0, s1, dt_seg, track_width, frac, b)
             self.assertAlmostEqual(ref[0], s0["x"] + (s1["x"] - s0["x"]) * frac)
             self.assertAlmostEqual(ref[1], s0["y"] + (s1["y"] - s0["y"]) * frac)
             self.assertAlmostEqual(ref[2], s0["heading"] + dh * frac)
-            self.assertAlmostEqual(ref[3], 0.5 * (v0 + v1))
+            # Midpoint velocity with T/2 = 10 ms lead cancels ZOH phase lag
+            frac_mid = min(max(frac + (0.5 * 0.02 / dt_seg), 0.0), 1.0)
+            self.assertAlmostEqual(ref[3], v0 + frac_mid * (v1 - v0))
             self.assertAlmostEqual(ref[4], ref_omega)
             # The gain comes from the interpolated values, like the firmware.
             self.assertAlmostEqual(

@@ -196,6 +196,24 @@ async def follow_trajectory(
             yr = y1 + alpha * dy
             tr = (h1 + alpha * dh + pi_val) % two_pi_val - pi_val
 
+            # Tick-level interval average with T/2 = 10 ms lead cancels ZOH hold lag
+            t_mid = t + 0.010
+            is_final_stop = (s_idx >= num_pts - 2) and (abs(v2) < 1e-4)
+            if is_final_stop and t_mid >= t2:
+                vr = 0.0
+                wr = 0.0
+            elif dt_traj > 0.0:
+                alpha_mid = (t_mid - t1) * inv_dt
+                if alpha_mid < 0.0:
+                    alpha_mid = 0.0
+                elif alpha_mid > 1.0:
+                    alpha_mid = 1.0
+                vr = v1 + alpha_mid * (v2 - v1)
+                wr = dh * inv_dt
+            else:
+                vr = 0.0
+                wr = 0.0
+
             odom.update()
             v_cmd, w_cmd = controller.calculate(
                 odom.x, odom.y, odom.heading,

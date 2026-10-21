@@ -270,19 +270,6 @@ class TestUnifiedDefaults(unittest.TestCase):
         self.assertEqual(call["cost_metric"], "discretization")
         self.assertTrue(call["epigraph_constraints"])
 
-    def test_the_retired_stock_set_is_not_reachable(self):
-        """--no-unified is deprecated: the planner's set is the only set."""
-        for flag in ("--no-unified", "--simple"):
-            call = self._invoke([flag])[0]
-            self.assertEqual(call["guess_style"], "frontier_sprint")
-            self.assertTrue(call["per_segment_dt"])
-
-    def test_the_deprecated_timing_flags_do_not_change_the_set(self):
-        """--uniform-dt and --sweep are deprecated; the set is the planner's."""
-        for flag in ("--uniform-dt", "--sweep"):
-            call = self._invoke([flag])[0]
-            self.assertEqual(call["guess_style"], "frontier_sprint")
-            self.assertTrue(call["per_segment_dt"])
 
     def test_explicit_samples_and_weight_reach_the_unified_specs(self):
         call = self._invoke(["-n", "12", "-a", "0.005"])[0]
@@ -447,7 +434,7 @@ class TestValidationReport(unittest.TestCase):
                     patch.object(self.main, "ImmraxValidator", self._WideImmrax):
                 result = self.runner.invoke(self.main.main, [
                     "-c", os.path.join(self.repo, "examples", "fll_choreo.json"),
-                    "-w", wp, "-o", out, "--simple", "--validate"])
+                    "-w", wp, "-o", out, "--validate"])
         return result
 
     def test_report_names_the_failing_segment(self):
@@ -572,7 +559,7 @@ class TestVariableSampleLayout(unittest.TestCase):
                     patch.object(self.main, "ImmraxValidator", self._Immrax):
                 result = self.runner.invoke(self.main.main, [
                     "-c", os.path.join(self.repo, "examples", "fll_choreo.json"),
-                    "-w", wp, "-o", out, "--simple", "--validate"])
+                    "-w", wp, "-o", out, "--validate"])
         marker = [line for line in result.output.splitlines()
                    if line.startswith(self.main.VALIDATION_MARKER)]
         self.assertEqual(len(marker), 1, result.output)
@@ -694,49 +681,21 @@ class TestDeprecatedCliFlags(unittest.TestCase):
         self.main = main
         self.runner = CliRunner()
 
-    def test_simple_is_deprecated_and_ignored(self):
-        result = self.runner.invoke(self.main.main, ["-w", "examples/example_straight.json", "--simple"])
-        self.assertIn("Warning: --simple is deprecated", result.output)
-
-    def test_the_retired_engines_warn_and_are_ignored(self):
-        """The engines are gone; the flags warn instead of doing something else."""
-        for flag, warning in (
-            ("--surrogate-polish", "--surrogate-polish is deprecated"),
-            ("--pyramid", "--pyramid is deprecated"),
-            ("--no-unified", "--no-unified is deprecated"),
-        ):
-            result = self.runner.invoke(
-                self.main.main, ["-w", "examples/example_straight.json", flag])
-            self.assertEqual(result.exit_code, 0, result.output)
-            self.assertIn(warning, result.output, flag)
-
-    def test_sweep_emits_deprecation_warning(self):
-        result = self.runner.invoke(self.main.main, ["-w", "examples/example_straight.json", "--sweep"])
-        self.assertIn("Warning: --sweep is deprecated", result.output)
-
-    def test_uniform_dt_emits_deprecation_warning(self):
-        result = self.runner.invoke(self.main.main, ["-w", "examples/example_straight.json", "--uniform-dt"])
-        self.assertIn("Warning: --uniform-dt is deprecated", result.output)
-
     def test_the_dead_legacy_flags_are_gone(self):
-        """Parsed-but-unused flags are worse than absent: nothing happens, quietly."""
-        for flag in ("--recombine-segments", "--memetic-evolution",
+        """Purged flags are rejected as unknown options."""
+        for flag in ("--simple", "--sweep", "--uniform-dt", "--per-segment-dt",
+                     "--surrogate-polish", "--pyramid", "--pyramid-candidates",
+                     "--h-adaptive", "--unified", "--no-unified",
+                     "--recombine-segments", "--memetic-evolution",
                      "--generations", "--population-size"):
             result = self.runner.invoke(
                 self.main.main, ["-w", "examples/example_straight.json", flag])
             self.assertNotEqual(result.exit_code, 0, flag)
             self.assertIn("no such option", result.output.lower(), flag)
 
-    def test_help_hides_the_deprecated_flags(self):
-        """A deprecated flag is accepted and warns; it does not clutter the
-        help of the flags that still do something."""
+    def test_help_shows_active_flags(self):
         result = self.runner.invoke(self.main.main, ["--help"])
         self.assertEqual(result.exit_code, 0)
-        for flag in ("--simple", "--sweep", "--uniform-dt", "--surrogate-polish",
-                     "--pyramid", "--pyramid-candidates", "--h-adaptive",
-                     "--unified", "--no-unified"):
-            self.assertNotIn(flag, result.output, flag)
-        # The flags that still do something are still in the help.
         self.assertIn("--candidates", result.output)
         self.assertIn("--polish", result.output)
         self.assertIn("--gui", result.output)

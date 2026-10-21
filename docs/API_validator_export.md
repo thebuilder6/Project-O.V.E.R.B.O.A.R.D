@@ -312,7 +312,7 @@ the tube's non-divergence are all inside their thresholds; the envelope size is 
 caller against the per-waypoint limit. `overboard/main.py` folds the numbers into the candidate's
 record and into the machine-readable validation report.
 
-## `compute_reachability(samples, backlash_range, track_width_range, wheel_radius_range, cof_range, torque_margin_range, inertia_range, legacy_debug_loop=None)`
+## `compute_reachability(samples, backlash_range, track_width_range, wheel_radius_range, cof_range, torque_margin_range, inertia_range)`
 
 Propagates the reachable tube sample to sample and returns:
 
@@ -324,8 +324,7 @@ Propagates the reachable tube sample to sample and returns:
 - `propagation`, the model that produced it
 
 The compiled `jax.lax.scan` path in `overboard/verification/reachability_engine.py` is the
-shipped one; `legacy_debug_loop=True` keeps the older Python while-loop for A/B measurements. With
-fewer than two samples, or with non-monotone timestamps, the report is `inf`/`diverged` rather than
+shipped execution engine. With fewer than two samples, or with non-monotone timestamps, the report is `inf`/`diverged` rather than
 empty, so a failed solve never reads as a clean tube.
 
 ## The digital twin

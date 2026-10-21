@@ -196,25 +196,20 @@ def _controller_inclusion(fn, kind: str):
 def _interpolated_reference(s0: Dict[str, Any], s1: Dict[str, Any],
                             dt: float, track_width: float,
                             s: float,
-                            ramsete_b: float = 2.0
+                            ramsete_b: float = 2.0,
+                            dt_ctrl: float = 0.020,
+                            is_final_stop: bool = False,
                             ) -> Tuple[float, float, float, float, float, float]:
     """
-    Reference interpolation matching pybricks_code/ramsete_fast.py.
+    Reference interpolation matching pybricks_code/ramsete.py.
 
-    The deployed controller linearly interpolates x, y, heading and v between
-    samples, and takes the turn rate as the *derivative* of the interpolated
-    heading. It does not use a Hermite curve.
-
-    Samples passed here are expected to have unrolled headings, so the
-    controller's continuous heading error is the same angle the robot sees
-    after its own shortest-angle interpolation. The heading difference itself
-    is taken the short way, exactly as the firmware does, so the two agree
-    even when a sample interval turns more than 180 degrees (KI-027).
+    Linearly interpolates x, y, heading at current time t (fraction s).
+    Computes feedforward velocity at tick midpoint t + dt_ctrl/2 (half-step lead)
+    to cancel discrete Zero-Order Hold (ZOH) phase lag.
     """
     v0 = (s0["vl"] + s0["vr"]) / 2.0
     v1 = (s1["vl"] + s1["vr"]) / 2.0
     omega0 = s0.get("omega", (s0["vr"] - s0["vl"]) / track_width)
-    omega1 = s1.get("omega", (s1["vr"] - s1["vl"]) / track_width)
 
     # The shortest-angle difference, like the firmware's. The unrolled
     # headings differ by the same amount for any turn below 180 degrees.
@@ -223,17 +218,20 @@ def _interpolated_reference(s0: Dict[str, Any], s1: Dict[str, Any],
     ref_x = s0["x"] + (s1["x"] - s0["x"]) * s
     ref_y = s0["y"] + (s1["y"] - s0["y"]) * s
     ref_heading = s0["heading"] + dh * s
-    ref_v = 0.5 * (v0 + v1)
-    # The turn rate is the derivative of the interpolated heading, so the
-    # heading and the turn rate describe the same motion.
-    ref_omega = dh / dt if dt > 0 else omega0
 
-    # The Ramsete gain is recomputed from the interpolated speed and turn
-    # rate, exactly as the firmware's controller does (ramsete.py:104). The
-    # legacy ramsete_fast.py interpolates a per-sample gain instead; the
-    # controllers that are in use recompute it, and the difference is worth
-    # nothing on the tracking error (docs/research/RQ-A_tracking_error.md,
-    # finding F7).
+    # Half-step lead fraction: t_mid = t + 0.5 * dt_ctrl
+    frac_mid = s + (0.5 * dt_ctrl / dt) if dt > 0.0 else s
+    if is_final_stop and frac_mid >= 1.0:
+        ref_v = 0.0
+        ref_omega = 0.0
+    elif dt > 0.0:
+        frac_mid = min(max(frac_mid, 0.0), 1.0)
+        ref_v = v0 + frac_mid * (v1 - v0)
+        ref_omega = dh / dt
+    else:
+        ref_v = 0.0
+        ref_omega = omega0
+
     ref_kr = math.sqrt(ref_omega**2 + ramsete_b * ref_v**2)
     return ref_x, ref_y, ref_heading, ref_v, ref_omega, ref_kr
 
@@ -734,8 +732,7 @@ class ImmraxValidator:
                  wheel_state: Optional[str] = None,
                  propagation: Optional[str] = None,
                  tick_inclusion: Optional[str] = None,
-                 belief_mode: Optional[str] = None,
-                 legacy_debug_loop: bool = False):
+                 belief_mode: Optional[str] = None):
         self.cfg = config
         self.model = JAXDifferentialDriveModel(config)
         self.ramsete_b = float(ramsete_b)
@@ -845,7 +842,6 @@ class ImmraxValidator:
         self._controller_if = _controller_inclusion(
             self._controller_command_interval, self.controller_inclusion)
         self._sampled_control = True
-        self.legacy_debug_loop = bool(legacy_debug_loop)
         self.reachability_engine = CompiledReachabilityEngine(self)
 
         # The closed-loop tick map, for the "tick" propagation. The robot's
@@ -1284,8 +1280,7 @@ class ImmraxValidator:
                              wheel_radius_range: Tuple[float, float],
                              cof_range: Tuple[float, float],
                              torque_margin_range: Tuple[float, float],
-                             inertia_range: Tuple[float, float],
-                             legacy_debug_loop: Optional[bool] = None) -> Dict[str, Any]:
+                             inertia_range: Tuple[float, float]) -> Dict[str, Any]:
         N = len(samples)
         if N < 2:
             return {
@@ -1298,42 +1293,18 @@ class ImmraxValidator:
                 "envelope_truncated": False,
             }
 
-        # Pass the uncertainty as an Interval, not a flat lower/upper array.
-        # Immrax's natural inclusion treats non-Interval arguments as constants,
-        # so a flat array silently used only the lower bounds (KI-003).
         gain_range = getattr(self, "digital_twin_gain_range", (1.0, 1.0))
         w_lower = jnp.array([cof_range[0], torque_margin_range[0], backlash_range[0], track_width_range[0], wheel_radius_range[0], inertia_range[0], gain_range[0]])
         w_upper = jnp.array([cof_range[1], torque_margin_range[1], backlash_range[1], track_width_range[1], wheel_radius_range[1], inertia_range[1], gain_range[1]])
         w_interval = Interval(w_lower, w_upper)
 
         if getattr(self, "propagation", PROPAGATION) == "tick":
-            # The closed-loop tick map: the controller is inside the map, so
-            # the feedback contracts the tube (see _reachability_tick).
             return self._reachability_tick(
                 samples, w_interval, 0.5 * float(w_upper[2]))
 
-        use_legacy = (
-            legacy_debug_loop
-            if legacy_debug_loop is not None
-            else getattr(self, "legacy_debug_loop", False)
-        )
-        if not use_legacy and hasattr(self, "emb_sys") and not hasattr(self, "plant_emb_sys"):
-            use_legacy = True
-
-        if not use_legacy:
-            if not hasattr(self, "reachability_engine") or self.reachability_engine is None:
-                self.reachability_engine = CompiledReachabilityEngine(self)
-            return self.reachability_engine.compute_reachability_report(
-                samples,
-                backlash_range=backlash_range,
-                track_width_range=track_width_range,
-                wheel_radius_range=wheel_radius_range,
-                cof_range=cof_range,
-                torque_margin_range=torque_margin_range,
-                inertia_range=inertia_range,
-            )
-
-        return self._legacy_compute_reachability(
+        if not hasattr(self, "reachability_engine") or self.reachability_engine is None:
+            self.reachability_engine = CompiledReachabilityEngine(self)
+        return self.reachability_engine.compute_reachability_report(
             samples,
             backlash_range=backlash_range,
             track_width_range=track_width_range,
@@ -1341,247 +1312,4 @@ class ImmraxValidator:
             cof_range=cof_range,
             torque_margin_range=torque_margin_range,
             inertia_range=inertia_range,
-            w_interval=w_interval,
         )
-
-    def _legacy_compute_reachability(self, samples: List[Dict[str, Any]],
-                                     backlash_range: Tuple[float, float],
-                                     track_width_range: Tuple[float, float],
-                                     wheel_radius_range: Tuple[float, float],
-                                     cof_range: Tuple[float, float],
-                                     torque_margin_range: Tuple[float, float],
-                                     inertia_range: Tuple[float, float],
-                                     w_interval: Interval) -> Dict[str, Any]:
-        """Legacy uncompiled Python while-loop reachability evaluation for debug/diagnostic comparisons."""
-        N = len(samples)
-        active_twin = getattr(self, "_digital_twin_active", False)
-        state_len = self.plant.xlen if active_twin else 3
-        delay_s = getattr(self, "digital_twin_delay_s", 0.0) if active_twin else 0.0
-
-        # Create FLAT array for state 'x' (lower bounds concatenated with
-        # upper bounds). The digital-twin plant adds actual wheel speeds after
-        # the pose; they start at rest with no uncertainty.
-        start_pose = jnp.array([samples[0]['x'], samples[0]['y'], samples[0]['heading']])
-        lower_state = jnp.concatenate([
-            start_pose - 0.001,
-            jnp.zeros(state_len - 3),
-        ])
-        upper_state = jnp.concatenate([
-            start_pose + 0.001,
-            jnp.zeros(state_len - 3),
-        ])
-        x_flat = jnp.concatenate([lower_state, upper_state])
-
-        def _box(flat):
-            # Slicing: the first state_len entries are lower bounds, the next
-            # state_len entries are upper bounds.
-            return {
-                "x_min": float(flat[0]), "x_max": float(flat[state_len]),
-                "y_min": float(flat[1]), "y_max": float(flat[state_len + 1]),
-                "theta_min": float(flat[2]), "theta_max": float(flat[state_len + 2]),
-                "tracking_error_m": 0.0,
-                "heading_error_rad": 0.0,
-            }
-
-        ramsete_b = getattr(self, "ramsete_b", 2.0)
-        envelope = [_box(x_flat)]  # box at sample 0, so envelope[i] is the box at sample i
-        max_tracking_error = 0.0
-        max_heading_error = 0.0
-        max_envelope_radius = 0.0
-        max_total_error = 0.0
-        sum_sq_tracking = 0.0
-        sum_sq_heading = 0.0
-        n_tracked = 0
-        diverged = False
-        command_history = []
-        # Half the backlash, used as the position uncertainty the reachable
-        # set carries in place of the old velocity offset.
-        backlash_half = 0.5 * float(w_interval.upper[2])
-
-        # The robot's own pose estimate. It starts where the plan starts and
-        # then drifts away from the truth by the measured odometry error and
-        # the gyro bias, exactly as the deployed robot's estimate does. It
-        # needs the wheel-speed states, so it only exists with the
-        # actuator-aware plant.
-        belief = None
-        if active_twin and self.plant.xlen > 3:
-            belief = (float(start_pose[0]), float(start_pose[1]),
-                      float(start_pose[2]))
-
-        for i in range(N - 1):
-            s = samples[i]
-            s_next = samples[i+1]
-            dt = s_next['t'] - s['t']
-
-            if not math.isfinite(dt) or dt <= 0:
-                # A failed solve can produce a non-monotone time vector. Do not
-                # integrate backwards; report the tube as unknown so the caller
-                # cannot export it.
-                diverged = True
-                max_tracking_error = float("inf")
-                max_envelope_radius = float("inf")
-                max_total_error = float("inf")
-                envelope.append({**envelope[-1], "unknown": True})
-                continue
-
-            if not diverged and getattr(self, "_sampled_control", False):
-                # Match ramsete_fast.py: sample the linear reference and read
-                # the state at the start of each 20 ms tick, compute the
-                # Ramsete command once, and hold it until the next tick.
-                t = s['t']
-                t_end = s_next['t']
-                while t < t_end - 1e-12:
-                    dt_ctrl = min(self.control_dt, t_end - t)
-                    if dt_ctrl <= 0:
-                        diverged = True
-                        break
-                    frac = (t - s['t']) / dt
-                    ref = _interpolated_reference(
-                        s, s_next, dt, self.cfg.track_width, frac,
-                        ramsete_b)
-                    u_ref = jnp.array(ref)
-                    if self.feedback_mode == "interval":
-                        x_interval = Interval(
-                            x_flat[:3],
-                            x_flat[state_len:state_len + 3])
-                        x_interval = self._odometry_pose(x_interval, start_pose)
-                        u_cmd = self._controller_if(
-                            x_interval, u_ref, w_interval)
-                    else:
-                        # The real controller sees one measured state, not
-                        # the whole tube. Use the tube midpoint for feedback,
-                        # then propagate the interval through the plant.
-                        if belief is not None:
-                            # With the digital twin on, the controller sees
-                            # the robot's own estimate, not the truth.
-                            x_center = jnp.array(belief)
-                        else:
-                            x_center = (
-                                x_flat[:3] + x_flat[state_len:state_len + 3]
-                            ) / 2.0
-                            x_center = self._odometry_pose(x_center, start_pose)
-                        u_cmd = self.controller(
-                            0.0, x_center, u_ref, w_interval, normalize=True,
-                            quantize=False)
-
-                    if active_twin and delay_s > 0.0:
-                        command_history.append((t, u_cmd))
-                        u_applied = self._delayed_command(
-                            command_history, t - delay_s)
-                    else:
-                        u_applied = u_cmd
-
-                    for _ in range(PLANT_SUBSTEPS):
-                        if belief is not None:
-                            # Advance the belief with the same speeds and the
-                            # same order as the plant, so a perfect odometry
-                            # keeps the belief on the truth.
-                            belief = self._advance_belief(
-                                belief, x_flat, state_len,
-                                dt_ctrl / PLANT_SUBSTEPS)
-                        dx_dt_flat = self.plant_emb_sys.f(
-                            0.0, x_flat, u_applied, w_interval)
-                        x_flat = x_flat + dx_dt_flat * (
-                            dt_ctrl / PLANT_SUBSTEPS)
-                    t += dt_ctrl
-
-            elif not diverged:
-                # Legacy path used by the fake dynamics in regression tests.
-                # Drive the whole interval with a reference that starts at
-                # sample i and ends at sample i+1.
-                for k in range(REACHABILITY_SUBSTEPS):
-                    frac = (k + 0.5) / REACHABILITY_SUBSTEPS
-                    ref = _interpolated_reference(
-                        s, s_next, dt, self.cfg.track_width, frac,
-                        ramsete_b)
-                    u_k = jnp.array(ref)
-
-                    # Evaluate the compiled embedding system using the
-                    # interval state and interval uncertainty.
-                    dx_dt_flat = self.emb_sys.f(0.0, x_flat, u_k, w_interval)
-                    x_flat = x_flat + dx_dt_flat * (dt / REACHABILITY_SUBSTEPS)
-
-            if not diverged:
-                env = _box(x_flat)
-                # The gear backlash is a position dead-band. It used to be
-                # subtracted from the commanded wheel speed, which put a fake
-                # systematic lag of backlash/2 * t into the tracking error.
-                # It is a position uncertainty, so it belongs in the reachable
-                # set: the same magnitude the plant used to bias the
-                # tracking error by, carried symmetrically. The worst-case
-                # total uncertainty at each sample is therefore unchanged.
-                if backlash_half > 0.0:
-                    elapsed = s_next['t'] - samples[0]['t']
-                    # Never let the spread go negative: that would shrink the
-                    # safety envelope instead of widening it.
-                    spread = backlash_half * max(0.0, elapsed)
-                    env = {
-                        **env,
-                        "x_min": env["x_min"] - spread,
-                        "x_max": env["x_max"] + spread,
-                        "y_min": env["y_min"] - spread,
-                        "y_max": env["y_max"] + spread,
-                    }
-                mid_x = (x_flat[0] + x_flat[state_len]) / 2.0
-                mid_y = (x_flat[1] + x_flat[state_len + 1]) / 2.0
-                tracking_error = float(jnp.sqrt(
-                    (mid_x - s_next['x'])**2 + (mid_y - s_next['y'])**2))
-                # The heading error is reported next to the position error.
-                # The tracking metric is position-only, so a trajectory can
-                # follow the path while arriving at the wrong heading - and
-                # the plan's own heading samples can be inconsistent with its
-                # positions by up to half the heading change per sample.
-                mid_heading = (x_flat[2] + x_flat[state_len + 2]) / 2.0
-                heading_error = float(abs(
-                    (mid_heading - s_next['heading'] + math.pi)
-                    % (2 * math.pi) - math.pi))
-                env["tracking_error_m"] = tracking_error
-                env["heading_error_rad"] = heading_error
-                radius = float(jnp.sqrt(
-                    ((env["x_max"] - env["x_min"]) / 2.0)**2
-                    + ((env["y_max"] - env["y_min"]) / 2.0)**2))
-
-                max_tracking_error = max(max_tracking_error, tracking_error)
-                max_heading_error = max(max_heading_error, heading_error)
-                max_envelope_radius = max(max_envelope_radius, radius)
-                max_total_error = max(max_total_error, tracking_error + radius)
-                sum_sq_tracking += tracking_error ** 2
-                sum_sq_heading += heading_error ** 2
-                n_tracked += 1
-
-                # If the interval tube exceeds 5cm the propagation has diverged (non-monotone
-                # closed loop). Do not shrink the box to a smaller one (that would report a
-                # safety margin we cannot prove): report the true bound, mark the sample and
-                # everything after it as unknown so consumers fail it.
-                if radius > 0.05:
-                    diverged = True
-                envelope.append({**env, "unknown": True} if diverged else env)
-            else:
-                envelope.append({**envelope[-1], "unknown": True})
-
-        return {
-            # Kept for callers that used the old combined bound. New callers
-            # should use the tracking and envelope fields separately.
-            "max_error_m": max_total_error,
-            "max_tracking_error_m": max_tracking_error,
-            "rms_tracking_error_m": math.sqrt(sum_sq_tracking / n_tracked) if n_tracked else 0.0,
-            "max_heading_error_rad": max_heading_error,
-            "rms_heading_error_rad": math.sqrt(sum_sq_heading / n_tracked) if n_tracked else 0.0,
-            "max_envelope_radius_m": max_envelope_radius,
-            "envelope": envelope,
-            "diverged": diverged,
-            # When the propagation was cut off, the reported radius is the
-            # width the tube had when it crossed the guard, NOT the width it
-            # would have reached. It is a lower bound on the true width, and
-            # the number it produces is a property of the guard rather than
-            # of the path: the same value comes out for paths of different
-            # lengths. A caller that quotes the radius without this flag is
-            # quoting a truncation as if it were a measurement.
-            "envelope_truncated": bool(diverged),
-            # Which propagation produced this number: the plant, propagated on
-            # its own with the controller outside it, or the closed-loop tick
-            # map. A number without its provenance cannot be read.
-            "propagation": "plant",
-        }
-
-

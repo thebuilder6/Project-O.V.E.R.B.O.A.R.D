@@ -307,19 +307,24 @@ async def follow_trajectory(drivebase, samples, config=None, b=2.0, zeta=0.7, de
         dh = normalize_angle(s2['heading'] - s1['heading'])
         thetar = normalize_angle(s1['heading'] + alpha * dh)
         
-        # Calculate reference velocities
-        # v = (vl + vr) / 2
+        # Calculate reference velocities with tick midpoint lead (T/2 = 10 ms)
+        # to cancel Zero-Order Hold (ZOH) phase lag.
         v1 = (s1['vl'] + s1['vr']) / 2.0
         v2 = (s2['vl'] + s2['vr']) / 2.0
-        ref_v = 0.5 * (v1 + v2)
+        dt_seg = s2['t'] - s1['t']
 
-        # The turn rate is the derivative of the heading, not an independent
-        # line: interpolating both separately makes them describe different
-        # motions (KI-027).
-        if s2['t'] == s1['t']:
+        t_mid = t + 0.010
+        is_final_stop = (sample_idx >= len(samples) - 2) and (abs(v2) < 1e-4)
+        if is_final_stop and t_mid >= s2['t']:
+            ref_v = 0.0
             ref_omega = 0.0
+        elif dt_seg > 0:
+            alpha_mid = min(max((t_mid - s1['t']) / dt_seg, 0.0), 1.0)
+            ref_v = v1 + alpha_mid * (v2 - v1)
+            ref_omega = dh / dt_seg
         else:
-            ref_omega = dh / (s2['t'] - s1['t'])
+            ref_v = 0.0
+            ref_omega = 0.0
 
         # Update current robot pose
         odom.update()

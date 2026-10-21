@@ -138,7 +138,7 @@ class CompiledReachabilityEngine:
     def __init__(self, validator: Any):
         self.validator = validator
         self.cfg = validator.cfg
-        self.control_dt = float(validator.control_dt)
+        self.control_dt = float(getattr(validator, 'control_dt', 0.02))
         self.ramsete_b = float(getattr(validator, "ramsete_b", 2.0))
         self.ramsete_zeta = float(getattr(validator, "ramsete_zeta", 0.7))
         self.track_width = float(validator.cfg.track_width)
@@ -248,6 +248,11 @@ class CompiledReachabilityEngine:
                         ref_x = s0[0] + (s1[0] - s0[0]) * frac
                         ref_y = s0[1] + (s1[1] - s0[1]) * frac
                         ref_h = s0[2] + dh * frac
+
+                        # Tick-level midpoint lead (T/2) cancels discrete ZOH phase lag
+                        t_mid = t_rel + 0.5 * control_dt
+                        frac_mid = jnp.clip(t_mid / dt_safe, 0.0, 1.0)
+                        ref_v = v0 + frac_mid * (v1 - v0)
 
                         sub_dt = dt_ctrl / float(num_substeps)
                         if use_fast_kinematic:

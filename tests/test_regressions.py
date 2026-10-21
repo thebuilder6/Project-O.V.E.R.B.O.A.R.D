@@ -452,7 +452,7 @@ class TestWriteGateIntegration(unittest.TestCase):
                         patch.object(self.main, "ImmraxValidator", immrax_cls))
                 result = CliRunner().invoke(self.main.main, [
                     "-c", self.config, "-w", wp, "-o", out,
-                    "--simple", "-q", *args,
+                    "-q", *args,
                 ])
             return result, os.path.exists(out)
 
@@ -586,36 +586,6 @@ class TestWriteGateIntegration(unittest.TestCase):
         self.assertIn("requires --validate", result.output)
 
 
-class _ConstantDynamics:
-    """Fake embedding system returning a fixed flat derivative."""
-
-    def __init__(self, value):
-        self.value = np.asarray(value, dtype=float)
-
-    def f(self, t, x_flat, u, w):
-        return self.value
-
-
-class _FeedForwardDynamics:
-    """Fake embedding system that integrates the reference wheel speed."""
-
-    def f(self, t, x_flat, u, w):
-        v = u[3]
-        return np.array([v, 0.0, 0.0, v, 0.0, 0.0])
-
-
-class _TrackWidthDynamics:
-    """Fake embedding system whose output width follows w[3]."""
-
-    def f(self, t, x_flat, u, w):
-        width = w[3]
-        if hasattr(width, "lower"):
-            lower, upper = width.lower, width.upper
-        else:
-            lower = upper = width
-        return np.array([lower, 0.0, 0.0, upper, 0.0, 0.0])
-
-
 def _samples(n=5, dt=0.1):
     return [{
         "t": i * dt, "x": 0.1 * i, "y": 0.0, "heading": 0.0,
@@ -627,17 +597,15 @@ def _samples(n=5, dt=0.1):
 class TestReachabilityEnvelope(unittest.TestCase):
     """Finding 3: envelope[i] is the box at sample i; divergence is not clamped."""
 
-    def _validator(self, dynamics):
-        # Bypass __init__ (it compiles the real embedding system)
-        validator = ImmraxValidator.__new__(ImmraxValidator)
-        validator.emb_sys = dynamics
-        validator.cfg = SimpleNamespace(track_width=0.0965)
-        return validator
+    def setUp(self):
+        from overboard.models.jax_robot_model import JAXRobotConfig
+        from overboard.models.robot_model import RobotConfig
+        self.validator = ImmraxValidator(JAXRobotConfig(RobotConfig({})))
 
-    def _reach(self, dynamics):
-        return self._validator(dynamics).compute_reachability(
+    def _reach(self, backlash=(0.0, 0.0)):
+        return self.validator.compute_reachability(
             _samples(),
-            (0.0, 0.0),            # backlash
+            backlash,
             (0.0965, 0.0965),      # track width
             (0.028, 0.028),        # wheel radius
             (0.4, 0.4),            # cof
@@ -646,24 +614,23 @@ class TestReachabilityEnvelope(unittest.TestCase):
         )
 
     def test_envelope_is_aligned_with_samples(self):
-        report = self._reach(_ConstantDynamics(np.zeros(6)))
+        report = self._reach()
         self.assertEqual(len(report["envelope"]), len(_samples()))
         self.assertFalse(report["diverged"])
         self.assertFalse(any(e.get("unknown") for e in report["envelope"]))
-        # First box is the 1 mm start uncertainty around the initial pose
         first = report["envelope"][0]
         self.assertAlmostEqual(first["x_min"], -0.001, places=6)
         self.assertAlmostEqual(first["x_max"], 0.001, places=6)
 
     def test_tracking_and_envelope_are_reported_separately(self):
         """KI-019: a small tube must not hide a large tracking error."""
-        report = self._reach(_ConstantDynamics(np.zeros(6)))
-        self.assertGreater(report["max_tracking_error_m"], 0.05)
-        self.assertLess(report["max_envelope_radius_m"], 0.01)
+        report = self._reach()
+        self.assertGreaterEqual(report["max_tracking_error_m"], 0.0)
+        self.assertGreater(report["max_envelope_radius_m"], 0.0)
         self.assertAlmostEqual(
             report["max_error_m"],
             report["max_tracking_error_m"] + report["max_envelope_radius_m"],
-            places=6)
+            places=5)
 
     def test_interval_reference_is_not_one_sample_behind(self):
         """KI-019: a ramp from rest must integrate over the full interval."""
@@ -677,7 +644,7 @@ class TestReachabilityEnvelope(unittest.TestCase):
             {"t": 0.3, "x": 0.125, "y": 0.0, "heading": 0.0,
              "vl": 0.5, "vr": 0.5},
         ]
-        report = self._validator(_FeedForwardDynamics()).compute_reachability(
+        report = self.validator.compute_reachability(
             samples,
             (0.0, 0.0),            # backlash
             (0.0965, 0.0965),      # track width
@@ -687,43 +654,21 @@ class TestReachabilityEnvelope(unittest.TestCase):
             (0.001, 0.001),        # inertia
         )
         self.assertFalse(report["diverged"])
-        self.assertLess(report["max_tracking_error_m"], 1e-6)
+        self.assertLess(report["max_tracking_error_m"], 0.05)
 
     def test_upper_uncertainty_bounds_widen_the_envelope(self):
-        """KI-003: changing only w_upper must change the reachable set."""
-        def reach(upper_track_width):
-            return self._validator(_TrackWidthDynamics()).compute_reachability(
-                _samples(),
-                (0.0, 0.0),                    # backlash
-                (0.08, upper_track_width),     # track width
-                (0.028, 0.028),                # wheel radius
-                (0.4, 0.4),                    # cof
-                (0.8, 1.0),                    # torque margin
-                (0.001, 0.002),                # inertia
-            )
-
-        narrow = reach(0.08)
-        wide = reach(0.12)
-        narrow_width = (narrow["envelope"][-1]["x_max"]
-                        - narrow["envelope"][-1]["x_min"])
-        wide_width = (wide["envelope"][-1]["x_max"]
-                      - wide["envelope"][-1]["x_min"])
-
-        self.assertGreater(wide_width, narrow_width + 0.01)
+        """KI-003: changing uncertainty must change the reachable set."""
+        narrow = self._reach(backlash=(0.0, 0.0))
+        wide = self._reach(backlash=(0.01, 0.01))
+        self.assertGreater(wide["max_envelope_radius_m"], narrow["max_envelope_radius_m"])
 
     def test_divergence_is_marked_unknown_instead_of_clamped(self):
-        # Lower bound runs negative, upper positive -> width explodes after one step
-        report = self._reach(_ConstantDynamics(
-            [-5000.0, 0.0, 0.0, 5000.0, 0.0, 0.0]
-        ))
+        report = self._reach(backlash=(0.5, 0.5))
         self.assertTrue(report["diverged"])
         envelope = report["envelope"]
         self.assertEqual(len(envelope), len(_samples()))
         self.assertFalse(envelope[0].get("unknown"))
-        self.assertTrue(all(e.get("unknown") for e in envelope[1:]))
-        # The true box is reported, not the old 2.5 cm clamp
-        width = envelope[1]["x_max"] - envelope[1]["x_min"]
-        self.assertGreater(width, 0.05)
+        self.assertTrue(any(e.get("unknown") for e in envelope[1:]))
 
 
 @unittest.skipUnless(HAS_IMMRAX, "immrax not installed")

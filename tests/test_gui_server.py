@@ -850,7 +850,6 @@ class TestStudioHelpers(unittest.TestCase):
         self.assertIn("-n 8", joined)
         self.assertIn("-a 0.5", joined)
         self.assertIn("--candidates 3", joined)
-        self.assertIn("--per-segment-dt", joined)
         self.assertIn("--validate", joined)
         self.assertIn("--export-format controller", joined)
         self.assertIn("--controller-dt 0.02", joined)
@@ -891,19 +890,17 @@ class TestStudioHelpers(unittest.TestCase):
             {"samples": 10, "fast_polish": False})
         self.assertNotIn("--fast-polish", " ".join(str(part) for part in command))
 
-    def test_the_sweep_and_self_consistent_switches_are_passed_through(self):
+    def test_the_self_consistent_switch_is_passed_through(self):
         command = gui_server.build_command(
             Path("."), Path("c.json"), Path("w.json"), Path("o.traj"),
-            {"samples": 10, "sweep": True, "self_consistent": True})
+            {"samples": 10, "self_consistent": True})
         joined = " ".join(str(part) for part in command)
-        self.assertIn("--sweep", joined)
         self.assertIn("--self-consistent", joined)
 
         command = gui_server.build_command(
             Path("."), Path("c.json"), Path("w.json"), Path("o.traj"),
             {"samples": 10})
         joined = " ".join(str(part) for part in command)
-        self.assertNotIn("--sweep", joined)
         self.assertNotIn("--self-consistent", joined)
 
     def test_summary_reads_the_written_trajectory(self):

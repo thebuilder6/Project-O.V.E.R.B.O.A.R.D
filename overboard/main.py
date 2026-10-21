@@ -1347,9 +1347,6 @@ def _render(output, samples_data, wps, optimizer, all_attempts, selected_index, 
               help='Port for the browser studio.')
 @click.option('--doctor', is_flag=True,
               help='Check the install, dependencies, examples and ports, then exit.')
-@click.option('--simple', is_flag=True, hidden=True,
-              help='(Deprecated: the 3-Pillar Unified Trajectory Engine is the only planner.) '
-                   'Accepted and ignored.')
 @click.option('--preset', type=click.Choice(['fast', 'balanced', 'safe'], case_sensitive=False),
               default=None,
               help='Named starting point. fast: 1 candidate, no validation. '
@@ -1376,12 +1373,6 @@ def _render(output, samples_data, wps, optimizer, all_attempts, selected_index, 
               help='Comma-separated waypoint:event pairs (e.g., "2:lower_arm,5:release").')
 
 # --- Optimizer Strategy ---
-@click.option('--per-segment-dt', is_flag=True, hidden=True,
-              help='(Deprecated: the planner always uses the per-segment model.) '
-                   'Accepted and ignored.')
-@click.option('--uniform-dt', is_flag=True, hidden=True,
-              help='(Deprecated: equal-duration dt severely penalizes variable-length segments) '
-                   'Force one shared sample interval across all segments.')
 @click.option('--no-parallel', is_flag=True,
               help='Solve the candidates in this process instead of in worker processes.')
 @click.option('--workers', default=8, type=int,
@@ -1391,25 +1382,10 @@ def _render(output, samples_data, wps, optimizer, all_attempts, selected_index, 
                    'IPOPT iterations; this gives it an iteration budget and finishes from that point '
                    'with a cold pass. Missions that solve inside the budget return the same '
                    'trajectory as before.')
-@click.option('--sweep', is_flag=True, hidden=True,
-              help='(Deprecated: 80 ms invariant mesh eliminates manual grid sweep) '
-                   'Search the timing model and accuracy weight grid.')
 @click.option('--self-consistent/--no-self-consistent', default=True,
               help='Plan a self-consistent trajectory: the samples are placed on the path the '
                    'trajectory\'s own (v, omega) profile traces, so the headings are its tangents '
                    '(simple solver only). On by default (KI-026).')
-@click.option('--unified/--no-unified', default=True, hidden=True,
-              help='(Deprecated: the 3-Pillar Unified Trajectory Engine is the only planner.) '
-                   'Both spellings are accepted and ignored; the engine always runs.')
-@click.option('--surrogate-polish', is_flag=True, hidden=True,
-              help='(Deprecated: the engine is gone.) Accepted and ignored.')
-@click.option('--pyramid', is_flag=True, default=False, hidden=True,
-              help='(Deprecated: the engine is gone.) Accepted and ignored.')
-@click.option('--pyramid-candidates', default=None, type=click.IntRange(min=1),
-              hidden=True,
-              help='(Deprecated: --pyramid is gone.) Accepted and ignored.')
-@click.option('--h-adaptive', is_flag=True, default=False, hidden=True,
-              help='(Deprecated: --pyramid is gone.) Accepted and ignored.')
 @click.option('--polish', is_flag=True,
               help='Optional post-solve gradient polish: the reachability rollout is '
                    'differentiated, and the plan is re-solved with the samples the '
@@ -1467,9 +1443,9 @@ def _render(output, samples_data, wps, optimizer, all_attempts, selected_index, 
 @click.option('-v', '--verbose', is_flag=True, help='Show solver internals.')
 @click.option('--quiet', '-q', is_flag=True, help='Suppress verbose output.')
 @click.pass_context
-def main(ctx, config, waypoints, output, gui, gui_port, doctor, simple, preset,
-         samples, accuracy_weight, force_weight, candidates, stop_waypoints, events, per_segment_dt, uniform_dt,
-         no_parallel, workers, fast_polish, sweep, self_consistent, unified, surrogate_polish, pyramid, pyramid_candidates, h_adaptive, polish, validate,
+def main(ctx, config, waypoints, output, gui, gui_port, doctor, preset,
+         samples, accuracy_weight, force_weight, candidates, stop_waypoints, events,
+         no_parallel, workers, fast_polish, self_consistent, polish, validate,
          sysid_fit, export_format, controller_dt, control_dt, propagation, benchmark,
          push_hub, hub_conn, hub_name, hub_log,
          plot, animate, iteration_history,
@@ -1487,45 +1463,6 @@ def main(ctx, config, waypoints, output, gui, gui_port, doctor, simple, preset,
     """
     if quiet and verbose:
         raise click.ClickException("--quiet and --verbose cannot be combined.")
-    if simple and not quiet:
-        click.secho(
-            "Warning: --simple is deprecated (the 3-Pillar Unified Trajectory "
-            "Engine is the only planner); the flag is ignored.",
-            fg="yellow",
-        )
-    if not unified and not quiet:
-        click.secho(
-            "Warning: --no-unified is deprecated (the 3-Pillar Unified Trajectory "
-            "Engine is the only planner); the flag is ignored.",
-            fg="yellow",
-        )
-    if surrogate_polish and not quiet:
-        click.secho(
-            "Warning: --surrogate-polish is deprecated (its engine is gone; the "
-            "gradient polish is now --polish); the flag is ignored.",
-            fg="yellow",
-        )
-    if pyramid and not quiet:
-        click.secho(
-            "Warning: --pyramid is deprecated (its engine is gone); the flag is ignored.",
-            fg="yellow",
-        )
-    if sweep and not quiet:
-        click.secho(
-            "Warning: --sweep is deprecated (80 ms invariant mesh eliminates manual grid sweep).",
-            fg="yellow",
-        )
-    if uniform_dt and not quiet:
-        click.secho(
-            "Warning: --uniform-dt is deprecated (equal-duration dt penalizes variable-length segments; per-segment dt is standard).",
-            fg="yellow",
-        )
-    if per_segment_dt and not quiet:
-        click.secho(
-            "Warning: --per-segment-dt is deprecated (the planner always uses "
-            "the per-segment model); the flag is ignored.",
-            fg="yellow",
-        )
     if polish and not HAS_JAX:
         raise click.ClickException(f"--polish needs JAX and Immrax. {JAX_HINT}")
 

@@ -367,16 +367,8 @@ def build_command(job_dir, config_path, waypoints_path, output_path, options):
         command += ["--candidates", str(candidates)]
 
     timing = options.get("timing", "auto")
-    if timing == "uniform":
-        command.append("--uniform-dt")
-    elif timing == "per-segment":
-        command.append("--per-segment-dt")
-
     if options.get("fast_polish"):
         command.append("--fast-polish")
-
-    if options.get("sweep"):
-        command.append("--sweep")
 
     if options.get("self_consistent") is False:
         command.append("--no-self-consistent")

@@ -154,7 +154,7 @@ class TestHeadingMetric(unittest.TestCase):
 class TestUnifiedReachabilityAndDrivetrainParity(unittest.TestCase):
     """Verify CompiledReachabilityEngine dispatch and shared drivetrain physics parity."""
 
-    def test_compiled_vs_legacy_debug_loop_parity(self):
+    def test_compiled_reachability_report(self):
         validator = ImmraxValidator(JAXRobotConfig(_TEST_ROBOT))
         samples = _straight(length=0.5, v=0.4, n=5)
         u_args = (
@@ -165,12 +165,12 @@ class TestUnifiedReachabilityAndDrivetrainParity(unittest.TestCase):
             (0.85, 0.85),
             (0.001, 0.001),
         )
-        rep_compiled = validator.compute_reachability(samples, *u_args, legacy_debug_loop=False)
-        rep_legacy = validator.compute_reachability(samples, *u_args, legacy_debug_loop=True)
+        rep = validator.compute_reachability(samples, *u_args)
 
-        self.assertAlmostEqual(rep_compiled["max_tracking_error_m"], rep_legacy["max_tracking_error_m"], places=5)
-        self.assertAlmostEqual(rep_compiled["max_envelope_radius_m"], rep_legacy["max_envelope_radius_m"], places=5)
-        self.assertEqual(len(rep_compiled["envelope"]), len(rep_legacy["envelope"]))
+        self.assertIn("max_tracking_error_m", rep)
+        self.assertIn("max_envelope_radius_m", rep)
+        self.assertEqual(len(rep["envelope"]), len(samples))
+        self.assertGreater(rep["max_envelope_radius_m"], 0.0)
 
     def test_shared_normal_force_and_traction_parity(self):
         from overboard.verification.validator import audit_constraints
