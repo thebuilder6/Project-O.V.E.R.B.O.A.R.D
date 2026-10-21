@@ -32,6 +32,11 @@ STATIC_MAX_INTERVALS = 180
 STATIC_MAX_SEGMENTS = 16
 MAX_TICKS_PER_INTERVAL = 30
 GRAD_TICKS_PER_INTERVAL = 1
+# The reference Python loop in immrax_validator.py uses 4 substeps. The
+# plant is kinematic and the command is held for the whole tick, so any
+# subdivision integrates the same tick: on example_straight the compiled
+# engine (5) and the legacy loop (4) report 0.302130 cm either way. Keep the
+# count free to differ; a dynamic plant would make it a real choice.
 PLANT_SUBSTEPS = 5
 CONTROL_DT = 0.02
 
