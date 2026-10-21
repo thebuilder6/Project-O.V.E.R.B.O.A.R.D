@@ -2,12 +2,12 @@
 reachability_engine.py - Canonical Pure-JAX Compiled Reachability Verification Engine.
 
 Eliminates the Python for/while loops and .float() host synchronizations in reachability
-verification across both immrax_validator.py and surrogate_polish.py so that:
+verification so that:
   1. Rollout executes as a single fused XLA kernel (10x-50x faster).
   2. Multiple candidates can be evaluated in parallel via jax.vmap.
   3. Reverse-mode autodiff (jax.grad) flows cleanly through the entire
      20 ms sample-and-hold closed-loop simulation.
-  4. Both ImmraxValidator and SurrogatePolishOptimizer share the exact same reachability physics.
+  4. The validator and the planner's polish share the exact same reachability physics.
 """
 
 from __future__ import annotations
