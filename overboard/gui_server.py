@@ -30,11 +30,6 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
-# Ensure repo root is on sys.path if invoked directly as a script
-_REPO_ROOT = str(Path(__file__).resolve().parent.parent)
-if _REPO_ROOT not in sys.path:
-    sys.path.insert(0, _REPO_ROOT)
-
 from overboard.paths import (
     REPO_ROOT,
     VIZ_DIR,

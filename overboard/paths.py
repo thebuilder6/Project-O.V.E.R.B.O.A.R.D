@@ -9,11 +9,17 @@ instead of climbing its own parents. Two reasons:
   the same root spelled as ``parents[2]`` in one module and ``parent.parent``
   in the next, and both are correct today only by coincidence of depth.
 - A directory that is resolved once can be checked once. ``tests/test_paths.py``
-  pins that every directory this module names is really the one it claims.
+  pins that every directory this module names is really the one it claims,
+  and that no module in the package spells the root out for itself.
 
 The module is stdlib only. ``overboard/diagnostics.py`` has to work on a
 machine where nothing is installed yet, so it may not pull in a dependency
 just to learn where it is.
+
+The tools under ``research/`` live outside the package and still put the
+repository root on ``sys.path`` themselves, one expression each: they have to
+import the package before the package can be imported. That is theirs, and
+``tests/test_paths.py`` does not look at them.
 """
 
 from __future__ import annotations

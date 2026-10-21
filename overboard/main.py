@@ -8,15 +8,9 @@ import importlib.util
 import json
 import math
 import os
-import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
-
-# Ensure repo root is on sys.path if invoked directly as a script
-_REPO_ROOT = str(Path(__file__).resolve().parent.parent)
-if _REPO_ROOT not in sys.path:
-    sys.path.insert(0, _REPO_ROOT)
 
 # A first-time user who runs this before installing anything should get the
 # environment report with the install command, not an ImportError traceback.

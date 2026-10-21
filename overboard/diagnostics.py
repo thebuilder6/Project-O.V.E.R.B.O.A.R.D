@@ -16,11 +16,9 @@ import socket
 import sys
 from pathlib import Path
 
-# Ensure repo root is on sys.path if invoked directly as a script
-_REPO_ROOT = str(Path(__file__).resolve().parent.parent)
-if _REPO_ROOT not in sys.path:
-    sys.path.insert(0, _REPO_ROOT)
-
+# The repository's directories come from the one module that knows them.
+# This module is stdlib only, so it still works on a machine where nothing
+# is installed yet.
 from overboard.paths import REPO_ROOT
 
 # (import name, pip name, required?)

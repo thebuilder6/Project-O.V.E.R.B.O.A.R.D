@@ -22,15 +22,12 @@ from overboard import paths
 ROOT = Path(__file__).resolve().parent.parent
 PACKAGE_DIR = ROOT / "overboard"
 
-# The three entry points that may be run as a standalone script, before the
-# package is importable. They put the root on sys.path themselves, and that
-# one bootstrap is the reason the root is spelled out in them at all. Every
-# other module asks overboard.paths.
-BOOTSTRAP_MODULES = {
-    "main.py",
-    "gui_server.py",
-    "diagnostics.py",
-}
+# No module in the package resolves the repository root itself. The tools
+# under research/ live outside the package and still put the root on
+# sys.path themselves, because they have to import the package before the
+# package can be imported; that is their own business, and it is one
+# expression each.
+BOOTSTRAP_MODULES = set()
 
 
 def _live_modules():
@@ -125,11 +122,12 @@ class TestCanonicalPaths(unittest.TestCase):
         self.assertTrue(paths.ROBOT_CONFIG_PY.is_file())
 
     def test_no_live_module_resolves_the_repository_root_itself(self):
-        """Only the standalone entry points may spell the root out.
+        """No module in the package spells the root out.
 
-        They have to: they run before the package is importable. Everything
-        else asks ``overboard.paths``, so there is one answer to where the
-        root is.
+        Everything asks ``overboard.paths``, so there is one answer to where
+        the root is. The entry points do not need an exception any more:
+        they are run as ``python -m overboard....`` from the repository root,
+        where the package is importable already.
         """
         offenders = []
         for path in _live_modules():
