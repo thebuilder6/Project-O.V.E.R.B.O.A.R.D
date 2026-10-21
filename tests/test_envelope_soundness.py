@@ -145,6 +145,7 @@ class TestNoPhantomTurnRate(unittest.TestCase):
             val.digital_twin_gain_range = GAIN
         report = _validate(val, _straight())
         return report, val
+
     def test_the_gain_band_does_not_blow_the_tube_up(self):
         """The plain plant: the tube stays well inside the 20 mm gate."""
         report, _ = self._envelope(None)
@@ -303,13 +304,33 @@ class TestTheTickPropagation(unittest.TestCase):
     does.
     """
 
-    def _validate(self, propagation, inclusion=None, gain=GAIN):
-        cfg = JAXRobotConfig(_TEST_ROBOT)
-        kw = {} if inclusion is None else {"tick_inclusion": inclusion}
-        val = ImmraxValidator(cfg, propagation=propagation, **kw)
-        val.digital_twin_gain_range = gain
-        report = _validate(val, _straight())
-        return report, val
+    # The plant box, the closed-loop tick box and the twin's tick box are
+    # pure functions of their arguments, and several tests ask for the same
+    # one. A distinct configuration pays a JAX compile, which dominates the
+    # test, so each is built once and read by every test that needs it.
+    _boxes = {}
+
+    @classmethod
+    def _box(cls, key, make, samples):
+        if key not in cls._boxes:
+            val = make()
+            val.digital_twin_gain_range = GAIN
+            cls._boxes[key] = (_validate(val, samples), val)
+        return cls._boxes[key]
+
+    def _validate(self, propagation, inclusion=None):
+        def make():
+            cfg = JAXRobotConfig(_TEST_ROBOT)
+            kw = {} if inclusion is None else {"tick_inclusion": inclusion}
+            return ImmraxValidator(cfg, propagation=propagation, **kw)
+        return self._box(("box", propagation, inclusion), make, _straight())
+
+    def _twin_tick(self, mode):
+        def make():
+            return ImmraxValidator(JAXRobotConfig(_TEST_ROBOT),
+                                   digital_twin=_twin(), propagation="tick",
+                                   tick_inclusion="jac", belief_mode=mode)
+        return self._box(("twin-tick", mode), make, _straight(length=0.5))
 
     def test_the_natural_extension_is_refused(self):
         """With the natural extension the closed-loop map explodes."""
@@ -345,9 +366,14 @@ class TestTheTickPropagation(unittest.TestCase):
         cfg = JAXRobotConfig(_TEST_ROBOT)
         samples = _straight(length=0.1)
         for inclusion in ("jac", "mjac"):
-            val = ImmraxValidator(cfg, propagation="tick",
-                                  tick_inclusion=inclusion)
-            val.digital_twin_gain_range = GAIN
+            if inclusion == "jac":
+                # The closed-loop box is asked for elsewhere too; reuse it
+                # instead of paying for its compile a second time.
+                _, val = self._validate("tick", inclusion="jac")
+            else:
+                val = ImmraxValidator(cfg, propagation="tick",
+                                      tick_inclusion=inclusion)
+                val.digital_twin_gain_range = GAIN
             report = _validate(val, samples)
 
             w_iv = Interval(
@@ -401,13 +427,13 @@ class TestTheTickPropagation(unittest.TestCase):
         self.assertEqual(val.belief_mode, "estimate")
 
     def test_both_belief_modes_propagate(self):
-        """Both are wired: the error form is a measured alternative."""
-        cfg = JAXRobotConfig(_TEST_ROBOT)
+        """Both are wired: the error form is a measured alternative.
+
+        The twin's box is the expensive part, and the twin test asks for the
+        default mode; sharing it means the second mode is the only new one.
+        """
         for mode in ("estimate", "error"):
-            val = ImmraxValidator(cfg, digital_twin=_twin(),
-                                  propagation="tick", tick_inclusion="jac",
-                                  belief_mode=mode)
-            report = _validate(val, _straight(length=0.5))
+            report, val = self._twin_tick(mode)
             self.assertTrue(np.isfinite(report["max_envelope_radius_m"]))
             self.assertEqual(val.tick_map.belief_mode, mode)
 
@@ -437,10 +463,8 @@ class TestTheTickPropagation(unittest.TestCase):
         feedback term is taken with respect to the wrong variable.
         """
         cfg = JAXRobotConfig(_TEST_ROBOT)
-        val = ImmraxValidator(cfg, digital_twin=_twin(), propagation="tick",
-                              tick_inclusion="jac")
+        report, val = self._twin_tick("estimate")
         samples = _straight(length=0.5)
-        report = _validate(val, samples)
         self.assertFalse(report["reachability"]["diverged"])
 
         def _w(track, gain):
