@@ -238,6 +238,132 @@ class UnifiedPathEngine:
             score=score,
         )
 
+    def candidate_specs(
+        self,
+        accuracy_weight: Optional[float] = None,
+        count: Optional[int] = None,
+    ) -> List[Dict[str, Any]]:
+        """The candidate set: the homotopy triad and its accuracy weights.
+
+        This is the whole set. The CLI asks the planner for it and does not
+        build candidates of its own, so there is one planner and one set.
+        """
+        specs = [
+            {"accuracy_weight": 0.001, "guess_style": "frontier_sprint"},
+            {"accuracy_weight": 0.002, "guess_style": "frontier_sweeper"},
+            {"accuracy_weight": 0.001, "guess_style": "frontier_exploratory"},
+        ]
+        for spec in specs:
+            spec.update({
+                "per_segment_dt": True,
+                "cost_metric": "discretization",
+                "epigraph_constraints": True,
+            })
+        if accuracy_weight is not None:
+            for spec in specs:
+                spec["accuracy_weight"] = float(accuracy_weight)
+        if count is not None:
+            specs = specs[:max(1, int(count))]
+        return specs
+
+    def gradient_polish(
+        self,
+        samples: List[Dict[str, Any]],
+        stats: Dict[str, Any],
+        waypoints: List[Tuple[float, float, Optional[float]]],
+        segment_samples: Optional[List[int]] = None,
+        accuracy_weight: float = 0.0,
+        stop_indices: Optional[List[int]] = None,
+        waypoint_events: Optional[Dict[int, str]] = None,
+        self_consistent: bool = True,
+        max_rounds: int = 2,
+    ) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
+        """One optional post-solve pass: let the reachability say what to fix.
+
+        The rollout is differentiable, so the engine can be differentiated
+        through: the gradient says which sample states move the reachable
+        set most. The plan is re-solved, warm-started from the one that was
+        found, with those samples weighted, and the better of the two plans
+        is the one that is kept. Off by default; it costs one compiled
+        rollout and one extra solve per round.
+        """
+        engine = self._ensure_validator()
+        if engine is None or not samples:
+            return samples, stats
+
+        num_segments = len(waypoints) - 1
+        if not segment_samples:
+            segment_samples = stats.get("segment_samples") or []
+        segment_samples = [int(s) for s in segment_samples]
+        if len(segment_samples) != num_segments:
+            return samples, stats
+
+        from overboard.verification.reachability_engine import (
+            _extract_state_and_dt_arrays,
+        )
+
+        states, dts = _extract_state_and_dt_arrays(
+            samples, num_segments, segment_samples)
+        sample_to_segment = list(
+            np.repeat(np.arange(num_segments), segment_samples))
+        weights = np.ones(len(states) - 1, dtype=np.float64)
+        best_samples, best_stats = samples, stats
+        best_key = self._polish_key(engine, states, dts, sample_to_segment)
+
+        for _ in range(max_rounds):
+            report, g_states, _ = engine.sample_sensitivities(
+                states, dts, sample_to_segment,
+                self.tracking_gate_m, self.envelope_gate_m)
+            # The samples the tube is widest at, and the samples that move it
+            # most, get the weight.
+            grad_norm = (np.linalg.norm(g_states[:-1], axis=1)
+                         + np.linalg.norm(g_states[1:], axis=1))
+            peak = float(np.max(grad_norm)) if grad_norm.size else 0.0
+            excess = np.maximum(
+                0.0,
+                np.asarray(report["tracking_errors"], dtype=np.float64)
+                / max(self.tracking_gate_m * 0.7, 1e-6) - 0.5)
+            weights = np.clip(
+                weights * (1.0 + 4.0 * (grad_norm / peak if peak > 1e-12 else 0.0)
+                           + 6.0 * excess ** 2), 1.0, 200.0)
+
+            guess = np.concatenate([np.asarray(dts, dtype=np.float64),
+                                    np.asarray(states, dtype=np.float64).flatten()])
+            polished, polished_stats = self.optimizer.solve(
+                waypoints,
+                num_samples_per_segment=segment_samples,
+                accuracy_weight=max(accuracy_weight, 0.005),
+                stop_waypoint_indices=stop_indices,
+                waypoint_events=waypoint_events,
+                initial_guess=guess,
+                sample_weights=weights,
+                per_segment_dt=True,
+                cost_metric="discretization",
+                epigraph_constraints=True,
+                self_consistent=self_consistent,
+                split_at_boundaries=False,
+                verbose=False,
+            )
+            if not polished or not polished_stats.get("converged", False):
+                break
+            p_states, p_dts = _extract_state_and_dt_arrays(
+                polished, num_segments, segment_samples)
+            key = self._polish_key(engine, p_states, p_dts, sample_to_segment)
+            if key >= best_key:
+                break
+            best_samples, best_stats, best_key = polished, polished_stats, key
+            states, dts = p_states, p_dts
+
+        best_stats = dict(best_stats)
+        best_stats["polish"] = {"rounds": max_rounds, "engine": "gradient"}
+        return best_samples, best_stats
+
+    def _polish_key(self, engine, states, dts, sample_to_segment):
+        """The pair the polish compares on: tracking error first, tube second."""
+        report = engine.evaluate_states(states, dts, sample_to_segment)
+        return (float(report["max_tracking_error_m"]),
+                float(report["max_envelope_radius_m"]))
+
     # =========================================================================
     # High-Level Planning Entry Point
     # =========================================================================

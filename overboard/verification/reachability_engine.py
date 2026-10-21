@@ -490,6 +490,32 @@ class CompiledReachabilityEngine:
             w_upper = def_hi if w_upper is None else w_upper
         return scan_fn(states, dts, seg_idx_arr, active_mask, w_lower, w_upper)
 
+    def sample_sensitivities(
+        self,
+        states: jnp.ndarray,
+        dts: jnp.ndarray,
+        sample_to_segment: Sequence[int],
+        safety_gate_m: float = 0.005,
+        tube_gate_m: float = 0.020,
+    ) -> Tuple[Dict[str, jnp.ndarray], np.ndarray, np.ndarray]:
+        """The reachability report and the gradient of its gates.
+
+        Differentiating the rollout says how much each sample state moves
+        the reachable set, which is what the polish pass weights the samples
+        by. Returns (report, gradient per sample state, gradient per
+        segment dt).
+        """
+        grad_fn = self._get_grad_fn(safety_gate_m, tube_gate_m)
+        seg_idx_arr = jnp.asarray(sample_to_segment, dtype=jnp.int32)
+        active_mask = jnp.ones(states.shape[0] - 1, dtype=bool)
+        w_lower, w_upper = self._uncertainty_bounds()
+        with JAX_COMPILE_LOCK:
+            (_, report), (g_states, g_dts) = grad_fn(
+                states, dts, seg_idx_arr, active_mask, w_lower, w_upper)
+        return (report,
+                np.asarray(g_states, dtype=np.float64),
+                np.asarray(g_dts, dtype=np.float64))
+
     def evaluate_batch_vmap(
         self,
         batch_states: jnp.ndarray,

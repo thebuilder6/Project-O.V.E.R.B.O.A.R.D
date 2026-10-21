@@ -141,37 +141,10 @@ def _select_attempt(attempts, prefer_duration: bool = False):
 
 
 
-# Accuracy weights the sweep tries. The weight trades time against the
-# wheel-jerk discipline, and which value is best depends on the path: a
-# mission with long straight segments wants a low weight, an uneven path
-# wants a little more. Measured on the example missions: the sweep finds
-# 18 % on examples/example_mission_first4.json and a passing trajectory on
-# examples/example_with_events.json, which the default candidate set cannot
-# solve at all.
-SWEEP_WEIGHTS = (0.0, 0.001, 0.002, 0.005, 0.01)
-
 # Thread limits handed to the candidate worker processes. Several candidates
 # solve at the same time, so each one keeps a single compute thread.
 _THREAD_ENV_VARS = ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS",
                     "NUMEXPR_NUM_THREADS")
-
-
-def _dt_modes(dt_mode):
-    """The timing models a candidate set cycles through.
-
-    The two modes are not peers: "uniform" shares one dt across all
-    segments, which because every segment has the same sample count also
-    forces every segment to take the SAME time; on a path with unequal
-    segment lengths that is a large artificial penalty. "per-segment" gives
-    each segment its own dt and is the general model (KI-022).
-    """
-    if dt_mode == "uniform":
-        return [False]
-    if dt_mode == "per-segment":
-        return [True]
-    if dt_mode == "auto":
-        return [False, True]
-    raise ValueError(f"Unknown dt_mode: {dt_mode}")
 
 
 def _rescue_specs(specs, base_weight, dt_mode, validated):
@@ -179,9 +152,8 @@ def _rescue_specs(specs, base_weight, dt_mode, validated):
 
     With validation, nothing passed the gates; without it, nothing
     converged. Either way the mission ends with no trajectory, and the
-    default candidate set cannot help: its two candidates are the *same*
-    seed (the baseline) on the two timing models, so the other seeds are
-    never tried (KI-048).
+    planner's own candidates cannot help: they are three variants of the
+    same frontier family, so the other seeds are never tried (KI-048).
 
     The rescue is the seeds the set did not use. On a validated run it uses
     the per-segment model, because that is where the measured rescues came
@@ -209,65 +181,6 @@ def _rescue_specs(specs, base_weight, dt_mode, validated):
             rescue.append({"accuracy_weight": base_weight,
                            "guess_style": style, "per_segment_dt": mode})
     return rescue
-
-
-def _candidate_specs(base_accuracy_weight, count, dt_mode="auto", sweep=False):
-    """Definitions for the candidate set.
-
-    Each candidate is a distinct initial-guess seed at the base accuracy
-    weight (KI-020: accuracy_weight is a time/smoothness knob, not a
-    candidate generator) combined with a timing mode. The default "auto"
-    timing mode alternates the two modes for each seed, so validation can
-    choose the timing model that works on this path. "uniform" and
-    "per-segment" force one mode.
-
-    The two modes are not peers. "uniform" shares one dt across all segments,
-    which because every segment has the same sample count also forces every
-    segment to take the SAME time; on a path with unequal segment lengths that
-    is a large, artificial penalty. "per-segment" gives each segment its own
-    dt and is the general model (KI-022).
-
-    sweep=True adds the timing-mode x accuracy-weight grid to the set. It adds
-    candidates, it never replaces them, so the default candidates stay in the
-    comparison and the usual rule (the passing candidate with the smallest
-    envelope, the shortest one breaking the tie) still decides. A sweep costs
-    more solves and more validation passes.
-    """
-    count = max(1, int(count))
-    modes = _dt_modes(dt_mode)
-
-    specs = []
-    for k in range(count):
-        # auto: baseline uniform, baseline per-segment, rolling uniform, ...
-        style = GUESS_STYLES[(k // len(modes)) % len(GUESS_STYLES)]
-        specs.append({
-            "accuracy_weight": base_accuracy_weight,
-            "guess_style": style,
-            "per_segment_dt": modes[k % len(modes)],
-        })
-
-    if sweep:
-        # The timing-mode x accuracy-weight grid. The base weight is always
-        # in the set, so a sweep can only add options. A combination the
-        # default set already covers is not solved twice.
-        seen = {(spec["accuracy_weight"], spec["guess_style"], spec["per_segment_dt"])
-                for spec in specs}
-        weights = []
-        for weight in (base_accuracy_weight,) + SWEEP_WEIGHTS:
-            if weight not in weights:
-                weights.append(weight)
-        for weight in weights:
-            for per_segment_dt in modes:
-                key = (weight, "baseline", per_segment_dt)
-                if key in seen:
-                    continue
-                seen.add(key)
-                specs.append({
-                    "accuracy_weight": weight,
-                    "guess_style": "baseline",
-                    "per_segment_dt": per_segment_dt,
-                })
-    return specs
 
 
 def _solve_candidate_worker(payload):
@@ -386,8 +299,8 @@ class _SolveContext:
     no_parallel: bool
     live: bool
     show_convergence: bool
-    pyramid: bool
-    surrogate_polish: bool
+    planner: Any
+    polish: bool
     optimizer: Any
 
     def may_run_parallel(self, payload_count):
@@ -435,32 +348,15 @@ def _solve_payloads(specs, ctx):
 
 
 def _dispatch_solve(specs, ctx):
-    """Solve one set of candidates with the engine the flags selected."""
+    """Solve one set of candidates with the one engine there is.
+
+    The candidates are solved by the CasADi optimizer, in worker processes
+    when there is more than one of them. The reachability check and the
+    optional gradient polish stay in this process, where the JAX stack is
+    warm.
+    """
     payloads = _solve_payloads(specs, ctx)
     parallel = ctx.may_run_parallel(len(payloads))
-    if ctx.pyramid:
-        from overboard.core.surrogate_polish import solve_pyramid_candidates
-        if not ctx.quiet:
-            click.echo(f"Solving {len(payloads)} survivor candidates in parallel (ProcessPoolExecutor)...")
-        survivor_guesses = [spec.get("initial_guess") for spec in specs
-                            if "initial_guess" in spec]
-        if len(survivor_guesses) == len(specs):
-            base_kw = dict(payloads[0][2])
-            base_kw.pop("initial_guess", None)
-            max_w = min(len(payloads), max(ctx.workers, os.cpu_count() or 8)) if parallel else 1
-            solved = solve_pyramid_candidates(
-                ctx.robot_cfg, ctx.waypoints, survivor_guesses, base_kw,
-                max_workers=max_w,
-            )
-            histories = [[] for _ in solved]
-            return solved, histories
-    if ctx.surrogate_polish:
-        from overboard.core.surrogate_polish import solve_candidates_threaded
-        if not ctx.quiet:
-            click.echo(f"Solving {len(payloads)} candidates via 5-Layer Surrogate-Polish pipeline (ThreadPoolExecutor)...")
-        return solve_candidates_threaded(
-            payloads, workers=ctx.workers if parallel else 1
-        )
     if not ctx.quiet and len(payloads) > 1:
         click.echo(f"Solving {len(payloads)} candidates "
                    f"({'in parallel' if parallel else 'sequentially'})...")
@@ -1006,7 +902,6 @@ class _ScoreContext:
     digital_twin: Any
     propagation: str
     control_dt: float
-    surrogate_polish: bool
     quiet: bool
 
 
@@ -1069,40 +964,29 @@ def _score_attempt(attempt_record, ctx):
         or (samples if isinstance(samples, (list, tuple, np.ndarray)) else None))
 
     try:
-        cached_immrax = stats.get("immrax_report") if isinstance(stats, dict) else None
-        if (
-            ctx.surrogate_polish
-            and cached_immrax is not None
-            and ctx.digital_twin is None
-            and ctx.propagation == "plant"
-        ):
-            if not ctx.quiet:
-                click.echo("  Running the Immrax robustness check (compiled lax.scan)...")
-            immrax_report = cached_immrax
+        validator_cls, robot_config_cls = _ensure_jax_classes()
+        jax_cfg = robot_config_cls(ctx.robot_cfg)
+        if ctx.digital_twin is None:
+            immrax_val = validator_cls(jax_cfg, control_dt=ctx.control_dt,
+                                       propagation=ctx.propagation)
         else:
-            validator_cls, robot_config_cls = _ensure_jax_classes()
-            jax_cfg = robot_config_cls(ctx.robot_cfg)
-            if ctx.digital_twin is None:
-                immrax_val = validator_cls(jax_cfg, control_dt=ctx.control_dt,
-                                           propagation=ctx.propagation)
-            else:
-                immrax_val = validator_cls(jax_cfg, digital_twin=ctx.digital_twin,
-                                           control_dt=ctx.control_dt,
-                                           propagation=ctx.propagation)
+            immrax_val = validator_cls(jax_cfg, digital_twin=ctx.digital_twin,
+                                       control_dt=ctx.control_dt,
+                                       propagation=ctx.propagation)
 
-            # Use the uncertainty ranges declared in the config (KI-009).
-            cof_range = ctx.robot_cfg.uncertainties["cof"]
-            torque_range = ctx.robot_cfg.uncertainties["torque_headroom"]
-            backlash_range = ctx.robot_cfg.uncertainties["gear_backlash_m"]
-            track_width_range = ctx.robot_cfg.uncertainties["track_width_range"]
-            wheel_radius_range = ctx.robot_cfg.uncertainties["wheel_radius_range"]
-            inertia_range = ctx.robot_cfg.uncertainties["inertia_kg_m2"]
+        # Use the uncertainty ranges declared in the config (KI-009).
+        cof_range = ctx.robot_cfg.uncertainties["cof"]
+        torque_range = ctx.robot_cfg.uncertainties["torque_headroom"]
+        backlash_range = ctx.robot_cfg.uncertainties["gear_backlash_m"]
+        track_width_range = ctx.robot_cfg.uncertainties["track_width_range"]
+        wheel_radius_range = ctx.robot_cfg.uncertainties["wheel_radius_range"]
+        inertia_range = ctx.robot_cfg.uncertainties["inertia_kg_m2"]
 
-            if not ctx.quiet:
-                click.echo("  Running the Immrax robustness check...")
-            immrax_report = immrax_val.validate_trajectory(
-                samples_data, cof_range, torque_range, backlash_range,
-                track_width_range, wheel_radius_range, inertia_range)
+        if not ctx.quiet:
+            click.echo("  Running the Immrax robustness check...")
+        immrax_report = immrax_val.validate_trajectory(
+            samples_data, cof_range, torque_range, backlash_range,
+            track_width_range, wheel_radius_range, inertia_range)
     except Exception as e:
         if not ctx.quiet:
             click.echo(f"  ERROR: Immrax validation failed: {e}")
@@ -1254,6 +1138,8 @@ def _run_candidate_rounds(specs_to_solve, solve_ctx, score_ctx, *,
     is_rescue = False
     while batch:
         solved, histories = _dispatch_solve(batch, solve_ctx)
+        if solve_ctx.polish:
+            solved = _polish_candidates(solved, solve_ctx)
         for cand_idx, (spec, solve_result) in enumerate(zip(batch, solved)):
             record = _record_candidate(
                 spec, solve_result, cand_idx, len(batch), histories,
@@ -1281,6 +1167,36 @@ def _run_candidate_rounds(specs_to_solve, solve_ctx, score_ctx, *,
             else:
                 click.echo("  No candidate converged; trying the other seeds.")
     return all_attempts
+
+
+def _polish_candidates(solved, ctx):
+    """The optional post-solve gradient polish, in this process.
+
+    The polish needs the JAX stack, and the stack is warm here: the
+    candidates were solved in worker processes, but the reachability check
+    and the polish stay in this one.
+    """
+    polished = []
+    for samples, stats in solved:
+        if not samples or not stats.get("converged", False):
+            polished.append((samples, stats))
+            continue
+        if not ctx.quiet:
+            click.echo("  Polishing the plan with the reachability gradient...")
+        try:
+            new_samples, new_stats = ctx.planner.gradient_polish(
+                samples, stats, ctx.waypoints,
+                stop_indices=ctx.stop_indices,
+                waypoint_events=ctx.events,
+                self_consistent=ctx.self_consistent,
+            )
+        except Exception as exc:  # a failed polish is not a failed plan
+            if not ctx.quiet:
+                click.echo(f"  Polish skipped: {exc}")
+            polished.append((samples, stats))
+            continue
+        polished.append((new_samples, new_stats))
+    return polished
 
 
 def _choose_attempt(all_attempts, *, validate, prefer_duration, sweep, quiet, samples):
@@ -1480,8 +1396,8 @@ def _render(output, samples_data, wps, optimizer, all_attempts, selected_index, 
 @click.option('--doctor', is_flag=True,
               help='Check the install, dependencies, examples and ports, then exit.')
 @click.option('--simple', is_flag=True,
-              help='Alias for --no-unified: solve the stock candidate set with '
-                   'the CasADi/IPOPT optimizer directly.')
+              help='(Deprecated: the 3-Pillar Unified Trajectory Engine is the only planner.) '
+                   'Accepted and ignored.')
 @click.option('--preset', type=click.Choice(['fast', 'balanced', 'safe'], case_sensitive=False),
               default=None,
               help='Named starting point. fast: 1 candidate, no validation. '
@@ -1497,14 +1413,11 @@ def _render(output, samples_data, wps, optimizer, all_attempts, selected_index, 
               help='Soft wheel-force and traction-utilization penalty weight in the NLP '
                    'objective (simple solver only).')
 @click.option('--candidates', default=2, type=click.IntRange(min=1),
-              help='Candidates to solve and compare. On the default path the three frontier '
-                   'candidates are solved; on the stock set (--no-unified) each candidate '
-                   'combines an initial-guess seed (baseline, rolling, bow_left, bow_right, '
-                   'turn_first) with the timing mode: candidate 1 is equal-duration baseline, '
-                   'candidate 2 is per-segment baseline, then the remaining seeds alternate. '
-                   'Validation picks a passing candidate: the fastest one on the default path, '
-                   'the one with the best fitness on the stock set. Without --validate only the '
-                   'first candidate is solved. Use 1 for a single solve.')
+              help='Candidates to solve and compare. The planner produces the three '
+                   'frontier candidates (sprint, sweeper, exploratory); this says how '
+                   'many of them are solved. Validation picks a passing one: the '
+                   'fastest. Without --validate only the first candidate is solved. '
+                   'Use 1 for a single solve.')
 @click.option('--stop-waypoints', default=None, type=str,
               help='Comma-separated waypoint indices where robot must stop (e.g., "2,5,7").')
 @click.option('--events', default=None, type=str,
@@ -1534,25 +1447,20 @@ def _render(output, samples_data, wps, optimizer, all_attempts, selected_index, 
                    'trajectory\'s own (v, omega) profile traces, so the headings are its tangents '
                    '(simple solver only). On by default (KI-026).')
 @click.option('--unified/--no-unified', default=True,
-              help='Run the 3-Pillar Unified Trajectory Engine (default: on): '
-                   'Kinetic Frontier Seeds + 80 ms Invariant Mesh + '
-                   'Discretization-Consistent Collocation.')
+              help='(Deprecated: the 3-Pillar Unified Trajectory Engine is the only planner.) '
+                   'Both spellings are accepted and ignored; the engine always runs.')
 @click.option('--surrogate-polish', is_flag=True,
-              help='Run the 5-Layer Unified Surrogate-to-Truth parallel pipeline: '
-                   'CasADi Discretization-Aware Metric + Linear Epigraph Force Bounds + '
-                   'Single-Process ThreadPoolExecutor + Compiled float64 jax.lax.scan '
-                   'Reachability + Differentiable Immrax Polish + Gate-Certified Min-Time Selection.')
+              help='(Deprecated: the engine is gone.) Accepted and ignored.')
 @click.option('--pyramid', is_flag=True, default=False,
-              help='Multi-Fidelity "Screen-then-Refine" Pyramid: vectorized JAX sieve '
-                   'over 100-350 hypotheses, topological clustering into survivor seeds, '
-                   'and process-isolated parallel IPOPT solves.')
+              help='(Deprecated: the engine is gone.) Accepted and ignored.')
 @click.option('--pyramid-candidates', default=None, type=click.IntRange(min=1),
-              help='Number of top distinct homotopy finalists to solve in parallel during '
-                   '--pyramid mode (defaults to 10).')
+              help='(Deprecated: --pyramid is gone.) Accepted and ignored.')
 @click.option('--h-adaptive', is_flag=True, default=False,
-              help='Adaptive mesh refinement (h-refinement): selectively allocates higher node density '
-                   '(8-10 nodes) to curved apex segments, lowering forward-integration discretization '
-                   'error to sub-centimeter levels (<1.0 cm).')
+              help='(Deprecated: --pyramid is gone.) Accepted and ignored.')
+@click.option('--polish', is_flag=True,
+              help='Optional post-solve gradient polish: the reachability rollout is '
+                   'differentiated, and the plan is re-solved with the samples the '
+                   'gradient points at weighted (requires JAX; off by default).')
 
 # --- Export & Validation ---
 @click.option('--validate/--no-validate', default=False,
@@ -1613,7 +1521,7 @@ def _render(output, samples_data, wps, optimizer, all_attempts, selected_index, 
 @click.pass_context
 def main(ctx, config, waypoints, output, gui, gui_port, doctor, simple, preset,
          samples, accuracy_weight, force_weight, candidates, stop_waypoints, events, per_segment_dt, uniform_dt,
-         no_parallel, workers, fast_polish, sweep, self_consistent, unified, surrogate_polish, pyramid, pyramid_candidates, h_adaptive, validate,
+         no_parallel, workers, fast_polish, sweep, self_consistent, unified, surrogate_polish, pyramid, pyramid_candidates, h_adaptive, polish, validate,
          sysid_fit, export_format, controller_dt, control_dt, propagation, benchmark,
          push_hub, hub_conn, hub_name, hub_log,
          plot, animate, live, show_convergence, convergence_mode, iteration_history,
@@ -1633,7 +1541,25 @@ def main(ctx, config, waypoints, output, gui, gui_port, doctor, simple, preset,
         raise click.ClickException("--quiet and --verbose cannot be combined.")
     if simple and not quiet:
         click.secho(
-            "Note: --simple is an alias for --no-unified; the stock candidate set is used.",
+            "Warning: --simple is deprecated (the 3-Pillar Unified Trajectory "
+            "Engine is the only planner); the flag is ignored.",
+            fg="yellow",
+        )
+    if not unified and not quiet:
+        click.secho(
+            "Warning: --no-unified is deprecated (the 3-Pillar Unified Trajectory "
+            "Engine is the only planner); the flag is ignored.",
+            fg="yellow",
+        )
+    if surrogate_polish and not quiet:
+        click.secho(
+            "Warning: --surrogate-polish is deprecated (its engine is gone; the "
+            "gradient polish is now --polish); the flag is ignored.",
+            fg="yellow",
+        )
+    if pyramid and not quiet:
+        click.secho(
+            "Warning: --pyramid is deprecated (its engine is gone); the flag is ignored.",
             fg="yellow",
         )
     if sweep and not quiet:
@@ -1646,13 +1572,12 @@ def main(ctx, config, waypoints, output, gui, gui_port, doctor, simple, preset,
             "Warning: --uniform-dt is deprecated (equal-duration dt penalizes variable-length segments; per-segment dt is standard).",
             fg="yellow",
         )
-    if ctx.get_parameter_source('unified') == click.core.ParameterSource.DEFAULT:
-        if simple or uniform_dt or sweep:
-            unified = False
     if per_segment_dt and uniform_dt:
         raise click.ClickException(
             "--per-segment-dt and --uniform-dt are mutually exclusive."
         )
+    if polish and not HAS_JAX:
+        raise click.ClickException(f"--polish needs JAX and Immrax. {JAX_HINT}")
 
     if doctor:
         from overboard.diagnostics import run_doctor
@@ -1680,7 +1605,7 @@ def main(ctx, config, waypoints, output, gui, gui_port, doctor, simple, preset,
             f"--validate needs JAX and Immrax. {JAX_HINT}"
         )
 
-    dt_mode = "per-segment" if per_segment_dt else "uniform" if uniform_dt else "auto"
+    dt_mode = "uniform" if uniform_dt else "per-segment"
 
     if gui or live:
         if gui and live:
@@ -1861,104 +1786,27 @@ def main(ctx, config, waypoints, output, gui, gui_port, doctor, simple, preset,
     capture_iterations = show_convergence or bool(iteration_history)
 
     # --- CANDIDATE LOOP (validate and select; KI-020) ---
-    # Solve several candidates, score each with the same Immrax check, and let
-    # _select_attempt pick the winner: passing first, then the smallest envelope,
-    # then the fastest. With the simple solver the candidates are different
-    # initial-guess seeds (different local optima), not different accuracy
-    # weights: the old accuracy_weight ladder silently traded speed for a bound
-    # that could get worse (longer trajectories accumulate more uncertainty).
-    candidate_specs = _candidate_specs(accuracy_weight, candidates,
-                                       dt_mode=dt_mode, sweep=sweep)
+    # The planner owns the candidate set: the homotopy triad, each with its
+    # own accuracy weight. The CLI does not build candidates of its own.
+    from overboard.core.unified_planner import UnifiedPathEngine
+    planner = UnifiedPathEngine(robot_cfg)
 
-    # --- SOLVE PHASE ---
     # The candidates are independent, so they are solved first and scored
     # afterwards. Without validation only the first candidate is solved.
     use_validation = HAS_JAX and validate
-    specs_to_solve = candidate_specs if use_validation else candidate_specs[:1]
 
-    if unified:
-        from overboard.core.unified_planner import UnifiedPathEngine
-        engine = UnifiedPathEngine(robot_cfg)
-        mesh_samples = engine.compute_invariant_mesh_samples(wps)
-        if ctx.get_parameter_source('samples') == click.core.ParameterSource.DEFAULT and preset is None:
-            samples = mesh_samples
-        specs_to_solve = [
-            {"accuracy_weight": 0.001, "guess_style": "frontier_sprint", "per_segment_dt": True, "cost_metric": "discretization", "epigraph_constraints": True},
-            {"accuracy_weight": 0.002, "guess_style": "frontier_sweeper", "per_segment_dt": True, "cost_metric": "discretization", "epigraph_constraints": True},
-            {"accuracy_weight": 0.001, "guess_style": "frontier_exploratory", "per_segment_dt": True, "cost_metric": "discretization", "epigraph_constraints": True},
-        ]
-        if ctx.get_parameter_source('accuracy_weight') != click.core.ParameterSource.DEFAULT:
-            for s in specs_to_solve:
-                s['accuracy_weight'] = float(accuracy_weight)
-        if candidates is not None and candidates < len(specs_to_solve):
-            specs_to_solve = specs_to_solve[:max(1, int(candidates))]
-        if not use_validation:
-            specs_to_solve = specs_to_solve[:1]
+    mesh_samples = planner.compute_invariant_mesh_samples(wps)
+    if ctx.get_parameter_source('samples') == click.core.ParameterSource.DEFAULT and preset is None:
+        samples = mesh_samples
 
-    if pyramid:
-        if not HAS_JAX:
-            raise click.ClickException(f"--pyramid requires JAX. {JAX_HINT}")
-        from overboard.core.surrogate_polish import (
-            generate_homotopy_bank,
-            screen_candidates_jax,
-            select_topological_representatives,
-        )
-        from overboard.verification.reachability_engine import CompiledReachabilityEngine
-        validator_cls, robot_config_cls = _ensure_jax_classes()
-        jax_cfg = robot_config_cls(robot_cfg)
-        immrax_val = validator_cls(jax_cfg, control_dt=control_dt, propagation=propagation)
-        engine = CompiledReachabilityEngine(immrax_val)
-
-        if h_adaptive:
-            segment_samples = optimizer.get_adaptive_mesh_sample_counts(wps)
-        else:
-            segment_samples = optimizer.get_segment_sample_counts(wps, samples, proportional=True)
-        segment_samples = [int(s) for s in segment_samples]
-        sample_to_segment = list(np.repeat(np.arange(len(wps) - 1), segment_samples))
-
-        if not quiet:
-            click.echo("Running Pyramid Stage 1: Vectorized Homotopy Bank Generation...")
-        cand_states, cand_dts, metadata = generate_homotopy_bank(
-            wps,
-            segment_samples,
-            track_width=float(robot_cfg.track_width),
-            v_max=float(robot_cfg.max_linear_speed()),
-            stop_waypoint_indices=all_stop_indices,
-        )
-        if not quiet:
-            click.echo(f"  Generated {len(cand_states)} hypotheses. Stage 2: Sieve screening via compiled JAX...")
-        surrogate_costs = screen_candidates_jax(
-            engine,
-            cand_states,
-            cand_dts,
-            sample_to_segment,
-        )
-        if pyramid_candidates is not None:
-            target_k = pyramid_candidates
-        elif ctx.get_parameter_source('candidates') != click.core.ParameterSource.DEFAULT:
-            target_k = candidates
-        else:
-            target_k = 10
-
-        k_clusters = max(2, min(target_k, len(cand_states)))
-        selected_indices = select_topological_representatives(
-            cand_states,
-            surrogate_costs,
-            k_clusters=k_clusters,
-            min_separation_m=0.12,
-        )
-        if not quiet:
-            click.echo(f"  Stage 3: Clustered into Top {len(selected_indices)} distinct homotopy seeds.")
-        specs_to_solve = [
-            {
-                "guess_style": f"pyramid_{i+1}",
-                "guess": f"pyramid_cluster_{idx}",
-                "per_segment_dt": True,
-                "accuracy_weight": accuracy_weight,
-                "initial_guess": np.concatenate([cand_dts[idx], cand_states[idx].flatten()]),
-            }
-            for i, idx in enumerate(selected_indices)
-        ]
+    weight = (float(accuracy_weight)
+              if ctx.get_parameter_source('accuracy_weight')
+              != click.core.ParameterSource.DEFAULT else None)
+    specs_to_solve = planner.candidate_specs(
+        accuracy_weight=weight,
+        count=candidates if candidates is not None else None)
+    if not use_validation:
+        specs_to_solve = specs_to_solve[:1]
 
     solve_ctx = _SolveContext(
         robot_cfg=robot_cfg,
@@ -1976,8 +1824,8 @@ def main(ctx, config, waypoints, output, gui, gui_port, doctor, simple, preset,
         no_parallel=no_parallel,
         live=live,
         show_convergence=show_convergence,
-        pyramid=pyramid,
-        surrogate_polish=surrogate_polish,
+        planner=planner,
+        polish=polish,
         optimizer=optimizer,
     )
 
@@ -1991,7 +1839,6 @@ def main(ctx, config, waypoints, output, gui, gui_port, doctor, simple, preset,
         digital_twin=digital_twin,
         propagation=propagation,
         control_dt=control_dt,
-        surrogate_polish=surrogate_polish,
         quiet=quiet,
     )
     all_attempts = _run_candidate_rounds(
@@ -2002,7 +1849,7 @@ def main(ctx, config, waypoints, output, gui, gui_port, doctor, simple, preset,
     (samples_data, stats, attempt_passed, best_reasons, selected_tube,
      selected_index) = _choose_attempt(
         all_attempts, validate=validate,
-        prefer_duration=bool(surrogate_polish or pyramid or unified),
+        prefer_duration=True,
         sweep=sweep, quiet=quiet, samples=samples)
 
     if use_validation:
