@@ -82,7 +82,11 @@ from tests.test_drivetrain import (
     TestDrivetrainModel,
     TestDeclaredMotorCheck,
 )
-from tests.test_validator_model import TestBacklashModel, TestHeadingMetric
+from tests.test_validator_model import (
+    TestBacklashModel,
+    TestHeadingMetric,
+    TestUnifiedReachabilityAndDrivetrainParity,
+)
 from tests.test_envelope_soundness import (
     TestNoPhantomTurnRate,
     TestTheBoxContainsTheReachableSet,
@@ -301,6 +305,7 @@ def test_classes():
         TestValidationVerdict,
         TestBacklashModel,
         TestHeadingMetric,
+        TestUnifiedReachabilityAndDrivetrainParity,
         TestNoPhantomTurnRate,
         TestTheBoxContainsTheReachableSet,
         TestTheTickPropagation,
