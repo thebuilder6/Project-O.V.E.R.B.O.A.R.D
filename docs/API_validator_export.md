@@ -114,7 +114,7 @@ Returns:
 
 **Usage.** The tracking error comes from the Immrax report when one is supplied (the per-sample closed-loop error), and from the CPU audit's forward integration otherwise. The reachability spread comes from the Immrax report's per-sample envelopes, and from the envelopes attached to the samples if there is no report. `weights` overrides the default weights; `stop_sample_indices` are the sample indices of the stops, and the final sample is always a checkpoint.
 
-The score is a **ranking, not a gate**: a plan is never rejected because its fitness is bad. `overboard/main.py` uses it to pick between the candidates that passed the gates **on the stock path** (`--no-unified`); the default unified path ranks the passing candidates by duration first. See `docs/HEURISTICS_AND_VERIFICATION.md` §7.3.
+The score is a **ranking, not a gate**: a plan is never rejected because its fitness is bad. The CLI reports it for every candidate, so the rule can be re-run offline, but the selection takes the passing candidate with the shortest duration. See `docs/HEURISTICS_AND_VERIFICATION.md` 7.3.
 
 ## `check_final_waypoint(samples, waypoint, pos_tol=0.02, heading_tol=0.02)`
 

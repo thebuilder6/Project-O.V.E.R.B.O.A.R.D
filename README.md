@@ -9,7 +9,7 @@ A trajectory optimizer for LEGO differential-drive robots in FIRST LEGO League (
 **⚡ Optimal control derivation:** [docs/OPTIMAL_CONTROL_DERIVATION.md](docs/OPTIMAL_CONTROL_DERIVATION.md) — 5 invariant differential-drive control laws extracted from 50 generations of evolutionary search and the analytical Kinetic Frontier seeds (`overboard/core/frontier_seed.py`). *Historical: the evolutionary search was removed from the tree - it is in the git tag `archive/legacy-2026-10`.*
 **🖼️ Visual gallery:** [docs/VISUAL_GALLERY.md](docs/VISUAL_GALLERY.md) — gallery of state-space phase portraits, multi-shape manifolds, and multi-island convergence figures from the archived search.
 
-The audit items from KI-001 through KI-052 are resolved in the codebase, except the one still open (hardware calibration and digital-twin validation, KI-020); KI-004 is deleted and KI-032 is mitigated (see [KNOWN_ISSUES.md](KNOWN_ISSUES.md)). The 3-Pillar unified planner is the default solve path; `--no-unified` restores the stock candidate set, and the old Multi-Verse pipeline was removed from the tree (git tag `archive/legacy-2026-10`) and is not reachable from the CLI.
+The audit items from KI-001 through KI-052 are resolved in the codebase, except the one still open (hardware calibration and digital-twin validation, KI-020); KI-004 is deleted and KI-032 is mitigated (see [KNOWN_ISSUES.md](KNOWN_ISSUES.md)). The 3-Pillar unified planner is the only planner, and the old Multi-Verse pipeline was removed from the tree (git tag `archive/legacy-2026-10`) and is not reachable from the CLI.
 
 ## Start here (first time)
 
@@ -133,7 +133,7 @@ It lists the Python version, every package, the example files, the output direct
 python -m overboard.main -w examples/example_straight.json
 ```
 
-The 3-Pillar unified planner is the default, so no extra flag is needed; `--no-unified` (or its alias `--simple`) solves the stock candidate set with CasADi/IPOPT directly.
+The 3-Pillar unified planner is the only planner, so no extra flag is needed; the candidate set is its three frontier candidates and the CasADi/IPOPT optimizer is the backend it drives.
 
 ## Quick Start
 
@@ -334,8 +334,8 @@ python -m overboard.main --live -w examples/example_complex_mission.json
 ```text
 Usage: python -m overboard.main [OPTIONS]
 
-  FLL Trajectory Optimizer CLI. Generates time-optimal trajectories for Lego
-  robots.
+  FLL Trajectory Optimizer CLI. Generates time-optimal trajectories for
+  Lego robots.
 
   Examples:
     python -m overboard.main -w examples/example_straight.json
@@ -346,97 +346,90 @@ Usage: python -m overboard.main [OPTIONS]
 Options:
   -c, --config FILE               Path to the robot configuration file
                                   (.json).
-  -w, --waypoints FILE            Path to waypoints JSON file. Required unless
-                                  --gui or --doctor.
+  -w, --waypoints FILE            Path to waypoints JSON file. Required
+                                  unless --gui or --doctor.
   -o, --output TEXT               Output trajectory file path.
   --gui                           Open the browser studio: draw a mission,
                                   solve it, export it.
   --gui-port INTEGER              Port for the browser studio.
-  --doctor                        Check the install, dependencies, examples
-                                  and ports, then exit.
-  --simple                        Alias for --no-unified: solve the stock
-                                  candidate set with the CasADi/IPOPT
-                                  optimizer directly.
-  --preset [fast|balanced|safe]   Named starting point. fast: 1 candidate, no
-                                  validation. balanced: the defaults. safe: 3
-                                  candidates, --validate and a controller
-                                  export. Options you set yourself always win.
+  --doctor                        Check the install, dependencies,
+                                  examples and ports, then exit.
+  --simple                        (Deprecated: the 3-Pillar Unified
+                                  Trajectory Engine is the only planner.)
+                                  Accepted and ignored.
+  --preset [fast|balanced|safe]   Named starting point. fast: 1 candidate,
+                                  no validation. balanced: the defaults.
+                                  safe: 3 candidates, --validate and a
+                                  controller export. Options you set
+                                  yourself always win.
   -n, --samples INTEGER RANGE     Samples per segment.  [2<=x<=200]
   -a, --accuracy-weight FLOAT RANGE
-                                  Smoothness/accuracy weight (0 = pure time-
-                                  optimal).  [x>=0.0]
-  --force-weight FLOAT RANGE      Soft wheel-force and traction-utilization
-                                  penalty weight in the NLP objective (simple
-                                  solver only).  [x>=0.0]
-  --candidates INTEGER RANGE      Candidates to solve and compare. Each
-                                  candidate combines an initial-guess seed
-                                  (baseline, rolling, bow_left, bow_right,
-                                  turn_first) with the timing mode: by default
-                                  candidate 1 is equal-duration baseline,
-                                  candidate 2 is per-segment baseline, then
-                                  the remaining seeds alternate. Validation
-                                  picks the passing candidate with the best
-                                  fitness, then the fastest. Without
-                                  --validate only the first candidate is
-                                  solved. Use 1 for a single solve.  [x>=1]
-  --stop-waypoints TEXT           Comma-separated waypoint indices where robot
-                                  must stop (e.g., "2,5,7").
-  --events TEXT                   Comma-separated waypoint:event pairs (e.g.,
-                                  "2:lower_arm,5:release").
-  --per-segment-dt                Force each waypoint segment to have its own
-                                  sample interval (simple solver only). This
-                                  is the general timing model. By default
-                                  candidates mix both modes.
+                                  Smoothness/accuracy weight (0 = pure
+                                  time-optimal).  [x>=0.0]
+  --force-weight FLOAT RANGE      Soft wheel-force and traction-
+                                  utilization penalty weight in the NLP
+                                  objective.  [x>=0.0]
+  --candidates INTEGER RANGE      Candidates to solve and compare. The
+                                  planner produces the three frontier
+                                  candidates (sprint, sweeper,
+                                  exploratory); this says how many of them
+                                  are solved. Validation picks a passing
+                                  one: the fastest. Without --validate
+                                  only the first candidate is solved. Use
+                                  1 for a single solve.  [x>=1]
+  --stop-waypoints TEXT           Comma-separated waypoint indices where
+                                  robot must stop (e.g., "2,5,7").
+  --events TEXT                   Comma-separated waypoint:event pairs
+                                  (e.g., "2:lower_arm,5:release").
+  --per-segment-dt                Force each waypoint segment to have its
+                                  own sample interval. This is the general
+                                  timing model, and the one the planner
+                                  uses.
   --uniform-dt                    (Deprecated: equal-duration dt severely
-                                  penalizes variable-length segments) Force
-                                  one shared sample interval across all
-                                  segments.
-  --no-parallel                   Solve the candidates in this process instead
-                                  of in worker processes.
+                                  penalizes variable-length segments)
+                                  Force one shared sample interval across
+                                  all segments.
+  --no-parallel                   Solve the candidates in this process
+                                  instead of in worker processes.
   --workers INTEGER               Number of worker processes used to solve
                                   candidates in parallel.
-  --fast-polish                   Solve large missions faster. The warm-start
-                                  solve can crawl through thousands of IPOPT
-                                  iterations; this gives it an iteration
-                                  budget and finishes from that point with a
-                                  cold pass. Missions that solve inside the
-                                  budget return the same trajectory as before.
-  --sweep                         (Deprecated: 80 ms invariant mesh eliminates
-                                  manual grid sweep) Search the timing model
-                                  and accuracy weight grid.
+  --fast-polish                   Solve large missions faster. The warm-
+                                  start solve can crawl through thousands
+                                  of IPOPT iterations; this gives it an
+                                  iteration budget and finishes from that
+                                  point with a cold pass. Missions that
+                                  solve inside the budget return the same
+                                  trajectory as before.
+  --sweep                         (Deprecated: 80 ms invariant mesh
+                                  eliminates manual grid sweep) Search the
+                                  timing model and accuracy weight grid.
   --self-consistent / --no-self-consistent
                                   Plan a self-consistent trajectory: the
                                   samples are placed on the path the
-                                  trajectory's own (v, omega) profile traces,
-                                  so the headings are its tangents (simple
-                                  solver only). On by default (KI-026).
-  --unified / --no-unified        Run the 3-Pillar Unified Trajectory Engine
-                                  (default: on): Kinetic Frontier Seeds + 80
-                                  ms Invariant Mesh + Discretization-
-                                  Consistent Collocation.
-  --surrogate-polish              Run the 5-Layer Unified Surrogate-to-Truth
-                                  parallel pipeline: CasADi Discretization-
-                                  Aware Metric + Linear Epigraph Force Bounds
-                                  + Single-Process ThreadPoolExecutor +
-                                  Compiled float64 jax.lax.scan Reachability +
-                                  Differentiable Immrax Polish + Gate-
-                                  Certified Min-Time Selection.
-  --pyramid                       Multi-Fidelity "Screen-then-Refine" Pyramid:
-                                  vectorized JAX sieve over 100-350
-                                  hypotheses, topological clustering into
-                                  survivor seeds, and process-isolated
-                                  parallel IPOPT solves.
+                                  trajectory's own (v, omega) profile
+                                  traces, so the headings are its tangents
+                                  (simple solver only). On by default
+                                  (KI-026).
+  --unified / --no-unified        (Deprecated: the 3-Pillar Unified
+                                  Trajectory Engine is the only planner.)
+                                  Both spellings are accepted and ignored;
+                                  the engine always runs.
+  --surrogate-polish              (Deprecated: the engine is gone.)
+                                  Accepted and ignored.
+  --pyramid                       (Deprecated: the engine is gone.)
+                                  Accepted and ignored.
   --pyramid-candidates INTEGER RANGE
-                                  Number of top distinct homotopy finalists to
-                                  solve in parallel during --pyramid mode
-                                  (defaults to 10).  [x>=1]
-  --h-adaptive                    Adaptive mesh refinement (h-refinement):
-                                  selectively allocates higher node density
-                                  (8-10 nodes) to curved apex segments,
-                                  lowering forward-integration discretization
-                                  error to sub-centimeter levels (<1.0 cm).
-  --validate / --no-validate      Run validation and block export on failure
-                                  (requires JAX/Immrax).
+                                  (Deprecated: --pyramid is gone.)
+                                  Accepted and ignored.  [x>=1]
+  --h-adaptive                    (Deprecated: --pyramid is gone.)
+                                  Accepted and ignored.
+  --polish                        Optional post-solve gradient polish: the
+                                  reachability rollout is differentiated,
+                                  and the plan is re-solved with the
+                                  samples the gradient points at weighted
+                                  (requires JAX; off by default).
+  --validate / --no-validate      Run validation and block export on
+                                  failure (requires JAX/Immrax).
   --sysid-fit FILE                Optional sysid_fit.json digital-twin fit
                                   (requires --validate or --live).
   --export-format [none|controller|python|python-compact]
@@ -445,47 +438,50 @@ Options:
                                   format).
   --controller-dt FLOAT RANGE     Fixed timestep for controller export
                                   (seconds).  [0.001<=x<=1.0]
-  --control-dt FLOAT RANGE        The control period the validator models, in
-                                  seconds. The deployed controllers hold their
-                                  command for 20 ms, but a robot that cannot
-                                  sustain it runs slower; set this to the
-                                  period the robot actually achieves (the
-                                  pushed session reports it) so the gate is
-                                  measured against the controller that will
-                                  run.  [0.001<=x<=0.2]
-  --propagation [plant|tick]      Which reachability propagation the envelope
-                                  gate uses. "plant" is the default: the plant
-                                  is embedded and propagated, and the
-                                  controller is evaluated outside the
-                                  propagation, so the tube bounds an open-loop
-                                  plant driven by a pre-recorded command.
-                                  "tick" embeds one control tick of the closed
-                                  loop - controller, pose estimate and delayed
-                                  command inside the map - and propagates
-                                  that, so the feedback contracts the tube the
-                                  way the robot's does. It needs a Jacobian
-                                  inclusion and costs 7-10x the validation
-                                  time. The propagation in force is reported
-                                  with every candidate.
-  --benchmark                     Collect comprehensive benchmarking data for
-                                  whitepaper.
-  --push-hub                      Push the trajectory to a Pybricks hub and
-                                  run it there (needs pybricksdev and a hub
-                                  with Pybricks firmware).
+  --control-dt FLOAT RANGE        The control period the validator models,
+                                  in seconds. The deployed controllers
+                                  hold their command for 20 ms, but a
+                                  robot that cannot sustain it runs
+                                  slower; set this to the period the robot
+                                  actually achieves (the pushed session
+                                  reports it) so the gate is measured
+                                  against the controller that will run.
+                                  [0.001<=x<=0.2]
+  --propagation [plant|tick]      Which reachability propagation the
+                                  envelope gate uses. "plant" is the
+                                  default: the plant is embedded and
+                                  propagated, and the controller is
+                                  evaluated outside the propagation, so
+                                  the tube bounds an open-loop plant
+                                  driven by a pre-recorded command. "tick"
+                                  embeds one control tick of the closed
+                                  loop - controller, pose estimate and
+                                  delayed command inside the map - and
+                                  propagates that, so the feedback
+                                  contracts the tube the way the robot's
+                                  does. It needs a Jacobian inclusion and
+                                  costs 7-10x the validation time. The
+                                  propagation in force is reported with
+                                  every candidate.
+  --benchmark                     Collect comprehensive benchmarking data
+                                  for whitepaper.
+  --push-hub                      Push the trajectory to a Pybricks hub
+                                  and run it there (needs pybricksdev and
+                                  a hub with Pybricks firmware).
   --hub-conn [ble|usb]            How to reach the hub when pushing.
-  --hub-name TEXT                 Bluetooth name or address of the hub to push
-                                  to.
-  --hub-log FILE                  Write the hub console output to this file.
-                                  The runner reports the measured pose as a
-                                  POSE line in it.
+  --hub-name TEXT                 Bluetooth name or address of the hub to
+                                  push to.
+  --hub-log FILE                  Write the hub console output to this
+                                  file. The runner reports the measured
+                                  pose as a POSE line in it.
   --plot                          Plot the resulting trajectory.
   --animate                       Animate the trajectory in real-time.
-  --live                          Open the browser studio on this mission and
-                                  solve it there (blocking).
+  --live                          Open the browser studio on this mission
+                                  and solve it there (blocking).
   --show-convergence              Show convergence visualization.
-  --iteration-history FILE        Write the solver's iteration history to this
-                                  JSON file, for the studio to plot how the
-                                  trajectory converged.
+  --iteration-history FILE        Write the solver's iteration history to
+                                  this JSON file, for the studio to plot
+                                  how the trajectory converged.
   --convergence-mode [parallel|best|layered]
                                   Convergence visualization mode.
   -v, --verbose                   Show solver internals.

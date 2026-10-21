@@ -33,7 +33,7 @@
 
 > **Read RQ-A before changing the tracking gate, the reference interpolation, or the optimizer's kinematics.** It contains the measurements, the refuted hypotheses, and the four instrument bugs that produced convincing nonsense along the way.
 >
-> **Which planner these findings describe.** The numbers below are the **stock** candidate set - the five seeds of the `--no-unified` path - measured on the tree of 2026-10-20. The default path is the 3-Pillar unified engine with the three frontier candidates ([1.1](#11-the-default-system-the-3-pillar-unified-engine)); its own measurements are in [19.6](STRATEGY_LEDGER.md#196-the-3-pillar-unified-trajectory-engine---unified-the-default-path) and in `docs/OPTIMAL_CONTROL_DERIVATION.md`.
+> **Which planner these findings describe.** The numbers below are the **stock** candidate set - the five seeds that are now the rescue round - measured on the tree of 2026-10-20. The stock path itself was retired with the other multi-track paths; the only planner now is the 3-Pillar unified engine with the three frontier candidates ([1.1](#11-the-default-system-the-3-pillar-unified-engine)), and its own measurements are in [19.6](STRATEGY_LEDGER.md#196-the-3-pillar-unified-trajectory-engine---unified-the-default-path) and in `docs/OPTIMAL_CONTROL_DERIVATION.md`.
 
 ---
 
@@ -64,7 +64,7 @@ no strategy in the ledger is to be re-litigated without new evidence.
   - [1. Two heuristic systems](#1-two-heuristic-systems)
   - [2. What is not in the tree](#2-what-is-not-in-the-tree)
   - [3. The default path, end to end](#3-the-default-path-end-to-end)
-  - [4. The stock seed heuristics (`--no-unified`)](#4-the-stock-seed-heuristics---no-unified)
+  - [4. The stock seed heuristics](#4-the-stock-seed-heuristics)
   - [5. The timing models](#5-the-timing-models)
   - [6. Candidate set construction](#6-candidate-set-construction)
   - [7. Scoring and selection](#7-scoring-and-selection)
@@ -204,7 +204,7 @@ waypoints
 
 This is the default path (`--unified` is on). The three frontier candidates are `frontier_sprint` (accuracy weight 0.001), `frontier_sweeper` (0.002) and `frontier_exploratory` (0.001), all per-segment timing; `--candidates N` truncates that list, and without `--validate` only the first one is solved. The derivation of the seeds is in [19.5](STRATEGY_LEDGER.md#195-the-kinetic-frontier-analytical-seed-generator--the-5-physical-principles) and of the engine in [19.6](STRATEGY_LEDGER.md#196-the-3-pillar-unified-trajectory-engine---unified-the-default-path).
 
-### 1.1b The stock path (`--no-unified`)
+### 1.1b The stock path (retired)
 
 **Entry point:** `overboard/main.py` → `TrajectoryOptimizer.solve` (`overboard/core/optimizer.py`).
 
@@ -223,7 +223,23 @@ waypoints
    └─ export gate   : main.py              _export_block_reason
 ```
 
-This is the path the measurements in [Section 9](#9-measured-heuristic-comparison) describe. `--no-unified` (alias `--simple`) selects it, and so do `--uniform-dt`, `--per-segment-dt` and `--sweep`, which are deprecated and turn the unified engine off. The Multi-Verse system has been removed (git tag `archive/legacy-2026-10`); no CLI flag selects it.
+This is the path the measurements in [Section 9](#9-measured-heuristic-comparison) describe. It was selected with `--no-unified` (alias `--simple`); that path is retired, and so are `--uniform-dt`, `--per-segment-dt` and `--sweep` as selectors: the CLI accepts them, warns, and ignores them. The five seeds survive as the rescue round ([1.1c](#11c-the-rescue-round-ki-048)). The Multi-Verse system has been removed (git tag `archive/legacy-2026-10`); no CLI flag selects it.
+
+### 1.1c The rescue round (KI-048)
+
+**Entry point:** `overboard/main.py` -> `_run_candidate_rounds` -> `_rescue_specs`.
+
+When the planner's three candidates produce nothing usable - no candidate
+passes the gates, or (without validation) none converged - the CLI tries the
+seeds the set did not use before it gives the mission up. The five stock
+seeds (`baseline`, `rolling`, `bow_left`, `bow_right`, `turn_first`) are
+therefore still in the tree, and only there.
+
+The rescue uses the per-segment model on a validated run, because that is
+where the measured rescues came from, and the same model on an unvalidated
+one. A rescue candidate is only *selected* when the candidate set itself
+produced nothing that passed; it costs nothing when the plan works, and one
+parallel round of solves when it does not.
 
 ### 1.2 The archived system: Multi-Verse
 
@@ -242,7 +258,7 @@ This is the list a newcomer most needs, because it defines the whole research sp
 | **Obstacle or field geometry.** No walls, no mat boundaries, no zone constraints. | The robot is assumed to reach every waypoint in a straight line through space. |
 | **A geometric term in the objective.** The objective is duration plus an optional jerk penalty (`overboard/core/optimizer.py`, `_compute_cost`). | The optimizer has no idea what the path *looks* like. It is pushed along by the integration constraints and the endpoint equalities. Two paths of the same length and the same smoothness are indistinguishable to it. This is the root cause of many entries in [`STRATEGY_LEDGER.md`](STRATEGY_LEDGER.md) (Part III). |
 | **Topology search.** No search over forward/reverse/point-turn combinations per segment. | The reverse and point-turn topologies existed only inside the archived JAX candidate generator (`archive/legacy-2026-10:overboard/legacy/jax_optimizer.py`), which never reached the shipped solver. |
-| **Multi-start beyond the frontier triad.** | The default path solves three frontier candidates (sprint, sweeper, exploratory); the stock path (`--no-unified`) solves five deterministic seeds, all from the same straight-line geometry. |
+| **Multi-start beyond the frontier triad.** | The default path solves three frontier candidates (sprint, sweeper, exploratory); the retired stock path solved five deterministic seeds, all from the same straight-line geometry, and those seeds are now the rescue round. |
 | **A reachability term.** Reachability is computed *after* the solve. | The optimizer cannot know that a path it is about to find will fail the envelope gate. See [Section 14](#14-what-each-layer-proves-and-does-not-prove). |
 | **Motor or odometry dynamics in the optimizer.** | The optimizer is kinematic. The plant is modelled only in the validator. |
 
@@ -291,9 +307,9 @@ Then `_select_attempt` (`overboard/main.py`) picks one - the **shortest passing 
 
 The export gate (`overboard/main.py`) blocks the write if the solver did not converge, or if `--validate` was requested and the selected candidate did not pass. On a blocked export, **nothing is written**: no `.traj`, no controller JSON, no Python module, no `_stats.json`. A pre-existing file at the output path is left untouched.
 
-## 4. The stock seed heuristics (`--no-unified`)
+## 4. The stock seed heuristics
 
-The default path uses the three **frontier** seeds of [1.1](#11-the-default-system-the-3-pillar-unified-engine); the five seeds below are the stock set, selected with `--no-unified`. They are declared in one line (`overboard/core/optimizer.py`):
+The default path uses the three **frontier** seeds of [1.1](#11-the-default-system-the-3-pillar-unified-engine); the five seeds below are the stock set, retired with the stock path and kept only as the rescue round ([1.1c](#11c-the-rescue-round-ki-048)). They are declared in one line (`overboard/core/optimizer.py`):
 
 ```
 GUESS_STYLES = ("baseline", "rolling", "bow_left", "bow_right", "turn_first")
@@ -525,7 +541,7 @@ specs_to_solve = [
 
 `--candidates N` truncates the list when `N < 3`; an explicit `--accuracy-weight` overrides the three weights. The sample count defaults to the engine's invariant mesh (10-18 samples per segment, a 50 ms tick span) unless `--samples` says otherwise.
 
-### 6.2 The stock set (`--no-unified`)
+### 6.2 The stock set (retired)
 
 `_candidate_specs` (`overboard/main.py`) builds the stock set: a seed and a timing model per candidate, cycling through the two timing models and the five seeds.
 
@@ -651,8 +667,8 @@ In words:
 
 1. **Non-converged candidates are never eligible.** (KI-001)
 2. Among the passing candidates, the rule depends on the path:
-   - **the default path** (`--unified`, and also `--surrogate-polish` and `--pyramid`) sets `prefer_duration`: **the shortest duration wins**, and the envelope breaks ties. This is the *gate-certified minimum time* the unified engine was built for.
-   - **the stock path** (`--no-unified`) ranks by the **lowest 5-part fitness score** ([7.2](#72-the-5-part-path-fitness-score)), with the envelope and then the duration breaking ties.
+   - **the only path** sets `prefer_duration`: **the shortest duration wins**, and the envelope breaks ties. This is the *gate-certified minimum time* the unified engine was built for.
+   - the **5-part fitness score** ([7.2](#72-the-5-part-path-fitness-score)) is reported for every candidate, so the rule can be re-run offline, but it does not decide.
    - if no fitness was scored at all, the fallback is the smallest envelope, then the shortest duration.
 3. If none pass, the converged candidate with the **smallest quantified violation** wins, and `passed_any` is `False` - so the export is still blocked. The fallback exists to pick the most useful candidate to *report*, not to ship.
 
@@ -684,7 +700,7 @@ better planner.
 
 **Measured 2026-10-20**, against the tree with the arc-length sample layout, the self-consistent collocation on by default (KI-026, KI-051, KI-052) and the consolidated firmware (KI-028) in place. 60 candidate solves - 6 missions x 2 timing models x 5 seeds - plus the timing-mode x accuracy-weight grid. The raw logs are in `archive/research-2026-10:docs/measurements/2026-10-20-variable-samples/`, and the exact commands are in [Appendix A](#appendix-a--reproducing-every-table). The provenance (source hashes, environment, test state) is in [S0.4](#04-measurement-conventions).
 
-**These numbers describe the stock planner** - the `--no-unified` candidate set, measured before the 3-Pillar unified engine became the default. Re-measuring the matrix on the unified path is queued as [Q13](RESEARCH_AGENDA.md#q13--should-the-measured-matrix-be-re-measured-on-the-unified-path), and it waits for the optimizer to settle first. They are still the right record for the seeds, the timing models and the gates, and the unified engine's own numbers are in [19.6](STRATEGY_LEDGER.md#196-the-3-pillar-unified-trajectory-engine---unified-the-default-path) and in `docs/OPTIMAL_CONTROL_DERIVATION.md`. They are **not comparable** with the 2026-10-20-post-ki028 evidence, which was taken with the trapezoidal collocation and a uniform sample count. The changes and what they cost are in [5.7](#57-the-collocation-where-a-sample-is-placed), [5.8](#58-the-sample-layout-how-many-samples-a-segment-gets) and [7.2](#72-the-5-part-path-fitness-score); the measurement that produced this section is in `archive/research-2026-10:docs/measurements/2026-10-20-variable-samples/`, and the runner takes the tree's fingerprint before and after the run, so a run whose tree changed underneath it is refused rather than quoted.
+**These numbers describe the stock planner** - the retired candidate set, measured before the 3-Pillar unified engine became the default. Re-measuring the matrix on the unified path is queued as [Q13](RESEARCH_AGENDA.md#q13--should-the-measured-matrix-be-re-measured-on-the-unified-path), and it waits for the optimizer to settle first. They are still the right record for the seeds, the timing models and the gates, and the unified engine's own numbers are in [19.6](STRATEGY_LEDGER.md#196-the-3-pillar-unified-trajectory-engine---unified-the-default-path) and in `docs/OPTIMAL_CONTROL_DERIVATION.md`. They are **not comparable** with the 2026-10-20-post-ki028 evidence, which was taken with the trapezoidal collocation and a uniform sample count. The changes and what they cost are in [5.7](#57-the-collocation-where-a-sample-is-placed), [5.8](#58-the-sample-layout-how-many-samples-a-segment-gets) and [7.2](#72-the-5-part-path-fitness-score); the measurement that produced this section is in `archive/research-2026-10:docs/measurements/2026-10-20-variable-samples/`, and the runner takes the tree's fingerprint before and after the run, so a run whose tree changed underneath it is refused rather than quoted.
 
 **The "Selected" column is the fitness score's choice**, not the envelope's ([7.3](#73-the-selection-rule)): among the candidates that pass, the one with the lowest 5-part fitness score wins, with the envelope and the duration as tie-breakers. That is the **stock** set's rule - this matrix is the stock set's measurement (see the note above).
 
@@ -839,7 +855,7 @@ Run with `--per-segment-dt --sweep`, so the grid adds the `baseline` seed at fiv
 
 ### 9.6 Table E — the full sweep: what the tool can actually deliver
 
-The stock candidate set plus the timing-mode x accuracy-weight grid, both timing modes: **13 candidates per mission, 78 in total**. This is `--no-unified --candidates 5 --sweep`, the most thorough configuration the stock path offers.
+The stock candidate set plus the timing-mode x accuracy-weight grid, both timing modes: **13 candidates per mission, 78 in total**. This was `--no-unified --candidates 5 --sweep`, the most thorough configuration the stock path offered; the path and the sweep are retired, and the numbers are the record.
 
 | Mission | Wall | Passing | Selected | Duration s | Envelope cm | Tracking cm | Fastest passing |
 |---|---:|---:|---|---:|---:|---:|---|
@@ -1237,7 +1253,7 @@ to go looking.
 | `overboard/core/optimizer.py` | the CasADi/IPOPT optimizer and the five stock seeds | `TrajectoryOptimizer`, `solve`, `_solve_once`, `_compute_cost`, `_build_initial_guess`, `_guess_point`, `_offset_segment_interiors`, `_rotate_before_driving`, `_set_rolling_speeds`, `_sample_times`, `format_output`, `guess_from_samples`, `get_segment_sample_counts`, `get_adaptive_mesh_sample_counts`, `merge_conditions`, `GUESS_STYLES`, `CASADI_IPOPT_LOCK` |
 | `overboard/core/frontier_seed.py` | the analytical frontier seeds | `generate_frontier_seed`, `generate_canonical_seeds`, `compute_tangent_headings` |
 | `overboard/core/unified_planner.py` | the 3-Pillar unified engine | `UnifiedPathEngine`, `compute_invariant_mesh_samples`, `generate_seed`, `solve_candidate`, `plan` |
-| `overboard/core/surrogate_polish.py` | the 5-layer surrogate-to-truth pipeline | `generate_homotopy_bank`, `screen_candidates_jax`, `select_topological_representatives` |
+| `overboard/core/unified_planner.py` | the 3-Pillar engine: the candidate set, the seeds and the optional gradient polish | `candidate_specs`, `gradient_polish` |
 | `overboard/verification/validator.py` | the CPU audit | `forward_integrate`, `audit_constraints`, `compute_metrics`, `compute_path_fitness`, `check_final_waypoint`, `validate_samples`, `validate_trajectory` |
 | `overboard/verification/immrax_validator.py` | the closed-loop interval reachability check | `ImmraxValidator`, `validate_trajectory`, `compute_reachability`, `_interpolated_reference`, `RamseteController`, `RobotOpenLoop`, `DigitalTwinOpenLoop`, `ClosedLoopTickMap`, `PROPAGATION`, `PROPAGATIONS`, `CONTROL_DT`, `PLANT_SUBSTEPS` |
 | `overboard/verification/reachability_engine.py` | the compiled `jax.lax.scan` propagation | `CompiledReachabilityEngine`, `unroll_trajectory_headings` |

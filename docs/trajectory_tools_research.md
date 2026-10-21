@@ -7,7 +7,7 @@ trapezoidal rule - KI-026, KI-051, KI-052). It no longer uses SLSQP or scipy.min
 
 > **Current status (2026-10):** time-optimal solving, the jerk/accuracy weight, CPU validation, Immrax
 > reachability, stops/events, and controller export are implemented. The default solve path is the
-> 3-Pillar unified engine (`--unified`, `--no-unified` for the stock candidate set). The Multi-Verse
+> 3-Pillar unified engine (the only planner). The Multi-Verse
 > refinement and its JAX seed provider have been removed (git tag `archive/legacy-2026-10`) and have no CLI entry point
 > and nothing shipped imports them (KI-004). An optional fitted actuator/odometry plant
 > (`overboard/sysid/digital_twin.py` + `overboard/sysid/fit.py` + `--sysid-fit`) exists and models

@@ -28,7 +28,7 @@ The current tree contains uncommitted fixes for several safety and correctness i
 
 What is still incomplete:
 
-- The Multi-Verse pipeline was removed from the tree (git tag `archive/legacy-2026-10`) and has no CLI entry point (KI-004). The unified planner is the default solve path; `--no-unified` restores the stock candidate set.
+- The Multi-Verse pipeline was removed from the tree (git tag `archive/legacy-2026-10`) and has no CLI entry point (KI-004). The unified planner is the only planner; `--no-unified` and `--simple` are deprecated and ignored.
 - The validator is kinematic and has no motor, DriveBase, odometry, or slip dynamics (KI-020).
 - Whether a representative path passes the Immrax gate is a measurement that moves with the config and the planner (KI-020); the current pass/fail ledger is in `docs/HEURISTICS_AND_VERIFICATION.md`.
 - Convergence flags and some export edge cases remain open (KI-017). The random benchmarks work (KI-015).
@@ -49,7 +49,7 @@ What is still incomplete:
 | `overboard/core/optimizer.py` | CasADi/IPOPT trajectory optimizer (`TrajectoryOptimizer`) |
 | `overboard/core/frontier_seed.py` | Analytical Kinetic Frontier seed generator |
 | `overboard/core/unified_planner.py` | The 3-Pillar Unified Trajectory Engine (`UnifiedPathEngine`) |
-| `overboard/core/surrogate_polish.py` | The 5-layer surrogate-to-truth pipeline and the pyramid sieve |
+| `overboard/core/unified_planner.py` | The 3-Pillar engine: the candidate set, the seeds, and the optional gradient polish |
 | (removed) | The bootstrap/critic/JAX-refinement pipeline (`MasterTrajectoryOptimizer`) - git tag `archive/legacy-2026-10`; no CLI entry point |
 | `overboard/verification/validator.py` | CPU forward integration, constraint audit, metrics, final-waypoint and sample gates |
 | `overboard/verification/immrax_validator.py` | Interval reachability with the deployed Ramsete structure, plus optional fitted plant |
@@ -69,7 +69,7 @@ What is still incomplete:
 ### 2.2 CLI flow
 
 1. Parse the robot config and waypoints.
-2. Select `TrajectoryOptimizer` as the backend and, unless `--no-unified` is given, the 3-Pillar engine on top of it.
+2. Select the 3-Pillar engine (`overboard/core/unified_planner.py`); it produces the candidate set, and `TrajectoryOptimizer` is the backend it drives.
 3. Solve the first candidate.
 4. With `--validate`, run Immrax reachability on that candidate and score its envelope.
 5. With `--validate`, repeat for the remaining `--candidates` trajectories (default 2). With the stock set each candidate combines an initial-guess seed (`baseline`, `rolling`, `bow_left`, `bow_right`, `turn_first`) with a timing mode: by default candidate 1 is equal-duration baseline, candidate 2 is per-segment baseline, then the remaining seeds alternate. Select the passing converged candidate with the lowest 5-part path fitness score (the envelope, then the shortest duration, break ties); otherwise keep the converged one closest to passing for reporting.
@@ -459,7 +459,7 @@ Do not tune the 5 mm tracking or 2 cm envelope thresholds to one path. The strai
 
 The full option list is in `README.md` and `docs/CONFIGURATION.md`. Current truth:
 
-- The simple CasADi solver is the default backend; the 3-Pillar unified engine (`overboard/core/unified_planner.py`) is the default solve path, and `--no-unified` (alias `--simple`) restores the stock candidate set. The Multi-Verse pipeline was removed from the tree (git tag `archive/legacy-2026-10`).
+- The 3-Pillar unified engine (`overboard/core/unified_planner.py`) is the only planner and the CasADi/IPOPT optimizer is its backend; `--no-unified` (alias `--simple`) is deprecated and ignored. The Multi-Verse pipeline was removed from the tree (git tag `archive/legacy-2026-10`).
 - `--validate` requires JAX/Immrax and gates output. `--candidates N` (default 2) selects among the unified frontier candidates, or the seed/timing combinations of the stock set.
 - `--sysid-fit sysid_fit.json` opts into the fitted five-state plant; it requires `--validate` or `--live`.
 - `--export-format controller|python|python-compact` writes optional outputs after the gate.
@@ -684,8 +684,8 @@ The path-planning side of this list — the seed heuristics, the timing models, 
                               the unified one)
 --stop-waypoints TEXT          comma-separated stop indices
 --events TEXT                  comma-separated index:event pairs
---unified / --no-unified       the 3-Pillar engine (default) or the stock set
---simple                       alias for --no-unified
+--unified / --no-unified       deprecated: the 3-Pillar engine is the only planner
+--simple                       deprecated: the 3-Pillar engine is the only planner
 --per-segment-dt               force per-segment intervals; simple solver only
 --uniform-dt                   force one shared interval; deprecated
 --no-parallel                  solve candidates in this process
@@ -704,7 +704,7 @@ The path-planning side of this list — the seed heuristics, the timing models, 
 --propagation [plant|tick]     the reachability model the gate uses
 --pyramid, --pyramid-candidates, --h-adaptive
                               the JAX screen-then-refine pyramid (off by default)
---surrogate-polish             the 5-layer surrogate-to-truth pipeline
+--surrogate-polish             deprecated: the engine is gone
 --force-weight FLOAT           price wheel-force utilisation in the objective
 --convergence-mode             parallel | best | layered
 -v, --verbose                  show solver internals

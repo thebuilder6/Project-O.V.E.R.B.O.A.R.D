@@ -2,7 +2,7 @@
 
 This document provides practical examples for using the FLL Trajectory Optimizer.
 
-> **Optimizer choice:** CasADi/IPOPT is the backend and the 3-Pillar unified planner is the default path on top of it, so every example below works with a core `requirements.txt` install; `--no-unified` (alias `--simple`) runs the stock candidate set instead. The old Multi-Verse pipeline has been removed (git tag `archive/legacy-2026-10`) and has no CLI entry point. `--validate` needs JAX/Immrax. With `--validate`, `--candidates N` (default 2) solves N candidates and exports the passing one with the lowest fitness score; the candidates combine initial-guess seeds with uniform or per-segment timing (the unified path uses its three frontier candidates). Use `--candidates 1` for a single solve. Without `--validate`, only the first candidate is solved.
+> **Optimizer choice:** CasADi/IPOPT is the backend and the 3-Pillar unified planner is the only planner on top of it, so every example below works with a core `requirements.txt` install. The old Multi-Verse pipeline was removed (git tag `archive/legacy-2026-10`) and has no CLI entry point. `--validate` needs JAX/Immrax. With `--validate`, `--candidates N` (default 2) solves N of the planner's frontier candidates and exports the passing one with the shortest duration; the 5-part fitness score is reported for every candidate. Use `--candidates 1` for a single solve. Without `--validate`, only the first candidate is solved.
 
 ## Table of Contents
 
@@ -343,7 +343,7 @@ python -m overboard.main -c examples/fll_choreo.json -w waypoints.json -o high_r
 - `-n 10`: Good balance for most FLL paths
 - `-n 20`: Slower optimization, smoother curves, better for complex paths
 
-On the default (unified) path the three frontier candidates are solved and the fastest passing one is kept. On the stock set (`--no-unified`) the candidate loop mixes the two timing modes - candidate 1 is equal-duration baseline, candidate 2 is per-segment baseline - and selection keeps the passing candidate with the lowest fitness score. A waypoint is a legitimate timing boundary only when the robot stops there *and* the heading is pinned; at every other waypoint the per-segment model keeps the wheel force profile continuous through the point (KI-024). To force one mode for an experiment:
+The three frontier candidates are solved and the fastest passing one is kept. A waypoint is a legitimate timing boundary only when the robot stops there *and* the heading is pinned; at every other waypoint the per-segment model keeps the wheel force profile continuous through the point (KI-024).
 
 ```bash
 python -m overboard.main --per-segment-dt \
@@ -539,7 +539,7 @@ python -m overboard.main --uniform-dt --validate -c examples/fll_choreo.json \
   -w examples/example_mission_first4.json -o first4.traj --candidates 5
 ```
 
-The seeds are `baseline`, `rolling`, `bow_left`, `bow_right`, and `turn_first` (the stock set, `--no-unified`). The candidate table prints each candidate's duration and envelope, and selection keeps the passing one with the lowest fitness score (the envelope, then the shortest, break ties). On the first four waypoints of the complex mission all five uniform seeds pass; `baseline` wins at 2.176 s / 0.27 cm. On the full mission the baseline also wins (6.068 s / 1.22 cm); the other uniform seeds converge to slower, wider paths (8.1-8.7 s), so they are rejected. Without `--uniform-dt`, the default candidate 2 is per-segment baseline; it is faster (1.833 s on first4, where it is selected, and 4.650 s on the mission), but on the mission its tracking is 0.84 cm and its motor force is 0.074 N over the limit, so it is rejected there.
+The five seeds (`baseline`, `rolling`, `bow_left`, `bow_right`, `turn_first`) are the ones the rescue round tries when the planner's candidates produce nothing usable (KI-048); they are declared in one line (`overboard/core/optimizer.py`). The measurements below are the record of the stock candidate set, which was retired with the rest of the multi-track paths: on the first four waypoints of the complex mission all five uniform seeds passed, and `baseline` won at 2.176 s / 0.27 cm; on the full mission the baseline also won (6.068 s / 1.22 cm), the other uniform seeds converging to slower, wider paths (8.1-8.7 s), so they were rejected. The per-segment baseline was faster (1.833 s on first4, and 4.650 s on the mission), but on the mission its tracking was 0.84 cm and its motor force 0.074 N over the limit, so it was rejected there.
 
 From Python, pass `guess_style` to `solve`; the default `per_segment_dt=False` reproduces the uniform seed comparison:
 
@@ -850,7 +850,7 @@ The browser opens at `http://127.0.0.1:8000` (use `--gui-port` for a different p
 
 - The studio runs the same command line in the background, so the export gate, the validation rules and the file formats are identical to the terminal path. A failed validation shows the reason and offers no download.
 - It needs no extra packages and no internet connection.
-- It leaves the backend at the CLI default (`--unified` on) and forwards `--unified`/`--no-unified` when the page sets it; there is no Multi-Verse toggle.
+- It leaves the backend at the CLI default and forwards `--unified`/`--no-unified` when the page sets it; there is no Multi-Verse toggle.
 
 ---
 
