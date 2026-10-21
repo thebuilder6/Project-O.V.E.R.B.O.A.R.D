@@ -507,7 +507,6 @@ function applyOptionsToForm(options) {
     if (options.samples !== undefined) el('opt-samples').value = options.samples;
     if (options.accuracy_weight !== undefined) el('opt-accuracy').value = options.accuracy_weight;
     if (options.candidates !== undefined) el('opt-candidates').value = options.candidates;
-    if (options.timing !== undefined) el('opt-timing').value = options.timing;
     if (options.validate !== undefined) el('opt-validate').checked = options.validate;
     if (options.fast_polish !== undefined) el('opt-fast-polish').checked = options.fast_polish;
     if (options.export_format !== undefined) el('opt-export').value = options.export_format;
@@ -2001,37 +2000,15 @@ function drawGhostPath() {
 
 /* ------------------------------------------------- what to try next */
 
-/* The report names the timing model the way the CLI does: "per-segment" or
-   "equal-duration". The dropdown's own names are "per-segment", "uniform"
-   and "auto". A name the dropdown does not have leaves it blank, and a
-   blank dropdown means no timing flag at all, so the re-solve would run the
-   auto mode instead of the model the button names. */
-function timingOptionFor(timing) {
-    if (timing === 'equal-duration') return 'uniform';
-    return timing;
-}
-
 /* When a validation fails, name the lever that might fix it and offer to
- * pull it. The levers are the ones the measurements point at: the accuracy
- * weight and the timing model. */
+ * pull it. The lever is the one the measurements point at: the accuracy
+ * weight. The timing model is not a lever any more - the planner uses the
+ * per-segment model for every candidate. */
 function suggestFixes(report) {
     const fixes = [];
     if (!report || !report.candidates || !report.candidates.length) return fixes;
     const selected = report.candidates[(report.selected || 1) - 1] || report.candidates[0];
     if (selected && selected.ok) return fixes;
-
-    // A candidate that was faster but missed the gate: try its timing model.
-    const faster = report.candidates
-        .filter((entry) => !entry.ok && entry.duration_s !== null
-            && selected && entry.duration_s < selected.duration_s)
-        .sort((a, b) => a.duration_s - b.duration_s)[0];
-    if (faster && faster.timing && faster.timing !== selected.timing) {
-        fixes.push({
-            id: 'timing',
-            label: `the ${faster.timing} timing model`,
-            timing: timingOptionFor(faster.timing),
-        });
-    }
 
     // The tracking gate with no weight: a small weight smooths the profile.
     const tracking = report.candidates.some((entry) => (entry.reasons || [])
@@ -2041,16 +2018,11 @@ function suggestFixes(report) {
         fixes.push({ id: 'weight', label: 'a weight of 0.001', weight: 0.001 });
     }
 
-    if (!el('opt-sweep').checked) {
-        fixes.push({ id: 'sweep', label: 'sweep for the best', sweep: true });
-    }
     return fixes;
 }
 
 function applyFix(fix) {
-    if (fix.timing) el('opt-timing').value = fix.timing;
     if (fix.weight !== undefined) el('opt-accuracy').value = fix.weight;
-    if (fix.sweep) el('opt-sweep').checked = true;
     solve();
 }
 
@@ -2647,11 +2619,9 @@ function collectOptions() {
         samples: Number(el('opt-samples').value),
         accuracy_weight: Number(el('opt-accuracy').value),
         candidates: Number(el('opt-candidates').value),
-        timing: el('opt-timing').value,
         validate: el('opt-validate').checked,
         fast_polish: el('opt-fast-polish').checked,
         self_consistent: el('opt-self-consistent').checked,
-        sweep: el('opt-sweep').checked,
         iteration_history: true,
         sysid_fit: (el('opt-use-model').checked && state.model) ? state.model.path : null,
         export_format: el('opt-export').value,
@@ -2703,9 +2673,7 @@ async function solve() {
         return;
     }
     setBusy(true);
-    setStatus(el('opt-sweep').checked
-        ? 'Sweeping the timing model and weight - this solves ten candidates'
-        : 'Solving...');
+    setStatus('Solving...');
     el('result-status').textContent = 'Solving...';
     el('validate-row').hidden = true;
     el('log').textContent = '';
@@ -4051,7 +4019,7 @@ el('opt-validate').addEventListener('change', () => {
     scheduleSessionSave();
 });
 
-['opt-samples', 'opt-accuracy', 'opt-candidates', 'opt-timing', 'opt-export', 'opt-controller-dt']
+['opt-samples', 'opt-accuracy', 'opt-candidates', 'opt-export', 'opt-controller-dt']
     .forEach((id) => el(id).addEventListener('change', () => {
         updateCandidatesHint();
         syncPresetRadio();

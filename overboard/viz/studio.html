@@ -235,14 +235,6 @@
             <input type="number" id="opt-candidates" min="1" max="5" step="1" value="2">
           </label>
           <label class="field">
-            <span>Timing mode</span>
-            <select id="opt-timing">
-              <option value="auto" selected>Auto (mixed)</option>
-              <option value="uniform">Equal duration</option>
-              <option value="per-segment">Per segment</option>
-            </select>
-          </label>
-          <label class="field">
             <span>Export format</span>
             <select id="opt-export">
               <option value="none" selected>None</option>
@@ -266,10 +258,6 @@
           <label class="check">
             <input type="checkbox" id="opt-self-consistent" checked>
             <span>Self-consistent samples (on the path's own profile)</span>
-          </label>
-          <label class="check">
-            <input type="checkbox" id="opt-sweep">
-            <span>Sweep the timing model and weight (10 solves, slow)</span>
           </label>
         </details>
       </section>

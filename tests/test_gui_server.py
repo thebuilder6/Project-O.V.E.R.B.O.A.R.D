@@ -870,13 +870,15 @@ class TestStudioHelpers(unittest.TestCase):
         self.assertNotIn("--unified", command)
         self.assertNotIn("--no-unified", command)
 
-    def test_unified_can_be_turned_on_and_off_explicitly(self):
+    def test_there_is_no_planner_choice_to_forward(self):
+        """The 3-Pillar engine is the only planner, so the studio has no toggle."""
         base = (Path("."), Path("c.json"), Path("w.json"), Path("o.traj"))
-        command = gui_server.build_command(*base, {"samples": 10, "unified": True})
-        self.assertIn("--unified", command)
-
-        command = gui_server.build_command(*base, {"samples": 10, "unified": False})
-        self.assertIn("--no-unified", command)
+        for options in ({"samples": 10},
+                        {"samples": 10, "unified": True},
+                        {"samples": 10, "unified": False}):
+            command = gui_server.build_command(*base, options)
+            self.assertNotIn("--unified", command)
+            self.assertNotIn("--no-unified", command)
 
     def test_fast_polish_is_passed_through(self):
         command = gui_server.build_command(

@@ -388,11 +388,6 @@ def build_command(job_dir, config_path, waypoints_path, output_path, options):
     elif options.get("self_consistent"):
         command.append("--self-consistent")
 
-    # Leave the flag out when the caller has no preference, so the CLI default
-    # applies. An explicit false must be forwarded: --unified is now the default.
-    if "unified" in options:
-        command.append("--unified" if options["unified"] else "--no-unified")
-
     # The iteration history is always requested: the studio's convergence
     # plot and its candidate explainer both read it, and without it the
     # browser shows nothing about how the solve converged.
