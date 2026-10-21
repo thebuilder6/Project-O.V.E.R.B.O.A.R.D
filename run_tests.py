@@ -88,6 +88,11 @@ from tests.test_validator_model import (
     TestUnifiedReachabilityAndDrivetrainParity,
 )
 from tests.test_paths import TestCanonicalPaths
+from tests.test_polish import (
+    TestPlannerCandidateSet,
+    TestReachabilityEngine,
+    TestGradientPolish,
+)
 from tests.test_envelope_soundness import (
     TestNoPhantomTurnRate,
     TestTheBoxContainsTheReachableSet,
@@ -192,14 +197,12 @@ from tests.test_regressions import (
     TestSegmentLimits,
     TestExportConfig,
     TestAttemptSelection,
-    TestCandidateSpecs,
     TestReachabilityEnvelope,
     TestBenchmarkValidationConfig,
     TestExportGate,
     TestValidatorGates,
     TestWriteGateIntegration,
     TestOpenLoopModel,
-    TestSweepSpecs,
 )
 
 # JAX-dependent tests (skip if jax is not installed)
@@ -221,15 +224,13 @@ def test_classes():
         TestGearedSpeedLimit,
         TestEventNameEscaping,
         TestAttemptSelection,
-        TestCandidateSpecs,
-        TestReachabilityEnvelope,
+            TestReachabilityEnvelope,
         TestBenchmarkValidationConfig,
         TestExportGate,
         TestValidatorGates,
         TestWriteGateIntegration,
         TestOpenLoopModel,
-        TestSweepSpecs,
-        TestTrajectoryOptimizer,
+            TestTrajectoryOptimizer,
         TestRobotConfig,
         TestUniversalRobotConfig,
         TestDifferentialDriveModel,
@@ -309,6 +310,9 @@ def test_classes():
         TestHeadingMetric,
         TestUnifiedReachabilityAndDrivetrainParity,
         TestCanonicalPaths,
+        TestPlannerCandidateSet,
+        TestReachabilityEngine,
+        TestGradientPolish,
         TestNoPhantomTurnRate,
         TestTheBoxContainsTheReachableSet,
         TestTheTickPropagation,

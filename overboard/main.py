@@ -141,46 +141,35 @@ def _select_attempt(attempts, prefer_duration: bool = False):
 
 
 
+# The fallback seeds, in the order they are tried when the planner's own
+# candidates produce nothing usable (KI-048). The order is the priority: the
+# seeds that change the geometry come first, because those are the ones that
+# can find a different optimum; the plain baseline is last, because it is the
+# guess the planner's candidates already beat.
+FALLBACK_CANDIDATE_STYLES = ("rolling", "bow_left", "bow_right", "turn_first",
+                             "baseline")
+
 # Thread limits handed to the candidate worker processes. Several candidates
 # solve at the same time, so each one keeps a single compute thread.
 _THREAD_ENV_VARS = ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS",
                     "NUMEXPR_NUM_THREADS")
 
 
-def _rescue_specs(specs, base_weight, dt_mode, validated):
-    """The candidates to try when the run would otherwise produce nothing.
+def _fallback_specs(accuracy_weight):
+    """The fallback batch: the seeds the planner's candidates cannot provide.
 
-    With validation, nothing passed the gates; without it, nothing
-    converged. Either way the mission ends with no trajectory, and the
-    planner's own candidates cannot help: they are three variants of the
-    same frontier family, so the other seeds are never tried (KI-048).
-
-    The rescue is the seeds the set did not use. On a validated run it uses
-    the per-segment model, because that is where the measured rescues came
-    from: of the eighteen mission-robot pairs the default set lost on
-    random paths, the full stock set rescued two, both of them per-segment,
-    and the other seeds' equal-duration candidates rescued none (the stress
-    run of 2026-10-20). On an unvalidated run the model is not changed: the
-    operator asked for one plan without a check, so the rescue is the same
-    plan from a different starting point.
+    The planner's own candidates are three variants of one frontier family,
+    so when none of them works the other seeds have to be tried (KI-048).
+    The timing model is per-segment, because that is where the measured
+    rescues came from: of the eighteen mission-robot pairs the planner's
+    candidates lost on random paths, the stock set rescued two, both of them
+    per-segment, and the equal-duration candidates rescued none (the stress
+    run of 2026-10-20).
     """
-    used = {spec["guess_style"] for spec in specs}
-    if validated and dt_mode != "uniform":
-        modes = [True]
-    else:
-        modes = []
-        for spec in specs:
-            mode = bool(spec.get("per_segment_dt", False))
-            if mode not in modes:
-                modes.append(mode)
-    rescue = []
-    for style in GUESS_STYLES:
-        if style in used:
-            continue
-        for mode in modes:
-            rescue.append({"accuracy_weight": base_weight,
-                           "guess_style": style, "per_segment_dt": mode})
-    return rescue
+    return [{"accuracy_weight": accuracy_weight,
+             "guess_style": style,
+             "per_segment_dt": True}
+            for style in FALLBACK_CANDIDATE_STYLES]
 
 
 def _solve_candidate_worker(payload):
@@ -297,8 +286,6 @@ class _SolveContext:
     fast_polish: bool
     workers: int
     no_parallel: bool
-    live: bool
-    show_convergence: bool
     planner: Any
     polish: bool
     optimizer: Any
@@ -306,14 +293,12 @@ class _SolveContext:
     def may_run_parallel(self, payload_count):
         """True when the candidates may be solved in worker processes.
 
-        The live view and the convergence plot both need the solver in this
-        process, so those runs stay sequential. Worker processes import the
-        optimizer module themselves, so an injected or patched optimizer would
-        be ignored there: only the stock solver may run in a worker.
+        Worker processes import the optimizer module themselves, so an
+        injected or patched optimizer would be ignored there: only the stock
+        solver may run in a worker.
         """
         stock_optimizer = type(self.optimizer).__module__ == "overboard.core.optimizer"
-        return (payload_count > 1 and not self.live and not self.show_convergence
-                and not self.no_parallel and stock_optimizer)
+        return (payload_count > 1 and not self.no_parallel and stock_optimizer)
 
 
 def _solve_payloads(specs, ctx):
@@ -640,7 +625,7 @@ def _apply_preset(ctx, preset, values):
 def _studio_options(samples, accuracy_weight, candidates, dt_mode, validate,
                     export_format, controller_dt, fast_polish, sysid_fit=None,
                     hub_conn=None, hub_name=None, self_consistent=True):
-    """The options the studio starts with, so --live reproduces this run."""
+    """The options the studio starts with, so a run in the studio is the same run."""
     return {
         "samples": samples,
         "accuracy_weight": accuracy_weight,
@@ -906,7 +891,7 @@ class _ScoreContext:
 
 
 def _record_candidate(spec, solve_result, cand_idx, batch_len, histories, *,
-                      is_rescue, sweep, quiet):
+                      is_rescue, quiet):
     """Turn one solver result into an attempt record and announce it."""
     accuracy_weight = spec["accuracy_weight"]
     guess_style = spec["guess_style"]
@@ -915,9 +900,8 @@ def _record_candidate(spec, solve_result, cand_idx, batch_len, histories, *,
         number = (f"Rescue {cand_idx + 1}/{batch_len}" if is_rescue
                   else f"Candidate {cand_idx + 1}/{batch_len}")
         timing = "per-segment" if per_segment_dt else "equal-duration"
-        weight = f", a={accuracy_weight:g}" if sweep else ""
         click.echo(f"{number} "
-                   f"(guess_style={guess_style}, {timing} dt{weight})...")
+                   f"(guess_style={guess_style}, {timing} dt, aw={accuracy_weight})...")
 
     samples_data, stats = solve_result
     return {
@@ -1126,16 +1110,18 @@ def _score_attempt(attempt_record, ctx):
     return not ctx.validate
 
 
-def _run_candidate_rounds(specs_to_solve, solve_ctx, score_ctx, *,
-                          accuracy_weight, dt_mode, use_validation, sweep, quiet):
-    """Solve the candidate set, then the unused seeds as a rescue (KI-048).
+def _run_candidates(specs_to_solve, solve_ctx, score_ctx, *,
+                     accuracy_weight, use_validation, quiet):
+    """Solve the candidate set, then the fallback seeds if nothing usable came out.
 
-    The first round is the candidate set; if it produced nothing usable the
-    seeds the set did not use are tried before the mission is given up on.
+    The planner's own candidates come first. If they produced nothing usable
+    - no candidate passed the gates, or (without validation) none converged -
+    the fallback seeds are tried once, in priority order (KI-048). The rescue
+    costs nothing when the plan works.
     """
-    all_attempts = []
+    attempts = []
     batch = list(specs_to_solve)
-    is_rescue = False
+    is_fallback = False
     while batch:
         solved, histories = _dispatch_solve(batch, solve_ctx)
         if solve_ctx.polish:
@@ -1143,30 +1129,27 @@ def _run_candidate_rounds(specs_to_solve, solve_ctx, score_ctx, *,
         for cand_idx, (spec, solve_result) in enumerate(zip(batch, solved)):
             record = _record_candidate(
                 spec, solve_result, cand_idx, len(batch), histories,
-                is_rescue=is_rescue, sweep=sweep, quiet=quiet)
-            all_attempts.append(record)
+                is_rescue=is_fallback, quiet=quiet)
+            attempts.append(record)
             if _score_attempt(record, score_ctx):
                 break
 
         # Did the run produce something usable? With validation that means a
         # candidate that passed every gate; without it, a candidate that
         # converged.
-        usable = [a for a in all_attempts
+        usable = [a for a in attempts
                   if (a.get("ok") if use_validation else a.get("converged"))]
-        if usable or is_rescue:
+        if usable or is_fallback:
             break
-        batch = _rescue_specs(specs_to_solve, accuracy_weight,
-                              dt_mode, use_validation)
-        if not batch:
-            break
-        is_rescue = True
+        is_fallback = True
+        batch = _fallback_specs(accuracy_weight)
         if not quiet:
             if use_validation:
-                click.echo("  No candidate passed the gates; trying the other "
-                           "seeds.")
+                click.echo("  No candidate passed the gates; trying the "
+                           "fallback seeds.")
             else:
-                click.echo("  No candidate converged; trying the other seeds.")
-    return all_attempts
+                click.echo("  No candidate converged; trying the fallback seeds.")
+    return attempts
 
 
 def _polish_candidates(solved, ctx):
@@ -1199,7 +1182,7 @@ def _polish_candidates(solved, ctx):
     return polished
 
 
-def _choose_attempt(all_attempts, *, validate, prefer_duration, sweep, quiet, samples):
+def _choose_attempt(all_attempts, *, validate, prefer_duration, quiet, samples):
     """Pick the attempt to export and print the candidate table.
 
     Returns ``(samples_data, stats, passed, reasons, tube, selected_index)``.
@@ -1207,16 +1190,10 @@ def _choose_attempt(all_attempts, *, validate, prefer_duration, sweep, quiet, sa
     if validate:
         # Never silently export a failed candidate: prefer a passing one with
         # the smallest envelope, otherwise the converged candidate closest to
-        # passing. A rescue candidate is insurance: it is only chosen when the
-        # candidate set itself produced nothing that passed.
-        primary = [a for a in all_attempts if not a.get("rescue")]
-        rescue = [a for a in all_attempts if a.get("rescue")]
-        best, passed_any = _select_attempt(primary, prefer_duration=prefer_duration)
-        if not passed_any and rescue:
-            rescue_best, rescue_passed = _select_attempt(
-                rescue, prefer_duration=prefer_duration)
-            if rescue_passed or best is None:
-                best, passed_any = rescue_best, rescue_passed
+        # passing. A fallback candidate is insurance: it is only in the list
+        # when the planner's own candidates produced nothing that passed
+        # (KI-048), so it cannot win over a passing one.
+        best, passed_any = _select_attempt(all_attempts, prefer_duration=prefer_duration)
         if best is None:
             raise click.ClickException(
                 f"Solver did not converge on any of the {len(all_attempts)} "
@@ -1234,9 +1211,8 @@ def _choose_attempt(all_attempts, *, validate, prefer_duration, sweep, quiet, sa
                 # Name the mode by what it constrains, and show how the time
                 # was split, so a uniform win is self-explanatory (KI-022).
                 timing = "per-seg" if a.get("per_segment_dt") else "equal-dur"
-                weight = f", a={a.get('accuracy_weight', 0.0):g}" if sweep else ""
                 label = (f"Candidate {k} ({a.get('guess_style', 'baseline')}, "
-                         f"{timing}{weight})")
+                         f"{timing})")
                 click.echo(f"  {label}: "
                            f"{a.get('duration', float('inf')):6.3f} s, "
                            f"{score} ({state})")
@@ -1323,8 +1299,7 @@ def _write_outputs(output, samples_data, stats, config_data, robot_cfg, *,
 
 
 def _render(output, samples_data, wps, optimizer, all_attempts, selected_index, *,
-            plot, animate, show_convergence, convergence_mode, iteration_history,
-            quiet):
+            plot, animate, iteration_history, quiet):
     """Draw the requested views and write the iteration history."""
     if plot:
         from overboard.viz.plotter import plot_trajectory, plot_reachability_envelope
@@ -1347,13 +1322,6 @@ def _render(output, samples_data, wps, optimizer, all_attempts, selected_index, 
         from overboard.viz.animated_plotter import animate_trajectory
         animate_trajectory(samples_data, waypoints=wps,
                            title=f"Trajectory: {os.path.basename(output)}")
-
-    if show_convergence:
-        if hasattr(optimizer, 'iteration_history') and optimizer.iteration_history:
-            from overboard.viz.convergence_plotter import plot_convergence
-            plot_convergence(optimizer.iteration_history, mode=convergence_mode,
-                             waypoints=wps,
-                             title=f"Convergence: {os.path.basename(output)}")
 
     if iteration_history:
         # The way the trajectory converged, for a tool that plots it.
@@ -1395,7 +1363,7 @@ def _render(output, samples_data, wps, optimizer, all_attempts, selected_index, 
               help='Port for the browser studio.')
 @click.option('--doctor', is_flag=True,
               help='Check the install, dependencies, examples and ports, then exit.')
-@click.option('--simple', is_flag=True,
+@click.option('--simple', is_flag=True, hidden=True,
               help='(Deprecated: the 3-Pillar Unified Trajectory Engine is the only planner.) '
                    'Accepted and ignored.')
 @click.option('--preset', type=click.Choice(['fast', 'balanced', 'safe'], case_sensitive=False),
@@ -1411,7 +1379,7 @@ def _render(output, samples_data, wps, optimizer, all_attempts, selected_index, 
               help='Smoothness/accuracy weight (0 = pure time-optimal).')
 @click.option('--force-weight', default=0.0, type=click.FloatRange(min=0.0),
               help='Soft wheel-force and traction-utilization penalty weight in the NLP '
-                   'objective (simple solver only).')
+                   'objective.')
 @click.option('--candidates', default=2, type=click.IntRange(min=1),
               help='Candidates to solve and compare. The planner produces the three '
                    'frontier candidates (sprint, sweeper, exploratory); this says how '
@@ -1425,9 +1393,9 @@ def _render(output, samples_data, wps, optimizer, all_attempts, selected_index, 
 
 # --- Optimizer Strategy ---
 @click.option('--per-segment-dt', is_flag=True,
-              help='Force each waypoint segment to have its own sample interval (simple solver only). '
-                   'This is the general timing model. By default candidates mix both modes.')
-@click.option('--uniform-dt', is_flag=True,
+              help='Force each waypoint segment to have its own sample interval. '
+                   'This is the general timing model, and the one the planner uses.')
+@click.option('--uniform-dt', is_flag=True, hidden=True,
               help='(Deprecated: equal-duration dt severely penalizes variable-length segments) '
                    'Force one shared sample interval across all segments.')
 @click.option('--no-parallel', is_flag=True,
@@ -1439,23 +1407,24 @@ def _render(output, samples_data, wps, optimizer, all_attempts, selected_index, 
                    'IPOPT iterations; this gives it an iteration budget and finishes from that point '
                    'with a cold pass. Missions that solve inside the budget return the same '
                    'trajectory as before.')
-@click.option('--sweep', is_flag=True,
+@click.option('--sweep', is_flag=True, hidden=True,
               help='(Deprecated: 80 ms invariant mesh eliminates manual grid sweep) '
                    'Search the timing model and accuracy weight grid.')
 @click.option('--self-consistent/--no-self-consistent', default=True,
               help='Plan a self-consistent trajectory: the samples are placed on the path the '
                    'trajectory\'s own (v, omega) profile traces, so the headings are its tangents '
                    '(simple solver only). On by default (KI-026).')
-@click.option('--unified/--no-unified', default=True,
+@click.option('--unified/--no-unified', default=True, hidden=True,
               help='(Deprecated: the 3-Pillar Unified Trajectory Engine is the only planner.) '
                    'Both spellings are accepted and ignored; the engine always runs.')
-@click.option('--surrogate-polish', is_flag=True,
+@click.option('--surrogate-polish', is_flag=True, hidden=True,
               help='(Deprecated: the engine is gone.) Accepted and ignored.')
-@click.option('--pyramid', is_flag=True, default=False,
+@click.option('--pyramid', is_flag=True, default=False, hidden=True,
               help='(Deprecated: the engine is gone.) Accepted and ignored.')
 @click.option('--pyramid-candidates', default=None, type=click.IntRange(min=1),
+              hidden=True,
               help='(Deprecated: --pyramid is gone.) Accepted and ignored.')
-@click.option('--h-adaptive', is_flag=True, default=False,
+@click.option('--h-adaptive', is_flag=True, default=False, hidden=True,
               help='(Deprecated: --pyramid is gone.) Accepted and ignored.')
 @click.option('--polish', is_flag=True,
               help='Optional post-solve gradient polish: the reachability rollout is '
@@ -1466,7 +1435,7 @@ def _render(output, samples_data, wps, optimizer, all_attempts, selected_index, 
 @click.option('--validate/--no-validate', default=False,
               help='Run validation and block export on failure (requires JAX/Immrax).')
 @click.option('--sysid-fit', type=click.Path(exists=True, dir_okay=False), default=None,
-              help='Optional sysid_fit.json digital-twin fit (requires --validate or --live).')
+              help='Optional sysid_fit.json digital-twin fit (requires --validate).')
 @click.option('--export-format', type=click.Choice(['none', 'controller', 'python', 'python-compact'], case_sensitive=False),
               default='none', help='Export format for controller consumption (python-compact is the packed Pybricks format).')
 @click.option('--controller-dt', default=0.02, type=click.FloatRange(min=0.001, max=1.0),
@@ -1506,14 +1475,9 @@ def _render(output, samples_data, wps, optimizer, all_attempts, selected_index, 
 # --- Visualization ---
 @click.option('--plot', is_flag=True, help='Plot the resulting trajectory.')
 @click.option('--animate', is_flag=True, help='Animate the trajectory in real-time.')
-@click.option('--live', is_flag=True,
-              help='Open the browser studio on this mission and solve it there (blocking).')
-@click.option('--show-convergence', is_flag=True, help='Show convergence visualization.')
 @click.option('--iteration-history', type=click.Path(dir_okay=False), default=None,
               help='Write the solver\'s iteration history to this JSON file, for the '
                    'studio to plot how the trajectory converged.')
-@click.option('--convergence-mode', type=click.Choice(['parallel', 'best', 'layered'], case_sensitive=False),
-              default='best', help='Convergence visualization mode.')
 
 # --- Miscellaneous ---
 @click.option('-v', '--verbose', is_flag=True, help='Show solver internals.')
@@ -1524,7 +1488,7 @@ def main(ctx, config, waypoints, output, gui, gui_port, doctor, simple, preset,
          no_parallel, workers, fast_polish, sweep, self_consistent, unified, surrogate_polish, pyramid, pyramid_candidates, h_adaptive, polish, validate,
          sysid_fit, export_format, controller_dt, control_dt, propagation, benchmark,
          push_hub, hub_conn, hub_name, hub_log,
-         plot, animate, live, show_convergence, convergence_mode, iteration_history,
+         plot, animate, iteration_history,
          verbose, quiet):
     """
     FLL Trajectory Optimizer CLI.
@@ -1583,7 +1547,7 @@ def main(ctx, config, waypoints, output, gui, gui_port, doctor, simple, preset,
         from overboard.diagnostics import run_doctor
         raise SystemExit(run_doctor(config_path=config))
 
-    if waypoints is None and not (gui or live):
+    if waypoints is None and not gui:
         raise click.UsageError(
             "Missing option '-w' / '--waypoints'. "
             "Example: python -m overboard.main -w examples/example_straight.json"
@@ -1607,23 +1571,14 @@ def main(ctx, config, waypoints, output, gui, gui_port, doctor, simple, preset,
 
     dt_mode = "uniform" if uniform_dt else "per-segment"
 
-    if gui or live:
-        if gui and live:
-            raise click.ClickException(
-                "--gui and --live both open the studio; use one of them."
-            )
-        if live and waypoints is None:
-            raise click.UsageError(
-                "Missing option '-w' / '--waypoints'. "
-                "Example: python -m overboard.main --live -w examples/example_straight.json"
-            )
+    if gui:
         if plot or animate:
             raise click.ClickException(
-                "--gui and --live cannot be combined with --plot or --animate."
+                "--gui cannot be combined with --plot or --animate."
             )
         from overboard.gui_server import run_studio
         run_studio(config_path=config, waypoints_path=waypoints,
-                   port=gui_port, presets=PRESETS, auto_solve=live,
+                   port=gui_port, presets=PRESETS, auto_solve=False,
                    options=_studio_options(samples, accuracy_weight, candidates,
                                            dt_mode, validate, export_format,
                                            controller_dt, fast_polish, sysid_fit,
@@ -1640,9 +1595,9 @@ def main(ctx, config, waypoints, output, gui, gui_port, doctor, simple, preset,
 
     digital_twin = None
     if sysid_fit:
-        if not (validate or live):
+        if not validate:
             raise click.ClickException(
-                "--sysid-fit requires --validate or --live so the fitted model is used."
+                "--sysid-fit requires --validate so the fitted model is used."
             )
         if not HAS_JAX:
             raise click.ClickException(
@@ -1782,7 +1737,7 @@ def main(ctx, config, waypoints, output, gui, gui_port, doctor, simple, preset,
             f"{dt_label})..."
         )
 
-    capture_iterations = show_convergence or bool(iteration_history)
+    capture_iterations = bool(iteration_history)
 
     # --- CANDIDATE LOOP (validate and select; KI-020) ---
     # The planner owns the candidate set: the homotopy triad, each with its
@@ -1821,8 +1776,6 @@ def main(ctx, config, waypoints, output, gui, gui_port, doctor, simple, preset,
         fast_polish=fast_polish,
         workers=workers,
         no_parallel=no_parallel,
-        live=live,
-        show_convergence=show_convergence,
         planner=planner,
         polish=polish,
         optimizer=optimizer,
@@ -1840,16 +1793,16 @@ def main(ctx, config, waypoints, output, gui, gui_port, doctor, simple, preset,
         control_dt=control_dt,
         quiet=quiet,
     )
-    all_attempts = _run_candidate_rounds(
+    all_attempts = _run_candidates(
         specs_to_solve, solve_ctx, score_ctx,
-        accuracy_weight=accuracy_weight, dt_mode=dt_mode,
-        use_validation=use_validation, sweep=sweep, quiet=quiet)
+        accuracy_weight=accuracy_weight,
+        use_validation=use_validation, quiet=quiet)
 
     (samples_data, stats, attempt_passed, best_reasons, selected_tube,
      selected_index) = _choose_attempt(
         all_attempts, validate=validate,
         prefer_duration=True,
-        sweep=sweep, quiet=quiet, samples=samples)
+        quiet=quiet, samples=samples)
 
     if use_validation:
         # The studio reads this to show which part of the path failed.
@@ -1900,8 +1853,7 @@ def main(ctx, config, waypoints, output, gui, gui_port, doctor, simple, preset,
         _push_to_hub(output, hub_conn, hub_name, hub_log, quiet)
 
     _render(output, samples_data, wps, optimizer, all_attempts, selected_index,
-            plot=plot, animate=animate, show_convergence=show_convergence,
-            convergence_mode=convergence_mode, iteration_history=iteration_history,
+            plot=plot, animate=animate, iteration_history=iteration_history,
             quiet=quiet)
 
 

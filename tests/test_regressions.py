@@ -218,89 +218,6 @@ class TestAttemptSelection(unittest.TestCase):
         self.assertEqual(best["samples"], "passed")
 
 
-class TestCandidateSpecs(unittest.TestCase):
-    """KI-020: candidates are an ordered, scored set, not silent escalation."""
-
-    def setUp(self):
-        from overboard.main import _candidate_specs
-        self.specs = _candidate_specs
-
-    def test_auto_alternates_timing_modes_per_seed(self):
-        specs = self.specs(0.0, 5)
-        self.assertEqual([s["guess_style"] for s in specs],
-                         ["baseline", "baseline", "rolling", "rolling", "bow_left"])
-        self.assertEqual([s["per_segment_dt"] for s in specs],
-                         [False, True, False, True, False])
-        self.assertEqual([s["accuracy_weight"] for s in specs], [0.0] * 5)
-
-    def test_uniform_mode_uses_seeds_without_per_segment_timing(self):
-        specs = self.specs(0.0, 3, dt_mode="uniform")
-        self.assertEqual([s["guess_style"] for s in specs],
-                         ["baseline", "rolling", "bow_left"])
-        self.assertTrue(all(not s["per_segment_dt"] for s in specs))
-
-    def test_per_segment_mode_uses_seeds_with_per_segment_timing(self):
-        specs = self.specs(0.0, 3, dt_mode="per-segment")
-        self.assertEqual([s["guess_style"] for s in specs],
-                         ["baseline", "rolling", "bow_left"])
-        self.assertTrue(all(s["per_segment_dt"] for s in specs))
-
-    def test_unknown_dt_mode_is_rejected(self):
-        with self.assertRaises(ValueError):
-            self.specs(0.0, 2, dt_mode="nope")
-
-    def test_single_candidate_is_the_uniform_baseline(self):
-        specs = self.specs(1.5, 1)
-        self.assertEqual(len(specs), 1)
-        self.assertEqual(specs[0]["guess_style"], "baseline")
-        self.assertEqual(specs[0]["accuracy_weight"], 1.5)
-        self.assertFalse(specs[0]["per_segment_dt"])
-
-    def test_count_is_clamped_to_at_least_one(self):
-        specs = self.specs(0.0, 0)
-        self.assertEqual(len(specs), 1)
-        self.assertEqual(specs[0]["guess_style"], "baseline")
-        self.assertFalse(specs[0]["per_segment_dt"])
-
-class TestSweepSpecs(unittest.TestCase):
-    """The sweep adds the timing-mode x accuracy-weight grid to the set."""
-
-    def setUp(self):
-        from overboard.main import _candidate_specs, SWEEP_WEIGHTS
-        self.specs = _candidate_specs
-        self.weights = SWEEP_WEIGHTS
-
-    def test_sweep_keeps_the_default_candidates(self):
-        plain = self.specs(0.0, 2)
-        swept = self.specs(0.0, 2, sweep=True)
-        for spec in plain:
-            self.assertIn(spec, swept)
-
-    def test_sweep_covers_both_timing_modes_at_every_weight(self):
-        swept = self.specs(0.0, 2, sweep=True)
-        for weight in self.weights:
-            for per_segment_dt in (False, True):
-                self.assertIn(
-                    {"accuracy_weight": weight, "guess_style": "baseline",
-                     "per_segment_dt": per_segment_dt},
-                    swept)
-
-    def test_sweep_does_not_solve_the_same_combination_twice(self):
-        swept = self.specs(0.0, 2, sweep=True)
-        keys = [(s["accuracy_weight"], s["guess_style"], s["per_segment_dt"])
-                for s in swept]
-        self.assertEqual(len(keys), len(set(keys)))
-
-    def test_sweep_includes_a_non_zero_base_weight(self):
-        swept = self.specs(0.005, 2, sweep=True)
-        self.assertIn(0.005, [s["accuracy_weight"] for s in swept])
-        self.assertIn(0.0, [s["accuracy_weight"] for s in swept])
-
-    def test_sweep_is_off_by_default(self):
-        plain = self.specs(0.0, 2)
-        self.assertEqual(len(plain), 2)
-
-
 @unittest.skipUnless(HAS_IMMRAX, "jax/immrax not installed")
 class TestExportGate(unittest.TestCase):
     """KI-001/KI-002: the write gate refuses failed solves and validation."""
@@ -408,20 +325,19 @@ class TestWriteGateIntegration(unittest.TestCase):
             type(self).calls += 1
             return super().solve(*args, **kwargs)
 
-    class _BaselineSeedFailsOptimizer(_Optimizer):
-        """The baseline seed stops at its budget; the other seeds do not.
+    class _FirstSeedFailsOptimizer(_Optimizer):
+        """The planner's first candidate stops at its budget; the others do not.
 
-        KI-048: the default candidate set is two candidates of the *same*
-        seed, so a path that beats the baseline seed used to end with no
-        trajectory at all.
+        KI-048: a path that beats the first seed used to end with no
+        trajectory at all, because the set could not offer anything else.
         """
 
         styles = []
 
         def solve(self, *args, **kwargs):
-            style = kwargs.get("guess_style", "baseline")
+            style = kwargs.get("guess_style", "frontier_sprint")
             type(self).styles.append(style)
-            if style == "baseline":
+            if style == "frontier_sprint":
                 return [], {"converged": False, "final_cost": float("inf")}
             return super().solve(*args, **kwargs)
 
@@ -431,11 +347,11 @@ class TestWriteGateIntegration(unittest.TestCase):
             samples[-1]["x"] = 1.0
             return samples, {"converged": True, "final_cost": 1.0}
 
-    class _CpuFailingPerSegmentOptimizer(_Optimizer):
-        """Per-segment candidate is shorter but violates the CPU force limit."""
+    class _CpuFailingFirstCandidateOptimizer(_Optimizer):
+        """The first candidate is shorter but violates the CPU force limit."""
 
         def solve(self, *args, **kwargs):
-            if kwargs.get("per_segment_dt"):
+            if kwargs.get("guess_style") == "frontier_sprint":
                 samples = _consistent_samples(n=11, dt=0.05, speed=0.2)
                 for sample in samples:
                     sample["al"] = 100.0
@@ -444,18 +360,17 @@ class TestWriteGateIntegration(unittest.TestCase):
             return super().solve(*args, **kwargs)
 
     class _SeedFailsGateOptimizer(_Optimizer):
-        """The baseline seed breaks the force limit; the other seeds do not.
+        """The first candidate breaks the force limit; the other seeds do not.
 
-        KI-048: the candidate set's two candidates share one seed, so a set
-        that fails every gate is rescued by the other seeds.
+        KI-048: a set that fails every gate is rescued by the other seeds.
         """
 
         styles = []
 
         def solve(self, *args, **kwargs):
-            style = kwargs.get("guess_style", "baseline")
+            style = kwargs.get("guess_style", "frontier_sprint")
             type(self).styles.append(style)
-            if style == "baseline":
+            if style == "frontier_sprint":
                 samples = _consistent_samples(n=11, dt=0.05, speed=0.2)
                 for sample in samples:
                     sample["al"] = 100.0
@@ -554,13 +469,13 @@ class TestWriteGateIntegration(unittest.TestCase):
 
     def test_another_seed_is_tried_when_the_first_one_stops(self):
         """KI-048: one seed that does not converge must not end the mission."""
-        self._BaselineSeedFailsOptimizer.styles = []
-        result, exists = self._run(self._BaselineSeedFailsOptimizer)
+        self._FirstSeedFailsOptimizer.styles = []
+        result, exists = self._run(self._FirstSeedFailsOptimizer)
         self.assertEqual(result.exit_code, 0, result.output)
         self.assertTrue(exists)
-        styles = self._BaselineSeedFailsOptimizer.styles
-        self.assertIn("baseline", styles)
-        self.assertTrue(any(style != "baseline" for style in styles),
+        styles = self._FirstSeedFailsOptimizer.styles
+        self.assertIn("frontier_sprint", styles)
+        self.assertTrue(any(style != "frontier_sprint" for style in styles),
                         f"no other seed was tried: {styles}")
 
     def test_a_set_that_fails_every_gate_is_rescued(self):
@@ -571,7 +486,7 @@ class TestWriteGateIntegration(unittest.TestCase):
         self.assertEqual(result.exit_code, 0, result.output)
         self.assertTrue(exists)
         styles = self._SeedFailsGateOptimizer.styles
-        self.assertTrue(any(style != "baseline" for style in styles),
+        self.assertTrue(any(style != "frontier_sprint" for style in styles),
                         f"no rescue seed was tried: {styles}")
 
     def test_the_rescue_is_bounded(self):
@@ -581,7 +496,8 @@ class TestWriteGateIntegration(unittest.TestCase):
         self.assertNotEqual(result.exit_code, 0)
         self.assertFalse(exists)
         # The candidate set, then one rescue per seed the set did not use.
-        self.assertLessEqual(self._NonConvergedOptimizer.calls, len(GUESS_STYLES))
+        self.assertLessEqual(self._NonConvergedOptimizer.calls,
+                             1 + len(GUESS_STYLES))
 
     def test_failed_validation_writes_nothing(self):
         result, exists = self._run(
@@ -611,10 +527,11 @@ class TestWriteGateIntegration(unittest.TestCase):
         self.assertTrue(exists)
 
     def test_cpu_failure_in_one_candidate_does_not_block_a_later_pass(self):
-        # Candidate 2 is shorter and passes Immrax, but its forces fail the CPU
-        # audit. It must not win over candidate 1, which passes every gate.
+        # The first candidate is shorter and passes Immrax, but its forces fail
+        # the CPU audit. It must not win over a later candidate, which passes
+        # every gate.
         result, exists = self._run(
-            self._CpuFailingPerSegmentOptimizer,
+            self._CpuFailingFirstCandidateOptimizer,
             ("--validate", "--candidates", "2"),
             self._PassingImmrax,
         )

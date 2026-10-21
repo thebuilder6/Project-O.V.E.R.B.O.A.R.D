@@ -290,6 +290,10 @@ class UnifiedPathEngine:
         engine = self._ensure_validator()
         if engine is None or not samples:
             return samples, stats
+        if not stats.get("converged", False):
+            # A plan that did not converge is the solver's best effort; a
+            # re-solve from it would only polish noise.
+            return samples, stats
 
         num_segments = len(waypoints) - 1
         if not segment_samples:

@@ -270,24 +270,19 @@ class TestUnifiedDefaults(unittest.TestCase):
         self.assertEqual(call["cost_metric"], "discretization")
         self.assertTrue(call["epigraph_constraints"])
 
-    def test_no_unified_restores_the_stock_set(self):
-        call = self._invoke(["--no-unified"])[0]
-        self.assertEqual(call["guess_style"], "baseline")
-        self.assertFalse(call["per_segment_dt"])
+    def test_the_retired_stock_set_is_not_reachable(self):
+        """--no-unified is deprecated: the planner's set is the only set."""
+        for flag in ("--no-unified", "--simple"):
+            call = self._invoke([flag])[0]
+            self.assertEqual(call["guess_style"], "frontier_sprint")
+            self.assertTrue(call["per_segment_dt"])
 
-    def test_uniform_dt_steps_aside_from_unified(self):
-        call = self._invoke(["--uniform-dt"])[0]
-        self.assertEqual(call["guess_style"], "baseline")
-        self.assertFalse(call["per_segment_dt"])
-
-    def test_explicit_unified_beats_uniform_dt(self):
-        call = self._invoke(["--unified", "--uniform-dt"])[0]
-        self.assertEqual(call["guess_style"], "frontier_sprint")
-        self.assertTrue(call["per_segment_dt"])
-
-    def test_sweep_steps_aside_from_unified(self):
-        call = self._invoke(["--sweep"])[0]
-        self.assertEqual(call["guess_style"], "baseline")
+    def test_the_deprecated_timing_flags_do_not_change_the_set(self):
+        """--uniform-dt and --sweep are deprecated; the set is the planner's."""
+        for flag in ("--uniform-dt", "--sweep"):
+            call = self._invoke([flag])[0]
+            self.assertEqual(call["guess_style"], "frontier_sprint")
+            self.assertTrue(call["per_segment_dt"])
 
     def test_explicit_samples_and_weight_reach_the_unified_specs(self):
         call = self._invoke(["-n", "12", "-a", "0.005"])[0]
@@ -739,7 +734,8 @@ class TestDeprecatedCliFlags(unittest.TestCase):
         self.assertEqual(result.exit_code, 0)
         self.assertIn("(Deprecated: 80 ms invariant mesh eliminates", result.output)
         self.assertIn("(Deprecated: equal-duration dt severely", result.output)
-        self.assertIn("Alias for --no-unified", result.output)
+        self.assertIn("Deprecated: the 3-Pillar Unified Trajectory",
+                      result.output)
         self.assertIn("--unified / --no-unified", result.output)
 
 if __name__ == "__main__":
