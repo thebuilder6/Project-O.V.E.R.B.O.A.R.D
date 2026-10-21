@@ -61,6 +61,9 @@ TREE_FILES = [
     "pybricks_code/ramsete_fast.py", "pybricks_code/ramsete.py",
     "pybricks_code/ramsete_compact.py",
     "pybricks_code/ramsete_compact_events.py",
+    # Opt-in pipeline; the default path does not import it, but the
+    # fingerprint is a record of the tree, so it belongs in it.
+    "surrogate_polish.py",
 ]
 
 

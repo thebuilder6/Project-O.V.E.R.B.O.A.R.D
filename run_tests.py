@@ -32,6 +32,8 @@ from tests.test_optimizer import (
     TestSoftWheelForceCost,
     TestPathFitnessScoring,
 )
+from tests.test_frontier_seed import TestFrontierSeed
+from tests.test_unified_planner import TestUnifiedPlanner
 from tests.test_robot_model import (
     TestRobotConfig,
     TestDifferentialDriveModel,
@@ -198,6 +200,7 @@ try:
     from tests.test_jax_ramsete import TestJAXRamsete, TestJAXDriveQuantization
     from tests.test_refinement_accuracy import TestRefinementAccuracy
     from tests.test_critic_metrics import TestCriticMetrics
+    from tests.test_surrogate_polish import TestSurrogatePolishPipeline
     JAX_AVAILABLE = True
 except ImportError as e:
     print(f"Warning: JAX-dependent tests skipped ({e})")
@@ -310,6 +313,8 @@ def test_classes():
         TestSelfConsistentPlan,
         TestSoftWheelForceCost,
         TestPathFitnessScoring,
+        TestFrontierSeed,
+        TestUnifiedPlanner,
         TestStudioRoutes,
         TestStudioSolve,
         TestStudioHelpers,
@@ -343,6 +348,7 @@ def test_classes():
             TestJAXDriveQuantization,
             TestRefinementAccuracy,
             TestCriticMetrics,
+            TestSurrogatePolishPipeline,
         ] + classes
     return classes
 

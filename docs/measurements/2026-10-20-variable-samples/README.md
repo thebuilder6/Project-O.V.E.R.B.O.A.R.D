@@ -69,6 +69,12 @@ passes in 3 of the 12 cells and is rescued in 4 of them - first4 under both
 timing models, the complex mission under equal-duration, the events mission
 under per-segment.
 
+**The "Selected" column is the fitness score's choice.** The passing
+candidates are ranked by the 5-part path fitness score, with the envelope
+and the duration as tie-breakers, and the report carries the score and its
+parts (`fitness_s`, `stop_spread_cm`, `slip_risk`, `rms_force_n`,
+`rms_force_util`).
+
 **These numbers are not comparable with the 2026-10-20-post-ki028 evidence**,
 which was taken with the trapezoidal collocation and a uniform sample count.
 The two changes are described in §5.7 and §5.8 of the heuristics document.

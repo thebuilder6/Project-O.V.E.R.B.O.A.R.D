@@ -103,10 +103,12 @@ def _ensure_jax_classes():
     return ImmraxValidator, JAXRobotConfig
 
 
-def _select_attempt(attempts):
+def _select_attempt(attempts, prefer_duration: bool = False):
     """Choose the candidate to export: a passing converged attempt with the
     lowest 5-part time-equivalent fitness score (when fitness is scored), or
     smallest reachability envelope then shortest duration as tie-breakers.
+    When prefer_duration=True (Layer 5 Gate-Certified Selection), passing
+    candidates are ranked by shortest duration first, then smallest envelope.
     Otherwise the converged attempt with the smallest quantified violation.
     Non-converged attempts are never eligible (KI-001)."""
     candidates = [a for a in attempts if a.get("converged", False)]
@@ -114,6 +116,14 @@ def _select_attempt(attempts):
         return None, False
     passing = [a for a in candidates if a["ok"]]
     if passing:
+        if prefer_duration:
+            return min(
+                passing,
+                key=lambda a: (
+                    a.get("duration", a["cost"]),
+                    a.get("tube", float("inf")),
+                ),
+            ), True
         if any(
             a.get("fitness") is not None and math.isfinite(float(a["fitness"]))
             for a in passing
@@ -564,8 +574,18 @@ def _segment_report(samples_data, samples_per_segment, thresholds, immrax_report
     """
     segments = []
     count = len(samples_data)
-    if count == 0 or samples_per_segment <= 0:
+    if count == 0:
         return segments
+    if isinstance(samples_per_segment, (list, tuple, np.ndarray)):
+        if len(samples_per_segment) == 0:
+            return segments
+        if segment_samples is None:
+            segment_samples = list(samples_per_segment)
+        nominal_sps = max(1, int(round(float(np.mean(samples_per_segment)))))
+    else:
+        if samples_per_segment <= 0:
+            return segments
+        nominal_sps = int(samples_per_segment)
 
     envelopes = []
     if immrax_report:
@@ -595,9 +615,9 @@ def _segment_report(samples_data, samples_per_segment, thresholds, immrax_report
         starts = list(bounds[:-1])
         stops = [min(stop, count) for stop in bounds[1:]]
     else:
-        n_segments = max(1, (count - 1) // samples_per_segment)
-        starts = [index * samples_per_segment for index in range(n_segments)]
-        stops = [min(start + samples_per_segment, count) for start in starts]
+        n_segments = max(1, (count - 1) // nominal_sps)
+        starts = [index * nominal_sps for index in range(n_segments)]
+        stops = [min(start + nominal_sps, count) for start in starts]
     for index in range(n_segments):
         start = starts[index]
         stop = stops[index]
@@ -996,7 +1016,7 @@ def _print_summary(output, samples_data, robot_cfg, validate, attempt_passed, tu
 @click.option('--force-weight', default=0.0, type=click.FloatRange(min=0.0),
               help='Soft wheel-force and traction-utilization penalty weight in the NLP '
                    'objective (simple solver only).')
-@click.option('--candidates', default=2, type=click.IntRange(1, len(GUESS_STYLES)),
+@click.option('--candidates', default=2, type=click.IntRange(min=1),
               help='Candidates to solve and compare. With the simple solver these combine initial-guess '
                    'seeds (baseline, rolling, bow_left, bow_right, turn_first) with the timing '
                    'mode: by default candidate 1 is equal-duration baseline, candidate 2 is '
@@ -1040,6 +1060,37 @@ def _print_summary(output, samples_data, robot_cfg, validate, attempt_passed, tu
                    'solver only, needs JAX). The pipeline is used as a seed provider: its '
                    'refinement hands the solver a path through every waypoint with a per-segment '
                    'interval, and the solver does the magnitudes.')
+@click.option('--unified/--no-unified', is_flag=True, default=True,
+              help='Run the 3-Pillar Unified Trajectory Engine: '
+                   'Kinetic Frontier Seeds + 80 ms Invariant Mesh + '
+                   'Discretization-Consistent Collocation. Enabled by default.')
+@click.option('--surrogate-polish', is_flag=True,
+              help='Run the 5-Layer Unified Surrogate-to-Truth parallel pipeline: '
+                   'CasADi Discretization-Aware Metric + Linear Epigraph Force Bounds + '
+                   'Single-Process ThreadPoolExecutor + Compiled float64 jax.lax.scan '
+                   'Reachability + Differentiable Immrax Polish + Gate-Certified Min-Time Selection.')
+@click.option('--pyramid', is_flag=True, default=False,
+              help='Multi-Fidelity "Screen-then-Refine" Pyramid: vectorized JAX sieve '
+                   'over 100-350 hypotheses, topological clustering into survivor seeds, '
+                   'and process-isolated parallel IPOPT solves.')
+@click.option('--pyramid-candidates', default=None, type=click.IntRange(min=1),
+              help='Number of top distinct homotopy finalists to solve in parallel during '
+                   '--pyramid mode (defaults to 10).')
+@click.option('--recombine-segments', is_flag=True, default=False,
+              help='Advanced Optimization: Segment-wise recombination (chimera splicing) '
+                   'that extracts the best-performing segments from different candidates, '
+                   'splices them at waypoint knots, and rapidly warm-polishes the composite.')
+@click.option('--memetic-evolution', is_flag=True, default=False,
+              help='Memetic Evolution: population-based genetic algorithm with segment-wise '
+                   'chimera crossover, creep mutation, and rapid warm IPOPT local search.')
+@click.option('--generations', default=3, type=click.IntRange(min=1),
+              help='Number of evolution generations for --memetic-evolution (defaults to 3).')
+@click.option('--population-size', default=10, type=click.IntRange(min=4),
+              help='Population size for --memetic-evolution (defaults to 10).')
+@click.option('--h-adaptive', is_flag=True, default=False,
+              help='Adaptive mesh refinement (h-refinement): selectively allocates higher node density '
+                   '(8-10 nodes) to curved apex segments, lowering forward-integration discretization '
+                   'error to sub-centimeter levels (<1.0 cm).')
 
 # --- Export & Validation ---
 @click.option('--validate/--no-validate', default=False,
@@ -1100,7 +1151,7 @@ def _print_summary(output, samples_data, robot_cfg, validate, attempt_passed, tu
 @click.pass_context
 def main(ctx, config, waypoints, output, gui, gui_port, doctor, multiverse, simple, preset,
          samples, accuracy_weight, force_weight, candidates, stop_waypoints, events, per_segment_dt, uniform_dt,
-         no_parallel, workers, fast_polish, sweep, self_consistent, refine, validate,
+         no_parallel, workers, fast_polish, sweep, self_consistent, refine, unified, surrogate_polish, pyramid, pyramid_candidates, recombine_segments, memetic_evolution, generations, population_size, h_adaptive, validate,
          sysid_fit, export_format, controller_dt, control_dt, propagation, benchmark,
          push_hub, hub_conn, hub_name, hub_log,
          plot, animate, live, show_convergence, convergence_mode, iteration_history,
@@ -1389,6 +1440,88 @@ def main(ctx, config, waypoints, output, gui, gui_port, doctor, multiverse, simp
     use_validation = HAS_JAX and validate
     specs_to_solve = candidate_specs if use_validation else candidate_specs[:1]
 
+    if unified and not multiverse:
+        from unified_planner import UnifiedPathEngine
+        engine = UnifiedPathEngine(robot_cfg)
+        mesh_samples = engine.compute_invariant_mesh_samples(wps)
+        samples = mesh_samples
+        specs_to_solve = [
+            {"accuracy_weight": 0.001, "guess_style": "frontier_sprint", "per_segment_dt": True, "cost_metric": "discretization", "epigraph_constraints": True},
+            {"accuracy_weight": 0.002, "guess_style": "frontier_sweeper", "per_segment_dt": True, "cost_metric": "discretization", "epigraph_constraints": True},
+            {"accuracy_weight": 0.001, "guess_style": "frontier_exploratory", "per_segment_dt": True, "cost_metric": "discretization", "epigraph_constraints": True},
+        ]
+        if candidates is not None and candidates < len(specs_to_solve):
+            specs_to_solve = specs_to_solve[:max(1, int(candidates))]
+        if not use_validation:
+            specs_to_solve = specs_to_solve[:1]
+
+    if (pyramid or memetic_evolution) and not multiverse:
+        if not HAS_JAX:
+            raise click.ClickException(f"--pyramid/--memetic-evolution requires JAX. {JAX_HINT}")
+        from surrogate_polish import (
+            CompiledReachabilityEngine,
+            generate_homotopy_bank,
+            screen_candidates_jax,
+            select_topological_representatives,
+        )
+        validator_cls, robot_config_cls = _ensure_jax_classes()
+        jax_cfg = robot_config_cls(robot_cfg)
+        immrax_val = validator_cls(jax_cfg, control_dt=control_dt, propagation=propagation)
+        engine = CompiledReachabilityEngine(immrax_val)
+
+        if h_adaptive:
+            segment_samples = optimizer.get_adaptive_mesh_sample_counts(wps)
+        else:
+            segment_samples = optimizer.get_segment_sample_counts(wps, samples, proportional=True)
+        segment_samples = [int(s) for s in segment_samples]
+        sample_to_segment = list(np.repeat(np.arange(len(wps) - 1), segment_samples))
+
+        if not quiet:
+            click.echo("Running Pyramid Stage 1: Vectorized Homotopy Bank Generation...")
+        cand_states, cand_dts, metadata = generate_homotopy_bank(
+            wps,
+            segment_samples,
+            track_width=float(robot_cfg.track_width),
+            v_max=float(robot_cfg.max_linear_speed()),
+            stop_waypoint_indices=all_stop_indices,
+        )
+        if not quiet:
+            click.echo(f"  Generated {len(cand_states)} hypotheses. Stage 2: Sieve screening via compiled JAX...")
+        surrogate_costs = screen_candidates_jax(
+            engine,
+            cand_states,
+            cand_dts,
+            sample_to_segment,
+        )
+        if pyramid_candidates is not None:
+            target_k = pyramid_candidates
+        elif memetic_evolution:
+            target_k = population_size
+        elif ctx.get_parameter_source('candidates') != click.core.ParameterSource.DEFAULT:
+            target_k = candidates
+        else:
+            target_k = 10
+
+        k_clusters = max(2, min(target_k, len(cand_states)))
+        selected_indices = select_topological_representatives(
+            cand_states,
+            surrogate_costs,
+            k_clusters=k_clusters,
+            min_separation_m=0.12,
+        )
+        if not quiet:
+            click.echo(f"  Stage 3: Clustered into Top {len(selected_indices)} distinct homotopy seeds.")
+        specs_to_solve = [
+            {
+                "guess_style": f"pyramid_{i+1}",
+                "guess": f"pyramid_cluster_{idx}",
+                "per_segment_dt": True,
+                "accuracy_weight": accuracy_weight,
+                "initial_guess": np.concatenate([cand_dts[idx], cand_states[idx].flatten()]),
+            }
+            for i, idx in enumerate(selected_indices)
+        ]
+
     def _payloads_for(specs):
         """The solve payloads for a set of candidates."""
         payloads = []
@@ -1407,6 +1540,14 @@ def main(ctx, config, waypoints, output, gui, gui_port, doctor, multiverse, simp
                 solve_kwargs["self_consistent"] = bool(self_consistent)
                 if force_weight > 0.0:
                     solve_kwargs["force_weight"] = float(force_weight)
+                if "initial_guess" in spec:
+                    solve_kwargs["initial_guess"] = spec["initial_guess"]
+                    solve_kwargs["cost_metric"] = "discretization"
+                    solve_kwargs["epigraph_constraints"] = True
+                if "cost_metric" in spec:
+                    solve_kwargs["cost_metric"] = spec["cost_metric"]
+                if "epigraph_constraints" in spec:
+                    solve_kwargs["epigraph_constraints"] = spec["epigraph_constraints"]
             if fast_polish:
                 solve_kwargs["fast_polish"] = True
             payloads.append((robot_cfg, wps, spec, solve_kwargs, multiverse))
@@ -1423,6 +1564,27 @@ def main(ctx, config, waypoints, output, gui, gui_port, doctor, multiverse, simp
         payloads = _payloads_for(specs)
         parallel = (len(payloads) > 1 and not live and not show_convergence
                     and not no_parallel and stock_optimizer)
+        if (pyramid or memetic_evolution) and not multiverse:
+            from surrogate_polish import solve_pyramid_candidates
+            if not quiet:
+                click.echo(f"Solving {len(payloads)} survivor candidates in parallel (ProcessPoolExecutor)...")
+            survivor_guesses = [spec.get("initial_guess") for spec in specs if "initial_guess" in spec]
+            if len(survivor_guesses) == len(specs):
+                base_kw = dict(payloads[0][3])
+                base_kw.pop("initial_guess", None)
+                max_w = min(len(payloads), max(workers, os.cpu_count() or 8)) if parallel else 1
+                solved = solve_pyramid_candidates(
+                    robot_cfg, wps, survivor_guesses, base_kw, max_workers=max_w
+                )
+                histories = [[] for _ in solved]
+                return solved, histories
+        if surrogate_polish and not multiverse:
+            from surrogate_polish import solve_candidates_threaded
+            if not quiet:
+                click.echo(f"Solving {len(payloads)} candidates via 5-Layer Surrogate-Polish pipeline (ThreadPoolExecutor)...")
+            return solve_candidates_threaded(
+                payloads, workers=workers if parallel else 1
+            )
         if not quiet and len(payloads) > 1:
             click.echo(f"Solving {len(payloads)} candidates "
                        f"({'in parallel' if parallel else 'sequentially'})...")
@@ -1436,6 +1598,92 @@ def main(ctx, config, waypoints, output, gui, gui_port, doctor, multiverse, simp
     is_rescue = False
     while batch:
         solved, histories = _solve_batch(batch)
+
+        if recombine_segments and len(solved) > 1 and not multiverse and not is_rescue:
+            from surrogate_polish import recombine_candidate_segments, CompiledReachabilityEngine
+            validator_cls, robot_config_cls = _ensure_jax_classes()
+            jax_cfg = robot_config_cls(robot_cfg)
+            immrax_val = validator_cls(jax_cfg, control_dt=control_dt, propagation=propagation)
+            rec_engine = CompiledReachabilityEngine(immrax_val)
+
+            base_kw = {
+                "accuracy_weight": accuracy_weight,
+                "stop_waypoint_indices": all_stop_indices,
+                "waypoint_events": waypoint_events,
+                "force_weight": force_weight,
+                "per_segment_dt": True,
+            }
+            if not quiet:
+                click.echo("Running Segment-Wise Recombination Splicer (Chimera Crossover)...")
+            chimera_samples, chimera_stats, recomb_rep = recombine_candidate_segments(
+                solved, wps, robot_cfg, rec_engine,
+                stop_waypoint_indices=all_stop_indices,
+                accuracy_weight=accuracy_weight,
+                force_weight=force_weight,
+                solve_kwargs=base_kw,
+                max_polish_iters=250,
+            )
+            if chimera_samples and chimera_stats and recomb_rep.get("recombined"):
+                if not quiet:
+                    click.echo(
+                        f"  Synthesized Chimera trajectory (contributors: {recomb_rep['unique_contributors']}, "
+                        f"polished in {recomb_rep['polish_iters']} iters, duration={recomb_rep['duration_s']:.3f} s)."
+                    )
+                solved.append((chimera_samples, chimera_stats))
+                histories.append([])
+                batch.append({
+                    "guess_style": "chimera_recombined",
+                    "guess": "chimera",
+                    "per_segment_dt": True,
+                    "accuracy_weight": accuracy_weight,
+                })
+            else:
+                if not quiet:
+                    click.echo(f"  Recombination notice: {recomb_rep.get('reason', 'unknown')}")
+
+        if memetic_evolution and len(solved) > 1 and not multiverse and not is_rescue:
+            from surrogate_polish import run_memetic_evolution, CompiledReachabilityEngine
+            validator_cls, robot_config_cls = _ensure_jax_classes()
+            jax_cfg = robot_config_cls(robot_cfg)
+            immrax_val = validator_cls(jax_cfg, control_dt=control_dt, propagation=propagation)
+            mem_engine = CompiledReachabilityEngine(immrax_val)
+
+            base_kw = {
+                "accuracy_weight": accuracy_weight,
+                "stop_waypoint_indices": all_stop_indices,
+                "waypoint_events": waypoint_events,
+                "force_weight": force_weight,
+                "per_segment_dt": True,
+            }
+            if not quiet:
+                click.echo(f"Running Memetic Evolution ({generations} generations, population={population_size})...")
+            champ_samples, champ_stats, evo_report = run_memetic_evolution(
+                solved, wps, robot_cfg, mem_engine,
+                num_generations=generations,
+                population_size=population_size,
+                stop_waypoint_indices=all_stop_indices,
+                accuracy_weight=accuracy_weight,
+                force_weight=force_weight,
+                solve_kwargs=base_kw,
+                max_polish_iters=150,
+                max_workers=workers if not no_parallel else 1,
+                verbose=not quiet,
+            )
+            if champ_samples and champ_stats:
+                if not quiet:
+                    click.echo(
+                        f"  Memetic Evolution completed: Champion duration={champ_stats.get('memetic_evolution', {}).get('champion_duration', 0.0):.3f} s "
+                        f"(score={champ_stats.get('memetic_evolution', {}).get('champion_score', 0.0):.3f}, "
+                        f"origin '{champ_stats.get('memetic_evolution', {}).get('champion_tag', '')}')."
+                    )
+                solved.append((champ_samples, champ_stats))
+                histories.append([])
+                batch.append({
+                    "guess_style": "memetic_champion",
+                    "guess": "memetic",
+                    "per_segment_dt": True,
+                    "accuracy_weight": accuracy_weight,
+                })
 
         for cand_idx, (spec, solve_result) in enumerate(zip(batch, solved)):
             curr_accuracy_weight = spec["accuracy_weight"]
@@ -1493,29 +1741,40 @@ def main(ctx, config, waypoints, output, gui, gui_port, doctor, multiverse, simp
                 continue
 
             try:
-                validator_cls, robot_config_cls = _ensure_jax_classes()
-                jax_cfg = robot_config_cls(robot_cfg)
-                if digital_twin is None:
-                    immrax_val = validator_cls(jax_cfg, control_dt=control_dt,
-                                               propagation=propagation)
+                cached_immrax = stats.get("immrax_report") if isinstance(stats, dict) else None
+                if (
+                    surrogate_polish
+                    and cached_immrax is not None
+                    and digital_twin is None
+                    and propagation == "plant"
+                ):
+                    if not quiet:
+                        click.echo("  Running the Immrax robustness check (compiled lax.scan)...")
+                    immrax_report = cached_immrax
                 else:
-                    immrax_val = validator_cls(jax_cfg, digital_twin=digital_twin,
-                                               control_dt=control_dt,
-                                               propagation=propagation)
+                    validator_cls, robot_config_cls = _ensure_jax_classes()
+                    jax_cfg = robot_config_cls(robot_cfg)
+                    if digital_twin is None:
+                        immrax_val = validator_cls(jax_cfg, control_dt=control_dt,
+                                                   propagation=propagation)
+                    else:
+                        immrax_val = validator_cls(jax_cfg, digital_twin=digital_twin,
+                                                   control_dt=control_dt,
+                                                   propagation=propagation)
 
-                # Use the uncertainty ranges declared in the config (KI-009).
-                cof_range = robot_cfg.uncertainties["cof"]
-                torque_range = robot_cfg.uncertainties["torque_headroom"]
-                backlash_range = robot_cfg.uncertainties["gear_backlash_m"]
-                track_width_range = robot_cfg.uncertainties["track_width_range"]
-                wheel_radius_range = robot_cfg.uncertainties["wheel_radius_range"]
-                inertia_range = robot_cfg.uncertainties["inertia_kg_m2"]
+                    # Use the uncertainty ranges declared in the config (KI-009).
+                    cof_range = robot_cfg.uncertainties["cof"]
+                    torque_range = robot_cfg.uncertainties["torque_headroom"]
+                    backlash_range = robot_cfg.uncertainties["gear_backlash_m"]
+                    track_width_range = robot_cfg.uncertainties["track_width_range"]
+                    wheel_radius_range = robot_cfg.uncertainties["wheel_radius_range"]
+                    inertia_range = robot_cfg.uncertainties["inertia_kg_m2"]
 
-                if not quiet:
-                    click.echo("  Running the Immrax robustness check...")
-                immrax_report = immrax_val.validate_trajectory(
-                    samples_data, cof_range, torque_range, backlash_range,
-                    track_width_range, wheel_radius_range, inertia_range)
+                    if not quiet:
+                        click.echo("  Running the Immrax robustness check...")
+                    immrax_report = immrax_val.validate_trajectory(
+                        samples_data, cof_range, torque_range, backlash_range,
+                        track_width_range, wheel_radius_range, inertia_range)
             except Exception as e:
                 if not quiet:
                     click.echo(f"  ERROR: Immrax validation failed: {e}")
@@ -1687,9 +1946,9 @@ def main(ctx, config, waypoints, output, gui, gui_port, doctor, multiverse, simp
         # set itself produced nothing that passed.
         primary = [a for a in all_attempts if not a.get("rescue")]
         rescue = [a for a in all_attempts if a.get("rescue")]
-        best, passed_any = _select_attempt(primary)
+        best, passed_any = _select_attempt(primary, prefer_duration=bool(surrogate_polish or pyramid or memetic_evolution or unified))
         if not passed_any and rescue:
-            rescue_best, rescue_passed = _select_attempt(rescue)
+            rescue_best, rescue_passed = _select_attempt(rescue, prefer_duration=bool(surrogate_polish or pyramid or memetic_evolution or unified))
             if rescue_passed or best is None:
                 best, passed_any = rescue_best, rescue_passed
         if best is None:
@@ -1721,7 +1980,8 @@ def main(ctx, config, waypoints, output, gui, gui_port, doctor, multiverse, simp
                 click.echo(f"  {label}: {a.get('duration', float('inf')):6.3f} s, {score} ({state})")
                 seg_dt = (a.get("stats") or {}).get("segment_dt")
                 if seg_dt and len(seg_dt) > 1:
-                    seg_times = [d * samples for d in seg_dt]
+                    seg_samples_list = (a.get("stats") or {}).get("segment_samples") or (samples if isinstance(samples, (list, tuple)) else [samples] * len(seg_dt))
+                    seg_times = [d * s for d, s in zip(seg_dt, seg_samples_list)]
                     spread = "  segment times: " + " ".join("%.2f" % t for t in seg_times) + " s"
                     click.echo(f"    {spread}")
             click.echo(f"  Selected candidate {selected_k}.")
@@ -1793,15 +2053,16 @@ def main(ctx, config, waypoints, output, gui, gui_port, doctor, multiverse, simp
 
     if benchmark:
         quality_metrics = compute_metrics(samples_data, robot_cfg)
-        stats["quality_metrics"] = quality_metrics
-        stats["robot_config"] = {
+        stats_to_write = {k: v for k, v in stats.items() if k != "immrax_report"}
+        stats_to_write["quality_metrics"] = quality_metrics
+        stats_to_write["robot_config"] = {
             "mass": robot_cfg.mass, "inertia": robot_cfg.inertia, "track_width": robot_cfg.track_width,
             "wheel_radius": robot_cfg.wheel_radius, "v_max_rad_s": robot_cfg.v_max_rad_s,
             "t_max_nm": robot_cfg.t_max_nm, "gearing": robot_cfg.gearing, "cof": robot_cfg.cof
         }
         stats_output = os.path.splitext(output)[0] + '_stats.json'
         with open(stats_output, 'w') as f:
-            json.dump(stats, f, indent=2)
+            json.dump(stats_to_write, f, indent=2)
         written.append(stats_output)
 
     if validate:

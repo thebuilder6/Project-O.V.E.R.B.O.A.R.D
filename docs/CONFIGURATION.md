@@ -193,7 +193,9 @@ python main.py --simple -c examples/fll_choreo.json -w examples/example_straight
 
 - `-n, --samples`: Samples per segment (default 10).
 - `-a, --accuracy-weight`: Smoothness/jerk weight (0 = time-optimal).
-- `--candidates`: Candidates to solve and compare with `--validate` (default 2, max 5). With the simple solver each candidate combines an initial-guess seed (`baseline`, `rolling`, `bow_left`, `bow_right`, `turn_first`) with a timing mode: by default candidate 1 is equal-duration baseline, candidate 2 is per-segment baseline, then the remaining seeds alternate. The Multi-Verse path keeps the `accuracy_weight` ladder. A passing candidate wins by smallest envelope, then shortest time; `1` disables the comparison.
+- `--force-weight`: Soft wheel-force and traction-utilisation penalty in the NLP objective (0 = none, the default). Simple solver only; the hard per-wheel limits apply either way.
+- `--surrogate-polish`: Run the 5-layer surrogate-to-truth pipeline (the discretisation-aware metric, the linear epigraph force bounds, one warm thread pool, a compiled `jax.lax.scan` reachability engine, a differentiable Immrax polish, and a minimum-time selection). Off by default; the default path is the one the rest of this document describes.
+- `--candidates`: Candidates to solve and compare with `--validate` (default 2, max 5). With the simple solver each candidate combines an initial-guess seed (`baseline`, `rolling`, `bow_left`, `bow_right`, `turn_first`) with a timing mode: by default candidate 1 is equal-duration baseline, candidate 2 is per-segment baseline, then the remaining seeds alternate. The Multi-Verse path keeps the `accuracy_weight` ladder. A passing candidate wins by the lowest fitness score (the envelope, then the shortest time, break ties); `1` disables the comparison.
 - `--stop-waypoints "0,2,4"`: Comma-separated stop indices.
 - `--events "1:lower_arm,3:release"`: Comma-separated event mappings.
 - `--simple`: CasADi-only optimizer (recommended).
@@ -204,7 +206,7 @@ python main.py --simple -c examples/fll_choreo.json -w examples/example_straight
 
 ### Validation and export
 
-- `--validate`: CPU audit + Immrax + final-waypoint gate. Requires JAX/Immrax. With `--candidates N` (default 2, max 5), solves N candidates (seed/timing combinations with `--simple`, accuracy-weight variants otherwise) and exports the passing one with the smallest envelope; on failure, exits 1 and writes nothing.
+- `--validate`: CPU audit + Immrax + final-waypoint gate. Requires JAX/Immrax. With `--candidates N` (default 2, max 5), solves N candidates (seed/timing combinations with `--simple`, accuracy-weight variants otherwise) and exports the passing one with the lowest fitness score (the envelope and the shortest time break ties); on failure, exits 1 and writes nothing.
 - `--sysid-fit PATH`: Optional `sysid_fit.json` measured actuator/odometry model; requires `--validate` or `--live`. The default kinematic model is used when omitted. Slip is loaded/reported but not applied yet (KI-020).
 - `--export-format controller|python|python-compact`: Write a fixed-timestep controller JSON, a legacy list-of-dicts Python module, or a packed-compact Python module. The compact module is consumed by `pybricks_code/ramsete_compact.py` or `ramsete_compact_events.py`.
 - `--controller-dt`: Controller timestep in seconds (default 0.02).

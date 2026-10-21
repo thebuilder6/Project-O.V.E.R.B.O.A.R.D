@@ -4,6 +4,8 @@ A trajectory optimizer for LEGO differential-drive robots in FIRST LEGO League (
 
 **📖 Technical documentation:** [docs/WHITEPAPER.md](docs/WHITEPAPER.md)
 **🔬 Heuristics and verification:** [docs/HEURISTICS_AND_VERIFICATION.md](docs/HEURISTICS_AND_VERIFICATION.md) — every path-planning heuristic, the full verification chain, the failed-strategy ledger, and the research agenda.
+**⚡ Optimal control derivation:** [docs/OPTIMAL_CONTROL_DERIVATION.md](docs/OPTIMAL_CONTROL_DERIVATION.md) — 5 invariant differential-drive control laws extracted from 50 generations of evolutionary search and the analytical Kinetic Frontier seeds (`frontier_seed.py`).
+**🖼️ Visual gallery:** [docs/VISUAL_GALLERY.md](docs/VISUAL_GALLERY.md) — complete exhibition of state-space phase portraits, multi-shape manifolds, and multi-island convergence figures.
 
 The audit items from KI-001 through KI-050 are resolved in the codebase (see [KNOWN_ISSUES.md](KNOWN_ISSUES.md)). The Multi-Verse pipeline is experimental and is used as a **seed provider**: `main.py --refine` adds its refined trajectory to the candidate set, which is a cheaper way to reach the stock set's speed rather than a better one, so it stays opt-in (KI-004).
 
@@ -381,7 +383,8 @@ Options:
                                   alternate. The Multi-Verse path uses
                                   accuracy_weight steps of 2.0 instead.
                                   Validation picks the passing candidate with
-                                  the smallest envelope, then the fastest.
+                                  the lowest fitness score, then the
+                                  smallest envelope, then the fastest.
                                   Without --validate only the first candidate
                                   is solved. Use 1 for a single solve.
                                   [1<=x<=5]
@@ -604,7 +607,7 @@ The default candidate set includes both timing modes, so the equal-duration cand
 
 ### Sweeping for the fastest passing trajectory
 
-The two timing modes and the accuracy weight are a two-dimensional search, and the best combination depends on the path. `--sweep` searches it: it adds the timing-mode × accuracy-weight grid (weights `0`, `0.001`, `0.002`, `0.005`, `0.01`) to the candidate set, validates every combination on the same scale, and lets the usual rule pick the winner — the passing candidate with the smallest envelope, the shortest one breaking the tie. The default candidates stay in the set, so a sweep can only add options, never remove them.
+The two timing modes and the accuracy weight are a two-dimensional search, and the best combination depends on the path. `--sweep` searches it: it adds the timing-mode × accuracy-weight grid (weights `0`, `0.001`, `0.002`, `0.005`, `0.01`) to the candidate set, validates every combination on the same scale, and lets the usual rule pick the winner — the passing candidate with the lowest fitness score (the time its defects are worth), the envelope and the shortest one breaking the tie. The default candidates stay in the set, so a sweep can only add options, never remove them.
 
 Measured on the example missions:
 
@@ -660,7 +663,7 @@ With `--sysid-fit`, the Immrax plant switches from the default three-state kinem
 
 The final pose is also checked against the last waypoint. If any check fails, the CLI exits 1 and writes nothing.
 
-With `--validate`, `--candidates N` (default 2, max 5) solves N trajectories. With the simple solver, each candidate combines an initial-guess seed with a timing mode at the same `accuracy_weight`; the Multi-Verse path uses `accuracy_weight`, `accuracy_weight + 2.0`, and so on. Every candidate is validated and CPU-audited; the selected one is the passing candidate with the smallest envelope, with the shortest trajectory breaking ties. If none pass, the candidate closest to passing is selected for reporting but still blocked from export. Without `--validate`, only the first candidate is solved.
+With `--validate`, `--candidates N` (default 2, max 5) solves N trajectories. With the simple solver, each candidate combines an initial-guess seed with a timing mode at the same `accuracy_weight`; the Multi-Verse path uses `accuracy_weight`, `accuracy_weight + 2.0`, and so on. Every candidate is validated and CPU-audited; the selected one is the passing candidate with the lowest fitness score — a single number in seconds covering the reachability spread at the stops, the slip risk, the RMS wheel force, the tracking error and the run time — with the envelope and the shortest trajectory breaking ties. If none pass, the candidate closest to passing is selected for reporting but still blocked from export. Without `--validate`, only the first candidate is solved.
 
 **Measured current examples** (model predictions, not hardware). All rows use the default two candidates unless stated: candidate 1 is equal-duration baseline, candidate 2 is per-segment baseline.
 

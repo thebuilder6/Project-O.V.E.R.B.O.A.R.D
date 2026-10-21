@@ -134,21 +134,30 @@ This architecture integrates the calibrated system parameters and interaction fo
                         [Export to Pybricks]
 ```
 
-## Phase A: JAX Pre-Solver (Multi-Verse Seed Generation)
-Before solving the global non-linear program (NLP), JAX evaluates thousands of structural seed trajectories in parallel [1, 2].
-1.  **Waypoint Generation:** The path planner reads the waypoint file. If a segment is flagged with an interaction (e.g., `"lever_push_01"`), the spatial boundaries are marked [2].
-2.  **Heading Permutation Generator:** For any unconstrained headings or potential reversals, JAX generates candidate combinations (tangent angles, 180° flipped angles, point-turn overrides) [1, 2].
-3.  **JAX-Accelerated Cost Evaluator (`vmap`):** A vectorized cost function evaluates the viability of all candidate trajectories [1]. It uses the newly calibrated nominal parameters ($I, b, \mu$) to reject candidate paths that contain local loop-backs or exceeding traction limitations [1, 2].
-4.  **Seed Selection:** The single best candidate is selected as the seed [1, 2].
+## Phase A: Deterministic Homotopy Dispatch & Kinematic Velocity Profiling (Seed Generation)
+Before solving the non-linear program (NLP), candidate hypotheses are generated deterministically and screened in pure JAX via `vmap` [1, 2], superseding multi-generation evolutionary/genetic search:
+1.  **3-Way Geometric Classifier:** For each segment between waypoints, seeds are generated based on physical geometry:
+    *   *Flowing unpinned turns:* Late-apex racing lines (shifting the curve midpoint outward).
+    *   *Sharp corners ($> 90^\circ$):* Pivot-in-place turns (zero speed at waypoint, pure rotational velocity).
+    *   *Stop / Interaction waypoints:* Direct chord with threshold deceleration.
+2.  **Kinematic Velocity Profiling ($\Delta t_i$ Initialization):** Rather than equal time distribution, segment durations are initialized using the physical curvature speed limit:
+    $$v_{\max, i} = \min\left(v_{\text{motor}}, \sqrt{\frac{\underline{\mu} g}{\kappa_i}}, \sqrt{\frac{a_{\max}}{\kappa_i}}\right), \qquad \Delta t_i = \frac{L_i}{0.75 \cdot v_{\max, i}}$$
+3.  **Vectorized JAX Screening (`vmap`):** All generated candidate seeds are evaluated simultaneously in $< 25\text{ ms}$ for kinematic feasibility and estimated tracking error.
+4.  **Topological Clustering:** Deduplicates candidates into the top 2--3 structurally distinct homotopies to warm-start IPOPT in parallel.
 
-## Phase B: CasADi / IPOPT High-Precision Solver
-The selected seed is passed to IPOPT, which enforces the physical constraints to compute the time-optimal trajectory [1, 2, 3.2].
-1.  **Per-Wheel Traction Enforcement:** At each timestep $k$, the solver limits each wheel separately, using the smaller normal force from lateral weight transfer and the lower calibrated CoF ($\underline{\mu}$) [1, 2]:
+## Phase B: Discretization-Consistent CasADi / IPOPT Solver
+The selected seeds are passed to IPOPT, which enforces exact hard constraints and accounts for the robot's discrete execution [1, 2, 3.2]:
+1.  **Discretization-Aware Collocation & Objective:** Rather than continuous-time jerk penalties, the NLP uses 4-node Gauss-Legendre quadrature (`self_consistent=True`) and directly prices the discrete 20 ms ZOH tracking error (`cost_metric="discretization"`):
+    *   *Sagitta chord-vs-arc error:* $\frac{1}{8} v_{\text{mid}} \omega_{\text{mid}} \Delta t_k^2$
+    *   *Parabolic heading mismatch:* $\frac{1}{8} v_{\text{mid}} (\omega_2 - \omega_1) \Delta t_k^2$
+    *   *20 ms hold lag:* $\frac{1}{2} (v_2 - v_1) \cdot 0.02$
+2.  **Linear Epigraph Force Bounds:** Replaces $\sqrt{F^2 + \epsilon}$ (which produces $10^6$ Hessian spikes on saturation boundaries) with 4 smooth linear inequalities (`epigraph_constraints=True`), stabilizing interior-point convergence.
+3.  **Per-Wheel Traction Enforcement:** At each timestep $k$, the solver limits each wheel separately, using the smaller normal force from lateral weight transfer and the lower calibrated CoF ($\underline{\mu}$) [1, 2]:
     $$|f_{l,k}| \le \underline{\mu} \cdot n_{l,k}, \qquad |f_{r,k}| \le \underline{\mu} \cdot n_{r,k}$$
     This replaces the older total-force friction-circle constraint (KI-010).
-2.  **Motor Limits Enforcement:** The velocity-dependent maximum force is constrained using the worst-case torque headroom, wheel radius, and speed term [1, 2]:
+4.  **Motor Limits Enforcement:** The velocity-dependent maximum force is constrained using the worst-case torque headroom, wheel radius, and speed term [1, 2]:
     $$|f_{w,k}| \le \frac{1}{r_{\text{force}}} \cdot \left(\tau_{\max} \cdot \underline{h}_t \cdot \max\left(0, 1 - \frac{|\omega_k|}{\omega_{\max}}\right)\right)$$
-3.  **Interaction Force Injection (design only):** The current optimizer does not read `interactions` or inject $F_{\text{push}}$. When implemented, timesteps inside an interaction window would add the recorded resistance to the dynamics:
+5.  **Interaction Force Injection (design only):** The current optimizer does not read `interactions` or inject $F_{\text{push}}$. When implemented, timesteps inside an interaction window would add the recorded resistance to the dynamics:
     $$f_{\text{total\_k}} = m \cdot a_k + \max(F_{\text{push\_interval}})$$
     *This would force the optimizer to scale down entry speeds and accelerations through the mission model. It is not implemented yet (KI-020).*
 
@@ -162,7 +171,7 @@ Once the optimal nominal trajectory is computed, the validator checks the path a
 3.  **Safety Verification:**
     *   Immrax calculates the spatial reachable tube (the bounding box of where the robot frame could exist) [1].
     *   It checks the worst-case per-wheel motor force, wheel slip, wheel speed, tracking error, and envelope radius [1].
-4.  **Current feedback status:** the validator is a post-solve gate and candidate score. With `--validate`, `main.py` solves up to `--candidates` trajectories (default 2, max 5) and scores each by envelope. With `--simple` the candidates combine initial-guess seeds (`baseline`, `rolling`, `bow_left`, `bow_right`, `turn_first`) with uniform or per-segment timing; the Multi-Verse path uses increasing accuracy weights. It selects a passing one with the smallest envelope; it does not feed the violated segment back into the optimizer as a penalty. Reachability-driven optimization remains future work (KI-020).
+4.  **Current feedback status:** the validator is a post-solve gate and candidate score. With `--validate`, `main.py` solves up to `--candidates` trajectories (default 2, max 5) and scores each by envelope. With `--simple` the candidates combine initial-guess seeds (`baseline`, `rolling`, `bow_left`, `bow_right`, `turn_first`) with uniform or per-segment timing; the Multi-Verse path uses increasing accuracy weights. It selects a passing one by the 5-part fitness score, and it prices the wheel forces in the objective (`--force-weight`, off by default); it does not feed the violated segment back into the optimizer as a penalty. Reachability-driven optimization remains future work (KI-020).
     *   If validation passes, the trajectory is exported; if it fails, no output is written and the command exits non-zero.
 
 ---

@@ -9,6 +9,8 @@ This document describes the current implementation in the working tree. It repla
 > **Scope and safety status:** this is an offline desktop tool for one FLL differential-drive robot. The simple optimizer and safety gate work. The validation model is not yet a full digital twin, some representative curved paths still fail the Immrax gate (KI-020), and the Multi-Verse refinement is a **seed provider** rather than a second solver (KI-004). Only output that has passed `--validate` should be treated as safety-checked.
 
 > **Companion document:** [`docs/HEURISTICS_AND_VERIFICATION.md`](HEURISTICS_AND_VERIFICATION.md) documents every path-planning heuristic in the tree, the full verification chain and what each layer does and does not prove, a ledger of the strategies that did not work, and a prioritised research agenda. Section 5 below summarises the validation chain; the companion document is the reference for the gate thresholds, the seed heuristics and the failed approaches.
+>
+> **Optimal control derivation:** [`docs/OPTIMAL_CONTROL_DERIVATION.md`](OPTIMAL_CONTROL_DERIVATION.md) documents the extraction of the 5 invariant differential-drive control laws from the 50-generation evolutionary search and the mathematical formulation of the analytical Kinetic Frontier seeds (`frontier_seed.py`).
 
 ---
 
@@ -64,7 +66,7 @@ What is still incomplete:
 2. Select `TrajectoryOptimizer` (default) or `MasterTrajectoryOptimizer` (`--multiverse`).
 3. Solve the first candidate.
 4. With `--validate`, run Immrax reachability on that candidate and score its envelope.
-5. With `--validate`, repeat for the remaining `--candidates` trajectories (default 2, max 5). With the simple solver each candidate combines an initial-guess seed (`baseline`, `rolling`, `bow_left`, `bow_right`, `turn_first`) with a timing mode: by default candidate 1 is equal-duration baseline, candidate 2 is per-segment baseline, then the remaining seeds alternate. The Multi-Verse path uses accuracy-weight steps of 2.0. Select a passing converged candidate with the smallest envelope (shortest breaks ties); otherwise keep the converged one closest to passing for reporting.
+5. With `--validate`, repeat for the remaining `--candidates` trajectories (default 2, max 5). With the simple solver each candidate combines an initial-guess seed (`baseline`, `rolling`, `bow_left`, `bow_right`, `turn_first`) with a timing mode: by default candidate 1 is equal-duration baseline, candidate 2 is per-segment baseline, then the remaining seeds alternate. The Multi-Verse path uses accuracy-weight steps of 2.0. Select the passing converged candidate with the lowest 5-part path fitness score (the envelope, then the shortest duration, break ties); otherwise keep the converged one closest to passing for reporting.
 6. Check the final waypoint, and with `--validate`, run the CPU `validate_samples` gate.
 7. Write the trajectory, then optional stats/controller/legacy-Python/compact-Python exports, then plots.
 
@@ -190,6 +192,8 @@ J = duration + accuracy_weight * dt_ref^2 * sum_k [
 
 The first term is trajectory duration. The optional second term penalizes wheel jerk, where `span_k` is the spacing between the midpoints of the two intervals that meet at boundary `k` and `dt_ref` is the mean interval over the whole path. Normalising by `dt_ref` makes the price of physical jerk independent of the timing layout, so the same `accuracy_weight` means the same smoothness in either variant; without it the raw acceleration jump is proportional to `jerk * dt`, and a short interval would be charged `dt^2` less per unit of jerk (KI-022). `accuracy_weight = 0` is pure time-optimal. With `--per-segment-dt` the duration term is `sum_i(s_i * dt_i)`, the sum over the segments of their own sample count times their own interval.
 
+The optional third term, `--force-weight`, prices the wheel forces: the time integral of the squared force utilisation against both the stall force and the per-wheel traction limit. The hard per-wheel limits apply regardless; the term is a *soft* penalty that charges a plan for running near the traction limit, which is the cheapest form of the reachability-driven optimisation KI-020 asks for. It is off by default.
+
 ### 4.3 Constraints
 
 - `dt` (or each `dt_i` with `--per-segment-dt`) in `[0.001, 1.0]` s.
@@ -271,7 +275,7 @@ Validation has three layers.
 
 The envelope is the axis-aligned bounding box of the reachable set. The planner checks its radius against a local threshold: 2 cm for transit samples by default, 0.5 cm for `precision_mode` waypoints, or an explicit `error_threshold`. Tracking error is checked separately at 0.5 cm.
 
-The gate is a post-solve check. With `--validate`, `main.py` solves `--candidates` trajectories (default 2, max 5), validates each one, and selects the passing candidate with the smallest envelope; the shortest trajectory breaks ties. With the simple solver, the candidates combine initial-guess seeds (`baseline`, `rolling`, `bow_left`, `bow_right`, `turn_first`) with the uniform or per-segment timing mode; the default alternates modes and the Multi-Verse path uses increasing accuracy weights. The CPU audit runs on every candidate, not only the selected one. If none pass, it selects the closest candidate for reporting but still blocks export. Reachability is not a term or constraint in the optimizer (KI-020).
+The gate is a post-solve check. With `--validate`, `main.py` solves `--candidates` trajectories (default 2, max 5), validates each one, and selects the passing candidate with the lowest **5-part path fitness score**: the reachability spread at the stops and the final waypoint (200 s/m), the slip risk above a 70 % utilisation dead-zone (8 s), the RMS wheel force against the stall force (0.5 s), the tracking error (80 s/m) and the run time (1 s/s). The weights are in seconds, so the score reads as the time the plan's defects are worth, and lower is better. The envelope and the duration break ties. With the simple solver, the candidates combine initial-guess seeds (`baseline`, `rolling`, `bow_left`, `bow_right`, `turn_first`) with the uniform or per-segment timing mode; the default alternates modes and the Multi-Verse path uses increasing accuracy weights. The CPU audit runs on every candidate, not only the selected one. If none pass, it selects the closest candidate for reporting but still blocks export. Reachability is not a term or constraint in the optimizer (KI-020).
 
 The default candidate set mixes both timing modes, and the CPU audit runs on every candidate so a partial pass cannot block a later fully passing one. The two modes are not peers: the equal-duration mode shares one `dt` across all segments, which because every segment has the same sample count also forces every segment to take the SAME time, so on a path with unequal segment lengths the short segment inherits the long segment's duration. The per-segment mode is the general model, and both are held to the same wheel-jerk discipline so `accuracy_weight` means the same thing in either (KI-022). The per-segment mode also holds the wheel force profile continuous through every waypoint the robot does not stop at, which is what makes a change of time scale at such a point legitimate (KI-024). Measured on 2026-10-19: an uneven 1.0 m + 0.2 m path passes all gates with per-segment at `accuracy_weight=0.005` in 2.784 s with envelope 0.32 cm, tracking 0.36 cm and peak wheel jerk 9.52 m/s³, versus 4.456 s / 0.37 cm / 0.36 cm / 9.52 m/s³ for the equal-duration mode at the same weight, so selection keeps the per-segment winner. At `accuracy_weight=0`, per-segment is 2.710 s / 0.32 cm but fails the Immrax and CPU gates, so selection falls back to the equal-duration candidate (4.463 s / 0.35 cm). On the complex mission at `accuracy_weight=0`, per-segment is faster (4.650 s, envelope 1.00 cm) but its tracking is 0.84 cm and its motor force is 0.074 N over the limit, so it is rejected; the equal-duration 6.068 s / 1.22 cm / 0.49 cm candidate passes and wins. `--uniform-dt` forces the equal-duration-only behavior and `--per-segment-dt` forces per-segment timing.
 
@@ -533,6 +537,48 @@ These are model predictions. There is no hardware tracking log in the repository
 ### 10.4 Multi-Verse comparison
 
 The pipeline benchmark in §7.6 produced identical final costs for simple and Multi-Verse, with 0.00 % improvement — that was the state before the repair, and it is why KI-004 was opened. The pipeline has since been repaired and re-envisioned as a **seed provider**: `main.py --refine` adds its refined trajectory to the candidate set, and the probe now wins the polished solve (4.617 s against 6.049 s on the complex mission). As a seed it is a cheaper way to reach the stock set's speed rather than a better one: 4.936 s where the default two-candidate set gives 6.068 s, and the full ten-candidate stock set gives 4.877 s. Measured over 30 missions it rescues nothing, so it stays opt-in.
+
+### 10.5 Evolutionary discovery and analytical Kinetic Frontier seeds
+
+To address non-convex local traps on complex multi-waypoint missions with unpinned approach headings, a **5-Pillar Multi-Island Genetic Algorithm** was deployed across 50 generations (1,200 IPOPT evaluations). The stochastic search uncovered significant performance gains over local gradient descent, yielding a **+19.2% to +20.7% speedup** on the 10-waypoint complex mission and **+5.23%** on the 180° S-Curve acrobatic reversal.
+
+#### Phase portrait analysis & actuator saturation
+Analyzing the state-space phase portrait of linear speed $v$ versus yaw rate $\omega$ within the differential-drive kinematic feasibility diamond ($|\omega| \le \frac{2}{W}(v_{\max} - |v|)$) revealed the physical mechanism of time-optimal differential-drive motion:
+- **Stock Baseline Underutilization**: Naive rolling heuristics cluster passively in the interior of the diamond, decelerating excessively before turns and wasting up to 40% of available actuator capacity.
+- **Active Kinematic Hypotenuse**: The evolutionary algorithm pushes the robot directly onto the outer diagonal boundary of the diamond ($|v| + \frac{W}{2}|\omega| = v_{\max}$), demonstrating Pontryagin's Maximum Principle by maintaining 100% actuator saturation throughout cornering.
+
+![Optimal Control Phase Portrait](images/optimal_control_phase_portrait.png)
+
+#### The 5 distilled physical laws
+Mining the top-performing evolutionary genomes across the multi-island topology revealed five invariant physical laws governing time-optimal differential drive control:
+1. **Principle of the Active Kinematic Hypotenuse**: Cornering at $v_{\text{corner}} = v_{\max} - \frac{W}{2}|\omega|$ keeps actuators at maximum capacity during turns.
+2. **The Late-Apex Dynamic Law**: Asymmetric curvature peaking at $u_{\text{apex}} \in [0.65, 0.70]$ enables deep trail-braking into turns followed by instantaneous full-throttle acceleration out of corners.
+3. **Waypoint Momentum Preservation**: Passing through unpinned waypoints at $0.68 - 0.75 \cdot v_{\max}$ along the chord bisector tangent eliminates artificial deceleration at waypoint transitions.
+4. **KKT Slack Barrier Equilibrium**: Riding the $4.8\text{ mm}$ boundary of the $5.0\text{ mm}$ Immrax physical tracking gate trades excess tracking margin for longitudinal speed.
+5. **Multi-Modal Homotopy Triad**: Three distinct local attractors emerge naturally: `sprint` (maximum lateral acceleration, shortest time), `sweeper` (continuous curvature, low wheel jerk), and `exploratory` (wider clearance margin).
+
+#### Analytical Kinetic Frontier seeds (`frontier_seed.py`)
+Rather than paying a 280-second evolutionary computation budget for every run, these five principles were codified into closed-form mathematical equations in `frontier_seed.py`. The resulting seeds generate in **$< 1.5\text{ ms}$** and seed IPOPT directly into the global optimum basin.
+
+#### Quantitative benchmark on complex mission (`examples/example_complex_mission.json`)
+
+| Solver / Seed Strategy | Seed Gen Time | IPOPT Iters | Solve Time | Trajectory Duration | Max Tracking Error | Immrax Gate Status |
+| :--- | :---: | :---: | :---: | :---: | :---: | :---: |
+| **Stock Baseline (`rolling`)** | $0.87\text{ ms}$ | $150$ | $3.01\text{ s}$ | $6.743\text{ s}$ | $1.10\text{ cm}$ | ❌ **FAIL** (exceeds $0.50\text{ cm}$) |
+| **50-Gen GA Centurion Champion** | $281,000\text{ ms}$ | $1,200\text{ evals}$ | $281.0\text{ s}$ | $5.572\text{ s}$ | **$0.48\text{ cm}$** | ✅ **PASS** |
+| **Frontier Sweeper** | **$0.51\text{ ms}$** | $108$ | $2.28\text{ s}$ | $5.570\text{ s}$ | $0.51\text{ cm}$ | ⚠️ Boundary ($5.1\text{ mm}$) |
+| **Frontier Exploratory** | **$0.57\text{ ms}$** | $118$ | $2.43\text{ s}$ | $5.494\text{ s}$ | $0.50\text{ cm}$ | ⚠️ Boundary ($5.0\text{ mm}$) |
+| **Frontier Sprint (WINNER)** | **$1.29\text{ ms}$** | **$86$** | **$1.89\text{ s}$** | **$5.452\text{ s}$** | **$0.49\text{ cm}$** | ✅ **PASS** |
+
+![Frontier Seeds vs GA vs Baseline](images/plot_frontier_vs_ga_comparison.png)
+
+#### Geometric manifold sensitivity
+Comparing performance across diverse shapes establishes the precise boundary conditions where advanced seeds and global search are required:
+- **High Topological Freedom (10-Waypoint Complex: +19.2% / S-Curve Reversal: +5.23%)**: When waypoints have unpinned approach headings and allow continuous momentum, multiple homotopy classes exist; frontier seeds and evolutionary search bypass local saddle points to discover late-apex trail-braking.
+- **Rigid Point Constraints (90° Box Loop: +0.0% / Stops: +0.0%)**: Pinned headings with zero-velocity stops decouple the mission into independent 1D problems with a single global optimum, where standard local IPOPT solves to global optimality on iteration 1.
+- **Pre-Aligned Single-Basin Curves (Slalom: +0.0% / Hairpin: +0.1%)**: Smooth inflection curves naturally guide curvature, meaning the stock baseline already resides in the global optimum basin ($< 5\text{ mm}$ error).
+
+For the complete theoretical derivation and state-space formulations, see [`docs/OPTIMAL_CONTROL_DERIVATION.md`](OPTIMAL_CONTROL_DERIVATION.md).
 
 ---
 

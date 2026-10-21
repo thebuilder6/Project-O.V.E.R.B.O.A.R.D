@@ -2,7 +2,7 @@
 
 This document provides practical examples for using the FLL Trajectory Optimizer.
 
-> **Optimizer choice:** the simple CasADi solver is the default, so every example below works with a core `requirements.txt` install. The Multi-Verse path is opt-in with `--multiverse`; it needs JAX, and its refined trajectory reaches the solver as a seed (KI-004). `--validate` always needs JAX/Immrax. With `--validate`, `--candidates N` (default 2, max 5) solves N candidates and exports the passing one with the smallest envelope; with the simple solver the candidates combine initial-guess seeds with uniform or per-segment timing, on the Multi-Verse path they are accuracy-weight variants. Use `--candidates 1` for a single solve. Without `--validate`, only the first candidate is solved.
+> **Optimizer choice:** the simple CasADi solver is the default, so every example below works with a core `requirements.txt` install. The Multi-Verse path is opt-in with `--multiverse`; it needs JAX, and its refined trajectory reaches the solver as a seed (KI-004). `--validate` always needs JAX/Immrax. With `--validate`, `--candidates N` (default 2, max 5) solves N candidates and exports the passing one with the lowest fitness score; with the simple solver the candidates combine initial-guess seeds with uniform or per-segment timing, on the Multi-Verse path they are accuracy-weight variants. Use `--candidates 1` for a single solve. Without `--validate`, only the first candidate is solved.
 
 ## Table of Contents
 
@@ -343,7 +343,7 @@ python main.py -c examples/fll_choreo.json -w waypoints.json -o high_res.traj -n
 - `-n 10`: Good balance for most FLL paths
 - `-n 20`: Slower optimization, smoother curves, better for complex paths
 
-The candidate loop mixes the two timing modes by default: with `--validate`, candidate 1 is equal-duration baseline, candidate 2 is per-segment baseline, and selection keeps the passing candidate with the smallest envelope. A waypoint is a legitimate timing boundary only when the robot stops there *and* the heading is pinned; at every other waypoint the per-segment model keeps the wheel force profile continuous through the point (KI-024). To force one mode for an experiment:
+The candidate loop mixes the two timing modes by default: with `--validate`, candidate 1 is equal-duration baseline, candidate 2 is per-segment baseline, and selection keeps the passing candidate with the lowest fitness score. A waypoint is a legitimate timing boundary only when the robot stops there *and* the heading is pinned; at every other waypoint the per-segment model keeps the wheel force profile continuous through the point (KI-024). To force one mode for an experiment:
 
 ```bash
 python main.py --per-segment-dt \
@@ -631,7 +631,7 @@ python main.py --uniform-dt --validate -c examples/fll_choreo.json \
   -w examples/example_mission_first4.json -o first4.traj --candidates 5
 ```
 
-The seeds are `baseline`, `rolling`, `bow_left`, `bow_right`, and `turn_first`. The candidate table prints each candidate's duration and envelope, and selection keeps the passing one with the smallest envelope (shortest breaks ties). On the first four waypoints of the complex mission all five uniform seeds pass; `baseline` wins at 2.176 s / 0.27 cm. On the full mission the baseline also wins (6.068 s / 1.22 cm); the other uniform seeds converge to slower, wider paths (8.1-8.7 s), so they are rejected. Without `--uniform-dt`, the default candidate 2 is per-segment baseline; it is faster (1.833 s on first4, where it is selected, and 4.650 s on the mission), but on the mission its tracking is 0.84 cm and its motor force is 0.074 N over the limit, so it is rejected there.
+The seeds are `baseline`, `rolling`, `bow_left`, `bow_right`, and `turn_first`. The candidate table prints each candidate's duration and envelope, and selection keeps the passing one with the lowest fitness score (the envelope, then the shortest, break ties). On the first four waypoints of the complex mission all five uniform seeds pass; `baseline` wins at 2.176 s / 0.27 cm. On the full mission the baseline also wins (6.068 s / 1.22 cm); the other uniform seeds converge to slower, wider paths (8.1-8.7 s), so they are rejected. Without `--uniform-dt`, the default candidate 2 is per-segment baseline; it is faster (1.833 s on first4, where it is selected, and 4.650 s on the mission), but on the mission its tracking is 0.84 cm and its motor force is 0.074 N over the limit, so it is rejected there.
 
 From Python, pass `guess_style` to `solve`; the default `per_segment_dt=False` reproduces the uniform seed comparison:
 

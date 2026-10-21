@@ -89,6 +89,31 @@ Returns:
 
 `compute_metrics` does not validate; it only reports. Force utilization is computed against the nominal motor curve, not the robust limits.
 
+## `compute_path_fitness(samples, robot_cfg=None, stop_sample_indices=None, immrax_report=None, cpu_summary=None, weights=None)`
+
+Returns the 5-part time-equivalent **path fitness score** and its parts. Lower is better; the units are seconds, so the score reads as "the time this trajectory's defects are worth".
+
+| part | weight | what it measures |
+|---|---:|---|
+| `stop_precision` | 200 s/m | the reachability spread at every stop and at the final sample, with the heading spread lever-armed: `sqrt(r^2 + (L_arm * dtheta)^2)` |
+| `slip_risk` | 8 s | a quadratic penalty on the combined motor and traction utilisation above a 70 % dead-zone: `0.5 * mean + 0.5 * max` of `(utilisation - 0.7)^2` |
+| `rms_force` | 0.5 s | the time-weighted RMS wheel force, normalised by the stall force |
+| `tracking_accuracy` | 80 s/m | half the RMS path tracking error plus the sum of the closed-loop tracking errors at the stops and the final sample |
+| `time` | 1 s/s | the trajectory's own duration |
+
+Returns:
+
+- `fitness_score` — the weighted sum, in seconds
+- `travel_time_s`
+- `stop_precision_spread_m` and `final_precision_spread_m`
+- `slip_risk_penalty` and `peak_utilization`
+- `rms_wheel_force_n` and `rms_force_utilization`
+- `tracking_error_m`, `rms_tracking_error_m` and `stop_tracking_error_m`
+
+**Usage.** The tracking error comes from the Immrax report when one is supplied (the per-sample closed-loop error), and from the CPU audit's forward integration otherwise. The reachability spread comes from the Immrax report's per-sample envelopes, and from the envelopes attached to the samples if there is no report. `weights` overrides the default weights; `stop_sample_indices` are the sample indices of the stops, and the final sample is always a checkpoint.
+
+The score is a **ranking, not a gate**: a plan is never rejected because its fitness is bad. `main.py` uses it to pick between the candidates that passed the gates; see `docs/HEURISTICS_AND_VERIFICATION.md` §7.
+
 ## `check_final_waypoint(samples, waypoint, pos_tol=0.02, heading_tol=0.02)`
 
 Checks that the last sample reaches the requested final pose.
