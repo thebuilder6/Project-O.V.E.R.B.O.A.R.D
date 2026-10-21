@@ -32,14 +32,16 @@ missions plus 24 generated ones), through the **production** gate chain, with
 | Missions | 8 example missions + 24 generated (`research/suite.py`, seed 7), stratified over four profiles: `even`, `uneven`, `turny`, `mixed` |
 | Candidates | 21 per mission: 5 seeds x 2 timing models at the base weight, plus the baseline x 2 timing models x 5 accuracy weights, plus the two new guess families (Bezier path family, length-proportional time allocation) |
 | Total | 672 candidate solves, each solved and then scored by the full gate chain |
-| Scoring | the production `main.py` helpers (`_immrax_failure_reasons`, `_cpu_failure_reasons`) and the production Immrax validator and CPU audit |
+| Scoring | the production `overboard/main.py` helpers (`_immrax_failure_reasons`, `_cpu_failure_reasons`) and the production Immrax validator and CPU audit |
 | Robot | `examples/fll_choreo.json`, 10 samples per segment |
-| Tree | pinned copy, hashes in `pq_b_PINNED_TREE.md5`; every record carries a `tree` token, and every record in this campaign carries the same one |
+| Tree | pinned copy, hashes in `archive/research-2026-10:docs/research/pq_b_PINNED_TREE.md5`; every record carries a `tree` token, and every record in this campaign carries the same one |
 
 ### The instrument was checked first
 
 `research/check_instrument.py` runs the CLI and the harness on the same
-mission, against the same tree, and compares what they report:
+mission, against the same tree, and compares what they report. It is archived with the rest of the
+campaign (`archive/research-2026-10:research/check_instrument.py`), because it imports the
+pre-refactor module roots:
 
 ```text
 CLI:      baseline/equal-duration 3.6965s env 0.7650cm trk 1.3197cm ok=False
@@ -57,7 +59,8 @@ once, and KI-025 after the pin). The first attempt at this work produced a
 mixed dataset; it was thrown away and re-run against a pinned copy. The
 `tree` token in every record makes that check automatic.
 
-**The pin predates KI-025.** The pinned `immrax_validator.py` still has the
+**The pin predates KI-025.** The pinned `immrax_validator.py` (now
+`overboard/verification/immrax_validator.py`) still has the
 old backlash model (a velocity offset) that KI-025 replaced with a position
 uncertainty. RQ-A measured that term at ~1 % of the tracking error on curved
 paths and ~226 µm on straights, so the effect on the conclusions below is

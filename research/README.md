@@ -58,7 +58,7 @@ python research/analyze.py all research/results/matrix.jsonl
 The campaign that produced the published numbers used 8 example missions and
 24 generated ones (32 in total) and 21 candidates per mission; see
 [`../docs/research/pq_b/FINDINGS.md`](../docs/research/pq_b/FINDINGS.md) and
-[`../docs/measurements/2026-10-20/PQ-B.md`](../docs/measurements/2026-10-20/PQ-B.md).
+`archive/research-2026-10:docs/measurements/2026-10-20/PQ-B.md`.
 
 ### Spec sets
 

@@ -99,7 +99,7 @@ Three things are missing.
 
 ### 4.1 Pushing an existing trajectory
 
-Move the push out of `main.py` so the command line and the studio share one path.
+Move the push out of the CLI so the command line and the studio share one path.
 
 In `overboard/deploy/hub_deploy.py` (`parents[2]` because the module is two levels below the repo
 root):
@@ -125,7 +125,7 @@ def push_trajectory(traj_file, connection="ble", name=None, log_path=None):
     return lines
 ```
 
-`hub_deploy.py` also has a command-line mode so the studio can run it as a
+`overboard/deploy/hub_deploy.py` also has a command-line mode so the studio can run it as a
 subprocess (which is what makes cancel work):
 
 ```bash
@@ -248,7 +248,7 @@ said" into a better plan.
 
 | Phase | Content | Size | State |
 |---|---|---|---|
-| **1. The push** | `hub_deploy.push_trajectory` + the `--trajectory` mode; `main.py --push-hub` uses it; the studio's push job, button and streamed console output. | M | **Done** |
+| **1. The push** | `hub_deploy.push_trajectory` + the `--trajectory` mode; `overboard/main.py --push-hub` uses it; the studio's push job, button and streamed console output. | M | **Done** |
 | **2. The result** | Parse the `POSE`/`EVENT` lines; the measured marker on the canvas; the error; the event list; the session written next to the mission. | M | **Done** |
 | **3. The robot code** | The event checklist; the geometry warning with its one-click fix. | S–M | **Done** |
 | **4. The loop** | The compare report in the studio; the measured model; the calibration wizard. | M | **Done** (designed in [CALIBRATION_STUDIO_PLAN.md](CALIBRATION_STUDIO_PLAN.md)) |
@@ -257,7 +257,7 @@ What is built today:
 
 - `hub_deploy.push_trajectory(traj_file, connection, name, log_path)` writes the packed
   mission and pushes the runner. `python -m overboard.deploy.hub_deploy --trajectory out.traj --conn ble
-  --out session.csv` does the same from the command line, and `main.py --push-hub` calls
+  --out session.csv` does the same from the command line, and `overboard/main.py --push-hub` calls
   the same function, so there is one push path in the tree.
 - The studio's **Push to hub** button (`POST /api/push`) runs that command as a
   subprocess against the trajectory of the last **passed** solve, so the export gate

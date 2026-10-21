@@ -8,7 +8,7 @@ The procedure has two halves:
 1. **Collect** — the robot runs the test suite on the hub while you measure
    where it ended. The hub drives; you hold the tape measure.
 2. **Fit** — the measurements and the log become `sysid_fit.json`, which
-   `main.py --sysid-fit` then uses to plan with.
+   `python -m overboard.main --sysid-fit` then uses to plan with.
 
 Budget about half an hour. The robot drives for about six minutes of that;
 the rest is your setup between tests and the tape work.
@@ -218,7 +218,7 @@ measurements it still needs.
 
 ## Step 2 — fill in the measurement sheet
 
-`sysid_collect.py --sheet` already wrote it. If you collected the session
+`python -m overboard.sysid.collect --sheet` already wrote it. If you collected the session
 some other way, write it here:
 
 ```bash
@@ -396,10 +396,10 @@ python -m overboard.main -w examples/example_straight.json -o output.traj \
   --validate --sysid-fit sysid_fit.json
 ```
 
-`--sysid-fit` requires `--validate`. The validator applies the fitted
-actuator response and the odometry scale, and it uses the **gain interval**
-as the band it plans against, so a robot that varies a lot produces a
-conservative plan.
+`--sysid-fit` requires `--validate` (or `--live`, which passes the same fit to every solve the
+studio runs). The validator applies the fitted actuator response, the odometry belief and the
+measured braking shortfall, and it uses the **gain interval** as the band it plans against, so a
+robot that varies a lot produces a conservative plan.
 
 Check the plan against the robot you measured. The comparator reads the
 measured poses, so write them out of the sheet first:
@@ -455,5 +455,6 @@ thresholds do not change.
   test only. A robot that slips on one wheel will not show up there.
 - Three repeats give a wide interval on purpose. If you want a tighter one,
   collect more repeats, not a cleverer analysis.
-- Braking slip is fitted but the plant does not apply it yet (KI-020).
+- Braking slip is fitted and applied by the digital-twin plant, which slows the robot's
+  ground truth while it brakes. Slip during acceleration is still unmodelled (KI-020).
 - Do not tune `b`, `zeta`, or the validation thresholds to a single path.

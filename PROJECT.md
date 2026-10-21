@@ -1,5 +1,10 @@
 # Project: Project-O.V.E.R.B.O.A.R.D Modular Refactoring
 
+> **Status: done (2026-10-21).** This file is the plan the refactor was executed from; the tree is the
+> authority. Two items did not happen as planned and are marked below: there is **no**
+> `pyproject.toml` (the package is run from the repository root as `python -m overboard.main`,
+> with no install metadata), and the test tree ended with 32 modules, not 35.
+
 ## Architecture
 Project-O.V.E.R.B.O.A.R.D is refactored from a flat root layout into the modular `overboard/` package architecture with zero root shims.
 
@@ -53,14 +58,22 @@ overboard/
 │   ├── studio.css              # Studio UI stylesheet
 │   └── report.js               # Studio report formatting script
 └── legacy/                     # Archived prototypes & research (isolated)
+    ├── README.md               # What is in here and why
     ├── multiverse_optimizer.py # Multi-Verse pipeline (archived, no CLI entry point)
     ├── jax_optimizer.py        # JAX refinement used by the archived pipeline
-    └── path_planning.py        # Reeds-Shepp helpers used by the archived pipeline
+    ├── path_planning.py        # Reeds-Shepp helpers used by the archived pipeline
+    ├── benchmark_frontier_seed.py       # Benchmarks of the archived research
+    ├── benchmark_memetic_evolution.py
+    ├── generate_candidate_plots.py
+    ├── evolutionary_research/  # The GA, its plotters and the memetic study
+    └── sample_trajectories/   # The trajectories the archived research produced
 ```
 
 External Isolated Trees:
 - `pybricks_code/`: MicroPython robot-side firmware (strictly isolated, zero host imports).
-- `tests/`: 32 test modules, 657 tests (all importing from `overboard.*`).
+- `tests/`: 32 test modules, 657 tests (all importing from `overboard.*`). With PyYAML
+  installed the suite is 657 tests, 0 failures, 0 skipped; the three
+  `TestRoboVibeConverter` cases in `tests/test_fields.py` skip when PyYAML is missing.
 - Root developer tools: `run_tests.py`, `testcache.py`, `benchmark.py`.
 
 ## Feature Inventory
@@ -77,7 +90,7 @@ External Isolated Trees:
 | 9 | Path Anchors & Subprocess Updates | Update `REPO_ROOT = Path(__file__).resolve().parent.parent` and subprocess invocations (`python -m overboard.main`, `-m overboard.deploy.hub_deploy`) | M1 | Survey 3, R2 |
 | 10 | Legacy Tree Relocation | Move legacy research into `overboard/legacy/` | M1 | Survey 1, R1 |
 | 11 | Source Internal Hard Imports | Migrate all imports inside `overboard/` to `overboard.*` (zero relative escape, zero root imports) | M1 | Survey 1, R3 |
-| 12 | Test Suite Hard Imports Migration | Update all 35 test files in `tests/` to import from `overboard.*` | M2 | Survey 2, R3 |
+| 12 | Test Suite Hard Imports Migration | Update all test files in `tests/` (32 in the end) to import from `overboard.*` | M2 | Survey 2, R3 |
 | 13 | Test Suite Registry Update | Update `tests/test_suite_registry.py` to discover and validate against `overboard` package | M2 | Survey 2, R3 |
 | 14 | Test Legacy Boundary Update | Update `tests/test_legacy_boundary.py` to guard `overboard.legacy` and `overboard/legacy` | M2 | Survey 2, R3 |
 | 15 | Test Studio Static Asset Paths Update | Update `test_studio_inventory.py`, `test_studio_honesty.py`, `test_studio_report.py` to point to `overboard/viz/` | M2 | Survey 2, 3, R2 |
@@ -87,7 +100,7 @@ External Isolated Trees:
 | 19 | Test Runner & Cache Parity | Update `run_tests.py` and `testcache.py` to resolve and track `overboard` package modules | M4 | Survey 3, R4 |
 | 20 | Benchmark Script Parity | Update `benchmark.py` to invoke `overboard.main` | M4 | Survey 3, R4 |
 | 21 | Environment Scripts Parity | Update `install.bat`, `install.sh`, `start_studio.bat`, `start_studio.sh` with `-m overboard.main` preserving line endings | M4 | Survey 3, R4 |
-| 22 | Package Configuration & pyproject.toml | Create `pyproject.toml` with `overboard` package discovery and `viz` package-data inclusion | M4 | Survey 3, R4 |
+| 22 | Package Configuration & pyproject.toml | **Not done.** There is no `pyproject.toml`: the package is run from the repository root (`python -m overboard.main`), and the studio assets are read from the source tree. `requirements.txt` / `requirements-optional.txt` are the install surface | M4 | Survey 3, R4 |
 | 23 | Documentation Updates (AGENTS.md) | Update CLI commands and path conventions in `AGENTS.md` | M4 | Survey 3, R4 |
 | 24 | Full Test Suite Execution | Execute all 657 tests with 0 failures, 0 errors via `python run_tests.py --clear-cache` | M5 | R4, Acceptance |
 | 25 | CLI Diagnostics Verification | Verify `python -m overboard.main --doctor` passes with full dependency check | M5 | R2, Acceptance |
@@ -97,11 +110,11 @@ External Isolated Trees:
 ## Milestones
 | # | Name | Scope | Dependencies | Status |
 |---|------|-------|-------------|--------|
-| M1 | Package Skeleton & Source Migration | Create `overboard/` hierarchy, move modules, establish `CASADI_IPOPT_LOCK`, extract `reachability_engine.py`, set path anchors & subprocesses, migrate all internal source imports | none | IN_PROGRESS |
-| M2 | Test Suite Migration & Registry Verification | Update all 35 test files to `overboard.*`, update `test_suite_registry.py`, `test_legacy_boundary.py`, studio asset paths, mocks | M1 | PLANNED |
-| M3 | Root Cleaning & Firmware Isolation | Remove root-level source modules and dirs; confirm zero root shims remain; verify `pybricks_code/` isolation | M2 | PLANNED |
-| M4 | Runners, Scripts, Tooling & Docs Parity | Update `run_tests.py`, `testcache.py`, `benchmark.py`, `.bat`/`.sh`, `pyproject.toml`, `AGENTS.md` | M3 | PLANNED |
-| M5 | Final Verification & Forensic Audit | Run all 657 tests, `--doctor`, end-to-end `--validate`, and forensic integrity audit | M4 | PLANNED |
+| M1 | Package Skeleton & Source Migration | Create `overboard/` hierarchy, move modules, establish `CASADI_IPOPT_LOCK`, extract `reachability_engine.py`, set path anchors & subprocesses, migrate all internal source imports | none | **DONE** |
+| M2 | Test Suite Migration & Registry Verification | Update the test files to `overboard.*`, update `test_suite_registry.py`, `test_legacy_boundary.py`, studio asset paths, mocks | M1 | **DONE** |
+| M3 | Root Cleaning & Firmware Isolation | Remove root-level source modules and dirs; confirm zero root shims remain; verify `pybricks_code/` isolation | M2 | **DONE** |
+| M4 | Runners, Scripts, Tooling & Docs Parity | Update `run_tests.py`, `testcache.py`, `benchmark.py`, `.bat`/`.sh`, `AGENTS.md`. **No `pyproject.toml`** (item 22) | M3 | **DONE** (item 22 not done) |
+| M5 | Final Verification & Forensic Audit | Run all 657 tests, `--doctor`, end-to-end `--validate`, and forensic integrity audit | M4 | **DONE** |
 
 ## Interface Contracts
 ### `overboard.core.optimizer` ↔ `overboard.core.unified_planner` / `overboard.core.surrogate_polish`
@@ -127,4 +140,5 @@ External Isolated Trees:
 - MicroPython firmware: `pybricks_code/`
 - Field assets: `mats/`, `fields/`
 - Examples & calibration: `examples/`, `calibration/`, `missions/`
-- Root runners & tooling: `run_tests.py`, `testcache.py`, `benchmark.py`, `pyproject.toml`, `requirements.txt`
+- Root runners & tooling: `run_tests.py`, `testcache.py`, `benchmark.py`, `requirements.txt`,
+  `requirements-optional.txt`

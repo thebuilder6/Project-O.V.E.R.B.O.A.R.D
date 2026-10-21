@@ -34,7 +34,7 @@ Three questions:
 
 ### 1. One drivetrain model, in one place
 
-[`../../drivetrain.py`](../../drivetrain.py) holds the motor and drivetrain
+[`../../overboard/models/drivetrain.py`](../../overboard/models/drivetrain.py) holds the motor and drivetrain
 model: the back-EMF torque law, the gearbox's Coulomb and viscous friction,
 the traction cap, the braking and coasting decelerations, and a small
 integrator that runs a wheel-speed command through the motor and the ground.
@@ -58,7 +58,7 @@ other fitted number. A measurement is only used when it is valid: if the
 robot *reached* the commanded speed, the command was the limit and not the
 motor, and the number is rejected with the reason.
 
-`main.py --sysid-fit` now writes the measured motor into the robot config,
+`python -m overboard.main --sysid-fit` now writes the measured motor into the robot config,
 so **the optimizer, the CPU audit, the Immrax validator and the exported
 controller all plan against the same motor** (KI-010's rule).
 
@@ -154,8 +154,8 @@ braking has to know this.
 
 | change | where |
 |---|---|
-| the drivetrain model | [`../../drivetrain.py`](../../drivetrain.py) |
-| the measured motor reaches the config | [`../../robot_model.py`](../../robot_model.py) (`apply_measured_motor`), [`../../main.py`](../../main.py) |
-| the fit extracts the free-running speed | [`../../sysid_fit.py`](../../sysid_fit.py) (`_fit_no_load_speed`) |
+| the drivetrain model | [`../../overboard/models/drivetrain.py`](../../overboard/models/drivetrain.py) |
+| the measured motor reaches the config | [`../../overboard/models/robot_model.py`](../../overboard/models/robot_model.py) (`apply_measured_motor`), [`../../overboard/main.py`](../../overboard/main.py) |
+| the fit extracts the free-running speed | [`../../overboard/sysid/fit.py`](../../overboard/sysid/fit.py) (`_fit_no_load_speed`) |
 | the collector measures it | [`../../pybricks_code/sysid_digital_twin.py`](../../pybricks_code/sysid_digital_twin.py) (`test_top_speed`) |
 | the cross-check harness | [`../../research/crosscheck/`](../../research/crosscheck/) |

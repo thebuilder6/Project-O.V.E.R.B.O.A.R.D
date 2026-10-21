@@ -2,10 +2,10 @@ This document outlines the system identification (SysId) tool, the telemetry rec
 
 This design shifts complex mathematical computation to the PC (host side), leaving the robot with lightweight execution steps that are structurally robust against real-world slip and physical interaction [1, 2].
 
-> **Implementation status (2026-10-19)**
+> **Implementation status (2026-10-21)**
 >
-> - **Implemented:** robot-side digital-twin collector (`pybricks_code/sysid_digital_twin.py`), older telemetry logger (`pybricks_code/sysid_data_logger.py`), and host fitter (`sysid_fit.py`); optional five-state actuator/odometry plant via `digital_twin.py` and `main.py --sysid-fit`; canonical/legacy/flat config parsing with declared uncertainty ranges; per-wheel force and traction limits; CPU + Immrax validation gate; controller JSON and Python export.
-> - **Partial:** the older PC SysId solver (`sysid_solver.py`) is a standalone script with hardcoded CSV paths; braking slip is loaded/reported but not applied; integrated odometry, motor/DriveBase dynamics, and full slip dynamics are still missing.
+> - **Implemented:** robot-side digital-twin collector (`pybricks_code/sysid_digital_twin.py`) and host fitter (`overboard/sysid/fit.py`); the optional fitted plant (`overboard/sysid/digital_twin.py`) behind `python -m overboard.main --sysid-fit`, which applies the actuator gain, time constant, command delay, acceleration limit, odometry belief and braking shortfall; canonical/legacy/flat config parsing with declared uncertainty ranges; per-wheel force and traction limits; CPU + Immrax validation gate; controller JSON and Python export.
+> - **Partial:** the robot's own odometry is modelled as a *belief* inside the validator rather than as a plant state; motor current transients, DriveBase PID, slip under load and full slip dynamics are still missing.
 > - **Archived:** the JAX refinement and the Multi-Verse pipeline are under `overboard/legacy/` with no CLI entry point; measured as a seed provider the refined seed rescued nothing (KI-004).
 > - **Not implemented:** interaction force injection (`interactions` is parsed only as data), full motor/DriveBase/odometry/slip dynamics, and reachability-driven optimization or a feedback loop into the planner. The validator is a post-solve gate and candidate score, not a full digital twin (KI-020).
 > - **Do not read this document as a claim that the robot currently guarantees zero slip.** The zero-slip target remains a design goal.
@@ -17,7 +17,7 @@ This design shifts complex mathematical computation to the PC (host side), leavi
 These tools operate in two steps: a robot-side script (running on Pybricks) to collect high-frequency sensor data [1, 2], and a PC-side script (running in Python/JAX) to analyze the data and generate nominal and interval parameters [1].
 
 ```
-[Robot-Side Collector: sysid_digital_twin.py] -> [CSV Data Log + poses.csv] -> [PC-Side Fitter: sysid_fit.py] -> [sysid_fit.json -> main.py --sysid-fit] -> [sysid_compare.py report]
+[Robot-Side Collector: sysid_digital_twin.py] -> [CSV Data Log + poses.csv] -> [PC-Side Fitter: overboard.sysid.fit] -> [sysid_fit.json -> overboard.main --sysid-fit] -> [overboard.sysid.compare report]
 ```
 
 ## 1.1 Automated SysId Test Protocol
@@ -84,7 +84,7 @@ To plan for push/pull interactions (which disrupt standard path following), the 
 
 # Part 2: Data Output Schema
 
-The current `sysid_fit.py` writes a separate `sysid_fit.json` consumed by `main.py --sysid-fit`; it does not rewrite `RobotConfig`. It accepts a minimal drivebase profile (`wheel_radius_m`, optional `track_width_m`) so a different differential drive only needs its own geometry and profile logs; `sysid_compare.py` accepts the same profile and a plain predicted-pose CSV. The longer-term design target is to merge calibrated physical ranges into the robot config schema [1, 2]:
+The fitter (`overboard/sysid/fit.py`) writes a separate `sysid_fit.json`. The CLI loads it and merges the measured numbers into the robot config for that run (`RobotConfig.apply_sysid_fit`), so the optimizer, the CPU audit, the validator and the exported controller all use the same measured motor (KI-010's rule); the config file on disk is not rewritten. The fitter accepts a minimal drivebase profile (`wheel_radius_m`, optional `track_width_m`) so a different differential drive only needs its own geometry and profile logs; `overboard/sysid/compare.py` accepts the same profile and a plain predicted-pose CSV. The longer-term design target is to merge calibrated physical ranges into the robot config schema [1, 2]:
 
 ```json
 {
@@ -123,7 +123,7 @@ This architecture integrates the calibrated system parameters and interaction fo
                      [Path Planner Pipeline]
                                 │
                                 ▼
-         Phase A: JAX-Accelerated Multi-Verse Evaluator  <── Ingests RobotConfig JSON
+         Phase A: Multi-Verse Evaluator (archived)  <── Ingests RobotConfig JSON
                                 │                            (Solves unconstrained headings)
                                 ▼
          Phase B: CasADi / IPOPT High-Precision Solver   <── Enforces strict physics
@@ -172,7 +172,7 @@ Once the optimal nominal trajectory is computed, the validator checks the path a
 3.  **Safety Verification:**
     *   Immrax calculates the spatial reachable tube (the bounding box of where the robot frame could exist) [1].
     *   It checks the worst-case per-wheel motor force, wheel slip, wheel speed, tracking error, and envelope radius [1].
-4.  **Current feedback status:** the validator is a post-solve gate and candidate score. With `--validate`, `main.py` solves up to `--candidates` trajectories (default 2, max 5) and scores each by envelope. With `--simple` the candidates combine initial-guess seeds (`baseline`, `rolling`, `bow_left`, `bow_right`, `turn_first`) with uniform or per-segment timing; the Multi-Verse path uses increasing accuracy weights. It selects a passing one by the 5-part fitness score, and it prices the wheel forces in the objective (`--force-weight`, off by default); it does not feed the violated segment back into the optimizer as a penalty. Reachability-driven optimization remains future work (KI-020).
+4.  **Current feedback status:** the validator is a post-solve gate and candidate score. With `--validate`, `overboard/main.py` solves the candidate set - the three frontier candidates of the unified engine by default, or the stock seeds (`baseline`, `rolling`, `bow_left`, `bow_right`, `turn_first`) with `--no-unified` - and scores each by the 5-part path fitness score (stop spread, slip risk, RMS wheel force, tracking error, run time), with envelope and duration breaking ties. `--candidates` sets how many are solved (default 2; the flag itself has no upper bound). It prices the wheel forces in the objective (`--force-weight`, off by default); it does not feed the violated segment back into the optimizer as a penalty. Reachability-driven optimization remains future work (KI-020).
     *   If validation passes, the trajectory is exported; if it fails, no output is written and the command exits non-zero.
 
 ---
@@ -181,7 +181,7 @@ Once the optimal nominal trajectory is computed, the validator checks the path a
 
 See [`docs/STUDIO_3D_SIMULATOR_PLAN.md`](docs/STUDIO_3D_SIMULATOR_PLAN.md) for the complete design specification.
 
-This stretch goal introduces a client-side 3D WebGL physics environment inside the browser studio (`viz/studio.html`), using Three.js for rendering and Rapier3D (WebAssembly) for 60 Hz rigid-body simulation.
+This stretch goal introduces a client-side 3D WebGL physics environment inside the browser studio (`overboard/viz/studio.html`), using Three.js for rendering and Rapier3D (WebAssembly) for 60 Hz rigid-body simulation.
 
 
 [Trajectory (.traj)] ┐> [Rapier3D Physics Sandbox] <┐ [Clustered CAD (.ldr / .io)]

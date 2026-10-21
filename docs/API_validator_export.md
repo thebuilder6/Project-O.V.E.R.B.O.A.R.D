@@ -114,7 +114,7 @@ Returns:
 
 **Usage.** The tracking error comes from the Immrax report when one is supplied (the per-sample closed-loop error), and from the CPU audit's forward integration otherwise. The reachability spread comes from the Immrax report's per-sample envelopes, and from the envelopes attached to the samples if there is no report. `weights` overrides the default weights; `stop_sample_indices` are the sample indices of the stops, and the final sample is always a checkpoint.
 
-The score is a **ranking, not a gate**: a plan is never rejected because its fitness is bad. `main.py` uses it to pick between the candidates that passed the gates; see `docs/HEURISTICS_AND_VERIFICATION.md` §7.
+The score is a **ranking, not a gate**: a plan is never rejected because its fitness is bad. `overboard/main.py` uses it to pick between the candidates that passed the gates; see `docs/HEURISTICS_AND_VERIFICATION.md` §7.
 
 ## `check_final_waypoint(samples, waypoint, pos_tol=0.02, heading_tol=0.02)`
 
@@ -130,7 +130,7 @@ Checks that the last sample reaches the requested final pose.
 }
 ```
 
-If `samples` is empty or `waypoint` is `None`, it returns `passed=True` with zero errors. `main.py` calls this even when `--validate` is not set.
+If `samples` is empty or `waypoint` is `None`, it returns `passed=True` with zero errors. `overboard/main.py` calls this even when `--validate` is not set.
 
 ## `validate_samples(samples, robot_cfg, apply_headroom=True)`
 
@@ -156,7 +156,7 @@ Runs the same CPU checks as `validate_trajectory` without printing or writing fi
 - `audit["num_slip_points"] == 0`
 - `audit["speed_violation_m_s"] < 1e-6`
 
-This function does **not** check the final waypoint; `main.py` does that separately with `check_final_waypoint`.
+This function does **not** check the final waypoint; `overboard/main.py` does that separately with `check_final_waypoint`.
 
 ## `validate_trajectory(traj_file, config_file, apply_headroom=True, waypoints=None)`
 
@@ -291,9 +291,26 @@ inclusions and the digital-twin options, and default to module constants so a ru
 ## `validate_trajectory(samples, cof_range, torque_margin_range, backlash_range, track_width_range=None, wheel_radius_range=None, inertia_range=None, safety_threshold_m=0.005)`
 
 Interval audit of every sample: motor force, per-wheel slip and wheel speed, with the stall torque
-read from the config (`--sysid-fit` is what fills it with the measured number). Returns the
-`passed` verdict and the reasons it failed, which `overboard/main.py` folds into the candidate's
-record.
+read from the config (`--sysid-fit` is what fills it with the measured number). **Returns**
+
+```text
+max_motor_violation_N, max_traction_violation_N,
+max_slip_l_N, max_slip_r_N,
+max_tracking_error_m, rms_tracking_error_m,
+max_heading_error_rad, rms_heading_error_rad,
+max_envelope_radius_m,
+max_wheel_speed_m_s, wheel_speed_limit_m_s, speed_violation_m_s,
+reachability,          # the tube report, see compute_reachability
+inclusion,             # the plant / controller / tick inclusion used
+propagation,           # "plant" or "tick"
+digital_twin,          # the fit's summary, or None
+passed                 # the verdict
+```
+
+`passed` is true when the motor force, the per-wheel slip, the tracking error, the wheel speed and
+the tube's non-divergence are all inside their thresholds; the envelope size is judged by the
+caller against the per-waypoint limit. `overboard/main.py` folds the numbers into the candidate's
+record and into the machine-readable validation report.
 
 ## `compute_reachability(samples, backlash_range, track_width_range, wheel_radius_range, cof_range, torque_margin_range, inertia_range, legacy_debug_loop=None)`
 

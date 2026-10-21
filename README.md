@@ -332,7 +332,7 @@ python -m overboard.main --live -w examples/example_complex_mission.json
 ## CLI Options
 
 ```text
-﻿Usage: python -m overboard.main [OPTIONS]
+Usage: python -m overboard.main [OPTIONS]
 
   FLL Trajectory Optimizer CLI. Generates time-optimal trajectories for Lego
   robots.

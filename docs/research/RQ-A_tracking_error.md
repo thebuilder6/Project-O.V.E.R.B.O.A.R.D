@@ -3,13 +3,32 @@
 > **Archive note.** The experiment scripts under `rq_a/` and the raw measurement
 > trees referenced below are archived in the `archive/research-2026-10` tag.
 > Retrieve a file with `git show archive/research-2026-10:<path>`; see
-> [`../ARCHIVE.md`](../ARCHIVE.md).
+> [`../ARCHIVE.md`](../ARCHIVE.md). To *run* one, check the tag out
+> (`git checkout archive/research-2026-10` in a scratch worktree) - the scripts
+> import from the pre-refactor module roots, not from `overboard/`.
+>
+> **How to read the references below.** They were written before the runtime moved
+> into the `overboard/` package, so a bare `immrax_validator.py`, `optimizer.py` or
+> `frontier_seed.py` names the file that now lives at
+> `overboard/verification/`, `overboard/core/` and so on, and every `file:line` is
+> the line in the pinned tree, not in today's file. The investigation is kept as
+> the record of how the gate was diagnosed; the current tree is the authority on
+> where the code is.
+>
+> **What has moved since (2026-10-21).** The firmware was consolidated: `ramsete.py`
+> now holds the odometry, the Ramsete maths and the loop, `ramsete_fast.py` delegates
+> to it, and `ramsete_compact.py` delegates to `ramsete_compact_events.py` with
+> events off. So "the three controllers" in Fix 4 are one implementation with two
+> entry points today (`tests/test_firmware_events.py::TestFirmwareParity` pins it).
+> The tick propagation the reachability section argues for is now a shipped option,
+> `--propagation tick`, and the default is still `--propagation plant` for the
+> reason given there.
 
 **Status:** the cause is identified. The three things that stood between the plan and the robot are now closed in the tree — the plan's own collocation (KI-026), the reference's coupling (KI-027) and the model's parity with the controller that runs (KI-028) — and **every table below has been re-measured against that tree**. What is still open is the *shape* of the reference: the controller follows the chord between the samples, and the feedforward reports an interpolated value where the plan's own rule assumes an interval average.
 **Date:** 2026-10-20. The first pass was measured in the morning against a pinned copy; the tables were re-measured in the afternoon against the working tree, after KI-027 and KI-028 landed. Where a number has moved, the old one is kept and marked, because it is the record of the bug.
-**Tree under test:** the working tree, token `FD268F4F79AD`; the per-module MD5s are in [`rq_a/TREE_2026-10-20.md5`](rq_a/TREE_2026-10-20.md5). The tree kept moving while the campaign ran — the studio and the CLI changed under it — so the headline tables were **re-run at the end on the tree as it stood** and came back identical, to the last decimal (the verification output is in [`../../measurements/2026-10-20-post-ki028/rq_a_verify/`](../../measurements/2026-10-20-post-ki028/rq_a_verify/)). The first pass was measured against the pinned copy whose MD5s are in [`rq_a/PINNED_TREE.md5`](rq_a/PINNED_TREE.md5).
+**Tree under test:** the working tree, token `FD268F4F79AD`; the per-module MD5s are in `archive/research-2026-10:docs/research/rq_a/TREE_2026-10-20.md5`. The tree kept moving while the campaign ran — the studio and the CLI changed under it — so the headline tables were **re-run at the end on the tree as it stood** and came back identical, to the last decimal (the verification output is in `archive/research-2026-10:measurements/2026-10-20-post-ki028/rq_a_verify/`). The first pass was measured against the pinned copy whose MD5s are in `archive/research-2026-10:docs/research/rq_a/PINNED_TREE.md5`.
 **Companion:** [`../HEURISTICS_AND_VERIFICATION.md`](../HEURISTICS_AND_VERIFICATION.md) (the current-state reference and the research agenda).
-**Also:** [`../../research/`](../../research/) — the mission-suite harness for the agenda's Q1 (a Bezier path family), Q2 (a length-proportional time allocation) and Q8 (a 24-mission suite). That work measures the planner across many paths; this note diagnoses why the tracking gate binds on a few. **Their results predate KI-025, KI-027 and KI-028 and have to be re-run before they are quoted as current**: the reference fix moves the tracking error by up to 2 mm on the hard missions, and the parity fix moved it again. The 60-candidate matrix in the companion document **has** been re-run (the raw records are in [`../../measurements/2026-10-20-post-ki028/`](../../measurements/2026-10-20-post-ki028/)); the 32-mission campaign has not.
+**Also:** [`../../research/`](../../research/) — the mission-suite harness for the agenda's Q1 (a Bezier path family), Q2 (a length-proportional time allocation) and Q8 (a 24-mission suite). That work measures the planner across many paths; this note diagnoses why the tracking gate binds on a few. **Their results predate KI-025, KI-027 and KI-028 and have to be re-run before they are quoted as current**: the reference fix moves the tracking error by up to 2 mm on the hard missions, and the parity fix moved it again. The 60-candidate matrix in the companion document **has** been re-run (the raw records are in `archive/research-2026-10:measurements/2026-10-20-post-ki028/`); the 32-mission campaign has not.
 
 ---
 
@@ -37,15 +56,17 @@ On the S-curve the plan/profile discrepancy is 82 % of the reported tracking err
 
 *(Re-measured 2026-10-20 against the working tree, `rq_a/exp9_summary.py`. The first pass, against the pinned tree, read 0.346 / 0.435 / 0.489 / 1.814 / 1.260 cm: the reference fix (KI-027) moved the S-curve and the stops mission, and the parity fix (KI-028) left them alone — it is worth about 1 %.)*
 
-The wider claim — that the tracking gate, and not the envelope, is what rejects candidates — was measured on the 60-candidate matrix in the companion document, and it has been **re-measured twice on this tree**. On the tree that carried KI-025 to KI-028: 60 candidates, 31 pass, 29 fail, and of the failures **25 cite the tracking error, 6 the motor force and 13 the forward-integration check, and none the envelope** (the largest envelope anywhere is 1.75 cm against a 2 cm threshold). On the tree that added the self-consistent collocation and the arc-length sample layout: **26 pass, 34 fail**, and of the failures **28 cite the tracking error, 11 the motor force, and none the forward-integration check and none the envelope** (the largest envelope anywhere is 1.72 cm). The count moved (36 of 37 before the fixes, 25 of 29 after, 28 of 34 now) and the mechanism did not: the tracking gate is what rejects candidates, and the reachability envelope is not. The raw records are in [`../../measurements/2026-10-20-post-ki028/`](../../measurements/2026-10-20-post-ki028/) and in [`../../measurements/2026-10-20-variable-samples/`](../../measurements/2026-10-20-variable-samples/).
+The wider claim — that the tracking gate, and not the envelope, is what rejects candidates — was measured on the 60-candidate matrix in the companion document, and it has been **re-measured twice on this tree**. On the tree that carried KI-025 to KI-028: 60 candidates, 31 pass, 29 fail, and of the failures **25 cite the tracking error, 6 the motor force and 13 the forward-integration check, and none the envelope** (the largest envelope anywhere is 1.75 cm against a 2 cm threshold). On the tree that added the self-consistent collocation and the arc-length sample layout: **26 pass, 34 fail**, and of the failures **28 cite the tracking error, 11 the motor force, and none the forward-integration check and none the envelope** (the largest envelope anywhere is 1.72 cm). The count moved (36 of 37 before the fixes, 25 of 29 after, 28 of 34 now) and the mechanism did not: the tracking gate is what rejects candidates, and the reachability envelope is not. The raw records are in `archive/research-2026-10:measurements/2026-10-20-post-ki028/` and in `archive/research-2026-10:measurements/2026-10-20-variable-samples/`.
 
 ---
 
 ## Method
 
-The first pass of this note was measured against a **pinned copy** of the tree, because the working tree was being edited during the session (KI-024 landed mid-session). The scripts live in [`rq_a/`](rq_a/) and default to the repository root; set `OVERBOARD_TREE` to reproduce the recorded numbers against the pinned tree.
+The first pass of this note was measured against a **pinned copy** of the tree, because the working tree was being edited during the session (KI-024 landed mid-session). The scripts live in `archive/research-2026-10:docs/research/rq_a/` and default to the repository root; set `OVERBOARD_TREE` to reproduce the recorded numbers against the pinned tree.
 
-The tables were **re-measured against the working tree** after KI-027 (the turn rate is the derivative of the heading) and KI-028 (the validator mirrors the controller that runs) landed, and the 60-candidate matrix they lean on was measured again on the tree that added the self-consistent collocation and the arc-length sample layout ([`../../measurements/2026-10-20-variable-samples/`](../../measurements/2026-10-20-variable-samples/)). The raw output of every script is in [`../../measurements/2026-10-20-post-ki028/rq_a/`](../../measurements/2026-10-20-post-ki028/rq_a/), one file per script.
+The tables were **re-measured against the working tree** after KI-027 (the turn rate is the derivative of the heading) and KI-028 (the validator mirrors the controller that runs) landed, and the 60-candidate matrix they lean on was measured again on the tree that added the self-consistent collocation and the arc-length sample layout (`archive/research-2026-10:measurements/2026-10-20-variable-samples/`). The raw output of every script is in `archive/research-2026-10:measurements/2026-10-20-post-ki028/rq_a/`, one file per script.
+
+These commands need the tag checked out; they do not run against the current tree.
 
 ```bash
 python docs/research/rq_a/exp9_summary.py          # the summary table above
@@ -688,7 +709,7 @@ because the plan now agrees with itself.
 It is not a free win, and it is not the whole fix. Measured on the tree that
 carried F7 and F4, with the default candidate set and the collocation on and
 off; the raw records are in
-[`../../measurements/2026-10-20/matrix/`](../../measurements/2026-10-20/matrix/):
+`archive/research-2026-10:measurements/2026-10-20/matrix/`:
 
 | mission | trapezoid: tracking / gate | self-consistent: tracking / gate |
 |---|---|---|
@@ -831,5 +852,5 @@ In [`../HEURISTICS_AND_VERIFICATION.md`](../HEURISTICS_AND_VERIFICATION.md) Part
 | Safety | The KI-025 fix changed no gate outcome on its own: 0 of 60 candidates on the example matrix and 0 of 231 on the mission suite changed pass flag, with the worst-case uncertainty per run moving by at most 0.065 cm |
 | Which gate binds | **Tracking** in the default configuration (25 of 29 failures). **Envelope** once a calibrated model is fitted, because the measured gain band widens the reachable set (F5) - and after F12 that width is the reachable set itself and not an artefact of the model |
 | Hardware | **None.** Every number here is a model prediction. No hardware logs exist in this repository, and the uncertainty ranges in `examples/fll_choreo.json` are declared test assumptions. The *relative* findings (which term dominates, how the error scales) are properties of the model and hold regardless; the absolute numbers do not |
-| Re-measured | **Every table in this note was re-taken on 2026-10-20**, against the working tree that carries KI-025 to KI-028, because the model changed under them: the backlash moved into the reachable set, the plan's collocation became selectable and then the default, the reference's turn rate became the derivative of the heading, and the control period became the firmware's own. The conclusions did not change; the numbers did. The raw output is in [`../../measurements/2026-10-20-post-ki028/rq_a/`](../../measurements/2026-10-20-post-ki028/rq_a/), one file per script |
+| Re-measured | **Every table in this note was re-taken on 2026-10-20**, against the working tree that carries KI-025 to KI-028, because the model changed under them: the backlash moved into the reachable set, the plan's collocation became selectable and then the default, the reference's turn rate became the derivative of the heading, and the control period became the firmware's own. The conclusions did not change; the numbers did. The raw output is in `archive/research-2026-10:measurements/2026-10-20-post-ki028/rq_a/`, one file per script |
 

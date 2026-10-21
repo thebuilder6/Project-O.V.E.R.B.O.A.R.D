@@ -21,7 +21,8 @@ git ls-tree -r --name-only archive/research-2026-10 -- docs/measurements docs/re
 
 - `docs/research/RQ-A_tracking_error.md` — why the tracking gate binds.
 - `docs/research/RQ-B_drivetrain_model.md` — the drivetrain model check.
-- `docs/research/pq_b/FINDINGS.md` — the measured research-agenda answers.
+- `docs/research/pq_b/README.md` and `docs/research/pq_b/FINDINGS.md` — the measured
+  research-agenda answers.
 - `research/` — the measurement harness, random suite, robot randomizer and
   the independent cross-check, kept as developer tools.
 - `overboard/legacy/` — the archived Multi-Verse pipeline, Reeds-Shepp

@@ -82,7 +82,7 @@ TEST_END,...
 - `META,wheel_diameter_mm` and `META,axle_track_mm` are the robot's own geometry, measured by the robot itself. **The fit can take the wheel radius from the session**, which answers the open question in [docs/STUDIO_HUB_PLAN.md](STUDIO_HUB_PLAN.md) §9: no drivebase profile file is needed in the GUI flow.
 - `META,run_id` ties a pose to the test that was open when it was printed.
 
-`sysid_fit.py` already parses all of this (`parse_session`, `session_tests`, `write_sheet`, `sheet_to_poses`, `fit_session`). The GUI reuses those functions rather than re-parsing anything.
+`overboard/sysid/fit.py` already parses all of this (`parse_session`, `session_tests`, `write_sheet`, `sheet_to_poses`, `fit_session`). The GUI reuses those functions rather than re-parsing anything.
 
 ---
 
@@ -113,7 +113,7 @@ This is the smallest piece of the whole plan, and it is the one that pays off on
 
 ### B. The comparison table
 
-The studio already draws the measured pose next to the plan. The **table** is `sysid_compare.compare(traj, poses_csv)`: one row per stop with the measured and predicted pose, the position and heading error, and whether the measured pose is inside the reachability envelope.
+The studio already draws the measured pose next to the plan. The **table** is `overboard/sysid/compare.py::compare(traj, poses_csv)`: one row per stop with the measured and predicted pose, the position and heading error, and whether the measured pose is inside the reachability envelope.
 
 The server calls it and the studio renders the rows under the measured marker. The same renderer serves the pushed trajectory (one row: the final pose) and a calibration session (a row per measured stop).
 
@@ -124,7 +124,7 @@ A **Calibrate** block in the robot panel, with three steps:
 1. **Collect.** Pushes `pybricks_code/sysid_digital_twin.py` with the studio's existing machinery (D4) and captures the session. While it runs, the studio tails the session and shows the live checklist:
 
    ```text
-   test 12 of 17 - odometry_turn_cw, repeat 2 of 3
+   test 12 of 19 - odometry_turn_cw, repeat 2 of 3
    waiting for the centre button on the hub
    14 of 21 measurements still needed
    ```
@@ -176,7 +176,7 @@ The studio's browser session remembers which calibration and which fit are in us
 | Phase | Content | Size | State |
 |---|---|---|---|
 | **1. The measured model** | The robot panel's fit slot; the summary; `--sysid-fit` on the solves; the result panel's wording. | S-M | **Done** |
-| **2. The comparison table** | `sysid_compare` in the server; the rows in the studio. | S | **Done** |
+| **2. The comparison table** | `overboard/sysid/compare.py` in the server; the rows in the studio. | S | **Done** |
 | **3. The collect step** | The collector through the push machinery; the live checklist. | M | **Done** |
 | **4. The sheet as a form** | The rows, the inputs, the missing count, the sheet file, the fit. | M | **Done** |
 
@@ -188,7 +188,7 @@ Loading a fitted model and planning against it works end to end: the studio keep
 (`calibration/<robot>.sysid_fit.json`), passes `--sysid-fit` with every solve, turns validation on (the
 fitted plant is only used by the validator), and shows the model's numbers next to the robot.
 
-**The gain band is wider than the tracking gate.** `digital_twin.py` uses the fit's gain interval as the band
+**The gain band is wider than the tracking gate.** `overboard/sysid/digital_twin.py` uses the fit's gain interval as the band
 the validator plans against, so a robot whose straight gain varies by 1% is planned against as if it could be
 1% slow. Over a 1 m path that is 10 mm of position error, and the tracking gate is 5 mm. A measured
 straight example therefore **fails** validation with a 5.4 cm tracking error, and nothing is exported.

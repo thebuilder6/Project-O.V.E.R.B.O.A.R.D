@@ -209,7 +209,7 @@ list-format modules and `ramsete_compact.py` for packed modules.
 4. Use the fit in the host validator:
 
    ```bash
-   python -m overboard.main --simple -c examples/fll_choreo.json \
+   python -m overboard.main -c examples/fll_choreo.json \
        -w examples/example_straight.json -o output.traj \
        --validate --sysid-fit sysid_fit.json
    ```
@@ -238,11 +238,12 @@ heading errors, and whether each measured pose is inside the reachability
 envelope. It is a diagnostic only; the 5 mm/2 cm gate is unchanged.
 
 The fit is not yet a full digital twin: it covers first-order actuator response,
-odometry scale, and a bounded braking-slip estimate. The validator currently
-applies the straight-line actuator gain, time constant, command delay, and
-odometry scale. The slip estimate is loaded and reported but not applied yet.
-The 5 mm tracking and 2 cm envelope thresholds stay unchanged until hardware
-validation.
+the odometry scale, and a bounded braking-slip estimate. The validator applies
+the straight-line actuator gain, time constant, command delay, an acceleration
+limit, the robot's own odometry belief, and the braking shortfall (while braking,
+the wheels turn further than the robot travels, so the plant slows the ground
+truth). The 5 mm tracking and 2 cm envelope thresholds stay unchanged until
+hardware validation.
 
 ---
 

@@ -6,6 +6,14 @@
 
 > **Archive note.** Raw logs and experiment scripts referenced below live in the `archive/research-2026-10` tag, not in the product tree. Retrieve a file with `git show archive/research-2026-10:<path>`; see [`ARCHIVE.md`](ARCHIVE.md).
 >
+> **How to read the module references.** The runtime moved into the `overboard/` package after this
+> document was written, so a bare `optimizer.py`, `main.py`, `validator.py`, `immrax_validator.py`,
+> `robot_model.py`, `digital_twin.py`, `frontier_seed.py` or `unified_planner.py` names the file that
+> now lives under `overboard/core/`, `overboard/`, `overboard/verification/`, `overboard/models/`,
+> `overboard/sysid/`, `overboard/core/` and `overboard/core/`. Every `file:line` is the line in the
+> tree as measured on 2026-10-19, not in today's file. The measurements are the record; the tree is
+> the authority on where the code is.
+>
 > **Read this first.** Every number in this document is a **model prediction**, not a hardware measurement. No hardware logs exist in the repository. The robot-side collector (`pybricks_code/sysid_digital_twin.py`) can produce them, but nothing has been captured yet. The uncertainty ranges in `examples/fll_choreo.json` are *declared test assumptions*, not calibrated hardware values. A "PASS" in this document means "the trajectory passes the gates of an uncalibrated model", not "the robot will track it".
 
 ---
@@ -102,14 +110,14 @@ Two files hold most of the subject matter:
 
 | File | Role |
 |---|---|
-| `optimizer.py` | The CasADi/IPOPT optimizer and the five initial-guess seeds |
-| `main.py` | The CLI, the candidate set, the scoring, the selection and the export gate |
-| `validator.py` | The CPU audit: forward integration, force/slip audit, metrics |
-| `immrax_validator.py` | The closed-loop interval reachability check |
+| `overboard/core/optimizer.py` | The CasADi/IPOPT optimizer and the five initial-guess seeds |
+| `overboard/main.py` | The CLI, the candidate set, the scoring, the selection and the export gate |
+| `overboard/verification/validator.py` | The CPU audit: forward integration, force/slip audit, metrics |
+| `overboard/verification/immrax_validator.py` | The closed-loop interval reachability check |
 | `overboard/legacy/` | The archived Multi-Verse pipeline, Reeds-Shepp bootstrap and JAX refiner (no shipped imports) |
-| `robot_model.py` | The robot configuration and the shared force model |
-| `digital_twin.py` | The optional fitted plant |
-| `sysid_fit.py` | The host-side fitter |
+| `overboard/models/robot_model.py` | The robot configuration and the shared force model |
+| `overboard/sysid/digital_twin.py` | The optional fitted plant |
+| `overboard/sysid/fit.py` | The host-side fitter |
 
 ## 0.3 Notation
 
@@ -150,7 +158,7 @@ pybricks_code/ramsete_compact.py      MD5 E60C4BFEF3113CB0259FCCD3C1F3865D
 pybricks_code/ramsete_compact_events.py MD5 F2020A07297A1D554C947211CC84EF7E
 ```
 
-The list is generated, not copied: `docs/measurements/2026-10-20-variable-samples/TREE.md5` holds it, and the runner writes it from the tree it measured. The runner also takes the fingerprint **before and after** the run and refuses a measurement whose tree changed underneath it, so a run that straddles two planners cannot be quoted as one.
+The list is generated, not copied: `archive/research-2026-10:docs/measurements/2026-10-20-variable-samples/TREE.md5` holds it, and the runner writes it from the tree it measured. The runner also takes the fingerprint **before and after** the run and refuses a measurement whose tree changed underneath it, so a run that straddles two planners cannot be quoted as one.
 
 Environment: Windows 11, Python 3.12.10, `casadi`, `jax`, `immrax`, `jaxopt`, `rsplan`, `numpy`, `scipy` all installed. Test suite state at the time of writing: `python run_tests.py` → **623 tests**, 0 skipped.
 
@@ -1053,12 +1061,12 @@ Two constraints on the interval mode: the natural inclusion does not support `ab
         |  console: TEST_START / META, / DATA / TEST_END,
         |           POSE,x,y,heading_deg and EVENT,name
         v
-  hub_deploy.py --out session.csv    |    sysid_collect.py  (one command)
+  overboard.deploy.hub_deploy --out session.csv | overboard.sysid.collect  (one command)
         v
-  sysid_fit.py --poses poses.csv --profile examples/drivebase_profile.example.json
+  overboard.sysid.fit --poses poses.csv --profile examples/drivebase_profile.example.json
         |  -> sysid_fit.json
         v
-  main.py --sysid-fit sysid_fit.json --validate
+  overboard.main --sysid-fit sysid_fit.json --validate
         |  switches Immrax to the fitted five-state plant
         v
   sysid_compare.py output.traj poses.csv --run-id <id>
@@ -1084,8 +1092,8 @@ The **chirp tests are held out of the fit** and are the only genuinely independe
 
 ### 13.3 What the fit does *not* yet do
 
-- **The poses the collector reports are the hub's own odometry.** `sysid_collect.py` says so explicitly: the distance and heading scale have no ground truth and stay at 1.0 unless the operator replaces `poses.csv` with tape measurements and re-runs the fitter. The actuator part of the fit (gain, tau, delay, backlash) needs no ground truth and is calibrated either way.
-- **Braking slip is loaded and reported but not applied** in the default path. The plant has no braking state, so there is nothing to apply it to.
+- **The poses the collector reports are the hub's own odometry.** `overboard/sysid/collect.py` says so explicitly: the distance and heading scale have no ground truth and stay at 1.0 unless the operator replaces `poses.csv` with tape measurements and re-runs the fitter. The actuator part of the fit (gain, tau, delay, backlash) needs no ground truth and is calibrated either way.
+- **Braking slip is applied by the fitted plant.** While braking, the wheels turn further than the robot travels, so the plant scales the robot's ground truth down with a smooth factor of the commanded speed. The default kinematic plant is unchanged, because it has no fit to read a shortfall from. The grip belongs to the five-state plant, so a fit that carries the slip but no actuator time constant keeps the kinematic plant and the slip is loaded and not applied.
 - **No hardware logs exist in the repository.** Every number in this document is therefore a model prediction. This is KI-020.
 
 ## 14. What each layer proves and does not prove
@@ -1374,9 +1382,9 @@ removed with the pipeline.
 |---|---|
 | **Strategy** | Model that the wheels turn further than the robot travels while braking |
 | **Mechanism** | `digital_twin.py:126` `SlipFit`, `digital_twin.py:380` `brake_shortfall` |
-| **Outcome** | **Loaded and reported, but not applied** in the default validation path, because the plant has no braking state |
+| **Outcome** | **Applied** by the fitted plant as a smooth grip factor (the default kinematic path is unchanged, because it has no fit to read it from) |
 | **Status** | partial |
-| **What would revive it** | The fitted plant now has a braking term (a `tanh` transition below 0.05 m/s commanded speed); wire the shortfall into it and measure whether the envelope grows |
+| **What would revive it** | The shortfall is wired into the five-state plant, and the effect is measured: on the complex mission with an illustrative actuator fit (50 ms lag, 2 % gain band) the envelope grows 1.11 cm and the tracking error 0.55 cm (`research/brake_slip_effect.py`). What is left is a fit measured on the robot, and the gates it would have to pass (KI-020) |
 
 ## 22. Ledger: silent and unlogged behaviour
 
@@ -1552,9 +1560,9 @@ Each question has the current evidence, a hypothesis, and an experiment with a m
 | | |
 |---|---|
 | **Question** | Which missing model component buys the most gate accuracy per unit of effort? |
-| **Current evidence** | KI-020 lists the gaps: motor transients, DriveBase PID, encoder/gyro odometry, wheel-slip dynamics, braking slip not applied, interaction forces. The fitted plant now adds the actuator gain, tau, delay, odometry scale, gyro bias, an acceleration limit and a braking shortfall |
+| **Current evidence** | KI-020 lists the gaps: motor transients, DriveBase PID, encoder/gyro odometry, wheel-slip dynamics, interaction forces. The fitted plant now adds the actuator gain, tau, delay, odometry scale, gyro bias, an acceleration limit and a braking shortfall |
 | **Hypothesis** | The single largest remaining error source is **odometry error feeding back into the controller**, because the deployed controller never sees the true pose. The fitted plant now models that belief (`_advance_belief`), which makes this testable |
-| **Experiment** | 1. Collect a real session with `sysid_collect.py`. 2. Fit it. 3. Compare the fitted validator's predicted poses against the measured poses with `sysid_compare.py`, and against the *default* kinematic validator. 4. Report which model predicts the measured poses better, and by how much |
+| **Experiment** | 1. Collect a real session with `overboard/sysid/collect.py`. 2. Fit it. 3. Compare the fitted validator's predicted poses against the measured poses with `sysid_compare.py`, and against the *default* kinematic validator. 4. Report which model predicts the measured poses better, and by how much |
 | **Metric** | Position and heading error at each measured stop, for the default model versus the fitted model versus the tape-measured truth. |
 | **Success criterion** | A measured, ranked list of which missing model component matters most. |
 | **Cost** | High — it needs hardware. **It is also the only way to turn any number in this document from a prediction into a measurement.** |
@@ -1686,8 +1694,8 @@ python -m overboard.main --uniform-dt --validate -c examples/fll_choreo.json \
 ## A.4 From Python, without the CLI
 
 ```python
-from optimizer import TrajectoryOptimizer
-from robot_model import RobotConfig
+from overboard.core.optimizer import TrajectoryOptimizer
+from overboard.models.robot_model import RobotConfig
 
 cfg = RobotConfig({"robot": {"mass": 0.723, "inertia": 0.001, "track_width": 0.0965,
                               "wheel_radius": 0.028, "v_max_rad_s": 18.94,
@@ -1819,15 +1827,15 @@ Every symbol this document mentions, with its location in the tree that was meas
 
 | Symbol | Line | Role |
 |---|---|---|
-| `wheel_normal_forces` | 13 | The one weight-transfer model |
-| `RobotConfig` | 41 | The config abstraction |
-| `uncertainties` | 229 | The seven intervals |
-| `get_max_force_at_velocity` | 439 | The motor curve |
-| `get_robust_force_params` | 506 | The worst case for the optimizer |
-| `DifferentialDriveModel` | 705 | The force model |
-| `get_max_wheel_force_symbolic` | 790 | The per-wheel limit |
-| `get_traction_limit_symbolic` | 812 | The per-wheel traction limit |
-| `check_constraints` | 835 | The CPU-side check |
+| `wheel_normal_forces` | 13 | The one weight-transfer model (imported from `drivetrain_physics.py`) |
+| `RobotConfig` | 28 | The config abstraction |
+| `uncertainties` | 216 | The seven intervals |
+| `get_max_force_at_velocity` | 425 | The motor curve |
+| `get_robust_force_params` | 519 | The worst case for the optimizer |
+| `DifferentialDriveModel` | 728 | The force model |
+| `get_max_wheel_force_symbolic` | 780 | The per-wheel limit |
+| `get_traction_limit_symbolic` | 802 | The per-wheel traction limit |
+| `check_constraints` | 825 | The CPU-side check |
 
 ## `digital_twin.py`
 
@@ -1839,7 +1847,7 @@ Every symbol this document mentions, with its location in the tree that was meas
 | `SensorFit` | 126 | The gyro and accel biases |
 | `DigitalTwinConfig` | 412 | The whole fitted model |
 | `actuator_gain_range` | 488 | The interval that goes into Immrax |
-| `brake_shortfall` | 602 | Loaded, reported, not applied by default |
+| `brake_shortfall` | 602 | Loaded, reported, and applied by the fitted plant |
 | `load_sysid_fit` | 676 | The loader |
 
 ---
