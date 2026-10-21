@@ -643,33 +643,23 @@ The weights are in seconds, so they say what each defect is worth: 1 mm of sprea
 ### 7.3 The selection rule
 
 ```python
-def _select_attempt(attempts, prefer_duration=False):
+def _select_attempt(attempts):
     candidates = [a for a in attempts if a.get("converged", False)]   # KI-001
     if not candidates:
         return None, False
     passing = [a for a in candidates if a["ok"]]
     if passing:
-        if prefer_duration:
-            return min(passing, key=lambda a: (a.get("duration", a["cost"]),
-                                                a.get("tube", float("inf")))), True
-        if any(a.get("fitness") is not None and math.isfinite(float(a["fitness"]))
-               for a in passing):
-            return min(passing, key=lambda a: (float(a.get("fitness", float("inf"))),
-                                                a.get("tube", float("inf")),
-                                                a.get("duration", a["cost"]))), True
-        return min(passing, key=lambda a: (a.get("tube", float("inf")),
-                                           a.get("duration", a["cost"]))), True
+        return min(passing, key=lambda a: (a.get("duration", a["cost"]),
+                                           a.get("tube", float("inf")))), True
     return min(candidates, key=lambda a: (a["violation"], a["cost"])), False
 ```
 
 In words:
 
 1. **Non-converged candidates are never eligible.** (KI-001)
-2. Among the passing candidates, the rule depends on the path:
-   - **the only path** sets `prefer_duration`: **the shortest duration wins**, and the envelope breaks ties. This is the *gate-certified minimum time* the unified engine was built for.
-   - the **5-part fitness score** ([7.2](#72-the-5-part-path-fitness-score)) is reported for every candidate, so the rule can be re-run offline, but it does not decide.
-   - if no fitness was scored at all, the fallback is the smallest envelope, then the shortest duration.
-3. If none pass, the converged candidate with the **smallest quantified violation** wins, and `passed_any` is `False` - so the export is still blocked. The fallback exists to pick the most useful candidate to *report*, not to ship.
+2. Among the passing candidates, **the shortest duration wins**, and the reachability envelope breaks a tie.
+3. The 5-part fitness score ([7.2](#72-the-5-part-path-fitness-score)) is reported for every candidate, so the rule can be re-run offline, but it does not decide: the planner is time-optimal, so the shortest passing plan is the one that ships.
+4. If none pass, the converged candidate with the **smallest quantified violation** wins, and `passed_any` is `False` -
 
 **What the rule used to be, and why it changed.** The rule was `min(tube, then duration)`, and PQ-B's Q10 measured it: five candidate rules picked the same trajectory on every mission, because the envelope is almost a proxy for the duration (`corr(duration, envelope) = +0.97`, and the tube grows with the clock through the backlash term). The fitness score replaces it because it asks a different question - not "which plan is narrowest" but "which plan's defects are worth the least time" - and the two can disagree: a plan with a wider tube at the stops but a shorter run can win. The unified path then went one step further and asked for the shortest plan that passes at all, because its candidates are all built to be fast.
 
