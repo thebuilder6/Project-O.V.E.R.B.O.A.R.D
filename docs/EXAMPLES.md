@@ -37,7 +37,7 @@ python -m overboard.main -c examples/fll_choreo.json -w waypoints.json -o straig
 
 **Expected output:**
 
-- With the example config, the simple solver takes about 0.06 s of solve wall time
+- With the example config, the optimizer takes about 0.06 s of solve wall time
 - Robot accelerates from rest, cruises, and decelerates to rest
 - Trajectory time is about 2.38 s for the 1 m straight example; it depends on the robot's speed limits
 
@@ -119,6 +119,8 @@ python -m overboard.main -c examples/fll_choreo.json -w examples/example_complex
 # First four waypoints of the complex mission (candidate-seed benchmark)
 python -m overboard.main --validate -c examples/fll_choreo.json -w examples/example_mission_first4.json -o first4.traj --candidates 5
 ```
+
+With `--validate`, the example config's widened uncertainty ranges need the closed-loop model on a curved path: add `--propagation tick` (the `--preset safe` shortcut sets it for you). The straight line still passes with the default `plant`; a curved mission with the open-loop tube grows past the 2 cm envelope gate.
 
 ---
 
@@ -346,7 +348,7 @@ python -m overboard.main -c examples/fll_choreo.json -w waypoints.json -o high_r
 The three frontier candidates are solved and the fastest passing one is kept. A waypoint is a legitimate timing boundary only when the robot stops there *and* the heading is pinned; at every other waypoint the per-segment model keeps the wheel force profile continuous through the point (KI-024).
 
 The planner always uses the per-segment model, so there is no timing flag to choose: the
-`--per-segment-dt` and `--uniform-dt` flags are accepted, warned about and ignored. What the
+`--per-segment-dt` and `--uniform-dt` flags are removed and rejected as unknown options. What the
 timing model changes is the optimization variables, not the waypoint constraints.
 
 ---
@@ -533,12 +535,12 @@ python -m overboard.main --validate -c examples/fll_choreo.json \
   -w examples/example_mission_first4.json -o first4.traj --candidates 3
 ```
 
-The five seeds (`baseline`, `rolling`, `bow_left`, `bow_right`, `turn_first`) are the ones the rescue round tries when the planner's candidates produce nothing usable (KI-048); they are declared in one line (`overboard/core/optimizer.py`). The measurements below are the record of the stock candidate set, which was retired with the rest of the multi-track paths: on the first four waypoints of the complex mission all five uniform seeds passed, and `baseline` won at 2.176 s / 0.27 cm; on the full mission the baseline also won (6.068 s / 1.22 cm), the other uniform seeds converging to slower, wider paths (8.1-8.7 s), so they were rejected. The per-segment baseline was faster (1.833 s on first4, and 4.650 s on the mission), but on the mission its tracking was 0.84 cm and its motor force 0.074 N over the limit, so it was rejected there.
+The five seeds (`baseline`, `rolling`, `frontier_sprint`, `frontier_sweeper`, `frontier_exploratory`) are the ones the rescue round tries when the planner's candidates produce nothing usable (KI-048); they are declared in one line (`FALLBACK_CANDIDATE_STYLES` in `overboard/main.py`). The measurements below are the record of the stock candidate set, which was retired with the rest of the multi-track paths: on the first four waypoints of the complex mission all five uniform seeds passed, and `baseline` won at 2.176 s / 0.27 cm; on the full mission the baseline also won (6.068 s / 1.22 cm), the other uniform seeds converging to slower, wider paths (8.1-8.7 s), so they were rejected. The per-segment baseline was faster (1.833 s on first4, and 4.650 s on the mission), but on the mission its tracking was 0.84 cm and its motor force 0.074 N over the limit, so it was rejected there.
 
 From Python, pass `guess_style` to `solve`; the default `per_segment_dt=False` reproduces the uniform seed comparison:
 
 ```python
-for style in ("baseline", "rolling", "bow_left", "bow_right", "turn_first"):
+for style in ("baseline", "rolling", "frontier_sprint", "frontier_sweeper", "frontier_exploratory"):
     samples, stats = optimizer.solve(waypoints, 10, 0.0, guess_style=style)
 ```
 
@@ -799,7 +801,7 @@ The browser opens at `http://127.0.0.1:8000` (use `--gui-port` for a different p
 **Steps:**
 
 1. Click the field to add waypoints, drag them to move them, and use the right-hand panel to set a heading, a stop, an event name or an envelope limit.
-2. Pick a preset: **fast** (one candidate, no validation), **balanced** (the defaults) or **safe** (three candidates, validated, controller export).
+2. Pick a preset: **fast** (one candidate, no validation), **balanced** (the defaults) or **safe** (three candidates, validated with the closed-loop tick map, controller export).
 3. Press **Solve**. The solver log streams into the panel; the trajectory, the reachability envelope and the numbers appear on the field.
 4. Download the trajectory, the controller profile or the Python module from the result panel.
 5. **Save** writes the mission to `missions/<name>.json`; the file shows up in the mission list next time. **Download** gives you the same JSON as a file.
@@ -807,7 +809,7 @@ The browser opens at `http://127.0.0.1:8000` (use `--gui-port` for a different p
 **Before you solve:**
 
 - The mission panel shows the path length and the fastest the robot could possibly do it: *"Path 1.36 m | at least 2.85 s at 0.48 m/s top speed"*. A waypoint dragged 5 m away shows up here, not in the solve time.
-- **Fast polish** in the Advanced section gives the warm-start solve an iteration budget, and solves the mission cold from the original guess if the budget runs out. On the ten-waypoint complex mission the plain solve takes 1557 iterations on one machine and 669 on another - the count depends on the machine's floating point - and the fast one takes 354 and 708 respectively, for a trajectory within 1 % of the plain one. Leave it off when you want the plain solver.
+- **Fast polish** in the Advanced section gives the warm-start solve an iteration budget, and solves the mission cold from the warm stage's iterate if the budget runs out. On the ten-waypoint complex mission the plain solve takes about 1257 iterations and 33 s on the current tree, and the fast path 433 iterations and 12.5 s, for a trajectory within 1 % of the plain one (6.096 s against 6.087 s). Leave it off when you want the plain solver.
 
 **On the field:**
 
@@ -825,7 +827,7 @@ The browser opens at `http://127.0.0.1:8000` (use `--gui-port` for a different p
 - The result panel shows a row per path segment: the reachability envelope, the local limit and the drift.
 - A segment over its limit is drawn in red on the field, and the segment where the path drifts most is drawn in amber.
 - The note under the table says which gate failed and by how much, and the candidates can be compared with the chips above the table.
-- Nothing is downloaded: the export gate stays closed.
+- With **Keep the best path when validation fails** ticked (the default), the best candidate that failed on accuracy alone stays on the field and can be downloaded, marked *Failed validation*: it is for inspection, not approval. Untick it, or fail on force, slip, integration or convergence, and the export gate stays closed and nothing is downloaded.
 
 **Editing the robot:**
 
@@ -842,9 +844,9 @@ The browser opens at `http://127.0.0.1:8000` (use `--gui-port` for a different p
 
 **Notes:**
 
-- The studio runs the same command line in the background, so the export gate, the validation rules and the file formats are identical to the terminal path. A failed validation shows the reason and offers no download.
+- The studio runs the same command line in the background, so the export gate, the validation rules and the file formats are identical to the terminal path. A failed validation shows the reason; the best path that failed on accuracy alone is kept on the field and marked *Failed validation*, and is never offered for the hub.
 - It needs no extra packages and no internet connection.
-- It leaves the backend at the CLI default and forwards `--unified`/`--no-unified` when the page sets it; there is no Multi-Verse toggle.
+- It leaves the backend at the CLI default and forwards no planner or collocation switch; there is no Multi-Verse toggle.
 
 ---
 

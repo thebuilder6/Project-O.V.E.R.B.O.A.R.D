@@ -462,6 +462,58 @@ class TestValidationReport(unittest.TestCase):
         self.assertNotIn("Infinity", marker[0])
         self.assertIsNotNone(payload["candidates"][0]["duration_s"])
 
+    def _invoke(self, extra_args, validator=None):
+        with tempfile.TemporaryDirectory() as tmp:
+            wp = os.path.join(tmp, "wp.json")
+            out = os.path.join(tmp, "out.traj")
+            with open(wp, "w", encoding="utf-8") as handle:
+                json.dump([{"x": 0.0, "y": 0.0, "heading": 0.0},
+                           {"x": 0.1, "y": 0.0, "heading": 0.0}], handle)
+            with patch.object(self.main, "TrajectoryOptimizer", self._Optimizer), \
+                    patch.object(self.main, "ImmraxValidator",
+                                 validator or self._WideImmrax):
+                result = self.runner.invoke(self.main.main, [
+                    "-c", os.path.join(self.repo, "examples", "fll_choreo.json"),
+                    "-w", wp, "-o", out, "--validate"] + list(extra_args))
+            data = None
+            if os.path.exists(out):
+                with open(out, "r", encoding="utf-8") as handle:
+                    data = json.load(handle)
+        return result, data
+
+    def test_best_effort_writes_the_failed_path_with_its_verdict(self):
+        """The path is shown, and the file says it is not an approved one."""
+        result, data = self._invoke(["--best-effort"])
+        self.assertEqual(result.exit_code, 0, result.output)
+        self.assertIn("BEST EFFORT", result.output)
+        self.assertIsNotNone(data)
+        self.assertTrue(data["validation"]["best_effort"])
+        self.assertFalse(data["validation"]["passed"])
+        self.assertGreater(data["validation"]["max_excess_m"], 0.0)
+        self.assertIn("exceeds the local threshold",
+                      " ".join(data["validation"]["reasons"]))
+        self.assertIn("not approved", result.output)
+
+    def test_best_effort_still_refuses_a_physically_unsound_plan(self):
+        """A slip is not an accuracy drop, so it is not exported this way."""
+        class _SlippingImmrax(self._WideImmrax):
+            def validate_trajectory(self, samples, *ranges, **kwargs):
+                report = super().validate_trajectory(samples, *ranges, **kwargs)
+                report["max_slip_l_N"] = 0.5
+                return report
+
+        result, data = self._invoke(["--best-effort"], validator=_SlippingImmrax)
+        self.assertNotEqual(result.exit_code, 0, result.output)
+        self.assertIsNone(data)
+        self.assertIn("No candidate failed on accuracy alone", result.output)
+
+    def test_best_effort_needs_validation(self):
+        result = self.runner.invoke(self.main.main, [
+            "-w", os.path.join(self.repo, "examples", "example_straight.json"),
+            "--best-effort"])
+        self.assertNotEqual(result.exit_code, 0)
+        self.assertIn("--best-effort needs --validate", result.output)
+
     def test_every_candidate_carries_its_score_vector(self):
         """The selection rule can be re-run offline on these numbers.
 
@@ -484,6 +536,68 @@ class TestValidationReport(unittest.TestCase):
                          for segment in segments)
             self.assertAlmostEqual(candidate["max_excess_cm"],
                                    excess * 100.0, places=6)
+
+    class _RecordingImmrax(_WideImmrax):
+        """A passing envelope, plus the propagation it was built with."""
+
+        seen = []
+
+        def __init__(self, config, digital_twin=None, propagation="plant", **kwargs):
+            type(self).seen.append(propagation)
+
+        def validate_trajectory(self, samples, *ranges, **kwargs):
+            return self._report(samples)
+
+        def _report(self, samples):
+            return {
+                "passed": True,
+                "max_motor_violation_N": 0.0,
+                "max_traction_violation_N": 0.0,
+                "max_slip_l_N": 0.0,
+                "max_slip_r_N": 0.0,
+                "max_tracking_error_m": 0.001,
+                "reachability": {"max_error_m": 0.001, "diverged": False,
+                                 "envelope": [{"x_min": s["x"] - 0.001,
+                                               "x_max": s["x"] + 0.001,
+                                               "y_min": s["y"] - 0.001,
+                                               "y_max": s["y"] + 0.001}
+                                              for s in samples]},
+            }
+
+    def test_safe_preset_validates_with_the_closed_loop_model(self):
+        """The widened example ranges do not fit an open-loop tube.
+
+        `safe` is the preset that pays for the closed-loop model, so it has
+        to reach the validator as `tick` - and an explicit flag still wins.
+        """
+        self._RecordingImmrax.seen = []
+        with tempfile.TemporaryDirectory() as tmp:
+            wp = os.path.join(tmp, "wp.json")
+            out = os.path.join(tmp, "out.traj")
+            with open(wp, "w", encoding="utf-8") as handle:
+                json.dump([{"x": 0.0, "y": 0.0, "heading": 0.0},
+                           {"x": 0.1, "y": 0.0, "heading": 0.0}], handle)
+            with patch.object(self.main, "TrajectoryOptimizer", self._Optimizer), \
+                    patch.object(self.main, "ImmraxValidator",
+                                 self._RecordingImmrax):
+                result = self.runner.invoke(self.main.main, [
+                    "-c", os.path.join(self.repo, "examples", "fll_choreo.json"),
+                    "-w", wp, "-o", out, "-q", "--preset", "safe",
+                    "--no-parallel"])
+            self.assertEqual(result.exit_code, 0, result.output)
+            self.assertTrue(self._RecordingImmrax.seen)
+            self.assertEqual(set(self._RecordingImmrax.seen), {"tick"})
+
+            self._RecordingImmrax.seen = []
+            with patch.object(self.main, "TrajectoryOptimizer", self._Optimizer), \
+                    patch.object(self.main, "ImmraxValidator",
+                                 self._RecordingImmrax):
+                result = self.runner.invoke(self.main.main, [
+                    "-c", os.path.join(self.repo, "examples", "fll_choreo.json"),
+                    "-w", wp, "-o", out, "-q", "--preset", "safe",
+                    "--propagation", "plant", "--no-parallel"])
+            self.assertEqual(result.exit_code, 0, result.output)
+            self.assertEqual(set(self._RecordingImmrax.seen), {"plant"})
 
 
 class TestVariableSampleLayout(unittest.TestCase):
@@ -642,6 +756,75 @@ class TestIterationHistory(unittest.TestCase):
         self.assertEqual(entries[1]["phase"], "final_solution")
         self.assertTrue(entries[0]["trajectory"])
 
+class TestCandidateComparison(unittest.TestCase):
+    """--candidates-out writes every candidate, and --pick-candidate chooses.
+
+    The studio draws the three frontier paths together; the operator's pick
+    is exported instead of the fastest passing candidate, and only when that
+    candidate passed.
+    """
+
+    def test_every_candidate_is_written_with_its_samples(self):
+        import overboard.main as main
+        runner = CliRunner()
+        with tempfile.TemporaryDirectory() as tmp:
+            out = os.path.join(tmp, "out.traj")
+            comparison = os.path.join(tmp, "candidates.json")
+            result = runner.invoke(main.main, [
+                "-w", "examples/example_straight.json", "-o", out,
+                "--validate", "--candidates", "2",
+                "--candidates-out", comparison, "-q"])
+            self.assertEqual(result.exit_code, 0, result.output)
+            with open(comparison, "r", encoding="utf-8") as handle:
+                payload = json.load(handle)
+        self.assertEqual(len(payload["candidates"]), 2)
+        self.assertEqual(payload["selected"], 1)
+        for candidate in payload["candidates"]:
+            self.assertTrue(candidate["samples"], candidate["style"])
+            self.assertIn(candidate["style"], ("frontier_sprint", "frontier_sweeper",
+                                               "frontier_exploratory"))
+
+    def test_a_candidate_that_failed_cannot_be_picked(self):
+        """The rule is overridden by a human, never suspended."""
+        import click
+        import overboard.main as main
+        attempts = [{"samples": [{"t": 0.0}], "stats": {}, "converged": True,
+                     "ok": False, "reasons": ["envelope 4.00 cm over 2.00 cm"],
+                     "tube": 0.04}]
+        with self.assertRaises(click.ClickException):
+            main._choose_attempt(attempts, validate=True, quiet=True, samples=10, pick=1)
+
+    def test_a_passing_pick_is_the_one_exported(self):
+        import overboard.main as main
+        attempt = {"samples": [{"t": 0.0}], "stats": {}, "converged": True,
+                   "ok": True, "reasons": [], "tube": 0.01}
+        chosen = main._choose_attempt([attempt], validate=True, quiet=True,
+                                      samples=10, pick=1)
+        self.assertEqual(chosen[5], 1)
+        self.assertIs(chosen[0], attempt["samples"])
+
+    def test_best_effort_opens_the_gate_only_for_a_converged_plan(self):
+        import overboard.main as main
+        self.assertIsNone(main._export_block_reason(
+            {"converged": True}, True, False, best_effort=True))
+        self.assertEqual(main._export_block_reason(
+            {"converged": False}, True, False, best_effort=True),
+            "solver did not converge")
+        # Without the flag the hard gate is unchanged.
+        self.assertEqual(main._export_block_reason(
+            {"converged": True}, True, False), "validation failed")
+
+    def test_the_pick_needs_validation(self):
+        import overboard.main as main
+        runner = CliRunner()
+        with tempfile.TemporaryDirectory() as tmp:
+            result = runner.invoke(main.main, [
+                "-w", "examples/example_straight.json", "-o", os.path.join(tmp, "out.traj"),
+                "--pick-candidate", "2", "-q"])
+        self.assertNotEqual(result.exit_code, 0)
+        self.assertIn("--pick-candidate needs --validate", result.output)
+
+
 class TestStudioEntryPoints(unittest.TestCase):
     """--gui opens the studio, and the CLI keeps no wrapper for it."""
 
@@ -686,6 +869,7 @@ class TestDeprecatedCliFlags(unittest.TestCase):
         for flag in ("--simple", "--sweep", "--uniform-dt", "--per-segment-dt",
                      "--surrogate-polish", "--pyramid", "--pyramid-candidates",
                      "--h-adaptive", "--unified", "--no-unified",
+                     "--self-consistent", "--no-self-consistent",
                      "--recombine-segments", "--memetic-evolution",
                      "--generations", "--population-size"):
             result = self.runner.invoke(

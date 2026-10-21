@@ -7,6 +7,7 @@ import math
 import os
 import time
 import unittest
+from unittest import mock
 import numpy as np
 from overboard.models.robot_model import RobotConfig
 from overboard.core.optimizer import TrajectoryOptimizer, GUESS_STYLES
@@ -387,7 +388,7 @@ class TestTrajectoryOptimizer(unittest.TestCase):
             optimizer._build_initial_guess(
                 [(0.0, 0.0, 0.0), (1.0, 0.0, 0.0)], 5, 6, style="nope")
 
-    def test_turn_first_guess_with_one_sample_per_segment_keeps_endpoint(self):
+    def test_frontier_exploratory_guess_with_one_sample_per_segment_keeps_endpoint(self):
         config = RobotConfig({"robot": {"mass": 0.8, "inertia": 0.002,
                                         "track_width": 0.1, "wheel_radius": 0.03,
                                         "v_max_rad_s": 15.0, "t_max_nm": 0.05,
@@ -395,7 +396,7 @@ class TestTrajectoryOptimizer(unittest.TestCase):
         optimizer = TrajectoryOptimizer(config)
         waypoints = [(0.0, 0.0, 0.0), (0.5, 0.0, 1.2), (1.0, 0.5, None)]
         guess = optimizer._build_initial_guess(
-            waypoints, num_samples_per_segment=1, N=3, style="turn_first")
+            waypoints, num_samples_per_segment=1, N=3, style="frontier_exploratory")
         states = guess[2:].reshape((3, 5))
         self.assertAlmostEqual(states[-1, 0], waypoints[-1][0], places=6)
         self.assertAlmostEqual(states[-1, 1], waypoints[-1][1], places=6)
@@ -811,6 +812,39 @@ class TestFastPolish(unittest.TestCase):
         self.assertLessEqual(abs(samples[k]["al"] - samples[k - 1]["al"]), 1e-4)
         self.assertLessEqual(abs(samples[k]["ar"] - samples[k - 1]["ar"]), 1e-4)
 
+    def test_the_cold_finish_starts_from_the_warm_stage(self):
+        """The cold stage must keep the warm stage's iterate (KI-047).
+
+        Cold-starting from the original guess lands in a worse local optimum
+        on the Gauss-Legendre collocation, however quickly it converges.
+        """
+        optimizer = TrajectoryOptimizer(self.config)
+        stage_a = [
+            {"t": 0.1 * i, "x": 0.1 * i, "y": 0.0, "heading": 0.0,
+             "vl": 0.4, "vr": 0.4, "omega": 0.0}
+            for i in range(5)
+        ]
+        stats_a = {"converged": False, "segment_samples": [2, 2],
+                   "iter_count": 200, "total_time": 0.1, "final_cost": 1.0}
+        stats_b = {"converged": True, "segment_samples": [2, 2],
+                   "iter_count": 10, "total_time": 0.1, "final_cost": 1.0}
+        calls = []
+
+        def fake_solve_once(*args, **kwargs):
+            calls.append(kwargs)
+            return stage_a, (stats_a if len(calls) == 1 else stats_b)
+
+        with mock.patch.object(optimizer, "_solve_once",
+                               side_effect=fake_solve_once):
+            optimizer.solve(self.waypoints, num_samples_per_segment=5,
+                            verbose=False, fast_polish=True,
+                            split_at_boundaries=False)
+
+        self.assertEqual(len(calls), 2)
+        self.assertFalse(calls[1]["warm_start"])
+        expected = TrajectoryOptimizer.guess_from_samples(stage_a, 2, [2, 2])
+        np.testing.assert_allclose(calls[1]["initial_guess"], expected)
+
     def test_fast_polish_finishes_when_the_budget_runs_out(self):
         """With a tiny budget the cold pass takes over and still converges."""
         _, plain = self._solve()
@@ -877,9 +911,12 @@ class TestSolverIterationBudget(unittest.TestCase):
     # The reference mission: the 10-waypoint complex mission with four stops.
     MISSION = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                            "examples", "example_complex_mission.json")
-    REFERENCE_COST = 6.068      # seconds, the documented trajectory time
-    MAX_ITERATIONS = 1200       # measured: 354 (200 budgeted + 154 cold)
-    MAX_WALL_SECONDS = 60.0     # measured: ~7 s; a smoke bound, not a benchmark
+    # Measured on the widened example ranges (2026-10-21): the plain pass is
+    # 7.886 s and the fast path 7.875 s. The reference is the plain pass, so
+    # the fast path is held to the trajectory the unbudgeted solve produces.
+    REFERENCE_COST = 7.886      # seconds, the documented trajectory time
+    MAX_ITERATIONS = 1200       # measured: 383 (200 budgeted + 183 cold)
+    MAX_WALL_SECONDS = 60.0     # measured: ~12 s; a smoke bound, not a benchmark
 
     @classmethod
     def setUpClass(cls):
@@ -906,7 +943,7 @@ class TestSolverIterationBudget(unittest.TestCase):
         samples, stats = optimizer.solve(
             self.waypoints, num_samples_per_segment=10,
             stop_waypoint_indices=self.stops, verbose=False, fast_polish=True,
-            self_consistent=False, proportional_samples=False, split_at_boundaries=False)
+            proportional_samples=False, split_at_boundaries=False)
         wall = time.time() - start
 
         self.assertTrue(stats["converged"])
@@ -918,11 +955,10 @@ class TestSolverIterationBudget(unittest.TestCase):
         self.assertLess(wall, self.MAX_WALL_SECONDS,
                         f"the fast path took {wall:.1f}s")
         # The trajectory must still be as good as the one we validated. The
-        # fast path finishes cold from the original guess when the budget
-        # runs out (KI-047), so it converges to a different optimum: on this
-        # tree it is 6.124 s against the plain pass's 6.068 s, 0.9% over.
-        # It is no longer the same trajectory, so the bound is a percent and
-        # not the old exact match; more than that is a regression.
+        # fast path finishes cold from the warm stage's iterate (KI-047), so
+        # it converges to a nearby optimum: on this tree it is 7.875 s
+        # against the plain pass's 7.886 s. The bound is a percent, not the
+        # old exact match; more than that is a regression.
         self.assertLessEqual(
             stats["final_cost"], self.REFERENCE_COST * 1.01,
             f"the fast path returned {stats['final_cost']:.4f} s, more than "
@@ -1089,10 +1125,9 @@ class TestBenchmarkDryRun(unittest.TestCase):
 class TestSelfConsistentPlan(unittest.TestCase):
     """The plan must lie on the path its own (v, omega) profile traces.
 
-    The trapezoidal collocation places the samples off that path, and the
-    deployed controller is then told to be somewhere its own profile never
-    goes. The self-consistent collocation integrates the profile instead, so
-    the samples lie on the path and the headings are its tangents.
+    The position rule integrates the profile with Gauss-Legendre, so the
+    samples lie on the path and the headings are its tangents. There is no
+    other collocation to compare against any more (KI-026).
     """
 
     CONFIG = {
@@ -1110,36 +1145,26 @@ class TestSelfConsistentPlan(unittest.TestCase):
 
     WAYPOINTS = [(0.0, 0.0, 0.0), (0.5, 0.3, 0.4), (1.0, 0.0, 0.0)]
 
-    def _solve(self, self_consistent):
+    def _solve(self):
         config = RobotConfig(self.CONFIG)
         optimizer = TrajectoryOptimizer(config)
         samples, _ = optimizer.solve(
-            self.WAYPOINTS, num_samples_per_segment=6, verbose=False,
-            self_consistent=self_consistent)
+            self.WAYPOINTS, num_samples_per_segment=6, verbose=False)
         return samples
 
-    def test_self_consistent_plan_lies_on_its_own_profile(self):
-        samples = self._solve(True)
+    def test_plan_lies_on_its_own_profile(self):
+        samples = self._solve()
         deviation = _plan_deviation(samples, self.CONFIG["robot"]["track_width"])
         self.assertLess(deviation, 1e-4,
                         msg="plan deviates from its own profile by "
                             f"{deviation * 1000:.3f} mm")
 
-    def test_trapezoidal_plan_does_not(self):
-        """The control: the default collocation really is inconsistent."""
-        samples = self._solve(False)
-        deviation = _plan_deviation(samples, self.CONFIG["robot"]["track_width"])
-        self.assertGreater(deviation, 1e-3,
-                           msg="expected the trapezoidal plan to deviate, got "
-                               f"{deviation * 1000:.3f} mm")
-
-    def test_both_plans_reach_the_waypoints(self):
-        for flag in (False, True):
-            samples = self._solve(flag)
-            self.assertAlmostEqual(samples[-1]["x"], 1.0, places=2)
-            self.assertAlmostEqual(samples[-1]["y"], 0.0, places=2)
-            self.assertAlmostEqual(samples[0]["vl"], 0.0, places=3)
-            self.assertAlmostEqual(samples[-1]["vr"], 0.0, places=3)
+    def test_plan_reaches_the_waypoints(self):
+        samples = self._solve()
+        self.assertAlmostEqual(samples[-1]["x"], 1.0, places=2)
+        self.assertAlmostEqual(samples[-1]["y"], 0.0, places=2)
+        self.assertAlmostEqual(samples[0]["vl"], 0.0, places=3)
+        self.assertAlmostEqual(samples[-1]["vr"], 0.0, places=3)
 
 
 class TestSoftWheelForceCost(unittest.TestCase):

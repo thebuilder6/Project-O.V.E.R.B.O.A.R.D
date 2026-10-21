@@ -9,7 +9,6 @@ import json
 import math
 import os
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Any
 
 # A first-time user who runs this before installing anything should get the
@@ -25,7 +24,7 @@ import numpy as np
 
 from overboard.paths import HUB_MISSION_MODULE, HUB_RUNNER
 from overboard.models.robot_model import RobotConfig
-from overboard.core.optimizer import TrajectoryOptimizer, GUESS_STYLES
+from overboard.core.optimizer import TrajectoryOptimizer
 from overboard.verification.validator import (
     validate_trajectory,
     validate_samples,
@@ -80,6 +79,10 @@ PRESETS = {
         "candidates": 3,
         "validate": True,
         "export_format": "controller",
+        # The widened config no longer fits an open-loop tube, so the safe
+        # preset pays for the closed-loop model (KI-049/KI-050). An explicit
+        # --propagation still wins.
+        "propagation": "tick",
     },
 }
 
@@ -130,7 +133,7 @@ TIMING_MODEL = "per-segment"
 # seeds that change the geometry come first, because those are the ones that
 # can find a different optimum; the plain baseline is last, because it is the
 # guess the planner's candidates already beat.
-FALLBACK_CANDIDATE_STYLES = ("rolling", "bow_left", "bow_right", "turn_first",
+FALLBACK_CANDIDATE_STYLES = ("rolling", "frontier_sprint", "frontier_sweeper", "frontier_exploratory",
                              "baseline")
 
 # Thread limits handed to the candidate worker processes. Several candidates
@@ -265,7 +268,6 @@ class _SolveContext:
     verbose: bool
     quiet: bool
     capture_iterations: bool
-    self_consistent: bool
     force_weight: float
     fast_polish: bool
     workers: int
@@ -299,7 +301,6 @@ def _solve_payloads(specs, ctx):
         )
         solve_kwargs["guess_style"] = spec["guess_style"]
         solve_kwargs["per_segment_dt"] = spec.get("per_segment_dt", False)
-        solve_kwargs["self_consistent"] = bool(ctx.self_consistent)
         if ctx.force_weight > 0.0:
             solve_kwargs["force_weight"] = float(ctx.force_weight)
         if "initial_guess" in spec:
@@ -333,13 +334,45 @@ def _dispatch_solve(specs, ctx):
                              local_optimizer=ctx.optimizer)
 
 
-def _export_block_reason(stats, validate, attempt_passed):
-    """Return why the result must not be written, or None if it may be."""
+def _export_block_reason(stats, validate, attempt_passed, best_effort=False):
+    """Return why the result must not be written, or None if it may be.
+
+    ``best_effort`` is the operator's explicit acceptance of an accuracy
+    excess: the path is written and marked, because a path that misses the
+    envelope is still a plan to look at. It is not a pass - the file says
+    so, the summary says so, and the studio's push stays gated on the
+    verdict. It does not cover a plan that is physically infeasible: motor
+    force, wheel slip, a diverged tube and a non-converged solve are refused
+    before the gate (`_choose_attempt`).
+    """
     if not stats.get("converged", False):
         return "solver did not converge"
-    if validate and not attempt_passed:
+    if validate and not attempt_passed and not best_effort:
         return "validation failed"
     return None
+
+
+def _mark_best_effort(stats, attempts, selected_index):
+    """Mark an exported trajectory as a best-effort, unvalidated plan.
+
+    The verdict travels with the trajectory: the `.traj` root and the
+    `_stats.json` both carry it, so a file read later cannot be mistaken for
+    an approved one. Returns the biggest excess over the local limit, in
+    metres, for the summary line.
+    """
+    attempt = attempts[max(0, selected_index - 1)]
+    segments = attempt.get("segments", []) or []
+    excess = max((float(segment.get("envelope_m", 0.0))
+                  - float(segment.get("limit_m", 0.0))
+                  for segment in segments), default=0.0)
+    stats["validation"] = {
+        "passed": False,
+        "best_effort": True,
+        "max_excess_m": excess,
+        "reasons": list(attempt.get("reasons", [])),
+        "segments": segments,
+    }
+    return excess
 
 
 def _immrax_failure_reasons(report, failed_threshold=False, max_violation=0.0):
@@ -515,7 +548,8 @@ def _segment_report(samples_data, samples_per_segment, thresholds, immrax_report
     return segments
 
 
-def _emit_validation_report(attempts, selected_index, propagation=None):
+def _emit_validation_report(attempts, selected_index, propagation=None,
+                            best_effort=False):
     """Print the machine-readable validation summary.
 
     Every candidate carries its score vector: the duration, the reachability
@@ -568,8 +602,49 @@ def _emit_validation_report(attempts, selected_index, propagation=None):
             "segments": segments,
         })
     payload = {"selected": selected_index, "candidates": candidates,
-               "propagation": propagation}
+               "propagation": propagation,
+               # True when a failed candidate was exported anyway, so the
+               # studio can say "failed, shown" instead of "not checked".
+               "best_effort": bool(best_effort)}
     click.echo(VALIDATION_MARKER + json.dumps(payload))
+
+
+def _candidate_summary(attempts, selected_index):
+    """Every solved candidate, samples included, for a tool that draws them.
+
+    The comparison is only worth showing if the paths are there: the numbers
+    say one candidate is 0.04 s faster, and only the paths say why. The
+    summary is diagnostics - it is written next to the run, not exported, so
+    a failed validation still leaves the operator with something to look at.
+    """
+    candidates = []
+    for number, attempt in enumerate(attempts, 1):
+        candidates.append({
+            "index": number,
+            "style": attempt.get("guess_style"),
+            "ok": bool(attempt.get("ok")),
+            "converged": bool(attempt.get("converged")),
+            "rescue": bool(attempt.get("rescue")),
+            "duration_s": _finite(attempt.get("duration")),
+            "envelope_cm": _finite(attempt.get("tube", 0.0) * 100.0),
+            "tracking_cm": _finite(attempt.get("tracking_m", 0.0) * 100.0),
+            "fitness_s": _finite(attempt.get("fitness")),
+            "propagation": attempt.get("propagation"),
+            "reasons": list(attempt.get("reasons", [])),
+            "samples": attempt.get("samples") or [],
+        })
+    return {"selected": selected_index, "candidates": candidates}
+
+
+def _write_candidates(path, attempts, selected_index, quiet):
+    """Write the candidate comparison, when the caller asked for it."""
+    if not path:
+        return
+    payload = _candidate_summary(attempts, selected_index)
+    with open(path, "w", encoding="utf-8") as handle:
+        json.dump(payload, handle)
+    if not quiet:
+        click.echo(f"  wrote {len(payload['candidates'])} candidates to {path}")
 
 
 def _cpu_failure_reasons(summary, waypoint_check=None):
@@ -608,7 +683,7 @@ def _apply_preset(ctx, preset, values):
 
 def _studio_options(samples, accuracy_weight, candidates, dt_mode, validate,
                     export_format, controller_dt, fast_polish, sysid_fit=None,
-                    hub_conn=None, hub_name=None, self_consistent=True):
+                    hub_conn=None, hub_name=None, propagation="plant"):
     """The options the studio starts with, so a run in the studio is the same run."""
     return {
         "samples": samples,
@@ -619,10 +694,10 @@ def _studio_options(samples, accuracy_weight, candidates, dt_mode, validate,
         "export_format": export_format,
         "controller_dt": controller_dt,
         "fast_polish": fast_polish,
+        "propagation": propagation,
         "sysid_fit": sysid_fit,
         "hub_conn": hub_conn,
         "hub_name": hub_name,
-        "self_consistent": self_consistent,
     }
 
 
@@ -827,7 +902,8 @@ def _push_to_hub(traj_file, connection, name, log_path, quiet):
     return lines
 
 
-def _print_summary(output, samples_data, robot_cfg, validate, attempt_passed, tube, files):
+def _print_summary(output, samples_data, robot_cfg, validate, attempt_passed, tube, files,
+                   best_effort=False):
     """Print what was produced, in the units the user cares about."""
     metrics = compute_metrics(samples_data, robot_cfg)
     click.echo("")
@@ -842,6 +918,11 @@ def _print_summary(output, samples_data, robot_cfg, validate, attempt_passed, tu
         if attempt_passed:
             detail = f"envelope {tube * 100:.2f} cm" if tube == tube else "envelope n/a"
             click.secho(f"  validation: passed ({detail})", fg="green")
+        elif best_effort:
+            detail = f"envelope {tube * 100:.2f} cm" if tube == tube else "envelope n/a"
+            click.secho(
+                f"  validation: FAILED - best effort exported ({detail}); "
+                "not approved for the hub", fg="red")
         else:
             click.secho("  validation: failed (nothing was written)", fg="red")
     else:
@@ -892,6 +973,7 @@ def _record_candidate(spec, solve_result, cand_idx, batch_len, histories, *,
         "samples": samples_data, "stats": stats,
         "cost": stats.get('final_cost', float('inf')),
         "ok": False, "violation": float("inf"),
+        "accuracy_only_failure": False,
         "tube": float("inf"),
         "duration": float(samples_data[-1]['t']) if samples_data else float("inf"),
         "diverged": False,
@@ -972,6 +1054,7 @@ def _score_attempt(attempt_record, ctx):
 
     # CONTEXT-AWARE SAFETY CHECK (score every candidate on the same scale)
     failed_threshold = False
+    unknown_envelope = False
     max_vio_val = 0.0
     max_err_all = 0.0
 
@@ -992,7 +1075,13 @@ def _score_attempt(attempt_record, ctx):
             err_y = (env['y_max'] - env['y_min']) / 2.0
             err = np.sqrt(err_x**2 + err_y**2)
             max_err_all = max(max_err_all, err)
-            if env.get('unknown') or err > local_threshold:
+            if env.get('unknown'):
+                # The tube could not be bounded, so there is no accuracy
+                # number to accept; that is not an accuracy drop.
+                unknown_envelope = True
+                failed_threshold = True
+                max_vio_val = max(max_vio_val, err)
+            elif err > local_threshold:
                 failed_threshold = True
                 max_vio_val = max(max_vio_val, err)
 
@@ -1014,6 +1103,26 @@ def _score_attempt(attempt_record, ctx):
     attempt_record["heading_rad"] = float(immrax_report.get("max_heading_error_rad", 0.0))
     attempt_record["ok"] = (attempt_record["converged"] and not failed_threshold
                             and bool(immrax_report['passed']))
+    # Which kind of failure this is, for --best-effort. An accuracy excess -
+    # the envelope radius or the tracking error - is a number the operator
+    # can read and decide about. A force, slip, divergence or unbounded-tube
+    # failure is the plan being physically unsound, and showing it would not
+    # make it a path.
+    motor_violation = float(immrax_report.get("max_motor_violation_N", 0.0))
+    traction_violation = float(immrax_report.get("max_traction_violation_N", 0.0))
+    slip_violation = max(float(immrax_report.get("max_slip_l_N", 0.0)),
+                         float(immrax_report.get("max_slip_r_N", 0.0)))
+    speed_violation = float(immrax_report.get("speed_violation_m_s", 0.0))
+    hard_failure = bool(
+        attempt_record["diverged"]
+        or unknown_envelope
+        or motor_violation > 1e-3
+        or traction_violation > 1e-3
+        or slip_violation > 1e-3
+        or speed_violation > 1e-6)
+    attempt_record["accuracy_only_failure"] = bool(
+        attempt_record["converged"] and not attempt_record["ok"]
+        and not hard_failure)
     attempt_record["reasons"] = _immrax_failure_reasons(
         immrax_report, failed_threshold, max_vio_val)
     if failed_threshold:
@@ -1034,6 +1143,8 @@ def _score_attempt(attempt_record, ctx):
         cpu_summary = validate_samples(samples_data, ctx.robot_cfg)
         if not cpu_summary["passed"]:
             attempt_record["ok"] = False
+            # An integration or force failure is not an accuracy drop.
+            attempt_record["accuracy_only_failure"] = False
             attempt_record["reasons"] = list(attempt_record["reasons"]) + \
                 _cpu_failure_reasons(cpu_summary)
         # The peak wheel jerk, for the score vector. It is the quantity the
@@ -1155,7 +1266,6 @@ def _polish_candidates(solved, ctx):
                 samples, stats, ctx.waypoints,
                 stop_indices=ctx.stop_indices,
                 waypoint_events=ctx.events,
-                self_consistent=ctx.self_consistent,
             )
         except Exception as exc:  # a failed polish is not a failed plan
             if not ctx.quiet:
@@ -1166,12 +1276,38 @@ def _polish_candidates(solved, ctx):
     return polished
 
 
-def _choose_attempt(all_attempts, *, validate, quiet, samples):
+def _choose_attempt(all_attempts, *, validate, quiet, samples, pick=None,
+                    best_effort=False):
     """Pick the attempt to export and print the candidate table.
+
+    ``pick`` is the operator's choice from a comparison: it exports that
+    candidate instead of the one the rule picks. Only a candidate that
+    passed every gate may be picked - the rule is not suspended, it is
+    overridden by a human who has seen the same numbers.
+
+    ``best_effort`` is the explicit "show me the path" request. When
+    nothing passed, it exports the converged candidate whose only failure
+    is an accuracy excess, preferring the smallest one. A candidate that
+    failed on motor force, wheel slip, an unbounded tube or the integration
+    check is never exported this way: that is not an accuracy drop.
 
     Returns ``(samples_data, stats, passed, reasons, tube, selected_index)``.
     """
     if validate:
+        if pick is not None:
+            if not 1 <= pick <= len(all_attempts):
+                raise click.ClickException(
+                    f"Candidate {pick} was not solved: this run has "
+                    f"{len(all_attempts)} candidate(s).")
+            chosen = all_attempts[pick - 1]
+            if not chosen.get("ok"):
+                raise click.ClickException(
+                    f"Candidate {pick} did not pass the validator, so it cannot "
+                    "be exported. Pick a candidate that passed, or solve again.")
+            if not quiet:
+                click.echo(f"  Exporting candidate {pick} (the operator's pick).")
+            return (chosen["samples"], chosen["stats"], True, chosen["reasons"],
+                    chosen.get("tube", float("inf")), pick)
         # Never silently export a failed candidate: prefer a passing one with
         # the smallest envelope, otherwise the converged candidate closest to
         # passing. A fallback candidate is insurance: it is only in the list
@@ -1182,6 +1318,20 @@ def _choose_attempt(all_attempts, *, validate, quiet, samples):
             raise click.ClickException(
                 f"Solver did not converge on any of the {len(all_attempts)} "
                 f"attempts. No trajectory written.")
+        if not passed_any and best_effort:
+            # The operator asked for the best path even with an accuracy
+            # drop. Only an accuracy failure qualifies; the physically
+            # unsound candidates stay out of the pool.
+            if not best.get("accuracy_only_failure"):
+                eligible = [a for a in all_attempts
+                            if a.get("accuracy_only_failure")]
+                if not eligible:
+                    raise click.ClickException(
+                        "No candidate failed on accuracy alone, so there is no "
+                        "best-effort path to export: the solve did not converge, "
+                        "or the plan breaks the force, slip, integration or "
+                        "envelope-bound check. No trajectory written.")
+                best = min(eligible, key=lambda a: (a["violation"], a["cost"]))
         selected_index = next(k for k, a in enumerate(all_attempts, 1) if a is best)
         if not quiet and len(all_attempts) > 1:
             for k, a in enumerate(all_attempts, 1):
@@ -1243,6 +1393,10 @@ def _write_outputs(output, samples_data, stats, config_data, robot_cfg, *,
             "samples": samples_data
         }
     }
+    # A best-effort export carries its own verdict, so the file cannot be
+    # mistaken for an approved one when it is read later.
+    if stats.get("validation"):
+        result["validation"] = stats["validation"]
     with open(output, 'w') as f:
         json.dump(result, f, indent=1)
 
@@ -1350,7 +1504,8 @@ def _render(output, samples_data, wps, optimizer, all_attempts, selected_index, 
 @click.option('--preset', type=click.Choice(['fast', 'balanced', 'safe'], case_sensitive=False),
               default=None,
               help='Named starting point. fast: 1 candidate, no validation. '
-                   'balanced: the defaults. safe: 3 candidates, --validate and a controller export. '
+                   'balanced: the defaults. safe: 3 candidates, --validate with the '
+                   'closed-loop tick propagation, and a controller export. '
                    'Options you set yourself always win.')
 
 # --- Solver Parameters ---
@@ -1382,10 +1537,6 @@ def _render(output, samples_data, wps, optimizer, all_attempts, selected_index, 
                    'IPOPT iterations; this gives it an iteration budget and finishes from that point '
                    'with a cold pass. Missions that solve inside the budget return the same '
                    'trajectory as before.')
-@click.option('--self-consistent/--no-self-consistent', default=True,
-              help='Plan a self-consistent trajectory: the samples are placed on the path the '
-                   'trajectory\'s own (v, omega) profile traces, so the headings are its tangents '
-                   '(simple solver only). On by default (KI-026).')
 @click.option('--polish', is_flag=True,
               help='Optional post-solve gradient polish: the reachability rollout is '
                    'differentiated, and the plan is re-solved with the samples the '
@@ -1394,6 +1545,11 @@ def _render(output, samples_data, wps, optimizer, all_attempts, selected_index, 
 # --- Export & Validation ---
 @click.option('--validate/--no-validate', default=False,
               help='Run validation and block export on failure (requires JAX/Immrax).')
+@click.option('--best-effort', is_flag=True,
+              help='With --validate: export the best converging candidate when the '
+                   'only failure is an accuracy excess (envelope or tracking), and '
+                   'mark the trajectory as failed. Motor force, wheel slip, a '
+                   'diverged tube or a non-converged solve still block export.')
 @click.option('--sysid-fit', type=click.Path(exists=True, dir_okay=False), default=None,
               help='Optional sysid_fit.json digital-twin fit (requires --validate).')
 @click.option('--export-format', type=click.Choice(['none', 'controller', 'python', 'python-compact'], case_sensitive=False),
@@ -1406,6 +1562,10 @@ def _render(output, samples_data, wps, optimizer, all_attempts, selected_index, 
                    'sustain it runs slower; set this to the period the robot actually '
                    'achieves (the pushed session reports it) so the gate is measured '
                    'against the controller that will run.')
+@click.option('--pick-candidate', default=None, type=click.IntRange(min=1),
+              help='Export this candidate instead of the fastest one that passed. It has to '
+                   'have passed every gate: the rule is not suspended, it is overridden by a '
+                   'human who has seen the comparison. Needs --validate.')
 @click.option('--propagation', type=click.Choice(['plant', 'tick'], case_sensitive=False),
               default='plant',
               help='Which reachability propagation the envelope gate uses. "plant" is '
@@ -1438,17 +1598,23 @@ def _render(output, samples_data, wps, optimizer, all_attempts, selected_index, 
 @click.option('--iteration-history', type=click.Path(dir_okay=False), default=None,
               help='Write the solver\'s iteration history to this JSON file, for the '
                    'studio to plot how the trajectory converged.')
+@click.option('--candidates-out', type=click.Path(dir_okay=False), default=None,
+              help='Write every solved candidate to this JSON file - its seed, verdict, '
+                   'score and samples - so a tool can draw the comparison. Diagnostics: it '
+                   'is written even when the export gate blocks the run.')
+
 
 # --- Miscellaneous ---
 @click.option('-v', '--verbose', is_flag=True, help='Show solver internals.')
 @click.option('--quiet', '-q', is_flag=True, help='Suppress verbose output.')
 @click.pass_context
 def main(ctx, config, waypoints, output, gui, gui_port, doctor, preset,
-         samples, accuracy_weight, force_weight, candidates, stop_waypoints, events,
-         no_parallel, workers, fast_polish, self_consistent, polish, validate,
+         samples, accuracy_weight, force_weight, candidates, pick_candidate,
+         stop_waypoints, events,
+         no_parallel, workers, fast_polish, polish, validate, best_effort,
          sysid_fit, export_format, controller_dt, control_dt, propagation, benchmark,
          push_hub, hub_conn, hub_name, hub_log,
-         plot, animate, iteration_history,
+         plot, animate, iteration_history, candidates_out,
          verbose, quiet):
     """
     FLL Trajectory Optimizer CLI.
@@ -1478,7 +1644,7 @@ def main(ctx, config, waypoints, output, gui, gui_port, doctor, preset,
 
     values = {"samples": samples, "accuracy_weight": accuracy_weight,
               "candidates": candidates, "validate": validate,
-              "export_format": export_format}
+              "export_format": export_format, "propagation": propagation}
     if preset:
         values = _apply_preset(ctx, preset, values)
         samples = values["samples"]
@@ -1486,11 +1652,20 @@ def main(ctx, config, waypoints, output, gui, gui_port, doctor, preset,
         candidates = values["candidates"]
         validate = values["validate"]
         export_format = values["export_format"]
+        propagation = values["propagation"]
 
     if validate and not HAS_JAX:
         raise click.ClickException(
             f"--validate needs JAX and Immrax. {JAX_HINT}"
         )
+    if pick_candidate is not None and not validate:
+        raise click.ClickException(
+            "--pick-candidate needs --validate: only a checked candidate may be "
+            "exported.")
+    if best_effort and not validate:
+        raise click.ClickException(
+            "--best-effort needs --validate: it exports a failed verdict, so "
+            "there has to be one.")
 
     # The timing model is the planner's: one interval per waypoint segment.
     # The flags that used to choose it are deprecated and ignored, so the
@@ -1508,7 +1683,7 @@ def main(ctx, config, waypoints, output, gui, gui_port, doctor, preset,
                    options=_studio_options(samples, accuracy_weight, candidates,
                                            dt_mode, validate, export_format,
                                            controller_dt, fast_polish, sysid_fit,
-                                           hub_conn, hub_name, self_consistent))
+                                           hub_conn, hub_name, propagation))
         return
 
     config_data, robot_cfg = _load_config(config)
@@ -1695,7 +1870,6 @@ def main(ctx, config, waypoints, output, gui, gui_port, doctor, preset,
         verbose=verbose,
         quiet=quiet,
         capture_iterations=capture_iterations,
-        self_consistent=self_consistent,
         force_weight=force_weight,
         fast_polish=fast_polish,
         workers=workers,
@@ -1724,14 +1898,35 @@ def main(ctx, config, waypoints, output, gui, gui_port, doctor, preset,
 
     (samples_data, stats, attempt_passed, best_reasons, selected_tube,
      selected_index) = _choose_attempt(
-        all_attempts, validate=validate, quiet=quiet, samples=samples)
+        all_attempts, validate=validate, quiet=quiet, samples=samples,
+        pick=pick_candidate, best_effort=best_effort)
+
+    # The operator asked to see the path even though it missed the accuracy
+    # gates. The verdict is still a failure, and it travels with the file.
+    best_effort_export = bool(validate and best_effort and not attempt_passed)
+    if best_effort_export:
+        excess = _mark_best_effort(stats, all_attempts, selected_index)
+        click.secho(
+            "  BEST EFFORT: validation failed ("
+            + ("; ".join(best_reasons) or "see the candidate table")
+            + (f"; up to {excess * 100:.2f} cm outside the local limit"
+               if excess > 0 else "")
+            + "). The path is written for inspection and is not approved "
+            "for the hub.", fg="red", bold=True)
 
     if use_validation:
         # The studio reads this to show which part of the path failed.
-        _emit_validation_report(all_attempts, selected_index, propagation=propagation)
+        _emit_validation_report(all_attempts, selected_index,
+                                propagation=propagation,
+                                best_effort=best_effort_export)
+    # Every candidate, paths included, for a tool that draws the comparison.
+    # Diagnostics, so it is written before the export gate: a failed run is
+    # exactly when the operator wants to see what the candidates did.
+    _write_candidates(candidates_out, all_attempts, selected_index, quiet)
 
     # --- EXPORT GATE (KI-001 / KI-002) ---
-    block_reason = _export_block_reason(stats, validate, attempt_passed)
+    block_reason = _export_block_reason(stats, validate, attempt_passed,
+                                        best_effort=best_effort_export)
     if block_reason:
         detail = "; ".join(best_reasons)
         message = f"{block_reason}: {detail}" if detail else block_reason
@@ -1765,7 +1960,7 @@ def main(ctx, config, waypoints, output, gui, gui_port, doctor, preset,
 
     if not quiet:
         _print_summary(output, samples_data, robot_cfg, validate, attempt_passed,
-                       selected_tube, written[1:])
+                       selected_tube, written[1:], best_effort=best_effort_export)
 
     if push_hub:
         try:

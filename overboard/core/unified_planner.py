@@ -29,7 +29,7 @@ from __future__ import annotations
 import math
 import time
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, NamedTuple, Optional, Tuple
 
 import numpy as np
 
@@ -65,6 +65,17 @@ class UnifiedPlanResult:
     seed_generation_ms: float
     mesh_samples: List[int]
     status: str
+
+
+class _PlanEvaluation(NamedTuple):
+    """One plan's reachability report, and the verdict the gates give it."""
+
+    tracking_cm: float
+    envelope_cm: float
+    diverged: bool
+    passed_gates: bool
+    duration_s: float
+    score: float
 
 
 class UnifiedPathEngine:
@@ -164,6 +175,53 @@ class UnifiedPathEngine:
 
         return samples
 
+    def _evaluate(
+        self,
+        samples: List[Dict[str, Any]],
+        num_segments: int,
+        seg_samples: List[int],
+    ) -> _PlanEvaluation:
+        """Roll the plan out, then apply both gates and the score, once.
+
+        This is the only place the two gates are read and the only place a
+        candidate is scored, so a plan that came back from a solve and a plan
+        that came back from the polish are judged by the same rule. A rollout
+        that diverged passes neither gate, whatever numbers it reports.
+
+        The reachability import stays inside the function on purpose: the
+        engine module pulls in JAX and Immrax at import time, and a solve on a
+        machine without the optional stack has to fall back to the declared
+        numbers instead of failing to import (KI-020).
+        """
+        engine = self._ensure_validator()
+        if engine is not None:
+            from overboard.verification.reachability_engine import (
+                _extract_state_and_dt_arrays,
+            )
+
+            states, dts = _extract_state_and_dt_arrays(
+                samples, num_segments, seg_samples)
+            sample_to_segment = list(
+                np.repeat(np.arange(num_segments), seg_samples))
+            report = engine.evaluate_states(states, dts, sample_to_segment)
+            tracking_cm = float(report["max_tracking_error_m"]) * 100.0
+            envelope_cm = float(report["max_envelope_radius_m"]) * 100.0
+            diverged = bool(report.get("diverged", False))
+        else:
+            # No reachability engine: the declared numbers can be neither
+            # checked nor broken, and the gates are decided on them.
+            tracking_cm, envelope_cm, diverged = 0.45, 1.20, False
+
+        passed_gates = (tracking_cm <= self.tracking_gate_m * 100.0
+                        and envelope_cm <= self.envelope_gate_m * 100.0
+                        and not diverged)
+        duration_s = float(samples[-1]["t"]) if samples else float("inf")
+        score = (duration_s
+                 + 120.0 * max(0.0, tracking_cm / 100.0 - self.tracking_gate_m)
+                 + 60.0 * max(0.0, envelope_cm / 100.0 - self.envelope_gate_m))
+        return _PlanEvaluation(tracking_cm, envelope_cm, diverged, passed_gates,
+                               duration_s, score)
+
     def solve_candidate(
         self,
         waypoints: List[Tuple[float, float, Optional[float]]],
@@ -178,14 +236,12 @@ class UnifiedPathEngine:
         """Solves a single candidate using Discretization-Consistent IPOPT."""
         t0 = time.time()
         num_segments = len(waypoints) - 1
-        s2s = list(np.repeat(np.arange(num_segments), seg_samples))
 
         solve_kw = {
             "num_samples_per_segment": seg_samples,
             "per_segment_dt": True,
             "cost_metric": "discretization",
             "epigraph_constraints": True,
-            "self_consistent": True,
             "accuracy_weight": accuracy_weight,
             "force_weight": force_weight,
             "solver_options": {"max_iter": max_iter, "print_level": 0},
@@ -204,38 +260,21 @@ class UnifiedPathEngine:
         if not samples or len(samples) == 0:
             return None
 
-        dur = float(samples[-1]["t"])
         iters = stats.get("iter_count", len(stats.get("iterations", {}).get("obj", [])))
 
-        # Evaluate against Immrax reachability engine
-        engine = self._ensure_validator()
-        if engine is not None:
-            from overboard.verification.reachability_engine import _extract_state_and_dt_arrays
-            states, dts = _extract_state_and_dt_arrays(samples, num_segments, seg_samples)
-            rep = engine.evaluate_states(states, dts, s2s)
-            track_cm = float(rep["max_tracking_error_m"]) * 100.0
-            tube_cm = float(rep["max_envelope_radius_m"]) * 100.0
-            diverged = bool(rep.get("diverged", False))
-        else:
-            # Fallback naive estimator if JAX is unavailable
-            track_cm = 0.45
-            tube_cm = 1.20
-            diverged = False
-
-        passed = (track_cm <= self.tracking_gate_m * 100.0) and (tube_cm <= self.envelope_gate_m * 100.0) and not diverged
-        score = dur + 120.0 * max(0.0, (track_cm / 100.0) - self.tracking_gate_m) + 60.0 * max(0.0, (tube_cm / 100.0) - self.envelope_gate_m)
+        evaluation = self._evaluate(samples, num_segments, seg_samples)
 
         return PlannerCandidateResult(
             name=name,
             samples=samples,
             stats=stats,
-            duration_s=dur,
-            tracking_error_cm=track_cm,
-            envelope_radius_cm=tube_cm,
-            passed_gates=passed,
+            duration_s=evaluation.duration_s,
+            tracking_error_cm=evaluation.tracking_cm,
+            envelope_radius_cm=evaluation.envelope_cm,
+            passed_gates=evaluation.passed_gates,
             iterations=iters,
             wall_time_s=t_wall,
-            score=score,
+            score=evaluation.score,
         )
 
     def candidate_specs(
@@ -275,7 +314,6 @@ class UnifiedPathEngine:
         accuracy_weight: float = 0.0,
         stop_indices: Optional[List[int]] = None,
         waypoint_events: Optional[Dict[int, str]] = None,
-        self_consistent: bool = True,
         max_rounds: int = 2,
     ) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
         """One optional post-solve pass: let the reachability say what to fix.
@@ -316,7 +354,7 @@ class UnifiedPathEngine:
             polished, polished_stats = self._replan(
                 waypoints, segment_samples, states, dts, weights,
                 accuracy_weight=accuracy_weight, stop_indices=stop_indices,
-                waypoint_events=waypoint_events, self_consistent=self_consistent)
+                waypoint_events=waypoint_events)
             if not polished or not polished_stats.get("converged", False):
                 break
             p_states, p_dts = self._states_and_dts(
@@ -356,6 +394,9 @@ class UnifiedPathEngine:
         alone, and that let a re-solve come back 5.365 s -> 12.912 s on the
         complex mission and be accepted; a time-optimal planner may not
         trade time for a smaller tube.
+
+        A polished plan is certified on the same gates as a solved one: a
+        rollout that diverged is not certified, whatever numbers it reports.
         """
         engine = self._ensure_validator()
         if engine is None or not candidate.samples:
@@ -375,38 +416,28 @@ class UnifiedPathEngine:
         polished, polished_stats = self._replan(
             waypoints, seg_samples, states, dts, weights,
             accuracy_weight=accuracy_weight, stop_indices=stops,
-            waypoint_events=None, self_consistent=True, force_weight=force_weight)
+            waypoint_events=None, force_weight=force_weight)
         if not polished or not polished_stats.get("converged", False):
             return candidate
 
-        p_states, p_dts = self._states_and_dts(
-            polished, num_segments, seg_samples)
-        report = engine.evaluate_states(p_states, p_dts, sample_to_segment)
-        track_cm = float(report["max_tracking_error_m"]) * 100.0
-        tube_cm = float(report["max_envelope_radius_m"]) * 100.0
-        duration = self._duration(polished)
-        if duration > candidate.duration_s + 1e-9:
+        evaluation = self._evaluate(polished, num_segments, seg_samples)
+        if evaluation.duration_s > candidate.duration_s + 1e-9:
             return candidate
-        if (track_cm, tube_cm) >= (candidate.tracking_error_cm,
-                                   candidate.envelope_radius_cm):
+        if (evaluation.tracking_cm, evaluation.envelope_cm) >= (
+                candidate.tracking_error_cm, candidate.envelope_radius_cm):
             return candidate
 
-        passed = (track_cm <= self.tracking_gate_m * 100.0
-                  and tube_cm <= self.envelope_gate_m * 100.0)
-        score = (duration
-                 + 120.0 * max(0.0, track_cm / 100.0 - self.tracking_gate_m)
-                 + 60.0 * max(0.0, tube_cm / 100.0 - self.envelope_gate_m))
         return PlannerCandidateResult(
             name=f"{candidate.name}_polished",
             samples=polished,
             stats=polished_stats,
-            duration_s=duration,
-            tracking_error_cm=track_cm,
-            envelope_radius_cm=tube_cm,
-            passed_gates=passed,
+            duration_s=evaluation.duration_s,
+            tracking_error_cm=evaluation.tracking_cm,
+            envelope_radius_cm=evaluation.envelope_cm,
+            passed_gates=evaluation.passed_gates,
             iterations=candidate.iterations + int(polished_stats.get("iter_count", 0)),
             wall_time_s=candidate.wall_time_s,
-            score=score,
+            score=evaluation.score,
         )
 
     def _sensitivity_weights(self, engine, states, dts, sample_to_segment,
@@ -431,7 +462,7 @@ class UnifiedPathEngine:
                        + 6.0 * excess ** 2), 1.0, 200.0)
 
     def _replan(self, waypoints, segment_samples, states, dts, weights, *,
-                accuracy_weight, stop_indices, waypoint_events, self_consistent,
+                accuracy_weight, stop_indices, waypoint_events,
                 force_weight=0.0):
         """The warm-started re-solve the weights ask for.
 
@@ -455,7 +486,6 @@ class UnifiedPathEngine:
             per_segment_dt=True,
             cost_metric="discretization",
             epigraph_constraints=True,
-            self_consistent=self_consistent,
             split_at_boundaries=False,
             force_weight=max(force_weight, 0.002),
             verbose=False,

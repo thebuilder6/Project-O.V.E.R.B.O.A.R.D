@@ -203,6 +203,14 @@
           <input type="checkbox" id="toggle-runs" checked>
           <span>Earlier runs</span>
         </label>
+        <label class="check inline">
+          <input type="checkbox" id="toggle-saturation" checked>
+          <span>Actuator saturation</span>
+        </label>
+        <label class="check inline">
+          <input type="checkbox" id="toggle-apex" checked>
+          <span>Late-apex cues</span>
+        </label>
         <p class="hint" id="mat-name">No mat image.</p>
         <p class="hint" id="run-history">No earlier runs yet.</p>
         <p class="hint">FIRST's mat artwork is not ours to ship, so the image is
@@ -226,13 +234,28 @@
             <span>Samples per segment</span>
             <input type="number" id="opt-samples" min="2" max="200" step="1" value="10">
           </label>
+          <label class="check">
+            <input type="checkbox" id="opt-auto-mesh" checked>
+            <span>Auto invariant mesh (80 ms)</span>
+          </label>
           <label class="field">
             <span>Accuracy weight</span>
             <input type="number" id="opt-accuracy" min="0" step="0.005" value="0">
           </label>
           <label class="field">
-            <span>Candidates</span>
-            <input type="number" id="opt-candidates" min="1" max="5" step="1" value="2">
+            <span>Candidates (1-3)</span>
+            <input type="number" id="opt-candidates" min="1" max="3" step="1" value="2">
+          </label>
+          <label class="field">
+            <span>Reachability propagation</span>
+            <select id="opt-propagation">
+              <option value="plant" selected>Plant, open loop (fast)</option>
+              <option value="tick">Closed-loop tick map (contracted, slower)</option>
+            </select>
+          </label>
+          <label class="field">
+            <span>Soft force weight</span>
+            <input type="number" id="opt-force-weight" min="0" max="0.1" step="0.001" value="0">
           </label>
           <label class="field">
             <span>Export format</span>
@@ -252,12 +275,16 @@
             <span>Validate before export (needs JAX)</span>
           </label>
           <label class="check">
+            <input type="checkbox" id="opt-best-effort" checked>
+            <span>Keep the best path when validation fails (marked failed)</span>
+          </label>
+          <label class="check">
             <input type="checkbox" id="opt-fast-polish">
             <span>Fast polish (fewer IPOPT iterations on big missions)</span>
           </label>
           <label class="check">
-            <input type="checkbox" id="opt-self-consistent" checked>
-            <span>Self-consistent samples (on the path's own profile)</span>
+            <input type="checkbox" id="opt-polish">
+            <span>Gradient sensitivity polish (needs JAX)</span>
           </label>
         </details>
       </section>
@@ -327,7 +354,8 @@
           <h3 class="sub">Validation detail</h3>
           <p class="hint explainer" id="validation-explainer"></p>
           <div class="chips" id="validation-candidates"></div>
-          <table class="report" id="validation-table"></table>
+          <div class="row" id="pick-row" hidden></div>
+          <table class="report scroll" id="validation-table"></table>
           <p class="hint" id="validation-note"></p>
           <div class="row" id="fix-row" hidden></div>
         </div>

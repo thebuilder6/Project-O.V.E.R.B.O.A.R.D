@@ -71,6 +71,17 @@ const state = {
     /* The earlier solves, so a new one can be compared with them. */
     runs: [],
     showRuns: true,
+    /* The solver-side overlays: the trajectory coloured by actuator
+       saturation, and the late-apex cues on the curved segments. */
+    showSaturation: true,
+    showApex: true,
+    /* Every solved candidate's path, so the three frontier plans are on the
+       field together and can be compared (the CLI writes them for the run).
+       The candidate the chips point at is drawn stronger. */
+    candidatePaths: [],
+    /* The candidate the operator chose for the next solve. It is consumed by
+       that solve, so a later run is not quietly pinned to the same seed. */
+    pickCandidate: null,
     /* What the pointer is over: a mission model or a waypoint. */
     hoverObstacle: null,
     hoverWaypoint: -1,
@@ -185,7 +196,12 @@ const PLOTS = [
    list is a key to what the operator can see, not a list of possibilities. */
 const CANVAS_LEGEND = [
     { key: 'trajectory', color: '#38bdf8', label: 'Planned trajectory' },
+    { key: 'candidates', color: '#a78bfa', label: 'Compared candidates', dash: true },
     { key: 'envelope', color: 'rgba(52, 211, 153, 0.65)', label: 'Reachability envelope', dash: true },
+    { key: 'saturation', color: 'rgba(251, 191, 36, 0.95)', label: 'At the actuator limit' },
+    { key: 'slipping', color: 'rgba(248, 113, 113, 0.95)', label: 'Over the actuator limit' },
+    { key: 'apex', color: '#f59e0b', label: 'Late-apex target', dot: true },
+    { key: 'bisector', color: 'rgba(226, 232, 240, 0.8)', label: 'Momentum bisector', dash: true },
     { key: 'path', color: 'rgba(148, 163, 184, 0.85)', label: 'Path between waypoints', dash: true },
     { key: 'ghost', color: 'rgba(226, 232, 240, 0.6)', label: "Solver's first guess", dash: true },
     { key: 'runs', color: 'rgba(148, 163, 184, 0.5)', label: 'Earlier solves' },
@@ -505,15 +521,32 @@ function clearSession() {
 function applyOptionsToForm(options) {
     if (!options) return;
     if (options.samples !== undefined) el('opt-samples').value = options.samples;
+    if (options.auto_mesh !== undefined) el('opt-auto-mesh').checked = Boolean(options.auto_mesh);
     if (options.accuracy_weight !== undefined) el('opt-accuracy').value = options.accuracy_weight;
     if (options.candidates !== undefined) el('opt-candidates').value = options.candidates;
+    if (options.force_weight !== undefined) el('opt-force-weight').value = options.force_weight;
+    if (options.propagation !== undefined) {
+        el('opt-propagation').value = options.propagation === 'tick' ? 'tick' : 'plant';
+    }
     if (options.validate !== undefined) el('opt-validate').checked = options.validate;
     if (options.fast_polish !== undefined) el('opt-fast-polish').checked = options.fast_polish;
+    if (options.polish !== undefined) el('opt-polish').checked = Boolean(options.polish);
     if (options.export_format !== undefined) el('opt-export').value = options.export_format;
     if (options.controller_dt !== undefined) el('opt-controller-dt').value = options.controller_dt;
     updateCandidatesHint();
+    updateMeshField();
     syncPresetRadio();
 }
+
+/* The solver options the named presets carry beyond the ones the command
+   line owns. The preset cards come from the server, which knows the solver
+   flags; the propagation and the polish are the studio's own levers, and
+   `safe` is the one that pays for both. */
+const PRESET_SOLVER = {
+    fast: { propagation: 'plant', polish: false },
+    balanced: { propagation: 'plant', polish: false },
+    safe: { propagation: 'tick', polish: true },
+};
 
 /* Show the preset that matches the current options, if there is one. */
 function syncPresetRadio() {
@@ -521,12 +554,15 @@ function syncPresetRadio() {
     const radios = Array.from(document.querySelectorAll('#presets input[type=radio]'));
     const match = radios.find((radio) => {
         const preset = state.presets[radio.value];
+        const solver = PRESET_SOLVER[radio.value] || {};
         return preset
             && Number(preset.samples) === Number(current.samples)
             && Number(preset.accuracy_weight) === Number(current.accuracy_weight)
             && Number(preset.candidates) === Number(current.candidates)
             && Boolean(preset.validate) === Boolean(current.validate)
-            && preset.export_format === current.export_format;
+            && preset.export_format === current.export_format
+            && (solver.propagation || 'plant') === current.propagation
+            && Boolean(solver.polish) === Boolean(current.polish);
     });
     radios.forEach((radio) => { radio.checked = match ? radio.value === match.value : false; });
 }
@@ -571,6 +607,62 @@ function timingName(entry) {
     return entry.timing === 'per-segment' ? 'per-segment' : 'equal-duration';
 }
 
+/* The physical identity of a candidate. The planner's three are the frontier
+   triad; the rest are the rescue seeds, which are only in the list when the
+   triad produced nothing usable (KI-048). */
+const CANDIDATE_STYLES = {
+    frontier_sprint: { icon: '🚀', label: 'Sprint', detail: 'peak 0.70' },
+    frontier_sweeper: { icon: '🌊', label: 'Sweeper', detail: 'peak 0.65' },
+    frontier_exploratory: { icon: '🛡️', label: 'Exploratory', detail: '1.25x offset' },
+};
+const RESCUE_STYLES = ['baseline', 'rolling', 'bow_left', 'bow_right', 'turn_first'];
+
+function isRescueCandidate(style) {
+    return RESCUE_STYLES.indexOf(style) >= 0;
+}
+
+function candidateName(style) {
+    const known = CANDIDATE_STYLES[style];
+    if (known) return `${known.icon} ${known.label}`;
+    if (isRescueCandidate(style)) return `🛟 Rescue: ${style}`;
+    return style || 'baseline';
+}
+
+/* The three discretization mechanisms the solver's cost prices, measured on
+   the plan that came back (core/optimizer.py's discretization metric): the
+   chord-vs-arc sagitta, the parabolic-vs-linear heading mismatch, and the
+   20 ms sample-and-hold lag. Each is a distance in mm, against the 5 mm
+   tracking gate. */
+function segmentMechanisms(from, to) {
+    const samples = state.trajectory || [];
+    if (from === undefined || to === undefined || to - from < 1
+            || from < 0 || to >= samples.length) return null;
+    const track = Number(robotFields().track_width) || 0.0965;
+    let sagitta = 0;
+    let parabolic = 0;
+    let hold = 0;
+    for (let k = from; k < to; k++) {
+        const a = samples[k];
+        const b = samples[k + 1];
+        const dt = b.t - a.t;
+        if (!(dt > 0)) continue;
+        const v1 = (a.vl + a.vr) / 2;
+        const v2 = (b.vl + b.vr) / 2;
+        const w1 = (a.vr - a.vl) / track;
+        const w2 = (b.vr - b.vl) / track;
+        const vMid = 0.5 * (v1 + v2);
+        const wMid = 0.5 * (w1 + w2);
+        sagitta = Math.max(sagitta, Math.abs(0.125 * vMid * wMid * dt * dt));
+        parabolic = Math.max(parabolic, Math.abs(0.125 * vMid * (w2 - w1) * dt * dt));
+        hold = Math.max(hold, Math.abs(0.5 * (v2 - v1) * 0.02));
+    }
+    return {
+        sagitta_mm: sagitta * 1000,
+        parabolic_mm: parabolic * 1000,
+        hold_mm: hold * 1000,
+    };
+}
+
 /* A candidate that produced no samples has no duration, and the report
    carries that as null. */
 function durationText(entry) {
@@ -582,15 +674,14 @@ function durationText(entry) {
 }
 
 /* Why the solver picked what it picked: the winner, and what the others cost.
-   The rule is said out loud, because the winner is not always the fastest:
-   a passing candidate with the tightest envelope wins, and the shortest
-   time only breaks a tie. */
+   The rule is said out loud: among the passing candidates the shortest
+   duration wins, and the reachability envelope only breaks a tie. */
 function describeCandidates(report, winner) {
     const candidates = report.candidates || [];
     const parts = [];
 
     if (candidates.length > 4) {
-        // A sweep has too many candidates to list: summarise them.
+        // More candidates than a chip row can name: summarise them.
         const passed = candidates.filter((entry) => entry.ok).length;
         const failed = candidates.filter((entry) => !entry.ok && entry.duration_s !== null)
             .sort((a, b) => a.duration_s - b.duration_s);
@@ -605,8 +696,8 @@ function describeCandidates(report, winner) {
                 + `${weightOf(best)} in ${durationText(best)}: `
                 + `${(best.reasons || []).join('; ')}`);
         }
-        parts.push('the winner is the candidate that passes with the tightest envelope; '
-            + 'the shortest time only breaks a tie');
+        parts.push('the winner is the passing candidate with the shortest time; '
+            + 'the envelope only breaks a tie');
         return parts.join('. ');
     }
 
@@ -618,8 +709,8 @@ function describeCandidates(report, winner) {
             : `no candidate passed; ${timingName(winner)} ${winner.style || 'baseline'} came closest${duration}`;
         parts.push(lead);
         if (winner.ok) {
-            parts.push('the winner is the candidate that passes with the tightest envelope, '
-                + 'and the shortest time only breaks a tie');
+            parts.push('the winner is the passing candidate with the shortest time, '
+                + 'and the envelope only breaks a tie');
         }
     }
     candidates.forEach((entry) => {
@@ -662,6 +753,20 @@ function describeCandidates(report, winner) {
     return parts.join('. ');
 }
 
+/* How far a best-effort path missed, in the words the operator reads. The
+   number is the biggest per-segment excess over the local limit; the reasons
+   name the gate, so "failed" is never a bare word. */
+function bestEffortDetail(candidate) {
+    const excess = candidate && candidate.max_excess_cm;
+    const reasons = ((candidate && candidate.reasons) || []).filter(Boolean);
+    let lead = 'it did not pass the validator';
+    if (excess !== null && excess !== undefined && excess > 0) {
+        lead = `it is up to ${excess.toFixed(2)} cm outside the local limit`;
+    }
+    return lead[0].toUpperCase() + lead.slice(1)
+        + (reasons.length ? ` (${reasons.join('; ')})` : '') + '.';
+}
+
 /* The verdict of the last run. This is the one place that owns it: a report
    draws it, and no report takes it away again. A solve without validation
    has no verdict, so the screen must not keep the one before it. */
@@ -678,11 +783,14 @@ function renderValidationReport(report) {
         el('validation-note').textContent = '';
         el('fix-row').innerHTML = '';
         el('fix-row').hidden = true;
+        el('pick-row').innerHTML = '';
+        el('pick-row').hidden = true;
         state.reportCandidate = null;
         state.failingSegments = new Set();
         state.worstSegment = -1;
         /* The red segments on the field are the same verdict, so they go
-           with it. */
+           with it, and the key drops the model it named. */
+        updateLegendLabels();
         draw();
         return;
     }
@@ -699,15 +807,20 @@ function renderValidationReport(report) {
     report.candidates.forEach((entry, i) => {
         const chip = document.createElement('button');
         chip.type = 'button';
-        chip.className = `chip ${entry.ok ? 'ok' : 'bad'}${i === index ? ' active' : ''}`;
+        /* The seed is in the chip, not only in the tooltip: the fallback
+           seeds would otherwise be indistinguishable. The planner's three are
+           the frontier triad; a rescue seed is marked, because it is only in
+           the list when the triad failed (KI-048). */
+        const style = entry.style || 'baseline';
+        const rescue = isRescueCandidate(style);
+        chip.className = `chip ${entry.ok ? 'ok' : 'bad'}${i === index ? ' active' : ''}`
+            + (rescue ? ' is-rescue' : '');
         const timing = entry.timing === 'per-segment' ? 'per-seg' : 'equal-dur';
         const duration = entry.duration_s === null || entry.duration_s === undefined
             ? '' : ` ${entry.duration_s.toFixed(2)}s`;
         const weight = (entry.accuracy_weight !== null && entry.accuracy_weight !== undefined
             && entry.accuracy_weight > 0) ? ` @${entry.accuracy_weight}` : '';
-        /* The seed is in the chip, not only in the tooltip: two candidates
-           with the same timing model are otherwise the same chip. */
-        chip.textContent = `${i + 1}. ${entry.style || 'baseline'} ${timing}${weight}${duration} `
+        chip.textContent = `${i + 1}. ${candidateName(style)} ${timing}${weight}${duration} `
             + `${entry.ok ? 'ok' : 'failed'}`;
         // One title: the candidate's identity and why it failed. The second
         // assignment used to overwrite the first, so the tooltip never
@@ -741,18 +854,26 @@ function renderValidationReport(report) {
     const winner = report.candidates[(report.selected || 1) - 1] || report.candidates[0];
     const explainer = el('validation-explainer');
     explainer.textContent = describeCandidates(report, winner);
+    renderPick(report, index);
     renderFixes(report);
 
     const table = el('validation-table');
     table.innerHTML = '';
     const header = document.createElement('tr');
-    ['Segment', 'Envelope', 'Limit', 'Side drift'].forEach((label) => {
+    /* The last three columns are the discretization mechanisms the solver's
+       cost prices, measured on the plan that came back: the sagitta of the
+       chord, the heading mismatch of the parabolic step and the 20 ms
+       sample-and-hold lag. They are distances in mm, against the 5 mm
+       tracking gate, so a table row says why a segment tracked the way it
+       did. */
+    ['Segment', 'Envelope', 'Limit', 'Drift', 'Sagitta', 'Heading', 'Hold'].forEach((label) => {
         const th = document.createElement('th');
         th.textContent = label;
         header.appendChild(th);
     });
     table.appendChild(header);
 
+    const bounds = segmentBounds();
     const failing = new Set();
     let worst = -1;
     let worstDrift = -1;
@@ -763,10 +884,15 @@ function renderValidationReport(report) {
         const limit = (segment.limit_m || 0) * 100;
         if (!segment.ok) failing.add(segment.from);
         if (drift > worstDrift) { worstDrift = drift; worst = segment.from; }
+        const mechanism = segmentMechanisms(bounds[segment.from], bounds[segment.to]);
+        const cell = (value) => (mechanism ? `${value.toFixed(2)} mm` : '-');
         row.innerHTML = `<td>W${segment.from} &rarr; W${segment.to}</td>`
             + `<td>${envelope.toFixed(2)} cm</td>`
             + `<td>${limit.toFixed(2)} cm</td>`
-            + `<td>${drift.toFixed(2)} cm</td>`;
+            + `<td>${drift.toFixed(2)} cm</td>`
+            + `<td>${cell(mechanism ? mechanism.sagitta_mm : 0)}</td>`
+            + `<td>${cell(mechanism ? mechanism.parabolic_mm : 0)}</td>`
+            + `<td>${cell(mechanism ? mechanism.hold_mm : 0)}</td>`;
         if (!segment.ok) row.className = 'bad';
         else if (worst === segment.from && worstDrift > 0.005) row.className = 'warn';
         table.appendChild(row);
@@ -795,6 +921,10 @@ function renderValidationReport(report) {
         notes.push(`the path drifts most between W${worst} and W${worst + 1}`);
     }
     el('validation-note').textContent = notes.join('. ');
+    /* The key names the model the envelope came from, so it follows the
+       verdict rather than the page load. */
+    updateLegendLabels();
+    draw();
 }
 
 /* ------------------------------------------------------------- the report
@@ -1264,6 +1394,9 @@ function updatePushButton() {
             + 'before pushing it.';
     } else if (!solved) {
         status.textContent = 'Solve a mission first.';
+    } else if (!checked && state.validationReport) {
+        status.textContent = 'This trajectory failed validation, so it is not '
+            + 'approved for the robot. It is on the field for inspection only.';
     } else if (!checked) {
         status.textContent = 'This trajectory has not been validated against your robot. '
             + 'Turn validation on in the Solve tab and solve again before pushing it.';
@@ -1798,12 +1931,35 @@ function renderPlotTabs() {
 /* The key to the field's colours, built from the same list the drawing
    uses. */
 const legendRows = {};
+const legendLabels = {};
+
+/* The propagation the last verdict's envelope came from. An envelope is the
+   width of a reachability tube, and the tube is a property of the model that
+   produced it, so the key names the model rather than only the colour
+   (KI-049). */
+function envelopeModelName() {
+    const report = state.validationReport;
+    if (!report || !report.candidates || !report.candidates.length) return 'Plant';
+    const index = state.reportCandidate !== null
+        && state.reportCandidate < report.candidates.length
+        ? state.reportCandidate : (report.selected || 1) - 1;
+    const candidate = report.candidates[index] || report.candidates[0] || {};
+    return (candidate.propagation || report.propagation) === 'tick'
+        ? 'Closed-Loop Tick' : 'Plant';
+}
+
+function updateLegendLabels() {
+    if (legendLabels.envelope) {
+        legendLabels.envelope.textContent = `Reachability envelope (${envelopeModelName()})`;
+    }
+}
 
 function renderLegend() {
     const box = el('legend-items');
     if (!box) return;
     box.innerHTML = '';
     for (const key of Object.keys(legendRows)) delete legendRows[key];
+    for (const key of Object.keys(legendLabels)) delete legendLabels[key];
     CANVAS_LEGEND.forEach((item) => {
         const row = document.createElement('div');
         row.className = 'legend-item';
@@ -1818,8 +1974,77 @@ function renderLegend() {
         row.appendChild(label);
         box.appendChild(row);
         legendRows[item.key] = row;
+        legendLabels[item.key] = label;
     });
+    updateLegendLabels();
     updateLegend();
+}
+
+/* Where each waypoint sits in the sample list. The plan passes through the
+   waypoints, so the sample nearest a waypoint is its boundary; the samples
+   between two of them are one segment. */
+function segmentBounds() {
+    const samples = state.trajectory || [];
+    const waypoints = state.waypoints || [];
+    if (samples.length < 2 || waypoints.length < 2) return [];
+    const bounds = [];
+    let from = 0;
+    waypoints.forEach((point, index) => {
+        let best = from;
+        let bestDistance = Infinity;
+        for (let i = from; i < samples.length; i++) {
+            const distance = Math.hypot(samples[i].x - point.x, samples[i].y - point.y);
+            if (distance < bestDistance) {
+                bestDistance = distance;
+                best = i;
+            }
+        }
+        bounds.push(index === 0 ? 0 : best);
+        from = best;
+    });
+    bounds[bounds.length - 1] = samples.length - 1;
+    return bounds;
+}
+
+/* The sample that sits at `fraction` of a segment's arc length. */
+function sampleAtFraction(from, to, fraction) {
+    const samples = state.trajectory;
+    let total = 0;
+    for (let i = from; i < to; i++) {
+        total += Math.hypot(samples[i + 1].x - samples[i].x,
+            samples[i + 1].y - samples[i].y);
+    }
+    let running = 0;
+    for (let i = from; i < to; i++) {
+        running += Math.hypot(samples[i + 1].x - samples[i].x,
+            samples[i + 1].y - samples[i].y);
+        if (running >= total * fraction) return samples[i + 1];
+    }
+    return samples[to];
+}
+
+/* The segments the path turns through. A segment that changes heading by
+   more than 0.2 rad has an apex worth marking; a straight one does not. */
+function curvedSegments() {
+    const samples = state.trajectory || [];
+    const bounds = segmentBounds();
+    const curved = [];
+    for (let segment = 0; segment + 1 < bounds.length; segment++) {
+        const from = bounds[segment];
+        const to = bounds[segment + 1];
+        if (to - from < 2) continue;
+        const turn = wrapAngle(samples[to].heading - samples[from].heading);
+        if (Math.abs(turn) > 0.2) curved.push({ from, to, turn });
+    }
+    return curved;
+}
+
+/* The intermediate waypoints with a free heading: the ones where the robot
+   carries its momentum through instead of stopping to point. */
+function bisectorWaypoints() {
+    return state.waypoints.filter((point, index) => index > 0
+        && index < state.waypoints.length - 1
+        && (point.heading === null || point.heading === undefined));
 }
 
 /* What is on the field right now. The key shows only these, so the list is
@@ -1827,14 +2052,26 @@ function renderLegend() {
 function legendVisibility() {
     const samples = state.trajectory || [];
     const field = state.fields[state.season];
-    const withEnvelope = samples.filter((sample) => sample.reachability_envelope).length >= 2;
+    const withEnvelope = (envelopeSamples() || [])
+        .filter((sample) => sample.reachability_envelope).length >= 2;
     const hasHeading = state.waypoints.some(
         (point) => point.heading !== null && point.heading !== undefined);
     const hasFree = state.waypoints.some(
         (point) => point.heading === null || point.heading === undefined);
+    const limit = actuatorLimit();
+    const track = trackWidth();
+    const saturations = limit
+        ? samples.map((sample) => actuatorSaturation(sample, limit, track)) : [];
     return {
         trajectory: samples.length > 0,
+        candidates: state.candidatePaths.length > 1
+            || (state.candidatePaths.length > 0 && samples.length === 0),
         envelope: state.showEnvelope && withEnvelope,
+        saturation: state.showSaturation
+            && saturations.some((value) => value >= 0.85 && value <= 1.0),
+        slipping: state.showSaturation && saturations.some((value) => value > 1.0),
+        apex: state.showApex && curvedSegments().length > 0,
+        bisector: state.showApex && bisectorWaypoints().length > 0 && samples.length > 1,
         path: state.showPath && state.waypoints.length > 1,
         ghost: Boolean(state.ghostStates && state.ghostStates.length),
         runs: state.showRuns && state.runs.length > 0,
@@ -1847,12 +2084,27 @@ function legendVisibility() {
     };
 }
 
+/* The envelope switch says why it is off when there is nothing to draw: only
+   a validated run carries a reachable set, and fast/balanced do not validate.
+   A control that looks live and does nothing reads as a bug. */
+function updateEnvelopeToggle() {
+    const toggle = el('toggle-envelope');
+    if (!toggle) return;
+    const has = (envelopeSamples() || [])
+        .filter((sample) => sample.reachability_envelope).length >= 2;
+    toggle.disabled = !has;
+    toggle.title = has
+        ? 'The reachable set around the plan.'
+        : 'No envelope yet: only a validated run has one (fast and balanced do not validate).';
+}
+
 function updateLegend() {
     const visible = legendVisibility();
     Object.keys(legendRows).forEach((key) => {
         const row = legendRows[key];
         if (row) row.hidden = !visible[key];
     });
+    updateEnvelopeToggle();
 }
 
 function drawPlotFrame(ctx, width, height, series, xlabel, ylabel, title, horizontal) {
@@ -2000,18 +2252,47 @@ function drawGhostPath() {
 
 /* ------------------------------------------------- what to try next */
 
-/* When a validation fails, name the lever that might fix it and offer to
- * pull it. The lever is the one the measurements point at: the accuracy
- * weight. The timing model is not a lever any more - the planner uses the
- * per-segment model for every candidate. */
+/* When a validation fails, name the lever the measurements point at and
+ * offer to pull it: the tube's model for an envelope failure, the gradient
+ * polish for a tracking error just over the gate, the soft force weight for
+ * a force or slip failure, and the accuracy weight for a rough profile. The
+ * timing model is not a lever any more - the planner uses the per-segment
+ * model for every candidate. */
 function suggestFixes(report) {
     const fixes = [];
     if (!report || !report.candidates || !report.candidates.length) return fixes;
-    const selected = report.candidates[(report.selected || 1) - 1] || report.candidates[0];
+    const candidates = report.candidates;
+    const selected = candidates[(report.selected || 1) - 1] || candidates[0];
     if (selected && selected.ok) return fixes;
 
+    /* The plant tube does not see the feedback that contracts it. When the
+       envelope is the failure - wider than the 2 cm limit, or cut off at the
+       validator's guard - the closed-loop tick map is the lever. */
+    const envelopeFailed = candidates.some((entry) => !entry.ok
+        && (entry.envelope_truncated
+            || (Number.isFinite(entry.envelope_cm) && entry.envelope_cm > 2.0)));
+    if (envelopeFailed && el('opt-propagation').value !== 'tick') {
+        fixes.push({ id: 'tick', label: 'Try Closed-Loop Tick Propagation',
+                     propagation: 'tick' });
+    }
+
+    /* A tracking error just over the 5 mm gate is a sampling problem, which
+       is what the gradient polish re-solves for. */
+    const trackingError = selected ? Number(selected.tracking_cm) : NaN;
+    if (Number.isFinite(trackingError) && trackingError > 0.5 && trackingError <= 0.6
+            && !el('opt-polish').checked) {
+        fixes.push({ id: 'polish', label: 'Try Gradient Polish', polish: true });
+    }
+
+    /* A force or slip failure is what the soft force weight prices. */
+    const forceFailed = candidates.some((entry) => !entry.ok
+        && (entry.reasons || []).some((reason) => /force|slip|traction/i.test(reason)));
+    if (forceFailed && !(Number(el('opt-force-weight').value) > 0)) {
+        fixes.push({ id: 'force', label: 'Add Force Weight (0.005)', force_weight: 0.005 });
+    }
+
     // The tracking gate with no weight: a small weight smooths the profile.
-    const tracking = report.candidates.some((entry) => (entry.reasons || [])
+    const tracking = candidates.some((entry) => (entry.reasons || [])
         .some((reason) => reason.indexOf('tracking') >= 0));
     const weight = Number(el('opt-accuracy').value);
     if (tracking && (!weight || weight > 0.001)) {
@@ -2021,9 +2302,42 @@ function suggestFixes(report) {
     return fixes;
 }
 
+/* Pull the lever the button names, then solve again. */
 function applyFix(fix) {
     if (fix.weight !== undefined) el('opt-accuracy').value = fix.weight;
+    if (fix.propagation !== undefined) el('opt-propagation').value = fix.propagation;
+    if (fix.polish) el('opt-polish').checked = true;
+    if (fix.force_weight !== undefined) el('opt-force-weight').value = fix.force_weight;
+    syncPresetRadio();
+    scheduleSessionSave();
     solve();
+}
+
+/* A passing candidate that is not the one the rule exported can be exported
+   instead: the operator has seen the three paths and the scores, which is
+   the point of the comparison. The pick is a solve option, so it means one
+   more run with that candidate pinned - and the CLI refuses it if it does
+   not pass again, so the export gate stays the CLI's. */
+function renderPick(report, index) {
+    const row = el('pick-row');
+    row.innerHTML = '';
+    const candidate = report.candidates[index];
+    const exported = (report.selected || 1) - 1;
+    const pickable = candidate && candidate.ok && index !== exported
+        && !isRescueCandidate(candidate.style || 'baseline');
+    row.hidden = !pickable;
+    if (!pickable) return;
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'btn small';
+    button.textContent = `Solve again and export: ${candidateName(candidate.style)}`;
+    button.title = 'The plan is solved again with this candidate pinned, and exported only '
+        + 'if it still passes the validator.';
+    button.addEventListener('click', () => {
+        state.pickCandidate = index + 1;
+        solve();
+    });
+    row.appendChild(button);
 }
 
 function renderFixes(report) {
@@ -2562,10 +2876,14 @@ function renderPresets() {
     const box = el('presets');
     box.innerHTML = '';
     const order = ['fast', 'balanced', 'safe'];
+    /* What each card actually runs. Without validation the CLI solves one
+       candidate whatever the count says, so balanced is the same run as fast
+       today - the count only compares when the validator is on. */
     const descriptions = {
-        fast: 'One candidate, no validation. Quick look at a path.',
-        balanced: 'Two candidates, no validation.',
-        safe: 'Three candidates, validated, controller export.',
+        fast: 'One candidate, no validation. Seconds.',
+        balanced: 'One candidate with the default settings; no validation. Seconds.',
+        safe: 'Three candidates compared and validated: minutes, not seconds - the '
+            + 'reachability check is the cost, so pick this only to ship.',
     };
     order.forEach((name) => {
         const preset = state.presets[name];
@@ -2596,10 +2914,14 @@ function applyPreset(name) {
     el('opt-candidates').value = preset.candidates;
     el('opt-validate').checked = Boolean(preset.validate);
     el('opt-export').value = preset.export_format;
+    const solver = PRESET_SOLVER[name] || {};
+    el('opt-propagation').value = solver.propagation || 'plant';
+    el('opt-polish').checked = Boolean(solver.polish);
     document.querySelectorAll('#presets input[type=radio]').forEach((radio) => {
         radio.checked = radio.value === name;
     });
     updateCandidatesHint();
+    updateMeshField();
     scheduleSessionSave();
 }
 
@@ -2612,16 +2934,37 @@ function updateCandidatesHint() {
         : 'Candidates are only compared when validation is on.';
 }
 
+/* The manual samples field only means something when the automatic mesh is
+   off: with it on, the 3-Pillar engine sizes the invariant mesh from the
+   path and the number in the field is not used. */
+function updateMeshField() {
+    const auto = el('opt-auto-mesh');
+    const samples = el('opt-samples');
+    if (!auto || !samples) return;
+    samples.disabled = auto.checked;
+    samples.title = auto.checked
+        ? 'The 3-Pillar engine sizes the invariant 80 ms mesh from the path.'
+        : 'Samples per segment on every segment.';
+}
+
 /* ----------------------------------------------------------------- solve */
 
 function collectOptions() {
     return {
         samples: Number(el('opt-samples').value),
+        auto_mesh: el('opt-auto-mesh').checked,
         accuracy_weight: Number(el('opt-accuracy').value),
         candidates: Number(el('opt-candidates').value),
+        force_weight: Number(el('opt-force-weight').value),
+        propagation: el('opt-propagation').value,
         validate: el('opt-validate').checked,
+        /* A failed validation still has a plan worth looking at: the best
+           candidate is exported and marked failed instead of leaving the
+           field empty. The server only forwards this with --validate, and
+           the push stays gated on the verdict. */
+        best_effort: el('opt-best-effort').checked,
         fast_polish: el('opt-fast-polish').checked,
-        self_consistent: el('opt-self-consistent').checked,
+        polish: el('opt-polish').checked,
         iteration_history: true,
         sysid_fit: (el('opt-use-model').checked && state.model) ? state.model.path : null,
         export_format: el('opt-export').value,
@@ -2680,6 +3023,7 @@ async function solve() {
     state.jobSummary = null;
     state.jobWallS = null;
     state.collisions = [];
+    state.candidatePaths = [];
     state.pollRetries = 0;
     state.solveJobId = null;
     state.solveHasTrajectory = false;
@@ -2700,6 +3044,17 @@ async function solve() {
     /* The mission that is going to be solved, so the answer can be checked
        against the mission on the screen when it comes back. */
     state.solvingFingerprint = missionFingerprint();
+    /* The operator's pick from the last comparison, when there is one: the
+       run exports that candidate instead of the fastest passing one. It is
+       consumed here, so a later solve is not quietly pinned to the same
+       seed; the CLI refuses the pick if that candidate no longer passes. */
+    const options = collectOptions();
+    if (state.pickCandidate) {
+        options.pick_candidate = state.pickCandidate;
+        options.candidates = Math.max(Number(options.candidates) || 1,
+            state.pickCandidate);
+        state.pickCandidate = null;
+    }
     try {
         const job = await api('/api/solve', {
             method: 'POST',
@@ -2707,7 +3062,7 @@ async function solve() {
                 name: el('mission-name').value,
                 config: state.config,
                 waypoints: state.waypoints.map(waypointToJson),
-                options: collectOptions(),
+                options,
             }),
         });
         state.jobId = job.id;
@@ -2737,6 +3092,10 @@ function pollJob() {
                 return;
             }
             setBusy(false);
+            /* Every candidate the run solved, paths included. A failed
+               validation still wrote them, and that is exactly when the
+               comparison is worth looking at. */
+            state.candidatePaths = (job.result && job.result.candidates) || [];
             if (job.status === 'ok') {
                 state.jobSummary = job.summary;
                 state.jobWallS = job.wall_s;
@@ -2756,6 +3115,11 @@ function pollJob() {
                 const selected = report && report.candidates
                     ? (report.candidates[(report.selected || 1) - 1] || {}) : {};
                 state.solveValidated = Boolean(selected.ok);
+                /* A best-effort run is a successful job whose verdict is a
+                   failure: the path is on the field to be inspected, not to
+                   be approved. Say which of the two it is. */
+                const failedValidation = Boolean(report && selected
+                    && selected.ok === false);
                 /* The trajectory is the answer to the mission that is on the
                    screen, so the mission has not moved on since the solve
                    and the trajectory can be pushed. When the mission was
@@ -2782,16 +3146,23 @@ function pollJob() {
                 el('result-status').innerHTML = validated
                     ? '<span class="badge ok">Validated</span> The trajectory passed the validator '
                         + 'and is ready to use.'
-                    : '<span class="badge warn">Not validated</span> This trajectory has not been '
-                        + 'checked against your robot. Validate it before you drive it.';
-                /* One click for the lever the message names. */
-                el('validate-row').hidden = validated;
+                    : failedValidation
+                        ? '<span class="badge error">Failed validation</span> The best path is '
+                            + 'shown for inspection: ' + bestEffortDetail(selected)
+                            + ' It is not approved for the hub.'
+                        : '<span class="badge warn">Not validated</span> This trajectory has not been '
+                            + 'checked against your robot. Validate it before you drive it.';
+                /* One click for the lever the message names. A failed verdict
+                   has already been checked, so the lever is not "check it
+                   again"; the validation detail carries the levers that fit. */
+                el('validate-row').hidden = validated || failedValidation;
                 // The answer goes in the header, so it is on screen whatever
                 // the column is showing.
                 const headline = resultHeadline();
                 setStatus(headline
-                    ? `${headline} - ${validated ? 'validated' : 'not validated'}`
-                    : 'Done', 'ok');
+                    ? `${headline} - ${validated ? 'validated'
+                        : (failedValidation ? 'validation failed' : 'not validated')}`
+                    : 'Done', failedValidation ? 'warn' : 'ok');
                 showPanel('panel-result');
             } else if (job.status === 'cancelled') {
                 el('result-status').innerHTML = '<span class="badge warn">Cancelled</span>';
@@ -2838,28 +3209,40 @@ function setBusy(busy) {
 }
 
 /* What the solver is doing right now: the elapsed time, the candidate it is
- * on, and whether the candidates run in parallel. */
+ * on, whether the candidates run in parallel, and whether it is in the
+ * reachability check - which is where the time goes on a long mission, not
+ * the solve. */
 function solveProgressText(job) {
     const log = job.log || [];
     let stage = '';
     let candidate = '';
+    let candidateAt = -1;
+    let checkAt = -1;
     for (let i = log.length - 1; i >= 0; i--) {
         const line = log[i];
-        if (!candidate) {
-            const match = line.match(/Candidate (\d+)\/(\d+)/);
-            if (match) candidate = `candidate ${match[1]}/${match[2]}`;
+        if (candidateAt < 0) {
+            const match = line.match(/(Candidate|Rescue) (\d+)\/(\d+)/);
+            if (match) {
+                candidate = `${match[1].toLowerCase()} ${match[2]}/${match[3]}`;
+                candidateAt = i;
+            }
         }
         if (!stage) {
             const parallel = line.match(/Solving (\d+) candidates \(in parallel\)/);
             if (parallel) stage = `${parallel[1]} candidates in parallel`;
         }
-        if (stage && candidate) break;
+        if (checkAt < 0 && line.indexOf('Running the Immrax robustness check') >= 0) {
+            checkAt = i;
+        }
+        if (stage && candidateAt >= 0 && checkAt >= 0) break;
     }
     const started = job.started || 0;
     const elapsed = started ? Math.max(0, Date.now() / 1000 - started) : 0;
     const parts = ['Solving...', `${elapsed.toFixed(1)} s`];
     if (stage) parts.push(stage);
     if (candidate) parts.push(candidate);
+    /* The check is the slow part, and the log says so once per candidate. */
+    if (checkAt > candidateAt) parts.push('validating');
     return parts.join(' - ');
 }
 
@@ -2983,17 +3366,22 @@ function drawNow() {
         ctx.restore();
     }
 
+    drawRunHistory();
+    /* The other candidates go under the ribbon, so the exported plan stays
+       the thing the eye lands on. */
+    drawCandidates();
     if (state.trajectory) {
-        drawRunHistory();
-        drawEnvelope(state.trajectory);
-        drawPath(state.trajectory, 'rgba(56, 189, 248, 0.25)', 10 * ratio);
-        drawPath(state.trajectory, '#38bdf8', 2.5 * ratio);
-    } else {
-        drawRunHistory();
+        drawTrajectory(state.trajectory, ratio);
     }
+    /* The envelope goes on top of the ribbon, not under it: the tube is a few
+       millimetres wide (0.2 cm on the tick map), and under the ribbon's halo
+       it disappeared altogether. */
+    const envelopeOf = envelopeSamples();
+    if (envelopeOf) drawEnvelope(envelopeOf);
     drawCollisionMarks();
 
     drawGhostPath();
+    drawApexCues();
     drawWaypoints();
     drawMeasuredPoses();
     drawRobot();
@@ -3212,6 +3600,46 @@ function drawGrid() {
     ctx.stroke();
 }
 
+/* The colour of one candidate, by its seed. The triad keeps three hues; a
+   rescue seed is amber, the same as the rescue chip. */
+const CANDIDATE_COLORS = {
+    frontier_sprint: '#38bdf8',
+    frontier_sweeper: '#a78bfa',
+    frontier_exploratory: '#34d399',
+};
+
+function candidateColor(style) {
+    return CANDIDATE_COLORS[style] || '#fbbf24';
+}
+
+/* Every solved candidate's path, so the comparison is on the field and not
+   only in a table. The plan that was exported keeps its own ribbon; the
+   candidate the chips point at is drawn stronger than the rest. */
+function drawCandidates() {
+    const entries = state.candidatePaths || [];
+    if (entries.length < 2) return;
+    const ratio = window.devicePixelRatio || 1;
+    const report = state.validationReport;
+    const exported = report ? (report.selected || 1) - 1 : -1;
+    const active = state.reportCandidate !== null
+        ? state.reportCandidate
+        : exported;
+    ctx.save();
+    ctx.lineJoin = 'round';
+    ctx.lineCap = 'round';
+    entries.forEach((entry, index) => {
+        const samples = entry.samples || [];
+        if (samples.length < 2) return;
+        /* The exported plan is the bright ribbon; drawing it twice would hide
+           the saturation colouring under a plain line. */
+        if (index === exported && state.trajectory) return;
+        ctx.globalAlpha = index === active ? 0.95 : 0.4;
+        drawPath(samples, candidateColor(entry.style),
+            (index === active ? 2.5 : 1.5) * ratio);
+    });
+    ctx.restore();
+}
+
 function drawPath(samples, color, width) {
     if (!samples || samples.length < 2) return;
     ctx.strokeStyle = color;
@@ -3227,15 +3655,159 @@ function drawPath(samples, color, width) {
     ctx.stroke();
 }
 
+/* The short way round, as the firmware takes a heading difference. */
+function wrapAngle(angle) {
+    let value = Number(angle) || 0;
+    while (value > Math.PI) value -= 2 * Math.PI;
+    while (value < -Math.PI) value += 2 * Math.PI;
+    return value;
+}
+
+/* How close a sample is to the actuator diamond: it asks for
+   |v| + (W/2)|omega| of the wheel speed the motors can give, which is the
+   same as the faster wheel's share of the top speed. Below 0.85 the plan is
+   clear of the limit, 0.85 to 1 rides it, and above 1 asks for more than the
+   wheels have. */
+function actuatorLimit() {
+    const limits = state.jobResult && state.jobResult.limits;
+    const speed = limits ? Number(limits.speed_limit_m_s) : NaN;
+    if (Number.isFinite(speed) && speed > 0) return speed;
+    return topSpeed();
+}
+
+function trackWidth() {
+    return Number(robotFields().track_width) || 0.0965;
+}
+
+function actuatorSaturation(sample, limit, track = trackWidth()) {
+    if (!limit || !sample) return 0;
+    const vl = Number(sample.vl) || 0;
+    const vr = Number(sample.vr) || 0;
+    const omega = Number.isFinite(Number(sample.omega))
+        ? Number(sample.omega) : (vr - vl) / track;
+    return (Math.abs((vl + vr) / 2) + (track / 2) * Math.abs(omega)) / limit;
+}
+
+/* The trajectory, coloured by how hard it asks the motors to work. The halo
+   is the same path wider, so the thin ribbon stays visible over the mat. */
+function drawTrajectory(samples, ratio) {
+    drawPath(samples, 'rgba(56, 189, 248, 0.25)', 10 * ratio);
+    const limit = state.showSaturation ? actuatorLimit() : null;
+    if (!limit) {
+        drawPath(samples, '#38bdf8', 2.5 * ratio);
+        return;
+    }
+    const track = trackWidth();
+    ctx.save();
+    ctx.lineJoin = 'round';
+    ctx.lineCap = 'round';
+    ctx.lineWidth = 2.5 * ratio;
+    for (let i = 0; i < samples.length - 1; i++) {
+        const saturation = Math.max(actuatorSaturation(samples[i], limit, track),
+            actuatorSaturation(samples[i + 1], limit, track));
+        ctx.strokeStyle = saturation > 1.0 ? 'rgba(248, 113, 113, 0.95)'
+            : (saturation >= 0.85 ? 'rgba(251, 191, 36, 0.95)' : '#38bdf8');
+        const a = worldToScreen(samples[i].x, samples[i].y);
+        const b = worldToScreen(samples[i + 1].x, samples[i + 1].y);
+        ctx.beginPath();
+        ctx.moveTo(a.x, a.y);
+        ctx.lineTo(b.x, b.y);
+        ctx.stroke();
+    }
+    ctx.restore();
+}
+
+/* The late-apex cue, and the line a free-heading waypoint lets the robot
+   keep. A turning segment is clipped at about 68% of its length - the apex
+   a driver aims at when the corner opens on exit - and a waypoint whose
+   heading is free is crossed along the bisector of the two tangents, which
+   is the direction that keeps the momentum. */
+function drawApexCues() {
+    if (!state.showApex || !state.trajectory || state.trajectory.length < 2) return;
+    const ratio = window.devicePixelRatio || 1;
+    const samples = state.trajectory;
+    const bounds = segmentBounds();
+
+    ctx.save();
+    curvedSegments().forEach((segment) => {
+        const sample = sampleAtFraction(segment.from, segment.to, 0.68);
+        const p = worldToScreen(sample.x, sample.y);
+        const size = 6 * ratio;
+        ctx.fillStyle = 'rgba(245, 158, 11, 0.9)';
+        ctx.strokeStyle = 'rgba(245, 158, 11, 0.9)';
+        ctx.lineWidth = 1.2 * ratio;
+        ctx.beginPath();
+        ctx.moveTo(p.x, p.y - size);
+        ctx.lineTo(p.x + size, p.y);
+        ctx.lineTo(p.x, p.y + size);
+        ctx.lineTo(p.x - size, p.y);
+        ctx.closePath();
+        ctx.fill();
+        ctx.stroke();
+    });
+
+    ctx.strokeStyle = 'rgba(226, 232, 240, 0.55)';
+    ctx.lineWidth = 1.5 * ratio;
+    bisectorWaypoints().forEach((point) => {
+        const index = state.waypoints.indexOf(point);
+        const before = bounds[index];
+        const after = bounds[index + 1];
+        if (before === undefined || after === undefined
+                || before >= samples.length || after >= samples.length) return;
+        const previous = samples[Math.max(before - 1, 0)];
+        const next = samples[Math.min(after + 1, samples.length - 1)];
+        const incoming = Math.atan2(samples[before].y - previous.y,
+            samples[before].x - previous.x);
+        const outgoing = Math.atan2(next.y - samples[after].y,
+            next.x - samples[after].x);
+        const angle = (incoming + wrapAngle(outgoing - incoming) / 2);
+        const start = worldToScreen(point.x, point.y);
+        const length = 28 * ratio;
+        const end = {
+            x: start.x + Math.cos(angle) * length,
+            y: start.y - Math.sin(angle) * length,
+        };
+        ctx.beginPath();
+        ctx.moveTo(start.x, start.y);
+        ctx.lineTo(end.x, end.y);
+        ctx.stroke();
+        [-0.45, 0.45].forEach((spread) => {
+            ctx.beginPath();
+            ctx.moveTo(end.x, end.y);
+            ctx.lineTo(end.x - Math.cos(angle + spread) * 6 * ratio,
+                end.y + Math.sin(angle + spread) * 6 * ratio);
+            ctx.stroke();
+        });
+    });
+    ctx.restore();
+}
+
+/* The samples whose reachable set is on the field: the exported plan when
+   there is one, otherwise the candidate the chips point at. A failed
+   validation still wrote every attempt's tube, so the key keeps its meaning
+   there too. */
+function envelopeSamples() {
+    if (state.trajectory && state.trajectory.length) return state.trajectory;
+    const entries = state.candidatePaths || [];
+    if (!entries.length) return null;
+    const report = state.validationReport;
+    const index = state.reportCandidate !== null
+        ? state.reportCandidate
+        : (report ? (report.selected || 1) - 1 : 0);
+    const entry = entries[index] || entries[0];
+    return entry && entry.samples && entry.samples.length ? entry.samples : null;
+}
+
 function drawEnvelope(samples) {
     if (!state.showEnvelope) return;
     const withEnv = samples.filter((s) => s.reachability_envelope);
     if (withEnv.length < 2) return;
     const ratio = window.devicePixelRatio || 1;
-    ctx.fillStyle = 'rgba(52, 211, 153, 0.12)';
-    ctx.strokeStyle = 'rgba(52, 211, 153, 0.45)';
-    ctx.lineWidth = 1 * ratio;
-    ctx.setLineDash([4 * ratio, 4 * ratio]);
+    ctx.save();
+    ctx.fillStyle = 'rgba(52, 211, 153, 0.10)';
+    ctx.strokeStyle = 'rgba(52, 211, 153, 0.75)';
+    ctx.lineWidth = 1.5 * ratio;
+    ctx.setLineDash([3 * ratio, 3 * ratio]);
     ctx.beginPath();
     withEnv.forEach((sample, index) => {
         const p = worldToScreen(sample.reachability_envelope.x_max, sample.reachability_envelope.y_max);
@@ -3250,7 +3822,7 @@ function drawEnvelope(samples) {
     ctx.closePath();
     ctx.fill();
     ctx.stroke();
-    ctx.setLineDash([]);
+    ctx.restore();
 }
 
 function drawWaypoints() {
@@ -3751,6 +4323,14 @@ el('toggle-runs').addEventListener('change', (e) => {
     state.showRuns = e.target.checked;
     draw();
 });
+el('toggle-saturation').addEventListener('change', (e) => {
+    state.showSaturation = e.target.checked;
+    draw();
+});
+el('toggle-apex').addEventListener('change', (e) => {
+    state.showApex = e.target.checked;
+    draw();
+});
 el('field-season').addEventListener('change', (e) => {
     state.season = e.target.value;
     state.collisions = [];
@@ -4019,12 +4599,18 @@ el('opt-validate').addEventListener('change', () => {
     scheduleSessionSave();
 });
 
-['opt-samples', 'opt-accuracy', 'opt-candidates', 'opt-export', 'opt-controller-dt']
+['opt-samples', 'opt-accuracy', 'opt-candidates', 'opt-export', 'opt-controller-dt',
+ 'opt-force-weight', 'opt-propagation', 'opt-polish']
     .forEach((id) => el(id).addEventListener('change', () => {
         updateCandidatesHint();
         syncPresetRadio();
         scheduleSessionSave();
     }));
+
+el('opt-auto-mesh').addEventListener('change', () => {
+    updateMeshField();
+    scheduleSessionSave();
+});
 
 el('mission-name').addEventListener('input', scheduleSessionSave);
 
@@ -4172,6 +4758,7 @@ async function init() {
         renderModel();
         updatePushButton();
         updateCandidatesHint();
+        updateMeshField();
         el('mat-width').value = String(Math.round(state.mat.widthM * 1000));
         el('mat-height').value = String(Math.round(state.mat.heightM * 1000));
         renderRunHistory();

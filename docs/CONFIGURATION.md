@@ -21,23 +21,23 @@ Canonical and legacy key names are both understood, for example `track_width`/`d
   "type": "Differential",
   "robot": {
     "mass": 0.723,
-    "inertia": 0.001,
+    "inertia": 0.0024,
     "track_width": 0.0965,
     "wheel_radius": 0.028,
     "v_max_rad_s": 18.94,
     "t_max_nm": 0.138,
     "gearing": 1.0,
-    "cof": 1.37,
+    "cof": 0.95,
     "gravity": 9.81,
     "torque_headroom": 0.85,
     "speed_headroom": 0.90,
     "uncertainties": {
-      "cof": [1.24, 1.51],
+      "cof": [0.85, 1.05],
       "torque_headroom": [0.75, 0.90],
-      "gear_backlash_m": [0.0002, 0.0007],
-      "inertia_kg_m2": [0.0008, 0.0011],
-      "track_width_range": [0.096, 0.097],
-      "wheel_radius_range": [0.0275, 0.0285]
+      "gear_backlash_m": [0.0002, 0.0008],
+      "inertia_kg_m2": [0.0020, 0.0028],
+      "track_width_range": [0.095, 0.098],
+      "wheel_radius_range": [0.027, 0.029]
     }
   },
   "interactions": {}
@@ -55,7 +55,7 @@ Canonical and legacy key names are both understood, for example `track_width`/`d
 | `v_max_rad_s` | rad/s | 15.7 | Motor no-load speed. Convert RPM with `RPM * 2π / 60`. |
 | `t_max_nm` | N·m | 0.04 | Motor stall torque. |
 | `gearing` | — | 1.0 | Motor-to-wheel ratio. Values above 1 trade speed for torque. |
-| `cof` | — | 0.45 | Nominal wheel/field friction coefficient. Measure it; FLL mats are often around 1.0-1.5, but the value depends on wheels and surface. |
+| `cof` | — | 0.45 | Nominal wheel/field friction coefficient. Measure it; LEGO rubber tires on a competition vinyl mat are usually around 0.85-1.05, but the value depends on wheels and surface. |
 | `gravity` | m/s² | 9.81 | Gravitational acceleration. |
 | `torque_headroom` | — | 0.85 | Fraction of the motor torque curve available to the planner. |
 | `speed_headroom` | — | 0.90 | Fraction of no-load wheel speed available to the planner. |
@@ -111,7 +111,7 @@ Recognized ranges:
 | `wheel_radius_range` | `[0.99 * wheel_radius, 1.01 * wheel_radius]` |
 | `inertia_kg_m2` | `[0.90 * inertia, 1.10 * inertia]` |
 
-`examples/fll_choreo.json` currently narrows `track_width_range` and `gear_backlash_m` for repeatable tests; those values are test assumptions, not measured hardware ranges. `t_max_range` is used: `JAXRobotConfig` builds its stall-torque interval from it (`overboard/models/jax_robot_model.py`), it defaults to 75-95 % of `t_max_nm`, and a `sysid` fit fills it with the measured stall range; `t_max_nm` and `torque_headroom` remain the nominal value and its margin. Use measured values and keep the ranges honest; a narrow range makes the validator optimistic.
+`examples/fll_choreo.json` declares physical-looking ranges (track width ±1.5 mm, wheel radius ±1 mm, backlash 0.2-0.8 mm, COF ±10 %), but they are still declared assumptions, not measured hardware ranges - no hardware log has been captured yet (KI-020). They are wide enough that the open-loop `plant` tube grows past the 2 cm gate on curved paths; the `safe` preset therefore validates with `--propagation tick` (KI-049/KI-050). `t_max_range` is used: `JAXRobotConfig` builds its stall-torque interval from it (`overboard/models/jax_robot_model.py`), it defaults to 75-95 % of `t_max_nm`, and a `sysid` fit fills it with the measured stall range; `t_max_nm` and `torque_headroom` remain the nominal value and its margin. Use measured values and keep the ranges honest; a narrow range makes the validator optimistic.
 
 ## Archived Multi-Verse parameters
 
@@ -176,16 +176,14 @@ python -m overboard.main -c examples/fll_choreo.json -w examples/example_straigh
 - `--candidates`: Candidates to solve and compare with `--validate` (default 2). The planner's three frontier candidates (`frontier_sprint`, `frontier_sweeper`, `frontier_exploratory`) are solved and `N` shortens that list; the fastest passing one wins, with the envelope breaking a duration tie. `1` disables the comparison.
 - `--stop-waypoints "0,2,4"`: Comma-separated stop indices.
 - `--events "1:lower_arm,3:release"`: Comma-separated event mappings.
-- `--unified` / `--no-unified`: **Deprecated.** The 3-Pillar unified engine is the only planner; both spellings are accepted, warned about and ignored, and so is `--simple`. The deprecated flags are hidden from `--help`.
-- `--pyramid`, `--pyramid-candidates N`, `--h-adaptive`: **Deprecated.** The screen-then-refine pyramid and its adaptive mesh are gone; the flags are accepted, warned about and ignored.
-- `--per-segment-dt`: **Deprecated.** The planner always uses the per-segment model, so the flag is accepted, warned about and ignored. The interval may only change across a waypoint where the robot stops *and* the heading is pinned; everywhere else the wheel force profile must be continuous through the point (KI-024). By default candidates mix both modes.
-- `--uniform-dt`: **Deprecated.** The equal-duration model forced one shared sample interval across all segments, which penalises a path with unequal segment lengths. The CLI warns and ignores it; the planner always uses the per-segment model.
-- Timing tradeoff: an uneven 1.0 m + 0.2 m path passes all gates with per-segment at `accuracy_weight=0.005` in 2.784 s / 0.32 cm envelope / 0.36 cm tracking / 9.52 m/s³ peak wheel jerk, versus 4.456 s / 0.37 cm / 0.36 cm / 9.52 m/s³ for the equal-duration mode at the same weight, so the mixed loop selects per-segment. At `accuracy_weight=0` the per-segment candidate is 2.710 s / 0.32 cm but fails the Immrax and CPU gates, so the mixed loop falls back to the equal-duration candidate. The complex mission at `accuracy_weight=0` is faster with per-segment (4.650 s / 1.00 cm) but its tracking is 0.84 cm and its motor force is 0.074 N over the limit, so the equal-duration 6.068 s / 1.22 cm candidate is selected. The CPU audit runs per candidate, so a partial pass cannot block a later fully passing candidate. Both modes are held to the same wheel-jerk discipline, so `accuracy_weight` means the same thing in either (KI-022).
+- `--unified`, `--no-unified`, `--simple`, `--pyramid`, `--pyramid-candidates`, `--h-adaptive`, `--per-segment-dt`, `--uniform-dt` and `--sweep`: **Removed.** The 3-Pillar unified engine is the only planner, every candidate uses the per-segment model, and the equal-duration model, the pyramid, the adaptive mesh and the sweep are gone. The command line rejects these spellings as unknown options.
+- Timing rule: every candidate uses the per-segment model, so each segment gets its own interval. The interval may only change across a waypoint where the robot stops *and* the heading is pinned; everywhere else the wheel force profile must be continuous through the point (KI-024). The retired equal-duration comparison and its measurements are in [HEURISTICS_AND_VERIFICATION.md](HEURISTICS_AND_VERIFICATION.md) (KI-022). The CPU audit runs per candidate, so a partial pass cannot block a later fully passing candidate.
 - `--no-parallel`, `--workers`: Solve candidates sequentially or in worker processes; they do not change the selected trajectory.
 
 ### Validation and export
 
-- `--validate`: CPU audit + Immrax + final-waypoint gate. Requires JAX/Immrax. With `--candidates N` (default 2), solves N of the planner's candidates and exports the passing one with the shortest duration (the envelope breaks a tie); on failure, exits 1 and writes nothing.
+- `--validate`: CPU audit + Immrax + final-waypoint gate. Requires JAX/Immrax. With `--candidates N` (default 2), solves N of the planner's candidates and exports the passing one with the shortest duration (the envelope breaks a tie); on failure, exits 1 and writes nothing (the next flag is the one exception).
+- `--best-effort`: with `--validate`, export the best converged candidate when the only failure is an accuracy excess (the envelope radius or the tracking error). The `.traj` root and `_stats.json` carry `validation: {passed: false, best_effort: true, max_excess_m, reasons, segments}`, the summary prints the excess in red, and the studio keeps the path on the field marked *Failed validation*. A motor-force, wheel-slip, integration, divergence, `unknown`-envelope or non-convergence failure still writes nothing, and the report keeps the hard gate: a failed plan is shown for inspection, never approved for the hub.
 - `--sysid-fit PATH`: Optional `sysid_fit.json` measured actuator/odometry model; requires `--validate`. The default kinematic model is used when omitted. The plant applies the measured actuator gain, time constant, command delay, odometry scale and braking shortfall (KI-020 keeps the un-modelled residue open).
 - `--control-dt`: The control period the validator models, in seconds (default 0.02). Set it to the period the robot actually achieves so the gate is measured against the controller that runs.
 - `--propagation [plant|tick]`: The reachability model the envelope gate uses: `plant` (default) or one closed-loop tick (opt-in, 7-10x slower).

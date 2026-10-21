@@ -161,6 +161,11 @@ class TestStudioSolve(StudioTestCase):
         iterations = done["result"]["iterations"]
         self.assertEqual(len(iterations), 2)
         self.assertEqual(iterations[0]["phase"], "initial_guess")
+        # Every candidate was written with its samples, so the field can draw
+        # the comparison (one candidate for this run).
+        candidates = done["result"]["candidates"]
+        self.assertEqual(len(candidates), 1)
+        self.assertTrue(candidates[0]["samples"])
 
         status, body = _request(f"{self.base}/api/jobs/{job['id']}/trajectory")
         self.assertEqual(status, 200)
@@ -843,8 +848,8 @@ class TestStudioHelpers(unittest.TestCase):
     def test_command_contains_the_expected_flags(self):
         command = gui_server.build_command(
             Path("."), Path("c.json"), Path("w.json"), Path("o.traj"),
-            {"samples": 8, "accuracy_weight": 0.5, "candidates": 3,
-             "timing": "per-segment", "validate": True,
+            {"samples": 8, "auto_mesh": False, "accuracy_weight": 0.5,
+             "candidates": 3, "timing": "per-segment", "validate": True,
              "export_format": "controller", "controller_dt": 0.02})
         joined = " ".join(str(part) for part in command)
         self.assertIn("-n 8", joined)
@@ -853,6 +858,85 @@ class TestStudioHelpers(unittest.TestCase):
         self.assertIn("--validate", joined)
         self.assertIn("--export-format controller", joined)
         self.assertIn("--controller-dt 0.02", joined)
+
+    def test_the_automatic_mesh_leaves_the_sample_count_out(self):
+        """Without -n the planner sizes the invariant mesh from the path."""
+        command = gui_server.build_command(
+            Path("."), Path("c.json"), Path("w.json"), Path("o.traj"),
+            {"samples": 10})
+        self.assertNotIn("-n", command)
+
+    def test_the_sample_count_is_sent_when_the_automatic_mesh_is_off(self):
+        command = gui_server.build_command(
+            Path("."), Path("c.json"), Path("w.json"), Path("o.traj"),
+            {"samples": 12, "auto_mesh": False})
+        joined = " ".join(str(part) for part in command)
+        self.assertIn("-n 12", joined)
+
+    def test_the_propagation_model_is_passed_through(self):
+        base = (Path("."), Path("c.json"), Path("w.json"), Path("o.traj"))
+        command = gui_server.build_command(*base, {"propagation": "tick"})
+        joined = " ".join(str(part) for part in command)
+        self.assertIn("--propagation tick", joined)
+        command = gui_server.build_command(*base, {"propagation": "plant"})
+        joined = " ".join(str(part) for part in command)
+        self.assertIn("--propagation plant", joined)
+        # Nothing said is the command line's own default.
+        command = gui_server.build_command(*base, {})
+        self.assertNotIn("--propagation", command)
+        command = gui_server.build_command(*base, {"propagation": "sideways"})
+        self.assertNotIn("--propagation", command)
+
+    def test_the_force_weight_and_the_polish_are_passed_through(self):
+        base = (Path("."), Path("c.json"), Path("w.json"), Path("o.traj"))
+        command = gui_server.build_command(*base, {"force_weight": 0.005, "polish": True})
+        joined = " ".join(str(part) for part in command)
+        self.assertIn("--force-weight 0.005", joined)
+        self.assertIn("--polish", joined)
+
+        command = gui_server.build_command(*base, {"force_weight": 0.0, "polish": False})
+        joined = " ".join(str(part) for part in command)
+        self.assertNotIn("--force-weight", joined)
+        self.assertNotIn("--polish", joined)
+
+    def test_best_effort_is_passed_through_only_with_validation(self):
+        base = (Path("."), Path("c.json"), Path("w.json"), Path("o.traj"))
+        command = gui_server.build_command(
+            *base, {"validate": True, "best_effort": True})
+        self.assertIn("--best-effort", command)
+
+        # Without a verdict there is nothing to override.
+        command = gui_server.build_command(*base, {"best_effort": True})
+        self.assertNotIn("--best-effort", command)
+
+    def test_the_candidate_comparison_is_always_requested(self):
+        command = gui_server.build_command(
+            Path("jobs"), Path("c.json"), Path("w.json"), Path("o.traj"),
+            {"samples": 10})
+        joined = " ".join(str(part) for part in command)
+        self.assertIn("--candidates-out", joined)
+        self.assertIn(gui_server.CANDIDATES_FILE, joined)
+
+    def test_the_operator_pick_is_passed_through(self):
+        command = gui_server.build_command(
+            Path("."), Path("c.json"), Path("w.json"), Path("o.traj"),
+            {"pick_candidate": 2})
+        joined = " ".join(str(part) for part in command)
+        self.assertIn("--pick-candidate 2", joined)
+
+        command = gui_server.build_command(
+            Path("."), Path("c.json"), Path("w.json"), Path("o.traj"), {})
+        self.assertNotIn("--pick-candidate", command)
+
+    def test_the_candidate_count_is_clamped_to_the_frontier_triad(self):
+        """The planner has three frontier candidates, so 9 is not a choice."""
+        base = (Path("."), Path("c.json"), Path("w.json"), Path("o.traj"))
+        joined = " ".join(str(part) for part in gui_server.build_command(*base, {"candidates": 9}))
+        self.assertIn("--candidates 3", joined)
+        joined = " ".join(str(part) for part in gui_server.build_command(*base, {"candidates": 0}))
+        self.assertIn("--candidates 1", joined)
+        command = gui_server.build_command(*base, {"candidates": 2})
+        self.assertNotIn("--candidates", command)
 
     def test_command_does_not_force_a_timing_mode_by_default(self):
         command = gui_server.build_command(
@@ -890,18 +974,14 @@ class TestStudioHelpers(unittest.TestCase):
             {"samples": 10, "fast_polish": False})
         self.assertNotIn("--fast-polish", " ".join(str(part) for part in command))
 
-    def test_the_self_consistent_switch_is_passed_through(self):
-        command = gui_server.build_command(
-            Path("."), Path("c.json"), Path("w.json"), Path("o.traj"),
-            {"samples": 10, "self_consistent": True})
-        joined = " ".join(str(part) for part in command)
-        self.assertIn("--self-consistent", joined)
-
-        command = gui_server.build_command(
-            Path("."), Path("c.json"), Path("w.json"), Path("o.traj"),
-            {"samples": 10})
-        joined = " ".join(str(part) for part in command)
-        self.assertNotIn("--self-consistent", joined)
+    def test_a_stale_self_consistent_option_never_reaches_the_command(self):
+        for value in (True, False):
+            command = gui_server.build_command(
+                Path("."), Path("c.json"), Path("w.json"), Path("o.traj"),
+                {"samples": 10, "self_consistent": value})
+            joined = " ".join(str(part) for part in command)
+            self.assertNotIn("--self-consistent", joined)
+            self.assertNotIn("--no-self-consistent", joined)
 
     def test_summary_reads_the_written_trajectory(self):
         samples = [{

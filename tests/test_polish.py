@@ -9,6 +9,7 @@ planner owns both now.
 
 import json
 import unittest
+from unittest.mock import patch
 
 import jax
 import jax.numpy as jnp
@@ -260,3 +261,121 @@ class TestCandidatePolish(unittest.TestCase):
         """A plan with room to spare does not pay for a polish."""
         calls = self._plan_with_gate(tracking_gate_m=0.5)
         self.assertFalse(calls, "a plan inside the gate was polished anyway")
+
+
+class _StubEngine:
+    """A reachability engine that reports the numbers it is given.
+
+    The rule under test is the gate, not the rollout, so the numbers are
+    fabricated: it lets a test say "a divergent rollout that reports 4 mm".
+    """
+
+    def __init__(self, tracking_m, envelope_m, diverged=False):
+        self._report = {
+            "max_tracking_error_m": tracking_m,
+            "max_envelope_radius_m": envelope_m,
+            "diverged": diverged,
+        }
+
+    def evaluate_states(self, states, dts, sample_to_segment):
+        return self._report
+
+    def sample_sensitivities(self, states, dts, sample_to_segment,
+                             tracking_gate_m, envelope_gate_m):
+        """No gradient and no excess error, so every weight stays at one."""
+        zeros = np.zeros((len(states), 5), dtype=np.float64)
+        report = dict(self._report,
+                      tracking_errors=np.zeros(len(states) - 1))
+        return report, zeros, zeros
+
+
+class TestPlanGates(unittest.TestCase):
+    """A plan is judged by one rule, whether it was solved or polished.
+
+    A solved candidate and a polished one used to apply the gates
+    separately, and only the solved one refused a rollout that diverged.
+    Both now take the verdict from ``UnifiedPathEngine._evaluate``.
+    """
+
+    # One straight segment: three samples, one second end to end.
+    SAMPLES = [
+        {"t": 0.0, "x": 0.0, "y": 0.0, "heading": 0.0, "vl": 0.0, "vr": 0.0},
+        {"t": 0.5, "x": 0.1, "y": 0.0, "heading": 0.0, "vl": 0.2, "vr": 0.2},
+        {"t": 1.0, "x": 0.2, "y": 0.0, "heading": 0.0, "vl": 0.2, "vr": 0.2},
+    ]
+
+    @classmethod
+    def setUpClass(cls):
+        with open("examples/fll_choreo.json", "r", encoding="utf-8") as handle:
+            cls.config = RobotConfig(json.load(handle))
+        cls.planner = UnifiedPathEngine(cls.config)
+
+    def _evaluate(self, tracking_m, envelope_m, diverged=False, engine=True):
+        planner = UnifiedPathEngine(self.config)
+        stub = _StubEngine(tracking_m, envelope_m, diverged) if engine else None
+        planner._ensure_validator = lambda: stub
+        return planner._evaluate(self.SAMPLES, 1, [3])
+
+    def test_a_plan_inside_both_gates_costs_its_duration_and_no_more(self):
+        evaluation = self._evaluate(0.004, 0.010)
+
+        self.assertTrue(evaluation.passed_gates)
+        self.assertAlmostEqual(evaluation.duration_s, 1.0)
+        self.assertAlmostEqual(evaluation.score, 1.0)
+
+    def test_a_gate_overflow_is_priced_into_the_score(self):
+        # 120 s per metre of tracking error, 60 s per metre of envelope.
+        for tracking_m, envelope_m, penalty in [
+                (0.006, 0.010, 120.0 * 0.001),
+                (0.004, 0.021, 60.0 * 0.001),
+        ]:
+            with self.subTest(tracking_m=tracking_m, envelope_m=envelope_m):
+                evaluation = self._evaluate(tracking_m, envelope_m)
+
+                self.assertFalse(evaluation.passed_gates)
+                self.assertAlmostEqual(evaluation.score, 1.0 + penalty)
+
+    def test_a_diverged_rollout_passes_no_gate_whatever_it_reports(self):
+        evaluation = self._evaluate(0.0, 0.0, diverged=True)
+
+        self.assertTrue(evaluation.diverged)
+        self.assertFalse(evaluation.passed_gates)
+
+    def test_without_the_engine_the_declared_numbers_decide(self):
+        evaluation = self._evaluate(0.0, 0.0, engine=False)
+
+        self.assertAlmostEqual(evaluation.tracking_cm, 0.45)
+        self.assertAlmostEqual(evaluation.envelope_cm, 1.20)
+        self.assertTrue(evaluation.passed_gates)
+
+    def test_a_diverged_polish_is_not_certified(self):
+        """The polish path used to certify a plan whose rollout diverged."""
+        wps = [(0.0, 0.0, 0.0), (0.3, 0.10, 0.25), (0.6, 0.20, 0.0)]
+        seg_samples = [6, 6]
+        seed = self.planner.generate_seed(wps, seg_samples, "sprint")
+        candidate = self.planner.solve_candidate(
+            waypoints=wps, seg_samples=seg_samples, name="sprint",
+            guess=seed, stop_indices=[], accuracy_weight=0.002)
+        self.assertIsNotNone(candidate)
+
+        # The re-solve comes back with the same plan, and the second rollout
+        # diverges while reporting numbers that beat the candidate's and sit
+        # inside both gates. The old polish kept that plan and certified it.
+        tracking_m = min(0.004, candidate.tracking_error_cm / 200.0)
+        envelope_m = min(0.010, candidate.envelope_radius_cm / 200.0)
+        self.assertLessEqual(tracking_m, 0.005)
+        self.assertLessEqual(envelope_m, 0.020)
+        stub = _StubEngine(tracking_m, envelope_m, diverged=True)
+
+        def replan(*args, **kwargs):
+            """The re-solve hands the same plan back."""
+            return candidate.samples, {"converged": True, "iter_count": 0}
+
+        with patch.object(self.planner, "_ensure_validator", lambda: stub), \
+                patch.object(self.planner, "_replan", replan):
+            polished = self.planner.polish_candidate_sensitivities(
+                candidate, wps, seg_samples, [])
+
+        self.assertIsNot(polished, candidate)
+        self.assertFalse(polished.passed_gates)
+

@@ -25,6 +25,15 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 Row = Dict[str, Any]
 
+# Old measurement files name the seeds the way the planner used to. The names
+# are aliases, not different seeds, so a row is filed under the canonical name
+# and the historical numbers stay comparable with new runs (KI-048).
+_CANONICAL_STYLE_NAMES = {
+    "bow_left": "frontier_sprint",
+    "bow_right": "frontier_sweeper",
+    "turn_first": "frontier_exploratory",
+}
+
 
 # --------------------------------------------------------------------------
 # Loading
@@ -42,6 +51,9 @@ def load(path: str) -> Tuple[Dict[str, Any], List[Row]]:
             if record.get("record") == "meta":
                 meta = record
             else:
+                style = record.get("style")
+                if style in _CANONICAL_STYLE_NAMES:
+                    record["style"] = _CANONICAL_STYLE_NAMES[style]
                 rows.append(record)
     return meta, rows
 
@@ -160,11 +172,6 @@ def group_by_mission(rows: Sequence[Row]) -> Dict[str, List[Row]]:
 
 def is_baseline(row: Row) -> bool:
     return row.get("style") == "baseline" and row.get("guess", "stock") == "stock"
-
-
-def candidate_key(row: Row) -> Tuple:
-    return (row.get("style"), row.get("guess", "stock"), row.get("timing"),
-            row.get("weight"), row.get("samples"))
 
 
 # --------------------------------------------------------------------------
@@ -704,17 +711,17 @@ def report_marginal(rows: Sequence[Row]) -> None:
             and r.get("timing") == "equal-duration" and r.get("weight") == 0)),
         ("rolling / per-segment", lambda r: (r.get("style") == "rolling"
             and r.get("timing") == "per-segment" and r.get("weight") == 0)),
-        ("bow_left / equal-duration", lambda r: (r.get("style") == "bow_left"
+        ("frontier_sprint / equal-duration", lambda r: (r.get("style") == "frontier_sprint"
             and r.get("timing") == "equal-duration" and r.get("weight") == 0)),
-        ("bow_left / per-segment", lambda r: (r.get("style") == "bow_left"
+        ("frontier_sprint / per-segment", lambda r: (r.get("style") == "frontier_sprint"
             and r.get("timing") == "per-segment" and r.get("weight") == 0)),
-        ("bow_right / equal-duration", lambda r: (r.get("style") == "bow_right"
+        ("frontier_sweeper / equal-duration", lambda r: (r.get("style") == "frontier_sweeper"
             and r.get("timing") == "equal-duration" and r.get("weight") == 0)),
-        ("bow_right / per-segment", lambda r: (r.get("style") == "bow_right"
+        ("frontier_sweeper / per-segment", lambda r: (r.get("style") == "frontier_sweeper"
             and r.get("timing") == "per-segment" and r.get("weight") == 0)),
-        ("turn_first / equal-duration", lambda r: (r.get("style") == "turn_first"
+        ("frontier_exploratory / equal-duration", lambda r: (r.get("style") == "frontier_exploratory"
             and r.get("timing") == "equal-duration" and r.get("weight") == 0)),
-        ("turn_first / per-segment", lambda r: (r.get("style") == "turn_first"
+        ("frontier_exploratory / per-segment", lambda r: (r.get("style") == "frontier_exploratory"
             and r.get("timing") == "per-segment" and r.get("weight") == 0)),
     ]
     for weight in (0.001, 0.002, 0.005, 0.01):

@@ -66,7 +66,7 @@ explains the same steps in detail.
 - **Time-optimal trajectories**: Minimizes travel time while respecting actuator and traction limits
 - **Per-wheel physics model**: Velocity-dependent motor force, lateral weight transfer, per-wheel slip limits, and declared worst-case uncertainty bounds
 - **Accuracy tuning**: Optional smoothness/jerk penalty to improve real-world tracking
-- **Fast simple solver**: Typical sub-second CasADi/IPOPT solves on a laptop
+- **Fast solver**: Typical sub-second CasADi/IPOPT solves on a laptop
 - **Browser studio**: Draw a mission in the browser, solve it, download the controller file
 - **Trajectory validation**: CPU forward integration, constraint audit, final-waypoint check, and Immrax interval reachability
 - **Safety gate**: `--validate` blocks every output and returns exit 1 on failure
@@ -148,23 +148,23 @@ The recommended format is the canonical `robot` object used by `examples/fll_cho
   "type": "Differential",
   "robot": {
     "mass": 0.723,
-    "inertia": 0.001,
+    "inertia": 0.0024,
     "track_width": 0.0965,
     "wheel_radius": 0.028,
     "v_max_rad_s": 18.94,
     "t_max_nm": 0.138,
     "gearing": 1.0,
-    "cof": 1.37,
+    "cof": 0.95,
     "gravity": 9.81,
     "torque_headroom": 0.85,
     "speed_headroom": 0.90,
     "uncertainties": {
-      "cof": [1.24, 1.51],
+      "cof": [0.85, 1.05],
       "torque_headroom": [0.75, 0.90],
-      "gear_backlash_m": [0.0002, 0.0007],
-      "inertia_kg_m2": [0.0008, 0.0011],
-      "track_width_range": [0.096, 0.097],
-      "wheel_radius_range": [0.0275, 0.0285]
+      "gear_backlash_m": [0.0002, 0.0008],
+      "inertia_kg_m2": [0.0020, 0.0028],
+      "track_width_range": [0.095, 0.098],
+      "wheel_radius_range": [0.027, 0.029]
     }
   }
 }
@@ -295,13 +295,13 @@ The page is three columns. The left one is what you set (tabs: **Mission**, **Ro
 
 **Project file.** One file with the mission, the robot config, the solve options, the measured model and the field. Send it to a team-mate and they open it and get the whole setup, not just the path.
 
-The studio runs the same command line in the background, so the export gate, the validation rules and the file formats are identical to the terminal path. A failed validation shows the reason and offers no download.
+The studio runs the same command line in the background, so the export gate, the validation rules and the file formats are identical to the terminal path. A failed validation shows the reason; the best path that failed on accuracy alone stays on the field, marked *Failed validation* and not approved for the hub.
 
 The studio also draws the plots the command line can make, from the same samples: the velocity profiles, the wheel forces against the force limit, the accelerations, the heading over time, and how the solve converged. The solver's first guess is drawn on the field as a dashed path, so you can see what the optimizer changed.
 
-The Advanced section has the same levers the command line has: **fast polish**, **self-consistent** samples and **sweep** (the timing model x weight grid, ten candidates - kept for experiments; the command line marks it deprecated because the 80 ms invariant mesh removed the need for it). The self-consistent switch is ticked by default, like the command line's, and unticking it is `--no-self-consistent`. The candidate chips are the leaderboard, and they say which weight each candidate used.
+The Advanced section has the same levers the command line has: **fast polish**, **gradient polish**, the force weight and the number of candidates. The candidate chips are the leaderboard, and they say which weight each candidate used. The timing model is no longer a control: the planner uses the per-segment model for every candidate.
 
-When a validation fails, the studio shows **where**: a row per path segment with the reachability envelope, the local limit and the drift, the failing segment marked in red on the field, and the reason the gate gave. Under the table it names the lever that might fix it - the other timing model, a smaller accuracy weight, or the sweep - and each one is a button that re-solves. The robot itself is editable in the studio — mass, wheel and track size, motor limits, friction and the uncertainty ranges — so the last JSON file you need to open by hand is gone.
+When a validation fails, the studio shows **where**: a row per path segment with the reachability envelope, the local limit and the drift, the failing segment marked in red on the field, and the reason the gate gave. Under the table it names the lever that might fix it - the closed-loop tick propagation, the gradient polish, the soft force weight, or a smaller accuracy weight - and each one is a button that re-solves. The robot itself is editable in the studio — mass, wheel and track size, motor limits, friction and the uncertainty ranges — so the last JSON file you need to open by hand is gone.
 
 Before you solve, the mission panel shows the path length and the fastest the robot could possibly do it, so a waypoint dragged five metres away is obvious. The Advanced section has the **fast polish** switch, which cuts the ten-waypoint complex mission from 26 s to 15 s for the same trajectory.
 
@@ -356,8 +356,9 @@ Options:
                                   and ports, then exit.
   --preset [fast|balanced|safe]   Named starting point. fast: 1 candidate, no
                                   validation. balanced: the defaults. safe: 3
-                                  candidates, --validate and a controller
-                                  export. Options you set yourself always win.
+                                  candidates, --validate with the closed-loop
+                                  tick propagation, and a controller export.
+                                  Options you set yourself always win.
   -n, --samples INTEGER RANGE     Samples per segment.  [2<=x<=200]
   -a, --accuracy-weight FLOAT RANGE
                                   Smoothness/accuracy weight (0 = pure time-
@@ -386,12 +387,6 @@ Options:
                                   budget and finishes from that point with a
                                   cold pass. Missions that solve inside the
                                   budget return the same trajectory as before.
-  --self-consistent / --no-self-consistent
-                                  Plan a self-consistent trajectory: the
-                                  samples are placed on the path the
-                                  trajectory's own (v, omega) profile traces,
-                                  so the headings are its tangents (simple
-                                  solver only). On by default (KI-026).
   --polish                        Optional post-solve gradient polish: the
                                   reachability rollout is differentiated, and
                                   the plan is re-solved with the samples the
@@ -462,13 +457,12 @@ Project-O.V.E.R.B.O.A.R.D/
 │   ├── main.py                  # CLI entry point and export gate
 │   ├── gui_server.py            # Browser studio backend (stdlib HTTP server)
 │   ├── diagnostics.py           # Environment checks for --doctor
-│   ├── core/                    # optimizer, frontier seeds, unified planner, surrogate polish
+│   ├── core/                    # optimizer, frontier seeds, unified planner
 │   ├── models/                  # robot config, drivetrain, JAX models
 │   ├── verification/            # CPU validator, Immrax reachability, reachability engine
 │   ├── sysid/                   # collect, fit, compare, digital twin, sheet form
 │   ├── deploy/                  # controller export, hub push and BLE discovery
-│   ├── viz/                     # plotters, fields, studio.html/js/css
-│   └── legacy/                  # archived Multi-Verse pipeline and research prototypes
+│   └── viz/                     # plotters, fields, studio.html/js/css
 ├── tests/                       # unittest suite
 ├── examples/                    # Example configs and waypoint files
 ├── missions/                    # Missions saved from the studio
@@ -479,12 +473,12 @@ Project-O.V.E.R.B.O.A.R.D/
 
 ## How It Works
 
-The simple optimizer solves a direct-collocation optimal-control problem:
+The optimizer solves a direct-collocation optimal-control problem:
 
-1. **Discretization**: Each segment is divided into samples; the decision variables include the timestep and the pose/wheel speeds at every sample. The candidate set mixes a uniform-timestep formulation with a per-segment formulation (`--per-segment-dt` forces the latter, `--uniform-dt` forces the former).
+1. **Discretization**: Each segment is divided into samples; the decision variables include the timestep and the pose/wheel speeds at every sample. Every candidate uses the per-segment formulation: each segment gets its own sample interval.
 2. **Objective**: Minimize total time, plus an optional jerk/smoothness penalty controlled by `--accuracy-weight`.
 3. **Constraints**:
-   - Self-consistent position rule by default: four-node Gauss-Legendre integration along the integrated heading, so the samples sit on the path the plan's own profile traces (`--no-self-consistent` restores the trapezoidal rule)
+   - Position rule: four-node Gauss-Legendre integration along the integrated heading, so the samples sit on the path the plan's own profile traces (KI-026, KI-051, KI-052)
    - Waypoint position constraints and optional heading constraints
    - Start, end, and intermediate stop constraints
    - Per-wheel torque-speed limits
@@ -493,7 +487,7 @@ The simple optimizer solves a direct-collocation optimal-control problem:
    - Worst-case force bounds over the declared uncertainty ranges
 4. **Solve**: IPOPT finds a locally optimal trajectory. The result is converted to Choreo v3 samples.
 
-The 3-Pillar unified planner is the default path: it supplies the seeds and the collocation mesh, and `--no-unified` solves the stock candidate set directly with the same CasADi/IPOPT backend. The old Multi-Verse pipeline was removed from the tree (git tag `archive/legacy-2026-10`) and has no CLI entry point.
+The 3-Pillar unified planner is the only path: it supplies the seeds and the collocation mesh, and the CasADi/IPOPT optimizer is the backend it drives. The old Multi-Verse pipeline was removed from the tree (git tag `archive/legacy-2026-10`) and has no CLI entry point.
 
 ## Common Usage Patterns
 
@@ -537,6 +531,7 @@ python -m overboard.main -c examples/fll_choreo.json -w waypoints.json -o missio
 - `-a 1.0`: Smoothness priority
 - `--benchmark`: Quality/telemetry stats after the export gate
 - `--validate`: CPU + Immrax gate
+- `--best-effort`: with `--validate`, keep the best path when the only failure is an accuracy excess, marked failed (force, slip, integration and convergence still block)
 - `--iteration-history PATH`: Write the solver's iteration history to JSON; the studio plots it
 - `--workers`/`--no-parallel` are not quality controls in the current tree
 
@@ -550,11 +545,9 @@ By default the optimizer is purely time-optimal (`--accuracy-weight 0.0`). This 
 
 The exact tradeoff depends on the path and robot. Measure it on your own trajectory rather than relying on a fixed percentage.
 
-With `--validate`, the tradeoff is measured, not assumed: `--candidates N` (default 2) solves N candidates, validates and scores every one, and keeps a passing one - the **fastest** on the default `--unified` path (the envelope breaks a duration tie), or the one with the **lowest 5-part fitness score** on the stock set (the envelope and the shortest trajectory break ties). The stock candidate set (`--no-unified`) combines initial-guess seeds with the timing mode: by default candidate 1 is equal-duration `baseline` (linear, zero-speed guess), candidate 2 is per-segment `baseline`, then the remaining seeds (`rolling`, `bow_left`, `bow_right`, `turn_first`) alternate modes. The default `--unified` path replaces that set with three frontier candidates (`frontier_sprint`, `frontier_sweeper`, `frontier_exploratory`, all per-segment at a low accuracy weight), and `--candidates` truncates that list. `--uniform-dt` or `--per-segment-dt` forces one mode. `--candidates 1` disables the comparison. A slower or differently shaped candidate that scores worse is discarded; nothing is escalated silently.
+With `--validate`, the tradeoff is measured, not assumed: `--candidates N` (default 2) solves N candidates from the planner's three frontier candidates (`frontier_sprint`, `frontier_sweeper`, `frontier_exploratory`, all per-segment at a low accuracy weight), validates and scores every one, and keeps the **fastest passing** one - the reachability envelope breaks a duration tie. The 5-part path fitness score is reported for every candidate, so the rule can be re-run offline, but it does not decide. `--candidates 1` disables the comparison. A slower or differently shaped candidate that scores worse is discarded; nothing is escalated silently.
 
-The two timing modes are not peers. The equal-duration mode shares one `dt` across all segments, and because every segment has the same sample count, that also forces every segment to take the **same time**. On a path with unequal segment lengths the short segment inherits the long segment's duration, so the robot crawls through it and has to make the time back up with non-monotone wheel motion. The per-segment mode gives every segment its own duration and is the general model: setting every `dt_i` equal recovers the equal-duration solution exactly, and the per-segment optimum is never worse at the same weight. Both modes are held to the same wheel-jerk discipline, so `--accuracy-weight` means the same thing in either (KI-022).
-
-Where the time allocation may change is a separate question, and the per-segment mode now answers it explicitly (KI-024). A waypoint is a legitimate **timing boundary** only when the robot stops there *and* the heading is pinned: the state there is then fully determined, so the pieces on either side need agree on nothing. At every other waypoint the pieces stay linked:
+Every candidate uses the per-segment timing model (KI-024). A waypoint is a legitimate **timing boundary** only when the robot stops there *and* the heading is pinned: the state there is then fully determined, so the pieces on either side need agree on nothing. At every other waypoint the pieces stay linked:
 
 | waypoint | what the two pieces must agree on |
 |---|---|
@@ -563,28 +556,28 @@ Where the time allocation may change is a separate question, and the per-segment
 | stop, no pinned heading | the heading there; the velocity is zero on both sides |
 | neither | the heading and the wheel velocities |
 
-Because the path is one NLP over one shared variable set, the state agreement is automatic. What the per-segment timing could break is the *reading* of the motion profile: the acceleration before a waypoint is `(vl[k]-vl[k-1])/dt_prev` and the one after it is `(vl[k+1]-vl[k])/dt_next`, so a change of interval across the waypoint re-reads the same velocity ramp as two different accelerations and puts a step in the wheel force profile exactly there. The per-segment model therefore requires the wheel acceleration — and so the wheel force — to be continuous through every waypoint the robot does not stop at. A waypoint where the robot stops is exempt, because the wheel force has to reverse sign when the robot comes to rest and goes again. The equal-duration model needs no counterpart: it never changes `dt`, so it reads the ramp the same way on both sides.
+Because the path is one NLP over one shared variable set, the state agreement is automatic. What the per-segment timing could break is the *reading* of the motion profile: the acceleration before a waypoint is `(vl[k]-vl[k-1])/dt_prev` and the one after it is `(vl[k+1]-vl[k])/dt_next`, so a change of interval across the waypoint re-reads the same velocity ramp as two different accelerations and puts a step in the wheel force profile exactly there. The per-segment model therefore requires the wheel acceleration — and so the wheel force — to be continuous through every waypoint the robot does not stop at. A waypoint where the robot stops is exempt, because the wheel force has to reverse sign when the robot comes to rest and goes again.
 
-The default candidate set includes both timing modes, so the equal-duration candidate preserves the complex-mission pass while an uneven path can select per-segment. The CPU audit runs on every candidate, not only the winner, so a candidate that passes Immrax but fails the force/slip/integration gate cannot block a later passing candidate. On an uneven 1.0 m + 0.2 m path, per-segment at `--accuracy-weight 0.005` passes all gates at 2.784 s with envelope 0.32 cm, tracking 0.36 cm and peak wheel jerk 9.52 m/s³, versus 4.456 s / 0.37 cm / 0.36 cm / 9.52 m/s³ for the equal-duration mode at the same weight; the mixed loop selects the per-segment candidate. At the default weight 0, per-segment is 2.710 s / 0.32 cm but fails the Immrax and CPU gates, so the mixed loop falls back to the equal-duration candidate (4.463 s / 0.35 cm). On the complex mission at `--accuracy-weight 0`, per-segment is faster (4.650 s, envelope 1.00 cm) but its tracking is 0.84 cm, above the 5 mm gate, and its motor force is 0.074 N over the limit, so it is rejected and the equal-duration 6.068 s / 1.22 cm candidate wins. Forcing one mode is available for experiments and reproducibility, not as a silent default.
+The CPU audit runs on every candidate, not only the winner, so a candidate that passes Immrax but fails the force/slip/integration gate cannot block a later passing candidate. The retired equal-duration model was measured against this one; its numbers are kept in [docs/HEURISTICS_AND_VERIFICATION.md](docs/HEURISTICS_AND_VERIFICATION.md). For example, on an uneven 1.0 m + 0.2 m path, per-segment at `--accuracy-weight 0.005` passed all gates at 2.784 s with envelope 0.32 cm, tracking 0.36 cm and peak wheel jerk 9.52 m/s³, versus 4.456 s / 0.37 cm / 0.36 cm / 9.52 m/s³ for the equal-duration mode at the same weight.
 
-### Sweeping for the fastest passing trajectory (deprecated)
+### Sweeping for the fastest passing trajectory (removed)
 
-> **Deprecated.** The 80 ms invariant mesh in the default path made the manual grid unnecessary, so `--sweep` is accepted, warned about and ignored (and hidden from `--help`). The section is kept because the measurements below are the record of why the grid no longer pays.
+> **Removed.** `--sweep` no longer exists and the command line rejects it as an unknown option. The section is kept because the measurements below are the record of why the grid no longer pays.
 
-The two timing modes and the accuracy weight are a two-dimensional search, and the best combination depends on the path. `--sweep` searched it: it added the timing-mode × accuracy-weight grid (weights `0`, `0.001`, `0.002`, `0.005`, `0.01`) to the candidate set, validated every combination on the same scale, and let the usual rule pick the winner — the passing candidate with the lowest fitness score (the time its defects are worth), the envelope and the shortest one breaking the tie. The default candidates stayed in the set, so a sweep could only add options, never remove them.
+The retired sweep added a timing-mode × accuracy-weight grid (weights `0`, `0.001`, `0.002`, `0.005`, `0.01`) to the candidate set, validated every combination on the same scale, and let the usual rule pick the winner. The default candidates stayed in the set, so a sweep could only add options, never remove them.
 
-Measured on the example missions:
+Measured at the time, on the example missions:
 
-| mission | default candidates | with `--sweep` | change |
+| mission | default candidates | with the retired `--sweep` | change |
 |---|---|---|---|
 | `example_mission_first4.json` | **1.833 s** (per-segment, weight 0) | 1.833 s | unchanged |
 | `example_with_events.json` | **4.416 s** (per-segment, weight 0) | 4.416 s | unchanged |
 | `example_complex_mission.json` | 6.068 s | 6.068 s (equal-duration, weight 0) | unchanged |
 | `example_straight.json` | 2.377 s | 2.377 s | unchanged |
 
-With the merge conditions in place (KI-024) the per-segment candidate now passes the gates on the first-4 and events missions, so the default two candidates already find those wins and the sweep no longer changes them. It still matters when the best combination is a weight other than the default, because it is the only way to try the grid.
+With the merge conditions in place (KI-024) the per-segment candidate passed the gates on the first-4 and events missions, so the default candidates already found those wins and the sweep no longer changed them. That is why it was retired; the accuracy weight remains a single control, not a grid.
 
-The sweep is opt-in because it costs more: ten candidates instead of two, so ten solves and ten validation passes. It is the tool to reach for when the robot's time matters more than the solve time, and it is the honest way to see the speed-versus-margin frontier: the rejected candidates are printed with their duration, envelope and tracking error, so the trade is visible instead of hidden behind one number.
+The sweep was opt-in because it cost more: ten candidates instead of two, so ten solves and ten validation passes. The measurements above are the record of the speed-versus-margin frontier it exposed.
 
 ## Output Format
 
@@ -625,7 +618,7 @@ Samples may also contain `event` and `reachability_envelope`. The validator, exp
 
 With `--sysid-fit`, the Immrax plant switches from the default three-state kinematic model to a five-state model with actual wheel speeds. The fitted straight-line gain is an interval, the time constant is a first-order lag, the delay is applied to the held command, and the odometry distance/heading scales are applied to the feedback pose. The fit is optional and disabled by default; without it, the default path is unchanged.
 
-The final pose is also checked against the last waypoint. If any check fails, the CLI exits 1 and writes nothing.
+The final pose is also checked against the last waypoint. If any check fails, the CLI exits 1 and writes nothing - unless `--best-effort` is given and the only failure is an accuracy excess, in which case the path is written and marked as failed.
 
 With `--validate`, `--candidates N` (default 2) solves N trajectories. With the stock candidate set, each candidate combines an initial-guess seed with a timing mode at the same `accuracy_weight`; the default `--unified` path uses its three frontier candidates instead. Every candidate is validated and CPU-audited; the selected one is a passing candidate - the fastest on the default `--unified` path, or the one with the lowest fitness score on the stock set, where the score is a single number in seconds covering the reachability spread at the stops, the slip risk, the RMS wheel force, the tracking error and the run time (the envelope and the shortest trajectory break ties). If none pass, the candidate closest to passing is selected for reporting but still blocked from export. Without `--validate`, only the first candidate is solved.
 
@@ -641,7 +634,18 @@ With `--validate`, `--candidates N` (default 2) solves N trajectories. With the 
 | Complex mission | PASS; selected 6.068 s, envelope 1.22 cm, tracking 0.49 cm; per-segment 4.650 s, 1.00 cm / 0.84 cm, rejected by the 5 mm tracking gate and a 0.074 N motor-force overshoot. |
 | Uneven test path (1.0 + 0.2 m), default mixed `-a 0.005` | PASS; selected per-segment 2.784 s, envelope 0.32 cm, tracking 0.36 cm, peak wheel jerk 9.52 m/s³; equal-duration at the same weight: 4.456 s, 0.37 cm / 0.36 cm / 9.52 m/s³. At `-a 0` per-segment is 2.710 s / 0.32 cm but fails the Immrax and CPU gates, so the equal-duration candidate 4.463 s / 0.35 cm is selected. |
 
-All of the failing commands exit 1 and write no output. This is the gate working, not a crash. These results use the narrowed `track_width_range` and `gear_backlash_m` in `examples/fll_choreo.json`; those are test assumptions, not measured hardware values. Without a hardware fit the validator is still kinematic; `--sysid-fit` adds the measured actuator/odometry model, but the thresholds are unchanged. See KI-020.
+All of the failing commands exit 1 and write no output. This is the gate working, not a crash. These results use the narrowed `track_width_range` and `gear_backlash_m` that `examples/fll_choreo.json` carried on 2026-10-19; those were test assumptions, not measured hardware values. Without a hardware fit the validator is still kinematic; `--sysid-fit` adds the measured actuator/odometry model, but the thresholds are unchanged. See KI-020.
+
+**Measured with the widened physical ranges** (2026-10-21, `examples/fll_choreo.json`: track width ±1.5 mm, wheel radius ±1 mm, backlash 0.2-0.8 mm, COF 0.95 ±10 %). Each cell is `--preset safe` (3 candidates, plus the KI-048 rescue when the set passes nothing; `-n 14`, `-a 0.005`) on the production gates:
+
+| Case | `--propagation plant` | `--propagation tick` |
+|---|---|---|
+| Straight | PASS 2.310 s, envelope 0.35 cm, tracking 0.051 cm | PASS 2.310 s, 0.35 cm, 0.056 cm |
+| S-curve | FAIL: envelope 4.90 cm, tracking 0.544 cm | **PASS** 3.808 s, envelope 1.105 cm, tracking 0.498 cm |
+| Stops | FAIL: envelope 6.76 cm (tracking 0.349 cm) | **PASS** 5.086 s, envelope 1.284 cm, tracking 0.306 cm |
+| Complex mission | FAIL: envelope 10.82 cm (tracking 0.193 cm) | **PASS** 5.698 s, envelope 1.398 cm, tracking 0.159 cm |
+
+With the wide ranges the open-loop tube grows past the 2 cm gate on every curved path (the straight line stays inside), so `safe` validates with the closed-loop tick map and every passing envelope is 0.35-1.40 cm, well inside 2 cm. The S-curve passes with 0.002 cm of margin on the 5 mm tracking gate, which is worth knowing before treating that mission as comfortable. These are still model predictions against declared assumptions, not a hardware fit (KI-020).
 
 The full gate chain, every threshold with its source line, and the measured comparison of all five initial-guess seeds under both timing models (60 candidates, with the raw logs) are in [docs/HEURISTICS_AND_VERIFICATION.md](docs/HEURISTICS_AND_VERIFICATION.md). The ledger of strategies that did not work is in [docs/STRATEGY_LEDGER.md](docs/STRATEGY_LEDGER.md), and the research agenda in [docs/RESEARCH_AGENDA.md](docs/RESEARCH_AGENDA.md).
 
@@ -661,8 +665,8 @@ The full gate chain, every threshold with its source line, and the measured comp
 
 Measured on the current working tree with the example config:
 
-- 1 m straight, simple optimizer: about **0.06 s** solve wall time, **2.377 s** trajectory time, **0.000407 m** max forward-integration error.
-- 10-waypoint complex mission, simple solver: the IPOPT polish takes **1557 iterations** and about **35 s** on the machine it was measured on, and **669 iterations** and about **3 s** on another - the count depends on the machine's floating point, so IPOPT takes a different path through the same NLP. `--fast-polish` budgets the warm pass at 200 iterations and then solves the mission cold from the original guess: **354 iterations** and **7 s** on the first machine, **708** and **3 s** on the second, for a trajectory within 1 % of the plain one. Every other example mission solves inside the iteration budget and returns a bit-identical trajectory.
+- 1 m straight, the optimizer: about **0.06 s** solve wall time, **2.377 s** trajectory time, **0.000407 m** max forward-integration error.
+- 10-waypoint complex mission, the default path: the IPOPT polish takes **1557 iterations** and about **35 s** on the machine it was measured on, and **669 iterations** and about **3 s** on another - the count depends on the machine's floating point, so IPOPT takes a different path through the same NLP. `--fast-polish` budgets the warm pass at 200 iterations and then solves the mission cold from that iterate: **433 iterations** and about **12 s** on the current tree, for a trajectory within 1 % of the plain one (6.096 s against 6.087 s). Every other example mission solves inside the iteration budget and returns a bit-identical trajectory.
 
 `python benchmark.py --mode solver --config examples/fll_choreo.json` prints that table for every example mission; add `--fast-polish` for the fast path.
 

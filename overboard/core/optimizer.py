@@ -1,24 +1,17 @@
-import math
 import threading
-import warnings
 import time
 from typing import List, Dict, Tuple, Any, Optional, Union, Sequence
 import numpy as np
 import casadi as ca
-from overboard.models.robot_model import RobotConfig, DifferentialDriveModel, CG_HEIGHT_M, wheel_normal_forces, diff_drive_fk, diff_drive_wheel_forces, angle_diff
+from overboard.models.robot_model import RobotConfig, DifferentialDriveModel, CG_HEIGHT_M, wheel_normal_forces, diff_drive_fk, diff_drive_wheel_forces
 
 # The canonical guess styles live in the seed provider; re-export them here so
 # the optimizer and its callers keep one list.
-from overboard.core.frontier_seed import (
-    GUESS_STYLES,
-    SUPPORTED_GUESS_STYLES,
-    LEGACY_GUESS_STYLE_MAP,
-)
+from overboard.core.frontier_seed import GUESS_STYLES
 
 # MUMPS inside CasADi/IPOPT is not re-entrant across OS threads on Windows;
 # serialize the C++ MUMPS call to guarantee thread-safe solves repository-wide.
 CASADI_IPOPT_LOCK = threading.RLock()
-CASADI_SOLVE_LOCK = CASADI_IPOPT_LOCK  # Backward-compatible alias
 
 # Gauss-Legendre nodes and weights on [-1, 1] for the self-consistent
 # collocation. Four nodes integrate one interval's velocity profile to
@@ -39,80 +32,19 @@ class TrajectoryOptimizer:
         self.iteration_history: List[Dict[str, Any]] = []  # Store convergence data
 
     @staticmethod
-    def get_adaptive_mesh_sample_counts(
-        waypoints: Sequence[Sequence[Any]],
-        min_samples: int = 3,
-        apex_samples: int = 8,
-        straight_samples: int = 4,
-    ) -> List[int]:
-        """Adaptive Mesh Refinement (h-refinement):
-        Selectively allocates higher collocation node density (8-10 nodes) to curved
-        apex segments while keeping straight segments compact (3-4 nodes), lowering
-        forward-integration discretization error from ~2.5 cm down to sub-centimeter (<1.0 cm).
-        """
-        num_segments = len(waypoints) - 1
-        if num_segments <= 0:
-            return []
-
-        counts = []
-        for i in range(num_segments):
-            p1 = waypoints[i]
-            p2 = waypoints[i + 1]
-            L = float(np.hypot(p2[0] - p1[0], p2[1] - p1[1]))
-            h1 = p1[2] if len(p1) > 2 else None
-            h2 = p2[2] if len(p2) > 2 else None
-
-            if h1 is not None and h2 is not None:
-                dth = abs(angle_diff(float(h2), float(h1)))
-            else:
-                v_curr = (p2[0] - p1[0], p2[1] - p1[1])
-                th_curr = math.atan2(v_curr[1], v_curr[0])
-                th_prev = th_curr
-                th_next = th_curr
-                if i > 0:
-                    p0 = waypoints[i - 1]
-                    th_prev = math.atan2(p1[1] - p0[1], p1[0] - p0[0])
-                if i < num_segments - 1:
-                    p3 = waypoints[i + 2]
-                    th_next = math.atan2(p3[1] - p2[1], p3[0] - p2[0])
-                dth = max(
-                    abs(angle_diff(th_curr, th_prev)),
-                    abs(angle_diff(th_next, th_curr)),
-                )
-
-            # Curved apex segments (significant heading rotation or tight turn)
-            if dth > 0.70:
-                count = max(apex_samples, min_samples)
-            elif dth > 0.30:
-                count = max(int(0.5 * (apex_samples + straight_samples)), min_samples)
-            elif L > 0.35:
-                count = max(straight_samples + 1, min_samples)
-            else:
-                count = max(straight_samples, min_samples)
-            counts.append(int(count))
-
-        return counts
-
-    @staticmethod
     def get_segment_sample_counts(
         waypoints: Sequence[Sequence[Any]],
         num_samples_per_segment: Union[int, Sequence[int]] = 10,
         proportional: bool = True,
         min_samples: int = 3,
-        h_adaptive: bool = False,
     ) -> List[int]:
-        """Allocate sample counts across segments proportional to arc length (KI-024)
-        or via adaptive curvature h-refinement.
+        """Allocate sample counts across segments proportional to arc length (KI-024).
 
         When proportional=True and num_samples_per_segment is an integer, short
         and long segments do not receive the same fixed count. Each segment receives
         at least min_samples, while keeping the total sample budget (num_segments *
         num_samples_per_segment).
         """
-        if h_adaptive:
-            return TrajectoryOptimizer.get_adaptive_mesh_sample_counts(
-                waypoints, min_samples=min_samples
-            )
         num_segments = len(waypoints) - 1
         if num_segments <= 0:
             return []
@@ -171,14 +103,12 @@ class TrajectoryOptimizer:
         fast_polish: bool = False,
         polish_iter_budget: int = 200,
         solver_options: Optional[Dict[str, Any]] = None,
-        self_consistent: bool = True,
         proportional_samples: bool = True,
         split_at_boundaries: bool = True,
         force_weight: float = 0.0,
         cost_metric: str = "jerk",
         epigraph_constraints: bool = False,
         sample_weights: Optional[Sequence[float]] = None,
-        h_adaptive: bool = False,
     ) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
         """
         waypoints: list of (x, y, heading)
@@ -202,9 +132,6 @@ class TrajectoryOptimizer:
         fast_polish: if True, use the fast solve path.
         polish_iter_budget: iteration budget for the warm pass in the fast path.
         solver_options: extra IPOPT options that override the defaults.
-        self_consistent: if True (default), place the samples on the path the
-                    trajectory's own (v, omega) profile traces, by
-                    integrating that profile with a Gauss-Legendre rule.
         proportional_samples: if True (default), allocate sample counts
                     proportional to segment arc length (KI-024).
         split_at_boundaries: if True (default), split trajectories at waypoints
@@ -264,7 +191,6 @@ class TrajectoryOptimizer:
                             fast_polish=fast_polish,
                             polish_iter_budget=polish_iter_budget,
                             solver_options=solver_options,
-                            self_consistent=self_consistent,
                             proportional_samples=proportional_samples,
                             split_at_boundaries=False,
                             force_weight=force_weight,
@@ -362,7 +288,6 @@ class TrajectoryOptimizer:
             capture_iterations=capture_iterations,
             guess_style=guess_style,
             per_segment_dt=per_segment_dt,
-            self_consistent=self_consistent,
             proportional_samples=proportional_samples,
             force_weight=force_weight,
             cost_metric=cost_metric,
@@ -392,8 +317,27 @@ class TrajectoryOptimizer:
             stats["stage_costs"] = [stage_a_stats.get("final_cost")]
             return stage_a_samples, stats
 
+        # The cold finish starts from the warm stage's iterate, not from the
+        # original guess. The budgeted warm stage has usually found the good
+        # basin already (on the complex mission it is at 6.08 s when the 200
+        # iterations run out); restarting cold from the original guess lands
+        # in a worse local optimum (8.67 s) even though it converges quickly.
+        # Cold-starting from the half-finished iterate keeps KI-047's lesson
+        # (do not warm-start the restart, which crawls) and the good optimum.
+        stage_b_guess = initial_guess
+        if stage_a_samples:
+            try:
+                stage_b_guess = self.guess_from_samples(
+                    stage_a_samples, num_segments,
+                    stage_a_stats.get("segment_samples")
+                    or ([int(num_samples_per_segment)] * num_segments
+                        if not isinstance(num_samples_per_segment, (list, tuple, np.ndarray))
+                        else list(num_samples_per_segment)))
+            except Exception:
+                stage_b_guess = initial_guess
+
         stage_b_samples, stage_b_stats = self._solve_once(
-            waypoints, initial_guess=initial_guess, warm_start=False,
+            waypoints, initial_guess=stage_b_guess, warm_start=False,
             stage_label="2/2", solver_options=solver_options, **common)
 
         if stage_b_stats.get("converged", False):
@@ -471,13 +415,11 @@ class TrajectoryOptimizer:
         warm_start: bool = True,
         stage_label: Optional[str] = None,
         solver_options: Optional[Dict[str, Any]] = None,
-        self_consistent: bool = True,
         proportional_samples: bool = True,
         force_weight: float = 0.0,
         cost_metric: str = "jerk",
         epigraph_constraints: bool = False,
         sample_weights: Optional[Sequence[float]] = None,
-        h_adaptive: bool = False,
     ) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
         """Build and solve the NLP for one candidate.
 
@@ -503,7 +445,7 @@ class TrajectoryOptimizer:
         """
         num_segments = len(waypoints) - 1
         segment_samples = self.get_segment_sample_counts(
-            waypoints, num_samples_per_segment, proportional=proportional_samples, h_adaptive=h_adaptive)
+            waypoints, num_samples_per_segment, proportional=proportional_samples)
         N = sum(segment_samples) + 1
         waypoint_sample_indices = [0] + list(np.cumsum(segment_samples))
         sample_to_segment = np.repeat(np.arange(num_segments), segment_samples)
@@ -650,31 +592,19 @@ class TrajectoryOptimizer:
             omega1 = (vr[k] - vl[k]) / self.config.track_width
             omega2 = (vr[k + 1] - vl[k + 1]) / self.config.track_width
 
-            if self_consistent:
-                dx = 0.0
-                dy = 0.0
-                d_omega = omega2 - omega1
-                for xi, weight in _GAUSS_LEGENDRE_4:
-                    s = 0.5 * dt_k * (1.0 + xi)
-                    w_s = 0.5 * dt_k * weight
-                    v_s = v1 + (v2 - v1) * s / dt_k
-                    theta_s = (theta[k] + omega1 * s
-                               + d_omega * s * s / (2.0 * dt_k))
-                    dx = dx + w_s * v_s * ca.cos(theta_s)
-                    dy = dy + w_s * v_s * ca.sin(theta_s)
-                opti.subject_to(x[k + 1] == x[k] + dx)
-                opti.subject_to(y[k + 1] == y[k] + dy)
-            else:
-                opti.subject_to(
-                    x[k + 1]
-                    == x[k]
-                    + 0.5 * (v1 * ca.cos(theta[k]) + v2 * ca.cos(theta[k + 1])) * dt_k
-                )
-                opti.subject_to(
-                    y[k + 1]
-                    == y[k]
-                    + 0.5 * (v1 * ca.sin(theta[k]) + v2 * ca.sin(theta[k + 1])) * dt_k
-                )
+            dx = 0.0
+            dy = 0.0
+            d_omega = omega2 - omega1
+            for xi, weight in _GAUSS_LEGENDRE_4:
+                s = 0.5 * dt_k * (1.0 + xi)
+                w_s = 0.5 * dt_k * weight
+                v_s = v1 + (v2 - v1) * s / dt_k
+                theta_s = (theta[k] + omega1 * s
+                           + d_omega * s * s / (2.0 * dt_k))
+                dx = dx + w_s * v_s * ca.cos(theta_s)
+                dy = dy + w_s * v_s * ca.sin(theta_s)
+            opti.subject_to(x[k + 1] == x[k] + dx)
+            opti.subject_to(y[k + 1] == y[k] + dy)
             opti.subject_to(
                 theta[k + 1] == theta[k] + 0.5 * (omega1 + omega2) * dt_k
             )
@@ -975,17 +905,8 @@ class TrajectoryOptimizer:
         return time_cost + accuracy_weight * smoothness_cost + force_weight * force_cost
 
     def _build_initial_guess(self, waypoints: List[Tuple[float, float, Optional[float]]], num_samples_per_segment: Union[int, Sequence[int]], N: int, style: str = "baseline", stop_waypoint_indices: Optional[List[int]] = None) -> np.ndarray:
-        if style not in SUPPORTED_GUESS_STYLES:
-            raise ValueError(f"Unknown guess_style {style!r}; expected one of {SUPPORTED_GUESS_STYLES}")
-
-        if style in LEGACY_GUESS_STYLE_MAP:
-            target_style = LEGACY_GUESS_STYLE_MAP[style]
-            warnings.warn(
-                f"guess_style '{style}' is deprecated; mapped directly to analytical {target_style}.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-            style = target_style
+        if style not in GUESS_STYLES:
+            raise ValueError(f"Unknown guess_style {style!r}; expected one of {GUESS_STYLES}")
 
         from overboard.core.frontier_seed import generate_frontier_seed
         return generate_frontier_seed(

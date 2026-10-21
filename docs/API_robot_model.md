@@ -222,22 +222,22 @@ from overboard.models.robot_model import RobotConfig, DifferentialDriveModel
 config = RobotConfig({
     "robot": {
         "mass": 0.723,
-        "inertia": 0.001,
+        "inertia": 0.0024,
         "track_width": 0.0965,
         "wheel_radius": 0.028,
         "v_max_rad_s": 18.94,
         "t_max_nm": 0.138,
         "gearing": 1.0,
-        "cof": 1.37,
+        "cof": 0.95,
         "torque_headroom": 0.85,
         "speed_headroom": 0.90,
         "uncertainties": {
-            "cof": [1.24, 1.51],
+            "cof": [0.85, 1.05],
             "torque_headroom": [0.75, 0.90],
-            "gear_backlash_m": [0.0002, 0.0007],
-            "track_width_range": [0.096, 0.097],
-            "wheel_radius_range": [0.0275, 0.0285],
-            "inertia_kg_m2": [0.0008, 0.0011]
+            "gear_backlash_m": [0.0002, 0.0008],
+            "track_width_range": [0.095, 0.098],
+            "wheel_radius_range": [0.027, 0.029],
+            "inertia_kg_m2": [0.0020, 0.0028]
         }
     }
 })

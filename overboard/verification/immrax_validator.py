@@ -21,11 +21,6 @@ from typing import List, Dict, Any, Tuple, Optional
 import math
 
 
-# Number of reference updates per sample interval for the legacy/continuous
-# path used by the fake dynamics in tests. The real validator uses the
-# deployed controller's sample-and-hold loop below.
-REACHABILITY_SUBSTEPS = 20
-
 # The control period of the controller that actually runs.
 #
 # The controllers in use hold the drive command for 20 ms:

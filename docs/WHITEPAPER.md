@@ -28,7 +28,7 @@ The current tree contains uncommitted fixes for several safety and correctness i
 
 What is still incomplete:
 
-- The Multi-Verse pipeline was removed from the tree (git tag `archive/legacy-2026-10`) and has no CLI entry point (KI-004). The unified planner is the only planner; `--no-unified` and `--simple` are deprecated and ignored.
+- The Multi-Verse pipeline was removed from the tree (git tag `archive/legacy-2026-10`) and has no CLI entry point (KI-004). The unified planner is the only planner; `--no-unified` and `--simple` are removed and rejected as unknown options.
 - The validator is kinematic and has no motor, DriveBase, odometry, or slip dynamics (KI-020).
 - Whether a representative path passes the Immrax gate is a measurement that moves with the config and the planner (KI-020); the current pass/fail ledger is in `docs/HEURISTICS_AND_VERIFICATION.md`.
 - Convergence flags and some export edge cases remain open (KI-017). The random benchmarks work (KI-015).
@@ -76,7 +76,7 @@ What is still incomplete:
 6. Check the final waypoint, and with `--validate`, run the CPU `validate_samples` gate.
 7. Write the trajectory, then optional stats/controller/legacy-Python/compact-Python exports, then plots.
 
-A failed solve and a failed validation both exit non-zero without writing the trajectory, controller, Python file, or stats.
+A failed solve and a failed validation both exit non-zero without writing the trajectory, controller, Python file, or stats. `--best-effort` is the narrow exception: an accuracy-only failure (envelope or tracking) is written and marked `validation: {passed: false, best_effort: true, ...}`, so the path can be inspected; force, slip, integration, divergence and non-convergence still write nothing.
 
 ### 2.3 Installation modes
 
@@ -168,12 +168,12 @@ The `uncertainties` block is normalized once and consumed by the optimizer and I
 
 For `N = 1 + sum_i(s_i)` samples, where `s_i` is the number of sample intervals in waypoint segment `i`, the optimizer chooses:
 
-- one timestep `dt` (the default), or one interval length `dt_i` per waypoint segment with `--per-segment-dt`
+- one interval length `dt_i` per waypoint segment (the per-segment model, which is the only one)
 - for each sample `k`: `x_k, y_k, theta_k, vl_k, vr_k`
 
 **The sample count follows the path.** `TrajectoryOptimizer.get_segment_sample_counts` splits the budget `segments * samples_per_segment` across the waypoint segments in proportion to their arc length, with at least three samples each, so a long segment is sampled finely and a short one coarsely. The total is the same as before (`N = 1 + sum_i(s_i) = 1 + segments * samples_per_segment`), but the layout is not: the sample-to-waypoint mapping is a table, not `k * samples_per_segment`, and the code carries it as `waypoint_sample_indices`.
 
-The per-segment variant uses `dt_i` inside segment `i`; total time is `sum_i(s_i * dt_i)`, and the interval starting at sample `k` uses the `dt` of the segment that sample belongs to. The uniform variant keeps all segments on one `dt`, and its total time is `dt * (N - 1)`. The uniform variant spends the same *interval* on every segment whatever its length, so a segment's duration is `s_i * dt` and the short segments inherit less time than the long ones - the opposite of the old layout, where equal counts gave every segment the same time. The per-segment variant is therefore the general model: setting every `dt_i` equal recovers the uniform solution exactly. The candidate loop solves both variants by default; `--uniform-dt` and `--per-segment-dt` force one.
+The per-segment variant uses `dt_i` inside segment `i`; total time is `sum_i(s_i * dt_i)`, and the interval starting at sample `k` uses the `dt` of the segment that sample belongs to. The uniform variant keeps all segments on one `dt`, and its total time is `dt * (N - 1)`. The uniform variant spends the same *interval* on every segment whatever its length, so a segment's duration is `s_i * dt` and the short segments inherit less time than the long ones - the opposite of the old layout, where equal counts gave every segment the same time. The per-segment variant is therefore the general model: setting every `dt_i` equal recovers the uniform solution exactly. Every candidate uses it; the uniform variant was retired along with `--uniform-dt` and `--per-segment-dt`.
 
 **Where the time allocation may change (KI-024).** A waypoint is a legitimate timing boundary only when the robot stops there *and* the heading is pinned: the state there is then fully determined, so the pieces on either side need agree on nothing. At every other waypoint the pieces stay linked, and the four cases are:
 
@@ -196,13 +196,13 @@ J = duration + accuracy_weight * dt_ref^2 * sum_k [
     ]
 ```
 
-The first term is trajectory duration. The optional second term penalizes wheel jerk, where `span_k` is the spacing between the midpoints of the two intervals that meet at boundary `k` and `dt_ref` is the mean interval over the whole path. Normalising by `dt_ref` makes the price of physical jerk independent of the timing layout, so the same `accuracy_weight` means the same smoothness in either variant; without it the raw acceleration jump is proportional to `jerk * dt`, and a short interval would be charged `dt^2` less per unit of jerk (KI-022). `accuracy_weight = 0` is pure time-optimal. With `--per-segment-dt` the duration term is `sum_i(s_i * dt_i)`, the sum over the segments of their own sample count times their own interval.
+The first term is trajectory duration. The optional second term penalizes wheel jerk, where `span_k` is the spacing between the midpoints of the two intervals that meet at boundary `k` and `dt_ref` is the mean interval over the whole path. Normalising by `dt_ref` makes the price of physical jerk independent of the timing layout, so the same `accuracy_weight` means the same smoothness in either variant; without it the raw acceleration jump is proportional to `jerk * dt`, and a short interval would be charged `dt^2` less per unit of jerk (KI-022). `accuracy_weight = 0` is pure time-optimal. The duration term is `sum_i(s_i * dt_i)`, the sum over the segments of their own sample count times their own interval.
 
 The optional third term, `--force-weight`, prices the wheel forces: the time integral of the squared force utilisation against both the stall force and the per-wheel traction limit. The hard per-wheel limits apply regardless; the term is a *soft* penalty that charges a plan for running near the traction limit, which is the cheapest form of the reachability-driven optimisation KI-020 asks for. It is off by default.
 
 ### 4.3 Constraints
 
-- `dt` (or each `dt_i` with `--per-segment-dt`) in `[0.001, 1.0]` s.
+- each `dt_i` in `[0.001, 1.0]` s.
 - Position bounds `|x|, |y| <= 20 m`; heading bounds `[-100, 100]` rad (unwrapped).
 - Wheel-speed bounds at 99 % of the headroom-limited no-load speed.
 - Kinematic integration. The trapezoidal rule over the two endpoints of the interval:
@@ -213,7 +213,7 @@ y_{k+1} = y_k + 0.5*(v_k*sin(theta_k) + v_{k+1}*sin(theta_{k+1}))*dt
 theta_{k+1} = theta_k + 0.5*(omega_k + omega_{k+1})*dt
 ```
 
-  `--self-consistent` (KI-026) replaces the position rule with the interval's velocity integrated along the *integrated* heading; it is what the CLI plans by default, and `--no-self-consistent` restores the trapezoidal rule:
+  The self-consistent position rule (KI-026) integrates the interval's velocity along the *integrated* heading; it is what the CLI plans, unconditionally. The historical `--self-consistent`/`--no-self-consistent` switch and the trapezoidal rule it restored were removed:
 
 ```text
 theta(s)    = theta_k + omega_k*s + (omega_{k+1} - omega_k)*s^2/(2*dt)
@@ -289,11 +289,11 @@ The envelope is the axis-aligned bounding box of the reachable set. The planner 
 
 The gate is a post-solve check. With `--validate`, `overboard/main.py` solves `--candidates` trajectories (default 2), validates each one, and selects the passing candidate with the **shortest duration**, the reachability envelope breaking a tie. The **5-part path fitness score** - the reachability spread at the stops and the final waypoint (200 s/m), the slip risk above a 70 % utilisation dead-zone (8 s), the RMS wheel force against the stall force (0.5 s), the tracking error (80 s/m) and the run time (1 s/s) - is reported for every candidate, so the rule can be re-run offline, but it does not decide: the planner is time-optimal, so the shortest passing plan is the one that ships. The CPU audit runs on every candidate, not only the selected one. If none pass, it selects the closest candidate for reporting but still blocks export. Reachability is not a term or constraint in the optimizer (KI-020).
 
-The default candidate set mixes both timing modes, and the CPU audit runs on every candidate so a partial pass cannot block a later fully passing one. The two modes are not peers: the equal-duration mode shares one `dt` across all segments, which because every segment has the same sample count also forces every segment to take the SAME time, so on a path with unequal segment lengths the short segment inherits the long segment's duration. The per-segment mode is the general model, and both are held to the same wheel-jerk discipline so `accuracy_weight` means the same thing in either (KI-022). The per-segment mode also holds the wheel force profile continuous through every waypoint the robot does not stop at, which is what makes a change of time scale at such a point legitimate (KI-024). Measured on 2026-10-19: an uneven 1.0 m + 0.2 m path passes all gates with per-segment at `accuracy_weight=0.005` in 2.784 s with envelope 0.32 cm, tracking 0.36 cm and peak wheel jerk 9.52 m/s³, versus 4.456 s / 0.37 cm / 0.36 cm / 9.52 m/s³ for the equal-duration mode at the same weight, so selection keeps the per-segment winner. At `accuracy_weight=0`, per-segment is 2.710 s / 0.32 cm but fails the Immrax and CPU gates, so selection falls back to the equal-duration candidate (4.463 s / 0.35 cm). On the complex mission at `accuracy_weight=0`, per-segment is faster (4.650 s, envelope 1.00 cm) but its tracking is 0.84 cm and its motor force is 0.074 N over the limit, so it is rejected; the equal-duration 6.068 s / 1.22 cm / 0.49 cm candidate passes and wins. `--uniform-dt` forces the equal-duration-only behavior and `--per-segment-dt` forces per-segment timing.
+Every candidate uses the per-segment timing model, and the CPU audit runs on every candidate so a partial pass cannot block a later fully passing one. The retired equal-duration mode shared one `dt` across all segments, which because every segment has the same sample count also forced every segment to take the SAME time, so on a path with unequal segment lengths the short segment inherited the long segment's duration. The per-segment mode is the general model, held to the wheel-jerk discipline (KI-022). The per-segment mode also holds the wheel force profile continuous through every waypoint the robot does not stop at, which is what makes a change of time scale at such a point legitimate (KI-024). Measured on 2026-10-19: an uneven 1.0 m + 0.2 m path passes all gates with per-segment at `accuracy_weight=0.005` in 2.784 s with envelope 0.32 cm, tracking 0.36 cm and peak wheel jerk 9.52 m/s³, versus 4.456 s / 0.37 cm / 0.36 cm / 9.52 m/s³ for the equal-duration mode at the same weight, so selection keeps the per-segment winner. At `accuracy_weight=0`, per-segment is 2.710 s / 0.32 cm but fails the Immrax and CPU gates, so selection falls back to the equal-duration candidate (4.463 s / 0.35 cm). On the complex mission at `accuracy_weight=0`, per-segment is faster (4.650 s, envelope 1.00 cm) but its tracking is 0.84 cm and its motor force is 0.074 N over the limit, so it is rejected; the equal-duration 6.068 s / 1.22 cm / 0.49 cm candidate passes and wins. The equal-duration comparison above is historical; its flags are removed.
 
 ### 5.3 Measured current behavior
 
-These are model predictions from the current tree, not hardware measurements.
+These are model predictions from the 2026-10-19 tree under the *narrowed* test ranges that `examples/fll_choreo.json` carried then, not hardware measurements. They are kept as the record; the current config and the closed-loop model are measured below.
 
 | Example | Trajectory time | Gate result |
 |---|---:|---|
@@ -305,7 +305,18 @@ These are model predictions from the current tree, not hardware measurements.
 | Complex mission | 6.0677 s | **PASS**; envelope 1.22 cm, tracking 0.49 cm (per-segment: 4.6501 s, 1.00 cm / 0.84 cm, rejected by the 5 mm tracking gate and a 0.074 N motor-force overshoot) |
 | Uneven test path (1.0 + 0.2 m), default mixed `-a 0.005` | 2.784 s | **PASS**; selected per-segment, envelope 0.32 cm, tracking 0.36 cm, peak wheel jerk 9.52 m/s³ (equal-duration at the same weight: 4.456 s, 0.37 cm / 0.36 cm / 9.52 m/s³). At `-a 0` per-segment is 2.710 s / 0.32 cm but fails the Immrax and CPU gates, so the equal-duration candidate 4.463 s / 0.35 cm is selected. |
 
-Under the narrowed test assumptions in `examples/fll_choreo.json`, the straight, first-4, events and complex-mission examples pass; the S-curve and stops examples fail and write no output. This is the gate working on an uncalibrated model, not a solver crash. The narrowed ranges are test assumptions, not measured hardware guarantees.
+Under those narrowed ranges, the straight, first-4, events and complex-mission examples pass; the S-curve and stops examples fail and write no output. This was the gate working on an uncalibrated model, not a solver crash.
+
+`examples/fll_choreo.json` now declares physical-looking ranges instead of the clamped ones: track width ±1.5 mm, wheel radius ±1 mm, backlash 0.2-0.8 mm, inertia 0.0020-0.0028 kg·m² and COF 0.95 ±10 %. With those ranges the open-loop `plant` tube grows past the 2 cm gate on every curved path, which is what the closed-loop `tick` map is for (KI-049/KI-050), and the `safe` preset selects it. Measured on 2026-10-21 with `--preset safe` (`-n 14`, `-a 0.005`):
+
+| Example | `plant` | `tick` |
+|---|---|---|
+| Straight | PASS 2.310 s, 0.35 cm envelope, 0.051 cm tracking | PASS 2.310 s, 0.35 cm, 0.056 cm |
+| S-curve | FAIL: 4.90 cm envelope, 0.544 cm tracking | **PASS** 3.808 s, 1.105 cm, 0.498 cm |
+| Stops | FAIL: 6.76 cm envelope (tracking 0.349 cm) | **PASS** 5.086 s, 1.284 cm, 0.306 cm |
+| Complex mission | FAIL: 10.82 cm envelope (tracking 0.193 cm) | **PASS** 5.698 s, 1.398 cm, 0.159 cm |
+
+Every passing envelope is 0.35-1.40 cm, inside the 2 cm gate; the S-curve's 0.498 cm tracking leaves 20 µm of margin against the 5 mm gate. These ranges are still declared assumptions, not measured hardware guarantees (KI-020); the point of the change is that the validator no longer gets an artificially easy interval to propagate.
 
 ### 5.4 What the validator does not prove
 
@@ -465,11 +476,11 @@ Do not tune the 5 mm tracking or 2 cm envelope thresholds to one path. The strai
 
 The full option list is in `README.md` and `docs/CONFIGURATION.md`. Current truth:
 
-- The 3-Pillar unified engine (`overboard/core/unified_planner.py`) is the only planner and the CasADi/IPOPT optimizer is its backend; `--no-unified` (alias `--simple`) is deprecated and ignored. The Multi-Verse pipeline was removed from the tree (git tag `archive/legacy-2026-10`).
+- The 3-Pillar unified engine (`overboard/core/unified_planner.py`) is the only planner and the CasADi/IPOPT optimizer is its backend; `--no-unified` (alias `--simple`) is removed and rejected. The Multi-Verse pipeline was removed from the tree (git tag `archive/legacy-2026-10`).
 - `--validate` requires JAX/Immrax and gates output. `--candidates N` (default 2) selects among the unified frontier candidates, or the seed/timing combinations of the stock set.
 - `--sysid-fit sysid_fit.json` opts into the fitted five-state plant; it requires `--validate`.
 - `--export-format controller|python|python-compact` writes optional outputs after the gate.
-- `--per-segment-dt` forces per-segment intervals and `--uniform-dt` forces one shared interval; both are only valid with the simple solver. By default candidates mix both.
+- Every candidate uses per-segment intervals; `--per-segment-dt` and `--uniform-dt` are removed and rejected.
 - `--benchmark` writes `<output>_stats.json` after the gate.
 - `--plot`, `--animate` and `--gui` are blocking.
 - `--workers` and `--no-parallel` do not affect the final result (KI-004).
@@ -650,23 +661,23 @@ The path-planning side of this list — the seed heuristics, the timing models, 
   "type": "Differential",
   "robot": {
     "mass": 0.723,
-    "inertia": 0.001,
+    "inertia": 0.0024,
     "track_width": 0.0965,
     "wheel_radius": 0.028,
     "v_max_rad_s": 18.94,
     "t_max_nm": 0.138,
     "gearing": 1.0,
-    "cof": 1.37,
+    "cof": 0.95,
     "gravity": 9.81,
     "torque_headroom": 0.85,
     "speed_headroom": 0.90,
     "uncertainties": {
-      "cof": [1.24, 1.51],
+      "cof": [0.85, 1.05],
       "torque_headroom": [0.75, 0.90],
-      "gear_backlash_m": [0.0002, 0.0007],
-      "inertia_kg_m2": [0.0008, 0.0011],
-      "track_width_range": [0.096, 0.097],
-      "wheel_radius_range": [0.0275, 0.0285]
+      "gear_backlash_m": [0.0002, 0.0008],
+      "inertia_kg_m2": [0.0020, 0.0028],
+      "track_width_range": [0.095, 0.098],
+      "wheel_radius_range": [0.027, 0.029]
     }
   }
 }
@@ -690,10 +701,10 @@ The path-planning side of this list — the seed heuristics, the timing models, 
                               the unified one)
 --stop-waypoints TEXT          comma-separated stop indices
 --events TEXT                  comma-separated index:event pairs
---unified / --no-unified       deprecated: the 3-Pillar engine is the only planner
---simple                       deprecated: the 3-Pillar engine is the only planner
---per-segment-dt               force per-segment intervals; simple solver only
---uniform-dt                   force one shared interval; deprecated
+--unified / --no-unified       removed: the 3-Pillar engine is the only planner
+--simple                       removed: the 3-Pillar engine is the only planner
+--per-segment-dt               removed: every candidate uses per-segment intervals
+--uniform-dt                   removed: the equal-duration model was retired
 --no-parallel                  solve candidates in this process
 --workers INTEGER              worker processes for parallel candidates
 --validate / --no-validate     CPU + Immrax gate; requires JAX

@@ -30,28 +30,12 @@ from overboard.models.drivetrain_physics import (
 )
 from overboard.models.robot_model import RobotConfig
 
-_asymmetric_late_apex_bump = asymmetric_late_apex_bump
-
-# Direct mapping of legacy heuristic styles to the analytical late-apex triad
-LEGACY_GUESS_STYLE_MAP = {
-    "bow_left": "frontier_sprint",
-    "bow_right": "frontier_sweeper",
-    "turn_first": "frontier_exploratory",
-}
-
 GUESS_STYLES = (
     "baseline",
     "rolling",
-    "bow_left",
-    "bow_right",
-    "turn_first",
-)
-
-SUPPORTED_GUESS_STYLES = GUESS_STYLES + (
     "frontier_sprint",
     "frontier_sweeper",
     "frontier_exploratory",
-    "frontier_direct",
 )
 
 
@@ -70,8 +54,6 @@ class StyleParams:
     apex_mult: float = 0.0
     accel_scale: float = 0.90
     momentum_frac: float = 0.50
-    fixed_sign: float = 0.0
-    turn_first_mode: bool = False
     zero_velocity: bool = False
 
 
@@ -79,9 +61,6 @@ STYLE_TABLE: Dict[str, StyleParams] = {
     "sprint": StyleParams(u_peak=0.70, apex_mult=1.00, accel_scale=0.95, momentum_frac=0.72),
     "sweeper": StyleParams(u_peak=0.65, apex_mult=0.90, accel_scale=0.80, momentum_frac=0.68),
     "exploratory": StyleParams(u_peak=0.66, apex_mult=1.25, accel_scale=0.85, momentum_frac=0.70),
-    "bow_left": StyleParams(u_peak=0.66, apex_mult=1.10, accel_scale=0.85, momentum_frac=0.68, fixed_sign=1.0),
-    "bow_right": StyleParams(u_peak=0.66, apex_mult=1.10, accel_scale=0.85, momentum_frac=0.68, fixed_sign=-1.0),
-    "turn_first": StyleParams(u_peak=0.50, apex_mult=0.00, accel_scale=0.85, momentum_frac=0.55, turn_first_mode=True),
     "rolling": StyleParams(u_peak=0.50, apex_mult=0.00, accel_scale=0.80, momentum_frac=0.60),
     "baseline": StyleParams(u_peak=0.50, apex_mult=0.00, accel_scale=0.80, momentum_frac=0.00, zero_velocity=True),
     "direct_chord": StyleParams(u_peak=0.50, apex_mult=0.00, accel_scale=0.90, momentum_frac=0.50),
@@ -241,16 +220,9 @@ def generate_frontier_seed(
     stops = set(stop_waypoint_indices or [])
 
     # Style resolution
-    if style in LEGACY_GUESS_STYLE_MAP:
-        style = LEGACY_GUESS_STYLE_MAP[style]
-
     clean_style = style
     if clean_style.startswith("frontier_"):
         clean_style = clean_style.replace("frontier_", "")
-        if clean_style == "racing":
-            clean_style = "sprint"
-        elif clean_style == "direct":
-            clean_style = "direct_chord"
 
     if clean_style == "baseline":
         return _build_baseline_seed(waypoints, seg_samples)
@@ -291,10 +263,7 @@ def generate_frontier_seed(
 
     # Vectorized Apex Offset Amplitudes
     apex_amps = np.zeros(num_segments, dtype=float)
-    if params.fixed_sign != 0.0:
-        mask = L_arr > 0.01
-        apex_amps[mask] = params.fixed_sign * np.minimum(0.20 * L_arr[mask], 0.08) * params.apex_mult
-    elif params.apex_mult > 0.0:
+    if params.apex_mult > 0.0:
         corner_dth = np.empty(num_segments, dtype=float)
         for i in range(num_segments - 1):
             corner_dth[i] = angle_diff(chord_angles[i + 1], chord_angles[i])
@@ -322,18 +291,12 @@ def generate_frontier_seed(
         u = np.arange(count, dtype=float) / float(s_i)
 
         amp = apex_amps[i]
-        bumps = _asymmetric_late_apex_bump(u, u_peak=params.u_peak) if abs(amp) > 1e-4 else 0.0
+        bumps = asymmetric_late_apex_bump(u, u_peak=params.u_peak) if abs(amp) > 1e-4 else 0.0
 
         px = pts[i, 0] + dx_arr[i] * u + nx_arr[i] * amp * bumps
         py = pts[i, 1] + dy_arr[i] * u + ny_arr[i] * amp * bumps
 
-        if params.turn_first_mode and s_i > 1:
-            th = np.full(count, chord_angles[i])
-            th[0] = th1_arr[i]
-            if len(waypoints[i + 1]) > 2 and waypoints[i + 1][2] is not None and count > 1:
-                th[-1] = th2_arr[i]
-        else:
-            th = th1_arr[i] + dth_arr[i] * u
+        th = th1_arr[i] + dth_arr[i] * u
 
         k_start = wp_indices[i]
         k_end = k_start + count
@@ -354,13 +317,10 @@ def generate_frontier_seed(
     dy_diff = np.diff(points_y)
     ds = np.maximum(np.hypot(dx_diff, dy_diff), 1e-5)
 
-    if params.turn_first_mode:
-        headings = np.copy(nominal_thetas)
-    else:
-        tangent_headings = np.empty(N, dtype=float)
-        tangent_headings[:-1] = np.arctan2(dy_diff, dx_diff)
-        tangent_headings[-1] = tangent_headings[-2] if N > 1 else wp_headings[-1]
-        headings = np.unwrap(tangent_headings)
+    tangent_headings = np.empty(N, dtype=float)
+    tangent_headings[:-1] = np.arctan2(dy_diff, dx_diff)
+    tangent_headings[-1] = tangent_headings[-2] if N > 1 else wp_headings[-1]
+    headings = np.unwrap(tangent_headings)
 
     if np.any(pinned_mask):
         pinned_idx = np.array(wp_indices)[pinned_mask]
@@ -444,23 +404,3 @@ def generate_frontier_seed(
         states[np.array(wp_indices)[pinned_mask], 2] = [h for h in pinned_headings if h is not None]
 
     return np.concatenate([initial_dts, states.ravel()])
-
-
-def generate_canonical_seeds(
-    waypoints: List[Tuple[float, float, Optional[float]]],
-    segment_samples: Union[int, Sequence[int]],
-    robot_config: RobotConfig,
-    stop_waypoint_indices: Optional[List[int]] = None,
-) -> Dict[str, np.ndarray]:
-    """Generate the full canonical triad of analytical Kinetic Frontier seeds."""
-    return {
-        "frontier_sprint": generate_frontier_seed(
-            waypoints, segment_samples, robot_config, stop_waypoint_indices, style="sprint"
-        ),
-        "frontier_sweeper": generate_frontier_seed(
-            waypoints, segment_samples, robot_config, stop_waypoint_indices, style="sweeper"
-        ),
-        "frontier_exploratory": generate_frontier_seed(
-            waypoints, segment_samples, robot_config, stop_waypoint_indices, style="exploratory"
-        ),
-    }

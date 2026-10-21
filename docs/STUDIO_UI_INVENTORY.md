@@ -1,6 +1,6 @@
 # Studio UI Inventory
 
-**Status:** 2026-10-20, after the structural rebuild. A complete list of every control, readout and generated element in the browser studio, so the next change starts from a list rather than from the page.
+**Status:** 2026-10-21, after the 3-Pillar alignment of the Solve and Result tabs. A complete list of every control, readout and generated element in the browser studio, so the next change starts from a list rather than from the page.
 **Scope:** `overboard/viz/studio.html`, `overboard/viz/studio.js`, `overboard/viz/studio.css`
 (served by `overboard/gui_server.py`). The studio is the only browser UI (the WebSocket live view was
 removed).
@@ -24,7 +24,7 @@ removed).
 
 **Three columns, two of them tabbed.** The left column is what you set, the canvas is the work, the right column is what you read. Each side column is a strip of tabs over one panel, so a column holds one topic at a time.
 
-The page carries **148 element ids**: **74 controls with an id** (36 buttons, 32 inputs, 6 selects), of which 8 are the tab buttons themselves. Eleven regions are filled in at run time:
+The page carries **155 element ids**: **80 controls with an id** (36 buttons, 37 inputs, 7 selects), of which 8 are the tab buttons themselves. Twelve regions are filled in at run time:
 
 | Generated region | Element id | Where |
 |---|---|---|
@@ -35,6 +35,7 @@ The page carries **148 element ids**: **74 controls with an id** (36 buttons, 32
 | The field's legend | `legend-items` | The canvas, top left |
 | The candidate chips | `validation-candidates` | Result tab, the validation detail |
 | The per-segment table | `validation-table` | Result tab, the validation detail |
+| The pick button | `pick-row` | Result tab, the validation detail |
 | The fix buttons | `fix-row` | Result tab, the validation detail |
 | The download buttons | `downloads` | Result tab |
 | The history rows | `history-list` | Mission tab, the History list |
@@ -156,22 +157,28 @@ The page carries **148 element ids**: **74 controls with an id** (36 buttons, 32
 | **Width** / **Height** (mm) | The mat's size, so the picture and the footprints share one frame. |
 | **Show the mat** (check) | Draws the mat under the field. |
 | **Earlier runs** (check) | Draws the earlier solves as faint paths. |
+| **Actuator saturation** (check) | Colours the trajectory by how much of the actuator diamond it asks for: blue below 0.85, amber from 0.85 to 1.0, red above 1.0. |
+| **Late-apex cues** (check) | Draws the late-apex diamond on a turning segment and the momentum bisector at a free-heading waypoint. |
 | *mat name* / *credit* / *run history* | Readouts. |
 
 ### Solve tab
 
 | Control | What it does |
 |---|---|
-| **fast / balanced / safe** (radio cards) | A preset fills in the options the user did not set. fast: one candidate, no validation. balanced: the defaults. safe: three candidates, validation, controller export. |
+| **fast / balanced / safe** (radio cards) | A preset fills in the options the user did not set. fast: one candidate, no validation, plant propagation - seconds. balanced: the defaults (a candidate count only compares when validation is on) - seconds. safe: the comparison - three candidates, validation, the closed-loop tick map, the gradient polish; the three frontier paths are drawn together and the operator may export the one they pick. safe costs minutes: the reachability check, not the solve, is the time. |
 | **Options** (details) | The rest of the solve options, below. |
-| **Samples per segment** | 2 to 200. |
-| **Accuracy weight** | The smoothness weight. |
-| **Candidates** | 1 to 5; disabled unless validation is on. |
+| **Samples per segment** | 2 to 200. Disabled while the automatic mesh is on, because the number is then not used. |
+| **Auto invariant mesh (80 ms)** | Ticked by default: `-n` is left off the command, so the 3-Pillar engine sizes the invariant 80 ms mesh from the path. Unticking it sends the number in **Samples per segment**. |
+| **Accuracy weight** | The smoothness weight (`--accuracy-weight`). |
+| **Candidates (1-3)** | How many of the planner's three frontier candidates are solved (sprint, sweeper, exploratory); clamped to 1-3 by the server. Disabled unless validation is on. |
+| **Reachability propagation** | The model the envelope gate uses (`--propagation`): the open-loop plant (fast) or the closed-loop tick map (feedback-contracted, 2-10x slower). |
+| **Soft force weight** | A weight above zero prices wheel-force utilisation (`--force-weight`); zero is the default and sends nothing. |
 | **Export format** | None / controller JSON / Python / Python compact. |
 | **Controller timestep** | The export's sample interval. |
 | **Validate before export** | The gate; needs JAX. |
+| **Keep the best path when validation fails** | Ticked by default: adds `--best-effort` next to `--validate`, so a run whose only failure is an accuracy excess (envelope or tracking) exports the best candidate and draws it on the field, marked failed. A force, slip, integration or convergence failure still blocks, and the push stays gated on the verdict. |
 | **Fast polish** | The budgeted solve. |
-| **Self-consistent** | Samples on the path's own profile. Ticked by default, like the command line's; unticking it is `--no-self-consistent`. |
+| **Gradient sensitivity polish** | The post-solve gradient polish (`--polish`); needs JAX. |
 
 ## Field canvas
 
@@ -179,12 +186,12 @@ The page carries **148 element ids**: **74 controls with an id** (36 buttons, 32
 |---|---|
 | **Legend** (details) | The key to the field's colours, built from the list the drawing uses. Live: an entry for something that is not on the field is hidden. |
 | **Frame all** | Fits the view to the mission. |
-| **Envelope** (check) | The reachability envelope. |
+| **Envelope** (check) | The reachable set around the plan, drawn *over* the trajectory (it is only a few millimetres wide on the tick map, so under it it vanished). There is none on a run that was not validated; the key hides it then. |
 | **Path** (check) | The straight-line path between the waypoints. |
 | **Play** + slider + time | The playback of the solved trajectory. |
 | *hint* | "Click the field to add a waypoint. Drag a waypoint to move it." |
 
-Canvas contents: the mat, the grid, the mission models, the earlier runs, the path, the trajectory, the envelope, the failing segments (red), the worst-drift segment (amber), the solver's first guess (dashed), the waypoints with their stop and event badges, the selected waypoint, the measured pose from the hub, and the collisions.
+Canvas contents: the mat, the grid, the mission models, the earlier runs, the path, the trajectory (coloured by actuator saturation when that is on), the other candidates' paths from a comparison (one hue per seed, the clicked one stronger), the envelope (whose key names the propagation that produced it), the failing segments (red), the worst-drift segment (amber), the solver's first guess (dashed), the late-apex diamonds and the momentum bisectors, the waypoints with their stop and event badges, the selected waypoint, the measured pose from the hub, and the collisions.
 
 ## Right column - the tabs
 
@@ -192,12 +199,12 @@ Canvas contents: the mat, the grid, the mission models, the earlier runs, the pa
 
 | Element | What it does |
 |---|---|
-| *status* | "Validated - the trajectory passed the validator" / "Not validated - this trajectory has not been checked against your robot" / the failure. |
+| *status* | "Validated - the trajectory passed the validator" / "Not validated - this trajectory has not been checked against your robot" / "Failed validation - the best path is shown for inspection ... it is not approved for the hub" (a best-effort export) / the failure. |
 | **Check it, then solve again** | The lever the status names: turns validation on, brings the Solve tab forward and solves again. Shown only after a solve that was not validated. |
 | *facts* | Duration, path, peak wheel speed, samples, max envelope, solve (wall), the time against the top-speed ideal, the field. |
 | *solve diff* | "vs. the previous solve: 0.27 s slower, the path 48 mm longer." |
 | *collisions* | Where the plan met a mission model. |
-| **Validation detail** (details) | The explainer, the candidate chips (the leaderboard, each chip naming its seed), the per-segment table, the note, and the **Try** buttons (the other timing model, a weight of 0.001, the sweep). |
+| **Validation detail** (details) | The explainer, the candidate chips, the pick button, the per-segment table, the note, and the **Try** buttons. A chip names its seed by its physical role - Sprint, Sweeper, Exploratory - and a rescue seed is a dashed amber chip (🛟 Rescue). Every solved candidate's path is on the field (`--candidates-out`), the clicked chip's path drawn stronger, so the comparison is visible and not only tabulated. The pick button (`Solve again and export: ...`) appears when the clicked candidate passed but is not the exported one: it re-solves with that candidate pinned (`--pick-candidate`), and the CLI refuses it if it no longer passes. The table carries, per segment, the envelope, the limit, the drift, and the three discretization mechanisms in mm (sagitta, heading mismatch, 20 ms hold lag). The **Try** buttons are the levers the numbers point at: the closed-loop tick map for an envelope failure, the gradient polish for a tracking error just over the gate, a soft force weight of 0.005 for a force or slip failure, and a weight of 0.001 for a rough profile. Each pulls its lever and solves again. |
 | **Mission report** | The report of the last solve, as a file. |
 | *downloads* | The trajectory, the controller, the Python module, the stats, the session, and the report. |
 | **Mission report** | Writes the one-page report next to the trajectory and opens it: the mission, the robot and the result on one printable page. |

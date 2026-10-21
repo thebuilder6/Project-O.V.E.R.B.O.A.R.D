@@ -124,6 +124,45 @@ class TestAFailedSolveLeavesNoPath(unittest.TestCase):
         self.assertIn("clearTrajectory()", body)
 
 
+class TestABestEffortPathIsNotApproved(unittest.TestCase):
+    """A failed verdict may be shown, but not as an approved trajectory.
+
+    `--best-effort` keeps the best path on the field when the only failure is
+    an accuracy excess. The verdict is still a failure: the status says so,
+    names the excess, and the push button stays off.
+    """
+
+    def setUp(self):
+        self.source = _read(VIZ / "studio.js")
+
+    def _function(self, name):
+        start = self.source.index(f"function {name}(")
+        end = self.source.find("\nfunction ", start + 1)
+        return self.source[start:end if end > 0 else len(self.source)]
+
+    def test_the_status_calls_it_failed_and_names_the_excess(self):
+        poll = self._function("pollJob")
+        self.assertIn("Failed validation", poll)
+        self.assertIn("bestEffortDetail(selected)", poll)
+        detail = self._function("bestEffortDetail")
+        self.assertIn("max_excess_cm", detail)
+        self.assertIn("reasons", detail)
+
+    def test_the_verdict_is_still_the_validators(self):
+        poll = self._function("pollJob")
+        self.assertIn("state.solveValidated = Boolean(selected.ok)", poll)
+
+    def test_the_push_says_why_it_stays_off(self):
+        push = self._function("updatePushButton")
+        self.assertIn("state.validationReport", push)
+        self.assertIn("failed validation", push)
+        self.assertIn("approved for the robot", push)
+
+    def test_the_check_it_again_lever_is_not_offered_for_a_failed_verdict(self):
+        poll = self._function("pollJob")
+        self.assertIn("validated || failedValidation", poll)
+
+
 class TestANewSolveClearsTheLastVerdict(unittest.TestCase):
     """A new run must not be read through the last run's verdict.
 
@@ -343,7 +382,7 @@ class TestTheResultExplainsItself(unittest.TestCase):
 
     def test_the_selection_rule_is_stated(self):
         body = self._function("describeCandidates")
-        self.assertIn("tightest envelope", body)
+        self.assertIn("shortest time", body)
         self.assertIn("breaks a tie", body)
 
     def test_a_candidate_that_passed_and_lost_says_why(self):

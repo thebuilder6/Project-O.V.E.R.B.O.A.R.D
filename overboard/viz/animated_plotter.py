@@ -1,5 +1,4 @@
 import matplotlib.pyplot as plt
-import matplotlib.patches as mpatches
 import matplotlib.animation as animation
 import numpy as np
 from matplotlib.gridspec import GridSpec

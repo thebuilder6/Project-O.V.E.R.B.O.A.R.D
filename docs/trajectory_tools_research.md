@@ -2,8 +2,8 @@
 
 *Context: FLL differential-drive path optimizer. The current implementation uses CasADi and IPOPT
 with direct collocation. The position rule integrates with four-node Gauss-Legendre along the
-integrated heading by default (`--self-consistent`; `--no-self-consistent` restores the
-trapezoidal rule - KI-026, KI-051, KI-052). It no longer uses SLSQP or scipy.minimize.*
+integrated heading unconditionally, since the historical `--self-consistent`/`--no-self-consistent`
+switch (and the trapezoidal rule it restored) was removed - KI-026, KI-051, KI-052. It no longer uses SLSQP or scipy.minimize.*
 
 > **Current status (2026-10):** time-optimal solving, the jerk/accuracy weight, CPU validation, Immrax
 > reachability, stops/events, and controller export are implemented. The default solve path is the

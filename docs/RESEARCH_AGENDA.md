@@ -123,11 +123,11 @@ Each question has the current evidence, a hypothesis, and an experiment with a m
 |---|---|
 | **Question** | `--accuracy-weight` is documented as the plan-time proxy for tracking accuracy. Is it? |
 | **Current evidence** | The weight penalises wheel jerk. The tracking gate is 5 mm. Nobody has measured the relationship between the two. |
-| **Hypothesis** | Tracking error correlates with wheel jerk, but not linearly, and the correlation depends on the path. If so, the knob is real but path-dependent, and the sweep grid (19.1) is the right way to use it. |
-| **Experiment** | For one mission, sweep `accuracy_weight` over a wide range (0, 0.001, 0.002, 0.005, 0.01, 0.02, 0.05, 0.1) in *both* timing modes, and record the tracking error, the envelope, the duration and the peak wheel jerk for each. Plot them. |
+| **Hypothesis** | Tracking error correlates with wheel jerk, but not linearly, and the correlation depends on the path. If so, the knob is real but path-dependent, and the retired sweep grid (19.1) was the way it was measured. |
+| **Experiment** | For one mission, sweep `accuracy_weight` over a wide range (0, 0.001, 0.002, 0.005, 0.01, 0.02, 0.05, 0.1) under the per-segment model, and record the tracking error, the envelope, the duration and the peak wheel jerk for each. Plot them. |
 | **Metric** | Tracking error vs. weight; duration vs. weight; the knee of each curve. |
 | **Success criterion** | A measured, quotable relationship that can replace the "usually reduces jerk at the cost of a longer trajectory" hand-wave in `docs/EXAMPLES.md:615`. |
-| **Cost** | Low. The sweep machinery exists (`--sweep` uses the same weights). |
+| **Cost** | Low. The retired sweep machinery used the same weights; a one-off weight ladder is enough now. |
 | **Note** | Do this before Q4. If the jerk weight is not a good accuracy proxy, then an envelope term in the objective is not optional — it is mandatory. |
 
 ### Q7 — Does sample density beat timing flexibility?
@@ -135,9 +135,9 @@ Each question has the current evidence, a hypothesis, and an experiment with a m
 | | |
 |---|---|
 | **Question** | Per-segment timing and higher sample density are two ways to give the solver more freedom. Which one pays? |
-| **Current evidence** | `--samples` (2–200) is untested against `--per-segment-dt`. The current candidate set varies the timing model but fixes the density. |
+| **Current evidence** | `--samples` (2–200) is untested against the per-segment model. The per-segment model is now the only one, so density is the remaining freedom. |
 | **Hypothesis** | At a fixed solve time, per-segment timing at low density beats uniform timing at high density, because it changes the *shape* of the solution rather than the resolution of it. |
-| **Experiment** | Fix a mission. Compare (uniform, n=10), (per-segment, n=10), (uniform, n=20), (per-segment, n=20), (uniform, n=40) at equal wall-clock budget. |
+| **Experiment** | Fix a mission. Compare per-segment at n=10, n=20 and n=40 at equal wall-clock budget (the uniform comparison is historical; the equal-duration model was removed). |
 | **Metric** | Duration, envelope, tracking, wall time, iterations. |
 | **Success criterion** | A clear ordering at equal wall time. |
 | **Cost** | Low. |
@@ -222,8 +222,8 @@ Each question has the current evidence, a hypothesis, and an experiment with a m
   ---  DONE: RQ-A  the tracking gate's cause is identified. See
                 docs/research/RQ-A_tracking_error.md. It reorders Q4 and Q9.
   ---  DONE: RQ-A's OQ1 and OQ2  the floor at fine sampling is the 20 ms
-                command hold, and the optimizer now has a self-consistent
-                collocation (KI-026, --self-consistent).
+                command hold, and the optimizer now uses the self-consistent
+                collocation unconditionally (KI-026).
   ---  DONE: Q3  the selection is instrumented and the insurance rate is
                 measured. See the matrix folder and its analyse_matrix.py.
   ---  DONE: Q10 the selection rules are compared offline on the same

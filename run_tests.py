@@ -93,6 +93,7 @@ from tests.test_polish import (
     TestReachabilityEngine,
     TestGradientPolish,
     TestCandidatePolish,
+    TestPlanGates,
 )
 from tests.test_envelope_soundness import (
     TestNoPhantomTurnRate,
@@ -145,6 +146,7 @@ from tests.test_cli_ux import (
     TestValidationReport,
     TestVariableSampleLayout,
     TestIterationHistory,
+    TestCandidateComparison,
 )
 from tests.test_gui_server import (
     TestStudioRoutes,
@@ -173,6 +175,7 @@ from tests.test_studio_honesty import (
     TestTheHiddenAttributeWins,
     TestThePushNeedsAValidatedTrajectory,
     TestAFailedSolveLeavesNoPath,
+    TestABestEffortPathIsNotApproved,
     TestASolveThatNeverStartsClearsTheVerdict,
     TestTheMessageTheOperatorReads,
     TestTheResultExplainsItself,
@@ -314,6 +317,7 @@ def test_classes():
         TestReachabilityEngine,
         TestGradientPolish,
         TestCandidatePolish,
+        TestPlanGates,
         TestNoPhantomTurnRate,
         TestTheBoxContainsTheReachableSet,
         TestTheTickPropagation,
@@ -321,6 +325,7 @@ def test_classes():
         TestValidationReport,
         TestVariableSampleLayout,
         TestIterationHistory,
+        TestCandidateComparison,
         TestFastPolish,
         TestSolverIterationBudget,
         TestMergeConditions,
@@ -346,6 +351,7 @@ def test_classes():
         TestThePushNeedsAMissionThatMatches,
         TestThePushNeedsAValidatedTrajectory,
         TestAFailedSolveLeavesNoPath,
+        TestABestEffortPathIsNotApproved,
         TestASolveThatNeverStartsClearsTheVerdict,
         TestTheMessageTheOperatorReads,
         TestTheResultExplainsItself,

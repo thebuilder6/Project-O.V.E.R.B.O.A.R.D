@@ -197,8 +197,15 @@ def _score(samples_data: List[Dict[str, Any]], stats: Dict[str, Any],
            thresholds: Dict[int, float], samples_per_segment: int,
            waypoints: Sequence[Tuple[float, float, Optional[float]]],
            profiles: bool = False, spread: float = 1.0,
-           propagation: str = "plant") -> Dict[str, Any]:
-    """Run the full gate chain on one candidate and return the measurements."""
+           propagation: str = "plant",
+           validator_cache: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """Run the full gate chain on one candidate and return the measurements.
+
+    ``validator_cache`` reuses one validator for candidates of the same robot
+    config. A fresh validator pays a ~36 s JAX compile, while a reused one
+    validates a candidate in under a second; the cache is bookkeeping only
+    and is keyed by the whole config, so a different robot misses it.
+    """
     record: Dict[str, Any] = {
         "converged": bool(stats.get("converged", False)),
         "duration_s": float(samples_data[-1]["t"]) if samples_data else float("inf"),
@@ -226,8 +233,17 @@ def _score(samples_data: List[Dict[str, Any]], stats: Dict[str, Any],
         return record
 
     try:
-        jax_cfg = robot_config_cls(robot_cfg)
-        immrax_val = validator_cls(jax_cfg, propagation=propagation)
+        if validator_cache is not None:
+            cache_key = json.dumps(robot_cfg.to_dict(), sort_keys=True)
+            immrax_val = validator_cache.get(cache_key)
+            if immrax_val is None:
+                immrax_val = validator_cls(robot_config_cls(robot_cfg),
+                                           propagation=propagation)
+                validator_cache.clear()
+                validator_cache[cache_key] = immrax_val
+        else:
+            jax_cfg = robot_config_cls(robot_cfg)
+            immrax_val = validator_cls(jax_cfg, propagation=propagation)
         uncertainties = robot_cfg.uncertainties
         report = immrax_val.validate_trajectory(
             samples_data,
@@ -382,8 +398,7 @@ def _initial_guess(spec: Dict[str, Any], mission: Dict[str, Any], robot_cfg):
     raise ValueError(f"Unknown guess kind {guess_kind!r}")
 
 
-def _payloads(mission: Dict[str, Any], specs: List[Dict[str, Any]], robot_cfg,
-              self_consistent: bool = True) -> List[Any]:
+def _payloads(mission: Dict[str, Any], specs: List[Dict[str, Any]], robot_cfg) -> List[Any]:
     """The solve payloads for one mission on one robot.
 
     A payload is ``(robot_cfg, waypoints, solve_kwargs)``: the shape
@@ -403,7 +418,6 @@ def _payloads(mission: Dict[str, Any], specs: List[Dict[str, Any]], robot_cfg,
             "capture_iterations": False,
             "guess_style": spec["style"],
             "per_segment_dt": spec["timing"] == "per-segment",
-            "self_consistent": bool(self_consistent),
         }
         guess = _initial_guess(spec, mission, robot_cfg)
         if guess is not None:
@@ -414,7 +428,7 @@ def _payloads(mission: Dict[str, Any], specs: List[Dict[str, Any]], robot_cfg,
 
 def _score_jobs(jobs: List[Any], solved: List[Any], validator_cls,
                 robot_config_cls, spreads: Sequence[float] = (1.0,),
-                profiles: bool = False, self_consistent: bool = True,
+                profiles: bool = False,
                 propagation: str = "plant"
                 ) -> List[Dict[str, Any]]:
     """Score a solved batch. One job per solved payload, in order.
@@ -425,6 +439,7 @@ def _score_jobs(jobs: List[Any], solved: List[Any], validator_cls,
     """
     records = []
     state = tree_state()
+    validator_cache: Dict[str, Any] = {}
     for job, result in zip(jobs, solved):
         mission, spec, robot_cfg, robot_label, factors = job
         samples_data, stats = result
@@ -433,7 +448,8 @@ def _score_jobs(jobs: List[Any], solved: List[Any], validator_cls,
                             robot_config_cls, mission["thresholds"],
                             spec["samples"], mission["waypoints"],
                             profiles=profiles, spread=spread,
-                            propagation=propagation)
+                            propagation=propagation,
+                            validator_cache=validator_cache)
             record.update({
                 "mission": mission["meta"].get("id") or mission["meta"]["file"],
                 "mission_file": mission["meta"]["file"],
@@ -443,7 +459,6 @@ def _score_jobs(jobs: List[Any], solved: List[Any], validator_cls,
                 "label": spec["label"],
                 "style": spec["style"],
                 "guess": spec["guess"],
-                "self_consistent": bool(self_consistent),
                 "timing": spec["timing"],
                 "weight": spec["weight"],
                 "samples": spec["samples"],
@@ -460,16 +475,14 @@ def run_mission(mission: Dict[str, Any], specs: List[Dict[str, Any]], robot_cfg,
                 validator_cls, robot_config_cls,
                 workers: int = 8, profiles: bool = False,
                 spreads: Sequence[float] = (1.0,),
-                self_consistent: bool = True,
                 propagation: str = "plant") -> List[Dict[str, Any]]:
     """Solve every spec for one mission and score each result."""
-    payloads = _payloads(mission, specs, robot_cfg, self_consistent)
+    payloads = _payloads(mission, specs, robot_cfg)
     solved, _histories = cli._solve_candidates(payloads, workers, quiet=True,
                                                 parallel=workers > 1)
     jobs = [(mission, spec, robot_cfg, None, None) for spec in specs]
     return _score_jobs(jobs, solved, validator_cls, robot_config_cls,
                        spreads=spreads, profiles=profiles,
-                       self_consistent=self_consistent,
                        propagation=propagation)
 
 
@@ -500,12 +513,6 @@ def main() -> None:
     parser.add_argument("--spreads", type=float, nargs="*", default=None,
                         help="Validate every candidate at these spread "
                              "factors. Overrides --spread.")
-    parser.add_argument("--self-consistent", dest="self_consistent", action="store_true", default=True,
-                        help="Plan self-consistent trajectories (KI-026): the "
-                             "samples lie on the path the plan's own profile "
-                             "traces (default: True).")
-    parser.add_argument("--no-self-consistent", dest="self_consistent", action="store_false",
-                        help="Disable self-consistent trajectories (use trapezoidal collocation).")
     parser.add_argument("--robot-jitter", type=float, default=0.0,
                         help="Move the robot's constants away from the "
                              "declared values: 0 = the declared robot, 1 = the "
@@ -565,7 +572,6 @@ def main() -> None:
                 "base_weight": args.weight,
                 "config": args.config,
                 "spread": list(spreads),
-                "self_consistent": bool(args.self_consistent),
                 "robot_jitter": args.robot_jitter,
                 "robot_seed": args.robot_seed,
                 "robots": max(1, args.robots),
@@ -597,13 +603,11 @@ def main() -> None:
             batch = jobs[start_index:start_index + chunk]
             payloads = []
             for mission, spec, robot_cfg, label, factors in batch:
-                payloads.extend(_payloads(mission, [spec], robot_cfg,
-                                         args.self_consistent))
+                payloads.extend(_payloads(mission, [spec], robot_cfg))
             solved, _histories = cli._solve_candidates(
                 payloads, args.workers, quiet=True, parallel=args.workers > 1)
             records = _score_jobs(batch, solved, validator_cls, robot_config_cls,
                                   spreads=spreads, profiles=args.profiles,
-                                  self_consistent=args.self_consistent,
                                   propagation=args.propagation)
             for record in records:
                 handle.write(json.dumps(record) + "\n")

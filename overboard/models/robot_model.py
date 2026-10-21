@@ -1,5 +1,4 @@
 import math
-import os
 import re
 from pathlib import Path
 from typing import Dict, Tuple, Any, Optional, Union
@@ -14,8 +13,6 @@ from overboard.models.drivetrain_physics import (
     wheel_normal_forces,
     motor_force_at_velocity,
     motor_linear_limits,
-    traction_limits,
-    total_traction_limit,
     check_drivetrain_constraints,
     kinematic_cornering_ceiling,
     wrap_angle,

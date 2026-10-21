@@ -15,6 +15,8 @@
 > the authority on where the code is.
 >
 > **Read this first.** Every number in this document is a **model prediction**, not a hardware measurement. No hardware logs exist in the repository. The robot-side collector (`pybricks_code/sysid_digital_twin.py`) can produce them, but nothing has been captured yet. The uncertainty ranges in `examples/fll_choreo.json` are *declared test assumptions*, not calibrated hardware values. A "PASS" in this document means "the trajectory passes the gates of an uncalibrated model", not "the robot will track it".
+>
+> **Range change, 2026-10-21.** `examples/fll_choreo.json` no longer carries the clamped ranges that most measurements below were taken with (track width ±0.1 mm, backlash 0.1 mm, COF 1.37). It now declares track width ±1.5 mm, wheel radius ±1 mm, backlash 0.2-0.8 mm, inertia 0.0020-0.0028 kg·m² and COF 0.95 ±10 % (KI-020). The 2026-10-19 matrix in Section 9 and the findings above are the **record of the old ranges with `plant` propagation**; they are not the current ledger. On the four roadmap missions the current ranges pass only with `--propagation tick` - see the new table in [README §Validation](../README.md#validation) - and the `safe` preset selects it.
 
 ---
 
@@ -23,7 +25,7 @@
 1. **The heuristic layer is small.** Three analytical frontier candidates (the default), or five deterministic seeds and two timing models (the stock set), a candidate set, and a selection rule. There is **no geometric path family** anywhere in the tree — no splines, clothoids, béziers or quintics — and the objective has no term that prefers one path over another. It has three terms that price the *motion* (the duration, the wheel jerk and, optionally, the wheel force), and the passing candidates are ranked by a 5-part fitness score in seconds ([7.2](#72-the-5-part-path-fitness-score)) - or, on the default path, by the shortest duration ([7.3](#73-the-selection-rule)).
 2. **The seeds do not rescue the baseline often, but they do win on speed.** Over the 60-candidate matrix the `baseline` seed is the fastest passing candidate in 1 of the 7 cells that produce a trajectory at all; a non-baseline seed wins the other 6. The baseline fails in 9 of the 12 cells, and **four** of them are rescued by another seed: first4 under both timing models, the complex mission under equal-duration, and the events mission under per-segment. In the other 5 — the S-curve and the stops mission, under both models — no seed passes either.
 3. **The tracking gate is the binding constraint; the reachability envelope never binds.** Of 34 failing candidates, 28 failed on the 5 mm tracking gate and 11 on motor force. **Zero** failed on the forward-integration check — it went with the self-consistent collocation — and **zero** on the 2 cm envelope threshold. The largest envelope measured anywhere was 1.72 cm.
-4. **Two of the six example missions still produce no output at all.** The S-curve and the stops mission fail **every candidate** in the full sweep — 0 of 9 each, across both timing models and the whole accuracy-weight grid. Their best tracking errors are 1.27 cm and 0.75 cm against a 0.50 cm gate. The self-consistent collocation removed the plan's own deviation from the picture, and what is left of the error is the reference's velocity half ([RQ-A finding F8](research/RQ-A_tracking_error.md)).
+4. **Two of the six example missions still produce no output at all.** The S-curve and the stops mission fail **every candidate** in the full sweep — 0 of 9 each, across both timing models and the whole accuracy-weight grid. Their best tracking errors are 1.27 cm and 0.75 cm against a 0.50 cm gate. The self-consistent collocation removed the plan's own deviation from the picture, and what is left of the error is the reference's velocity half ([RQ-A finding F8](research/RQ-A_tracking_error.md)). *(Record of the 2026-10-19 ranges with `plant`; with the widened ranges and `tick` both missions pass — see the range-change note above.)*
 5. **The timing model is a bigger lever than any seed, but not on every path.** Per-segment timing is 1.9x faster on the complex mission (4.812 s against 9.249 s) and it is what makes the events mission solvable at all; on the two paths whose segments are short and even (first4, the stops mission) the equal-duration model is the faster one. The seeds changed the outcome on 3 missions; the timing model on 1. The per-segment model also had to be made legitimate at the waypoints the robot drives through (KI-024, [5.5](#55-where-the-time-allocation-may-change-ki-024)); the matrix in [Section 9](#9-measured-heuristic-comparison) was re-measured after that change.
 6. **The accuracy weight is the cheapest lever of all.** On the first-four-waypoints mission, the *same* `baseline` seed fails at weight 0 (it misses the motor-force limit by 0.006 N) and passes at weight 0.001 (0.26 cm tracking). The sweep grid is the only candidate-set change that has ever produced a new best trajectory, and it works because it adds a genuinely different parameter.
 7. **The Multi-Verse pipeline was dead weight; it is repaired, and it is archived.** Its JAX-refined guess used to converge to 8.1473 s against the trivial baseline's 6.0677 s. Four defects were behind that - the refinement moved the waypoints, the JAX cost graded a different motion than IPOPT produces, the intervals were hard-coded, and the refined timing was discarded - and with them fixed the probe wins (4.617 s against 6.049 s) and the pipeline is reproducible. But measured over 30 missions as a *seed provider*, the refined seed is **not** better than the stock seeds (it is faster on 2 of the 9 missions where both pass, slower on 6) and it **rescues nothing**; it is a cheaper way to reach the stock set's speed on some missions (KI-004). It has been removed from the tree (git tag `archive/legacy-2026-10`) and has no CLI entry point.
@@ -202,7 +204,7 @@ waypoints
    └─ export gate   : main.py              _export_block_reason
 ```
 
-This is the default path (`--unified` is on). The three frontier candidates are `frontier_sprint` (accuracy weight 0.001), `frontier_sweeper` (0.002) and `frontier_exploratory` (0.001), all per-segment timing; `--candidates N` truncates that list, and without `--validate` only the first one is solved. The derivation of the seeds is in [19.5](STRATEGY_LEDGER.md#195-the-kinetic-frontier-analytical-seed-generator--the-5-physical-principles) and of the engine in [19.6](STRATEGY_LEDGER.md#196-the-3-pillar-unified-trajectory-engine---unified-the-default-path).
+This is the only path. The three frontier candidates are `frontier_sprint` (accuracy weight 0.001), `frontier_sweeper` (0.002) and `frontier_exploratory` (0.001), all per-segment timing; `--candidates N` truncates that list, and without `--validate` only the first one is solved. The derivation of the seeds is in [19.5](STRATEGY_LEDGER.md#195-the-kinetic-frontier-analytical-seed-generator--the-5-physical-principles) and of the engine in [19.6](STRATEGY_LEDGER.md#196-the-3-pillar-unified-trajectory-engine---unified-the-default-path).
 
 ### 1.1b The stock path (retired)
 
@@ -223,7 +225,7 @@ waypoints
    └─ export gate   : main.py              _export_block_reason
 ```
 
-This is the path the measurements in [Section 9](#9-measured-heuristic-comparison) describe. It was selected with `--no-unified` (alias `--simple`); that path is retired, and so are `--uniform-dt`, `--per-segment-dt` and `--sweep` as selectors: the CLI accepts them, warns, and ignores them. The five seeds survive as the rescue round ([1.1c](#11c-the-rescue-round-ki-048)). The Multi-Verse system has been removed (git tag `archive/legacy-2026-10`); no CLI flag selects it.
+This is the path the measurements in [Section 9](#9-measured-heuristic-comparison) describe. It was selected with `--no-unified` (alias `--simple`); that path is retired, and so are `--uniform-dt`, `--per-segment-dt` and `--sweep` as selectors: the CLI now rejects them as unknown options. The five seeds survive as the rescue round ([1.1c](#11c-the-rescue-round-ki-048)). The Multi-Verse system has been removed (git tag `archive/legacy-2026-10`); no CLI flag selects it.
 
 ### 1.1c The rescue round (KI-048)
 
@@ -305,6 +307,8 @@ Then `_select_attempt` (`overboard/main.py`) picks one: the **shortest passing c
 ### 3.4 Export
 
 The export gate (`overboard/main.py`) blocks the write if the solver did not converge, or if `--validate` was requested and the selected candidate did not pass. On a blocked export, **nothing is written**: no `.traj`, no controller JSON, no Python module, no `_stats.json`. A pre-existing file at the output path is left untouched.
+
+`--best-effort` is the one exception, and it is narrow. When nothing passed and the selected candidate's only failure is an accuracy excess (the envelope radius or the tracking error), the trajectory is written and marked, because a path that misses the envelope is still a plan to look at. The `.traj` root and the `_stats.json` carry `validation: {passed: false, best_effort: true, max_excess_m, reasons, segments}`, and the summary prints the excess. The gate does not open for a motor-force, wheel-slip, integration, `unknown`-envelope or non-convergence failure, and the verdict stays a failure: the studio keeps the path on the field labelled *Failed validation* and its push button stays off.
 
 ## 4. The stock seed heuristics
 
@@ -467,7 +471,7 @@ The decomposition is worth writing down because it is the only way to make long 
 
 The timing model says *when* a sample is; the collocation says *where* it is. It is the other half of the discretisation, and it is the half RQ-A found to be wrong: the plan's samples were not on the path the plan's own `(v, omega)` profile traces, so the controller was told to be somewhere the plan never goes.
 
-Two rules are in the tree. The CLI plans the second one by default, and `--no-self-consistent` restores the first (KI-026):
+Two rules used to be reachable. The second one shipped as the default, and the first was its historical alternative (KI-026); the switch between them has been removed, so only the self-consistent rule remains in the tree:
 
 | rule | position rule | what it guarantees |
 |---|---|---|
@@ -476,7 +480,7 @@ Two rules are in the tree. The CLI plans the second one by default, and `--no-se
 
 The self-consistent rule is worth roughly half the tracking error on a curved path: the S-curve goes from 1.47 cm to 0.88 cm, and the events mission's forward-integration error goes away. The heading rule is unchanged either way, so the headings are the tangents of the path the plan traces. The measurement is [RQ-A finding F10](research/RQ-A_tracking_error.md).
 
-**Which one you get is a switch, and the default is the same everywhere (KI-051, KI-052).** The CLI plans the self-consistent rule by default and `--no-self-consistent` restores the trapezoid; the studio's "Self-consistent samples" box is ticked by default and unticking it is `--no-self-consistent`; and `TrajectoryOptimizer.solve` defaults to the self-consistent rule as well, so a library caller gets the same plan the command line does. `research/harness.py` follows the library.
+**The switch has been removed (KI-051, KI-052).** The CLI, the studio and `TrajectoryOptimizer.solve` all use the self-consistent rule unconditionally, so a library caller gets the same plan the command line does; `--no-self-consistent` is rejected as an unknown option, and `research/harness.py` follows the library. The measured numbers above are the record of why the rule won.
 
 ### 5.8 The sample layout: how many samples a segment gets
 
@@ -562,11 +566,11 @@ specs.append({"accuracy_weight": base, "guess_style": style,
 
 With the default `--candidates 2`, the set is exactly `baseline/equal-duration` and `baseline/per-segment`. This is the set the measurements in [Section 9](#9-measured-heuristic-comparison) describe.
 
-`--uniform-dt` and `--per-segment-dt` fix `modes` to a single entry. The seed still rotates, so `--uniform-dt --candidates 5` solves all five seeds under equal-duration timing - the cleanest way to compare the seeds against each other. Both flags turn the unified engine off.
+`--uniform-dt` and `--per-segment-dt` used to fix `modes` to a single entry. The seed still rotates, so `--uniform-dt --candidates 5` solved all five seeds under equal-duration timing - the cleanest way to compare the seeds against each other. Both flags are now removed and rejected.
 
-### 6.3 The sweep grid (deprecated)
+### 6.3 The sweep grid (removed)
 
-`--sweep` adds the timing-mode × accuracy-weight grid:
+The retired `--sweep` added the timing-mode × accuracy-weight grid:
 
 ```python
 SWEEP_WEIGHTS = (0.0, 0.001, 0.002, 0.005, 0.01)    # overboard/main.py
@@ -587,13 +591,13 @@ the 6.07 s one stayed bounded. Do not reintroduce it.
 
 `PRESETS` (`overboard/main.py`) fills in options the user did not set. Explicit flags always win (`_apply_preset`).
 
-| Preset | samples | accuracy weight | candidates | validate | export |
-|---|---|---|---|---|---|
-| `fast` | 8 | 0.0 | 1 | no | none |
-| `balanced` | 10 | 0.0 | 2 | no | none |
-| `safe` | 14 | 0.005 | 3 | **yes** | controller |
+| Preset | samples | accuracy weight | candidates | validate | propagation | export |
+|---|---|---|---|---|---|---|
+| `fast` | 8 | 0.0 | 1 | no | plant | none |
+| `balanced` | 10 | 0.0 | 2 | no | plant | none |
+| `safe` | 14 | 0.005 | 3 | **yes** | **tick** | controller |
 
-`safe` is the only preset that turns on the gate. `fast` and `balanced` both leave `--validate` off, which means they solve only candidate 1.
+`safe` is the only preset that turns on the gate. `fast` and `balanced` both leave `--validate` off, which means they solve only candidate 1. `safe` validates with the closed-loop tick map: with the example config's widened ranges the open-loop `plant` tube exceeds the 2 cm gate on a curved path (KI-049/KI-050). An explicit `--propagation` still wins.
 
 ## 7. Scoring and selection
 
@@ -673,7 +677,7 @@ In words:
 ##OVERBOARD-VALIDATION## {"selected": 1, "candidates": [ ... ]}
 ```
 
-Each candidate carries `style`, `timing`, `duration_s`, `envelope_cm`, `tracking_cm`, `ok`, `converged`, `reasons`, and a per-segment breakdown, plus the fitness score and its parts: `fitness_s`, `stop_spread_cm`, `slip_risk`, `rms_force_n` and `rms_force_util`. The browser studio parses this line to show which part of the path failed (`viz/studio.js`). Two invariants: the JSON must stay valid (no `Infinity` — `_finite` maps inf/nan to `null`), and nothing is written to disk on a failed validation, so the report has to go to stdout.
+Each candidate carries `style`, `timing`, `duration_s`, `envelope_cm`, `tracking_cm`, `ok`, `converged`, `reasons`, and a per-segment breakdown, plus the fitness score and its parts: `fitness_s`, `stop_spread_cm`, `slip_risk`, `rms_force_n` and `rms_force_util`. The browser studio parses this line to show which part of the path failed (`viz/studio.js`). Two invariants: the JSON must stay valid (no `Infinity` - `_finite` maps inf/nan to `null`), and nothing is written to disk on a failed validation, so the report has to go to stdout. (`--best-effort` is the exception: it writes the accuracy-only failure and marks it; the payload then carries `best_effort: true`.)
 
 ## 8. The archived Multi-Verse path
 
@@ -796,7 +800,7 @@ The rule is `min(tube, then duration)` among the passing candidates (`overboard/
 
 ### 9.5 Table D — the timing-mode × accuracy-weight grid
 
-Run with `--per-segment-dt --sweep`, so the grid adds the `baseline` seed at five weights on top of the five per-segment seeds.
+Run at the time with `--per-segment-dt --sweep` (both removed now), so the grid added the `baseline` seed at five weights on top of the five per-segment seeds.
 
 **`example_mission_first4`** (wall 29.2 s, exit 0)
 
@@ -911,7 +915,8 @@ A candidate must clear every gate below. The order matters: cheap and categorica
       |
  G5  export gate                   overboard/main.py  _export_block_reason
       |  - not converged  -> block
-      |  - --validate and not passed -> block
+      |  - --validate and not passed -> block, unless --best-effort and the
+      |    failure is accuracy only: then write it, marked failed
       |  - blocked -> nothing is written, exit code 1
 ```
 
@@ -981,21 +986,23 @@ Per sample, the envelope radius is compared to the local threshold. The threshol
 
 **The limit belongs to the way *into* the waypoint.** A waypoint's limit governs the segment that ends at it - the approach - and the segment that starts there falls back to it when the next waypoint declares none. So a waypoint marked as a precision one is held to its tight limit on the way the robot arrives, which is what the operator asked for, and the final waypoint's limit governs the last segment instead of being dropped (KI-034).
 
+**The 2 cm is absolute; the quantity it measures is cumulative.** The tube grows with elapsed time, and therefore with path length, so the limit is a limit on duration as much as on accuracy: on the S-curve the first half reaches 0.99 cm after about 1.9 s and the second half 4.81 cm after about 3.7 s, with the same geometry in both halves; across the 204-candidate matrix the envelope correlates with duration at r = +0.97 ([`RESEARCH_AGENDA.md`](RESEARCH_AGENDA.md), the selection-rule question). A long path therefore fails a limit a short one passes. The threshold is still **not** scaled here: the declared ranges are assumptions, not measurements (KI-020), and widening a threshold so a path fits is tuning the model to the path. The honest levers are measured ranges, `--propagation tick`, and a per-waypoint `error_threshold` where the operator knows the path is long. What changed on 2026-10-21 is what a failure costs the operator: `--best-effort` writes the path and marks it (3.4 and 10.6), instead of showing nothing.
+
 A sample whose envelope is marked `unknown` also fails — that is how a diverged tube is caught (see below).
 
 ### 10.6 G5 — The export gate
 
 ```python
 # overboard/main.py, _export_block_reason
-def _export_block_reason(stats, validate, attempt_passed):
+def _export_block_reason(stats, validate, attempt_passed, best_effort=False):
     if not stats.get("converged", False):
         return "solver did not converge"
-    if validate and not attempt_passed:
+    if validate and not attempt_passed and not best_effort:
         return "validation failed"
     return None
 ```
 
-A blocked export raises a `ClickException`, exits 1, and writes nothing.
+A blocked export raises a `ClickException`, exits 1, and writes nothing. `best_effort` is only ever passed after `_choose_attempt` has confirmed that the chosen candidate failed on accuracy alone; see 3.4.
 
 ### 10.7 The full threshold table
 
@@ -1027,18 +1034,18 @@ Every number in the gate chain, in one place.
 
 | Interval | Default | Declared in `examples/fll_choreo.json` | Meaning |
 |---|---|---|---|
-| `cof` | `cof * [0.8, 1.2]` | `[1.24, 1.51]` | coefficient of friction |
+| `cof` | `cof * [0.8, 1.2]` | `[0.85, 1.05]` | coefficient of friction |
 | `torque_headroom` | `[0.8, 1.0]` | `[0.75, 0.9]` | usable fraction of the stall torque |
-| `gear_backlash_m` | `[0.0001, 0.0006]` | `[0.0004, 0.0005]` | drivetrain backlash, as a distance; it widens the reachable set by `backlash/2 * t` and does not slow the robot down (KI-025) |
-| `track_width_range` | `tw * [0.99, 1.01]` | `[0.0964, 0.0966]` | axle track |
-| `wheel_radius_range` | `r * [0.99, 1.01]` | `[0.0275, 0.0285]` | wheel radius |
-| `inertia_kg_m2` | `I * [0.90, 1.10]` | `[0.0008, 0.0011]` | yaw inertia |
+| `gear_backlash_m` | `[0.0001, 0.0006]` | `[0.0002, 0.0008]` | drivetrain backlash, as a distance; it widens the reachable set by `backlash/2 * t` and does not slow the robot down (KI-025) |
+| `track_width_range` | `tw * [0.99, 1.01]` | `[0.095, 0.098]` | axle track |
+| `wheel_radius_range` | `r * [0.99, 1.01]` | `[0.027, 0.029]` | wheel radius |
+| `inertia_kg_m2` | `I * [0.90, 1.10]` | `[0.0020, 0.0028]` | yaw inertia |
 | `t_max_range` | `t_max * [0.75, 0.95]` | *(not declared)* | motor torque limit |
 
 Three things to keep in mind:
 
 1. **Both bounds matter.** Immrax takes an `Interval(w_lower, w_upper)`; passing a plain array makes Immrax treat the values as constants, and only the lower bound would then have any effect (KI-003). `tests/test_regressions.py` (`TestReachabilityEnvelope`) guards this.
-2. **The declared ranges are test assumptions.** They were narrowed to make the example missions behave, not measured from the robot. A narrow `cof` interval makes the envelope small; it does not make the robot accurate.
+2. **The declared ranges are still assumptions.** They are now physical-looking rather than clamped to make the examples pass (track width ±1.5 mm, wheel radius ±1 mm, backlash 0.2-0.8 mm, COF ±10 %), but no hardware log has been captured yet, so they are not measured from the robot. A narrow `cof` interval makes the envelope small; it does not make the robot accurate. A wide one makes the open-loop `plant` tube exceed the 2 cm gate on a curved path, which is what `--propagation tick` is for.
 3. **The optimizer and the validator share one force model.** `wheel_normal_forces` (`overboard/models/robot_model.py`) is the single implementation of the weight transfer — lateral only, no front/rear split (a two-wheel robot has none) — and it is called from the optimizer, the CPU audit, the JAX model and the Immrax check (KI-010). The optimizer additionally uses the declared worst case for the coefficient of friction, the torque headroom, the wheel radius, the track width and the inertia (`overboard/models/robot_model.py` `get_robust_force_params`).
 
 ## 12. Controller and plant parity
@@ -1176,7 +1183,9 @@ Missions: `example_straight`, `example_s_curve`, `example_mission_first4`, `exam
 
 The machine-readable result is the `##OVERBOARD-VALIDATION##` line in the stdout; the human table has the wall times and the selected candidate.
 
-## A.2 The timing × accuracy-weight grid
+## A.2 The timing × accuracy-weight grid (historical command)
+
+`--sweep` is removed; this is the command that produced the record, kept for reference.
 
 ```bash
 python -m overboard.main -c examples/fll_choreo.json -w examples/<mission>.json \
@@ -1283,8 +1292,8 @@ to go looking.
 | KI-021 | Robot runtime | The DriveBase capped the acceleration the plan asked for | [Section 12](#12-controller-and-plant-parity) |
 | KI-022 | Solver / timing | The per-segment timing model was a jerk-penalty loophole | [5.3](#53-the-jerk-discipline-ki-022), [22.1](STRATEGY_LEDGER.md#221-the-per-segment-timing-model-was-a-jerk-penalty-loophole-ki-022) |
 | KI-024 | Solver / timing | The timing model had no rule for where the time allocation may change | [5.5](#55-where-the-time-allocation-may-change-ki-024) |
-| KI-051 | CLI / solver | ~~`--self-consistent` was a no-op: the switch could not change the plan and the trapezoidal collocation could not be reached from the CLI~~ (fixed; the flag is two-way now) | [5.7](#57-the-collocation-where-a-sample-is-placed) |
-| KI-052 | CLI / solver | ~~The CLI and the library plan different trajectories for the same mission~~ (fixed; both default to the self-consistent rule now). The numbers in §9 were measured with the trapezoidal rule and have not been re-measured since | [5.7](#57-the-collocation-where-a-sample-is-placed), [9](#9-measured-heuristic-comparison) |
+| KI-051 | CLI / solver | ~~`--self-consistent` was a no-op: the switch could not change the plan and the trapezoidal collocation could not be reached from the CLI~~ (fixed, then the switch and the trapezoidal branch were removed in the cleanup) | [5.7](#57-the-collocation-where-a-sample-is-placed) |
+| KI-052 | CLI / solver | ~~The CLI and the library plan different trajectories for the same mission~~ (fixed; both use the self-consistent rule unconditionally now). The numbers in §9 were measured with the trapezoidal rule and have not been re-measured since | [5.7](#57-the-collocation-where-a-sample-is-placed), [9](#9-measured-heuristic-comparison) |
 
 **Not referenced, and not relevant here:** KI-005, KI-006, KI-007, KI-008, KI-011, KI-012, KI-013, KI-016, KI-017, KI-023.
 

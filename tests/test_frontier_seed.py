@@ -9,9 +9,9 @@ import unittest
 import numpy as np
 
 from overboard.models.robot_model import RobotConfig
+from overboard.models.drivetrain_physics import asymmetric_late_apex_bump
 from overboard.core.frontier_seed import (
     compute_tangent_headings,
-    _asymmetric_late_apex_bump,
     generate_frontier_seed,
 )
 
@@ -45,7 +45,7 @@ class TestFrontierSeed(unittest.TestCase):
 
     def test_asymmetric_late_apex_bump(self):
         u = np.linspace(0.0, 1.0, 101)
-        bump = _asymmetric_late_apex_bump(u, u_peak=0.68)
+        bump = asymmetric_late_apex_bump(u, u_peak=0.68)
         self.assertEqual(bump[0], 0.0)
         self.assertEqual(bump[-1], 0.0)
         self.assertTrue(np.all(bump >= 0.0))

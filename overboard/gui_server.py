@@ -57,6 +57,9 @@ MAX_JOBS = 20
 # run. The server reads it back, so the rule "only a validated trajectory
 # goes to the robot" is enforced here and not only in the browser.
 VALIDATION_MARKER = "##OVERBOARD-VALIDATION## "
+# The file the CLI writes with every solved candidate, so the studio can draw
+# the comparison next to each other (--candidates-out).
+CANDIDATES_FILE = "candidates.json"
 # Unicode letters and digits are kept in a file name. Stripping them
 # turned every non-ASCII mission name into the same file name, so one
 # mission overwrote another without a word (KI-039).
@@ -348,6 +351,21 @@ class StudioServer(ThreadingHTTPServer):
             return None
 
 
+def clamp_candidates(value):
+    """How many of the planner's three frontier candidates to solve.
+
+    The 3-Pillar engine produces exactly three (sprint, sweeper,
+    exploratory), so a count outside 1..3 is not a choice the solver can
+    honour. It is clamped rather than refused: the field is a number box,
+    and a number box that refuses to solve is worse than one that clamps.
+    """
+    try:
+        count = int(value)
+    except (TypeError, ValueError):
+        return 2
+    return min(3, max(1, count))
+
+
 def build_command(job_dir, config_path, waypoints_path, output_path, options):
     """The command line for one solve."""
     command = [sys.executable, "-u", "-m", "overboard.main",
@@ -355,30 +373,57 @@ def build_command(job_dir, config_path, waypoints_path, output_path, options):
                "-w", str(waypoints_path),
                "-o", str(output_path)]
 
-    samples = int(options.get("samples", 10))
-    command += ["-n", str(samples)]
+    # The mesh is the planner's unless the operator switched the automatic
+    # one off. Without -n the 3-Pillar engine sizes the invariant 80 ms mesh
+    # from the path (UnifiedPathEngine.compute_invariant_mesh_samples),
+    # which is the discretization the solver is built around.
+    if not bool(options.get("auto_mesh", True)):
+        samples = int(options.get("samples", 10))
+        command += ["-n", str(samples)]
 
     accuracy = float(options.get("accuracy_weight", 0.0))
     if accuracy:
         command += ["-a", str(accuracy)]
 
-    candidates = int(options.get("candidates", 2))
+    # A soft wheel-force weight prices the force utilisation instead of only
+    # bounding it; zero is the default and the flag then says nothing.
+    force_weight = float(options.get("force_weight", 0.0) or 0.0)
+    if force_weight > 0.0:
+        command += ["--force-weight", str(force_weight)]
+
+    candidates = clamp_candidates(options.get("candidates", 2))
     if candidates != 2:
         command += ["--candidates", str(candidates)]
+
+    # The propagation model the envelope gate uses. It is only passed when
+    # the studio chose one: the command line's default is the plant, and a
+    # run that says nothing about it must stay the run it was before.
+    propagation = str(options.get("propagation") or "").lower()
+    if propagation in ("plant", "tick"):
+        command += ["--propagation", propagation]
+
+    # The optional post-solve gradient polish (needs JAX).
+    if options.get("polish"):
+        command.append("--polish")
+
+    # The operator's pick from a comparison, exported instead of the fastest
+    # passing candidate. The CLI refuses it when that candidate failed.
+    pick = options.get("pick_candidate")
+    if pick:
+        command += ["--pick-candidate", str(int(pick))]
 
     timing = options.get("timing", "auto")
     if options.get("fast_polish"):
         command.append("--fast-polish")
 
-    if options.get("self_consistent") is False:
-        command.append("--no-self-consistent")
-    elif options.get("self_consistent"):
-        command.append("--self-consistent")
-
     # The iteration history is always requested: the studio's convergence
     # plot and its candidate explainer both read it, and without it the
     # browser shows nothing about how the solve converged.
     command += ["--iteration-history", str(job_dir / "iterations.json")]
+
+    # Every solved candidate, paths included: the studio draws the three
+    # frontier paths next to each other so the operator can compare them.
+    command += ["--candidates-out", str(job_dir / CANDIDATES_FILE)]
 
     sysid_fit = options.get("sysid_fit")
     if sysid_fit:
@@ -386,6 +431,11 @@ def build_command(job_dir, config_path, waypoints_path, output_path, options):
 
     if options.get("validate"):
         command.append("--validate")
+        # The studio draws the best path a failed validation produced, marked
+        # as failed, instead of an empty field. Push and approval still read
+        # the validator's verdict, so this only affects what is displayed.
+        if options.get("best_effort"):
+            command.append("--best-effort")
 
     export_format = options.get("export_format", "none")
     if export_format and export_format != "none":
@@ -419,14 +469,30 @@ def start_job(server, payload):
         except (TypeError, ValueError):
             raise ValueError(f"Waypoint {index} has a non-numeric position.")
 
-    samples = int(options.get("samples", 10))
-    if not 2 <= samples <= 200:
-        raise ValueError("Samples per segment must be between 2 and 200.")
-    candidates = int(options.get("candidates", 2))
-    if not 1 <= candidates <= 5:
-        raise ValueError("Candidates must be between 1 and 5.")
+    # The number is only a choice when the automatic mesh is off; with the
+    # mesh on, the planner sizes the samples from the path and the field is
+    # not read at all.
+    if not bool(options.get("auto_mesh", True)):
+        samples = int(options.get("samples", 10))
+        if not 2 <= samples <= 200:
+            raise ValueError("Samples per segment must be between 2 and 200.")
+    # The planner has three frontier candidates, so the count is clamped to
+    # them instead of being refused (the box is a number, not a menu).
+    options["candidates"] = clamp_candidates(options.get("candidates", 2))
     if float(options.get("accuracy_weight", 0.0)) < 0:
         raise ValueError("The accuracy weight cannot be negative.")
+    if float(options.get("force_weight", 0.0) or 0.0) < 0:
+        raise ValueError("The force weight cannot be negative.")
+    if str(options.get("propagation") or "plant").lower() not in ("plant", "tick"):
+        raise ValueError("The propagation must be plant or tick.")
+    if options.get("pick_candidate") not in (None, ""):
+        try:
+            pick = int(options["pick_candidate"])
+        except (TypeError, ValueError):
+            raise ValueError("The picked candidate must be a whole number.")
+        if pick < 1:
+            raise ValueError("The picked candidate must be 1 or more.")
+        options["pick_candidate"] = pick
     if options.get("validate") and options.get("export_format") == "none":
         pass
 
@@ -441,7 +507,8 @@ def start_job(server, payload):
 
     command = build_command(job_dir, config_path, waypoints_path, output_path, options)
     job = Job(server.next_job_id(), name, job_dir)
-    job.result = {"trajectory": {}, "limits": {}, "iterations": [], "collisions": []}
+    job.result = {"trajectory": {}, "limits": {}, "iterations": [],
+                  "collisions": [], "candidates": []}
     _register_job(server, job)
 
     def run():
@@ -501,6 +568,10 @@ def start_job(server, payload):
                 history = job_dir / "iterations.json"
                 if history.is_file():
                     job.result["iterations"] = _read_json(history) or []
+                comparison = job_dir / CANDIDATES_FILE
+                if comparison.is_file():
+                    document = _read_json(comparison) or {}
+                    job.result["candidates"] = document.get("candidates") or []
             finally:
                 if job.status == "running":
                     if job.cancel_requested:

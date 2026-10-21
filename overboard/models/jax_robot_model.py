@@ -1,5 +1,5 @@
 import jax.numpy as jnp
-from typing import Dict, Any, Tuple, Optional, Union
+from typing import Dict, Any, Tuple, Union
 from jax.tree_util import register_pytree_node_class
 
 from overboard.models.robot_model import RobotConfig

@@ -104,12 +104,16 @@ Do not pass both `--profile` and `--robot-config`.
 ```bash
 python -m overboard.main -c examples/fll_choreo.json \
   -w examples/example_straight.json -o output.traj \
-  --validate --sysid-fit sysid_fit.json
+  --validate --sysid-fit sysid_fit.json --propagation tick
 ```
 
 `--sysid-fit` requires `--validate` and JAX/Immrax. Validation is a
 hard gate: a failed solve or failed validation writes no `.traj`, controller,
-Python file, or `_stats.json`.
+Python file, or `_stats.json`. (`--best-effort` is the narrow exception: it
+writes the best path when the only failure is an accuracy excess, marked
+failed; it never opens the gate for force, slip, integration, divergence or a
+non-converged solve.) The fitted plant widens the reachable set, so
+validate with the closed-loop `tick` model (`--preset safe` selects it).
 
 `python -m overboard.main` prints the profile and warns if the fitted wheel radius or track width
 differs from the robot config. The validator still uses the robot config for

@@ -296,6 +296,9 @@ input:disabled, select:disabled {
   border-radius: 2px;
 }
 .legend-swatch.dot { width: 9px; height: 9px; border-radius: 50%; }
+/* The key grows as the field draws more: it stops at the canvas edge
+   instead of covering the mat. */
+.legend { max-height: calc(100% - 24px); overflow-y: auto; }
 
 /* ------------------------------------------------------------ wp list */
 .wp-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
@@ -393,6 +396,13 @@ table.sheet td { padding: 2px 4px; }
 .chip.ok { color: var(--ok); border-color: var(--ok); }
 .chip.bad { color: var(--error); border-color: var(--error); }
 .chip.active { background: rgba(56, 189, 248, 0.15); color: var(--text); }
+/* A rescue candidate is insurance: it is only in the list when the frontier
+   triad failed, so it reads as a dashed, amber chip (KI-048). */
+.chip.is-rescue { border-style: dashed; border-color: var(--warn); color: var(--warn); }
+
+/* The per-segment table gained columns; it scrolls sideways instead of
+   pushing the result column wider. */
+table.report.scroll { display: block; overflow-x: auto; }
 
 .hint.explainer { color: var(--text); opacity: 0.85; margin: 0 0 8px; }
 
