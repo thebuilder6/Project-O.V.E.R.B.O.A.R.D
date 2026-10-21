@@ -18,7 +18,7 @@ import math
 from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 import numpy as np
 
-from robot_model import RobotConfig, CG_HEIGHT_M
+from robot_model import RobotConfig, CG_HEIGHT_M, diff_drive_ik, angle_diff, kinematic_cornering_ceiling
 
 
 def compute_tangent_headings(
@@ -45,7 +45,7 @@ def compute_tangent_headings(
             else:
                 a_prev = chord_angles[i - 1]
                 a_next = chord_angles[i]
-                dth = (a_next - a_prev + math.pi) % (2.0 * math.pi) - math.pi
+                dth = angle_diff(a_next, a_prev)
                 bisector = a_prev + 0.5 * dth
                 headings.append(bisector)
 
@@ -156,7 +156,7 @@ def generate_frontier_seed(
 
         th1 = wp_headings[i]
         th2 = wp_headings[i + 1]
-        dth = (th2 - th1 + math.pi) % (2.0 * math.pi) - math.pi
+        dth = angle_diff(th2, th1)
 
         # Apex offset calculation
         apex_amp = 0.0
@@ -164,7 +164,7 @@ def generate_frontier_seed(
             if i + 2 < len(waypoints):
                 p3 = waypoints[i + 2]
                 next_chord = math.atan2(p3[1] - p2[1], p3[0] - p2[0])
-                corner_dth = (next_chord - chord_angle + math.pi) % (2.0 * math.pi) - math.pi
+                corner_dth = angle_diff(next_chord, chord_angle)
             else:
                 corner_dth = dth
 
@@ -216,7 +216,7 @@ def generate_frontier_seed(
     for i, idx in enumerate(wp_indices):
         if idx < N and waypoints[i][2] is not None:
             target_th = float(waypoints[i][2])
-            diff = (target_th - headings[idx] + math.pi) % (2.0 * math.pi) - math.pi
+            diff = angle_diff(target_th, headings[idx])
             headings[idx] += diff
 
     dtheta = np.diff(headings)
@@ -226,12 +226,9 @@ def generate_frontier_seed(
     if N > 4:
         kappa = np.convolve(kappa, [0.2, 0.6, 0.2], mode="same")
 
-    # 3. Principle 1: Active Kinematic Hypotenuse (Diamond Boundary Projection)
-    # v_frontier = v_wheel_max / (1 + 0.5 * B * |kappa|)
+    # 3. Principle 1: Active Kinematic Hypotenuse & Composite Velocity Ceiling
     v_frontier = v_wheel_max / (1.0 + 0.5 * track_width * np.abs(kappa))
-    v_traction = np.sqrt(mu * g / np.maximum(np.abs(kappa), 1e-3))
-    v_tip = np.sqrt((g * track_width) / (2.0 * max(0.01, CG_HEIGHT_M) * np.maximum(np.abs(kappa), 1e-3)))
-    v_ceiling = np.minimum(v_wheel_max, np.minimum(v_frontier, np.minimum(v_traction, v_tip)))
+    v_ceiling = kinematic_cornering_ceiling(kappa, track_width, v_wheel_max, h_cg=CG_HEIGHT_M, mu=mu, g=g)
 
     # Principle 3: Preserve 0.65 - 0.75 * v_max through unpinned intermediate waypoints
     stop_sample_indices = {wp_indices[s] for s in stops if s < len(wp_indices)}
@@ -267,8 +264,7 @@ def generate_frontier_seed(
             v_profile[k] = 0.08
 
     # 5. Wheel Speeds on the Diamond Boundary (v_L, v_R)
-    vl = v_profile * (1.0 - 0.5 * track_width * kappa)
-    vr = v_profile * (1.0 + 0.5 * track_width * kappa)
+    vl, vr = diff_drive_ik(v_profile, v_profile * kappa, track_width)
     vl = np.clip(vl, -v_wheel_max, v_wheel_max)
     vr = np.clip(vr, -v_wheel_max, v_wheel_max)
 

@@ -3,7 +3,16 @@ from jax import jit
 from typing import Dict, Any, Tuple, Optional, Union
 from jax.tree_util import register_pytree_node_class
 
-from robot_model import RobotConfig, CG_HEIGHT_M, wheel_normal_forces
+from robot_model import RobotConfig
+from drivetrain_physics import (
+    CG_HEIGHT_M,
+    diff_drive_fk,
+    diff_drive_ik,
+    diff_drive_wheel_forces,
+    wheel_normal_forces,
+    motor_force_at_velocity,
+    check_drivetrain_constraints,
+)
 
 @register_pytree_node_class
 class JAXRobotConfig:
@@ -65,30 +74,35 @@ class JAXRobotConfig:
         radius = min(self.wheel_radius_range)
         return self.v_max_rad_s * radius / max(self.gearing, 1e-9)
 
-    def get_max_force_at_velocity(self, v_wheel: jnp.ndarray, apply_headroom: bool = True, use_intervals: bool = False) -> jnp.ndarray:
-        r = self.wheel_radius_range if use_intervals else self.wheel_radius
-        t_max = self.t_max_range if use_intervals else self.t_max_nm
-
-        # We handle intervals by taking the worst-case (lower bound for force)
+    def get_max_force_at_velocity(self, v_wheel: jnp.ndarray, apply_headroom: bool = True, use_intervals: bool = False) -> Any:
         if use_intervals:
             from immrax import Interval
-            r_iv = Interval(*r)
-            t_iv = Interval(*t_max)
-            v_abs_iv = Interval(jnp.abs(v_wheel), jnp.abs(v_wheel))
-            omega = (v_abs_iv / r_iv) * Interval(self.gearing, self.gearing)
-            torque = t_iv * (Interval(1.0, 1.0) - omega / Interval(self.v_max_rad_s, self.v_max_rad_s))
-            force = (torque / r_iv) * Interval(self.gearing, self.gearing)
-            if apply_headroom:
-                force *= Interval(self.torque_headroom, self.torque_headroom)
-            return force
+            r_iv = Interval(*self.wheel_radius_range)
+            t_iv = Interval(*self.t_max_range)
+            v_abs_iv = Interval(jnp.abs(v_wheel), jnp.abs(v_wheel)) if not isinstance(v_wheel, Interval) else v_wheel
+            headroom_iv = Interval(self.torque_headroom, self.torque_headroom) if apply_headroom else Interval(1.0, 1.0)
+            gearing_iv = Interval(self.gearing, self.gearing)
+            vmax_iv = Interval(self.v_max_rad_s, self.v_max_rad_s)
+            return motor_force_at_velocity(
+                v_wheel=v_abs_iv,
+                wheel_radius=r_iv,
+                gearing=gearing_iv,
+                t_max=t_iv,
+                v_max_rad_s=vmax_iv,
+                torque_headroom=headroom_iv,
+                smooth=False,
+            )
         else:
-            omega = (jnp.abs(v_wheel) / r) * self.gearing
-            torque = t_max * (1.0 - omega / self.v_max_rad_s)
-            torque = jnp.maximum(0, torque)
-            force = (torque / r) * self.gearing
-            if apply_headroom:
-                force *= self.torque_headroom
-            return force
+            headroom = self.torque_headroom if apply_headroom else 1.0
+            return motor_force_at_velocity(
+                v_wheel=v_wheel,
+                wheel_radius=self.wheel_radius,
+                gearing=self.gearing,
+                t_max=self.t_max_nm,
+                v_max_rad_s=self.v_max_rad_s,
+                torque_headroom=headroom,
+                smooth=False,
+            )
 
     def max_linear_speed(self, apply_headroom: bool = True) -> jnp.ndarray:
         speed = self.v_max_rad_s * self.wheel_radius / jnp.maximum(self.gearing, 1e-9)
@@ -131,66 +145,40 @@ class JAXDifferentialDriveModel:
             from immrax import Interval
             L = Interval(*self.cfg.track_width_range)
             I = Interval(*self.cfg.inertia_range)
+            al_iv = Interval(al, al) if not isinstance(al, Interval) else al
+            ar_iv = Interval(ar, ar) if not isinstance(ar, Interval) else ar
+            return diff_drive_wheel_forces(al_iv, ar_iv, self.cfg.mass, I, L)
         else:
-            L = self.cfg.track_width
-            I = self.cfg.inertia
-
-        a = (al + ar) / 2.0
-        if use_intervals:
-            from immrax import Interval
-            alpha = Interval(ar - al, ar - al) / L
-            f_total = Interval(self.cfg.mass * a, self.cfg.mass * a)
-            m_total = I * alpha
-            fr = (f_total + (Interval(2.0, 2.0) * m_total / L)) / Interval(2.0, 2.0)
-            fl = f_total - fr
-        else:
-            alpha = (ar - al) / L
-            f_total = self.cfg.mass * a
-            m_total = I * alpha
-            fr = (f_total + (2.0 * m_total / L)) / 2.0
-            fl = f_total - fr
-        return fl, fr
+            return diff_drive_wheel_forces(al, ar, self.cfg.mass, self.cfg.inertia, self.cfg.track_width)
 
     def get_wheel_normal_forces(self, vl: jnp.ndarray, vr: jnp.ndarray, al: jnp.ndarray, ar: jnp.ndarray, use_intervals: bool = False) -> Tuple[Any, Any]:
-        # Lateral (turning) weight transfer only; no front/rear split on a
-        # two-wheel robot (KI-010). Same formula as the CPU model and Immrax.
         if use_intervals:
             from immrax import Interval
             L = Interval(*self.cfg.track_width_range)
-        else:
-            L = self.cfg.track_width
-
-        v = (vl + vr) / 2.0
-        if use_intervals:
-            from immrax import Interval
-            omega = Interval(vr - vl, vr - vl) / L
-            centripetal_accel = Interval(v, v) * omega
-        else:
-            omega = (vr - vl) / L
+            vl_iv = Interval(vl, vl) if not isinstance(vl, Interval) else vl
+            vr_iv = Interval(vr, vr) if not isinstance(vr, Interval) else vr
+            v, omega = diff_drive_fk(vl_iv, vr_iv, L)
             centripetal_accel = v * omega
-        return wheel_normal_forces(self.cfg.mass, self.cfg.g, CG_HEIGHT_M, L, centripetal_accel)
+            return wheel_normal_forces(self.cfg.mass, self.cfg.g, CG_HEIGHT_M, L, centripetal_accel)
+        else:
+            v, omega = diff_drive_fk(vl, vr, self.cfg.track_width)
+            centripetal_accel = v * omega
+            return wheel_normal_forces(self.cfg.mass, self.cfg.g, CG_HEIGHT_M, self.cfg.track_width, centripetal_accel)
 
     def check_constraints(self, vl: jnp.ndarray, vr: jnp.ndarray, al: jnp.ndarray, ar: jnp.ndarray, apply_headroom: bool = True, use_intervals: bool = False) -> Dict[str, Any]:
         fl, fr = self.get_dynamics(vl, vr, al, ar, use_intervals)
-        fl_max = self.cfg.get_max_force_at_velocity(vl, apply_headroom)
-        fr_max = self.cfg.get_max_force_at_velocity(vr, apply_headroom)
-        left_motor_violation = jnp.maximum(0, jnp.abs(fl) - fl_max)
-        right_motor_violation = jnp.maximum(0, jnp.abs(fr) - fr_max)
-        nl, nr = self.get_wheel_normal_forces(vl, vr, al, ar)
-        left_traction_limit = self.cfg.cof * nl
-        right_traction_limit = self.cfg.cof * nr
-        left_wheel_slip = jnp.maximum(0, jnp.abs(fl) - left_traction_limit)
-        right_wheel_slip = jnp.maximum(0, jnp.abs(fr) - right_traction_limit)
-        traction_limit = self.cfg.cof * self.cfg.mass * self.cfg.g
-        traction_violation = jnp.maximum(0, jnp.abs(fl) + jnp.abs(fr) - traction_limit)
-        return {
-            "left_motor_violation": left_motor_violation,
-            "right_motor_violation": right_motor_violation,
-            "left_wheel_slip": left_wheel_slip,
-            "right_wheel_slip": right_wheel_slip,
-            "traction_violation": traction_violation,
-            "left_normal_force": nl,
-            "right_normal_force": nr,
-            "fl": fl,
-            "fr": fr
-        }
+        fl_max = self.cfg.get_max_force_at_velocity(vl, apply_headroom, use_intervals)
+        fr_max = self.cfg.get_max_force_at_velocity(vr, apply_headroom, use_intervals)
+        nl, nr = self.get_wheel_normal_forces(vl, vr, al, ar, use_intervals)
+        return check_drivetrain_constraints(
+            fl=fl,
+            fr=fr,
+            nl=nl,
+            nr=nr,
+            fl_max=fl_max,
+            fr_max=fr_max,
+            cof=self.cfg.cof,
+            mass=self.cfg.mass,
+            g=self.cfg.g,
+            smooth=False,
+        )

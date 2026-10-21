@@ -2,7 +2,7 @@ from typing import List, Dict, Tuple, Any, Optional
 import json
 import math
 import numpy as np
-from robot_model import RobotConfig, DifferentialDriveModel, wheel_normal_forces, CG_HEIGHT_M
+from robot_model import RobotConfig, DifferentialDriveModel, diff_drive_fk, angle_diff, wheel_normal_forces, CG_HEIGHT_M
 
 
 # Default time-equivalent weights (in seconds) for the 5-part FLL path fitness
@@ -74,8 +74,7 @@ def forward_integrate(samples: List[Dict[str, Any]], robot_cfg: RobotConfig, fin
     for step in range(num_steps + 1):
         t = min(step * fine_dt, total_t)
         vl, vr = interp_v(t)
-        v = (vl + vr) / 2.0
-        omega = (vr - vl) / robot_cfg.track_width
+        v, omega = diff_drive_fk(vl, vr, robot_cfg.track_width)
 
         # Record the state at time t before advancing to t + dt
         integrated.append({"t": float(t), "x": float(x), "y": float(y), "heading": float(theta)})
@@ -125,7 +124,7 @@ def forward_integrate(samples: List[Dict[str, Any]], robot_cfg: RobotConfig, fin
 
     dx = planned[:, 0] - integrated_at_t[:, 0]
     dy = planned[:, 1] - integrated_at_t[:, 1]
-    dtheta = (planned[:, 2] - integrated_at_t[:, 2] + np.pi) % (2 * np.pi) - np.pi
+    dtheta = angle_diff(planned[:, 2], integrated_at_t[:, 2])
 
     pos_err = np.hypot(dx, dy)
     errors = {
@@ -524,7 +523,7 @@ def check_final_waypoint(samples: List[Dict[str, Any]],
     pos_err = float(np.hypot(last["x"] - wx, last["y"] - wy))
     heading_err = 0.0
     if wh is not None:
-        heading_err = float(abs((last["heading"] - wh + np.pi) % (2 * np.pi) - np.pi))
+        heading_err = float(abs(angle_diff(last["heading"], wh)))
     return {
         "passed": pos_err <= pos_tol and heading_err <= heading_tol,
         "pos_error_m": pos_err,

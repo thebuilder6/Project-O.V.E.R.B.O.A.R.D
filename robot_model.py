@@ -4,38 +4,23 @@ import re
 from pathlib import Path
 from typing import Dict, Tuple, Any, Optional, Union, List
 import casadi as ca
+import numpy as np
 
-# Center-of-mass height used by every weight-transfer calculation. Kept in
-# one place so the optimizer, CPU audit, JAX model, and Immrax agree.
-CG_HEIGHT_M = 0.05
-
-
-def wheel_normal_forces(
-    mass: float,
-    g: float,
-    h_cg: float,
-    track_width: Any,
-    centripetal_accel: Any,
-) -> Tuple[Any, Any]:
-    """
-    Normal force on each wheel with lateral (turning) weight transfer.
-
-    A two-wheel differential robot has no front/rear axle, so longitudinal
-    acceleration does not split load left/right (KI-010). Only the lateral
-    transfer from centripetal acceleration (v * omega) applies:
-
-        nl = m*g/2 - m*h*a_c/b
-        nr = m*g/2 + m*h*a_c/b
-
-    Shared by the optimizer, the CPU audit, the JAX model, and Immrax so all
-    four use the same per-wheel limit. Types may be floats, JAX arrays, or
-    Immrax Intervals.
-    """
-    base_normal = (mass * g) / 2.0
-    # Immrax Intervals only implement left-hand operators, so the interval (or
-    # array) term leads every expression; plain floats and CasADi MX work too.
-    lateral_transfer = centripetal_accel * (mass * h_cg) / track_width
-    return (-lateral_transfer) + base_normal, lateral_transfer + base_normal
+from drivetrain_physics import (
+    CG_HEIGHT_M,
+    diff_drive_fk,
+    diff_drive_ik,
+    diff_drive_wheel_forces,
+    wheel_normal_forces,
+    motor_force_at_velocity,
+    motor_linear_limits,
+    traction_limits,
+    total_traction_limit,
+    check_drivetrain_constraints,
+    kinematic_cornering_ceiling,
+    wrap_angle,
+    angle_diff,
+)
 
 
 class RobotConfig:
@@ -451,13 +436,16 @@ drivebase.use_gyro(True)
         Returns:
             Maximum force in Newtons
         """
-        omega = (v_wheel / self.wheel_radius) * self.gearing
-        torque = self.t_max_nm * (1.0 - abs(omega) / self.v_max_rad_s)
-        torque = max(0, torque)
-        force = (torque / self.wheel_radius) * self.gearing
-        if apply_headroom:
-            force *= self.torque_headroom
-        return force
+        headroom = self.torque_headroom if apply_headroom else 1.0
+        return float(motor_force_at_velocity(
+            v_wheel=v_wheel,
+            wheel_radius=self.wheel_radius,
+            gearing=self.gearing,
+            t_max=self.t_max_nm,
+            v_max_rad_s=self.v_max_rad_s,
+            torque_headroom=headroom,
+            smooth=False,
+        ))
 
     def max_linear_speed(self, apply_headroom: bool = True) -> float:
         """No-load linear speed of the wheel (m/s).
@@ -477,6 +465,30 @@ drivebase.use_gyro(True)
             speed *= self.speed_headroom
         return speed
 
+    def get_motor_linear_limits(self, apply_headroom: bool = True) -> Tuple[float, float]:
+        """
+        Returns (f_stall_per_wheel, v_noload_wheel) in (N, m/s).
+        Encapsulates the DC motor linear characteristic line F(v) = F_stall * (1 - |v| / v_noload).
+        """
+        if apply_headroom:
+            r_speed, r_force, headroom = self.get_robust_force_params()
+            return motor_linear_limits(
+                wheel_radius=r_speed,
+                gearing=self.gearing,
+                t_max=self.t_max_nm,
+                v_max_rad_s=self.v_max_rad_s,
+                torque_headroom=headroom,
+                force_radius=r_force,
+            )
+        else:
+            return motor_linear_limits(
+                wheel_radius=self.wheel_radius,
+                gearing=self.gearing,
+                t_max=self.t_max_nm,
+                v_max_rad_s=self.v_max_rad_s,
+                torque_headroom=1.0,
+            )
+
     def no_load_wheel_speed_worst_case(self) -> float:
         """The wheel speed at which the motor makes no torque (m/s).
 
@@ -492,16 +504,16 @@ drivebase.use_gyro(True)
         """
         CasADi symbolic version of get_max_force_at_velocity.
         """
-        omega = (v_wheel / self.wheel_radius) * self.gearing
-        # Use smooth approximation of absolute value to prevent IPOPT step computation failures at zero speed
-        abs_omega = ca.sqrt(omega**2 + 1e-8)
-        torque = self.t_max_nm * (1.0 - abs_omega / self.v_max_rad_s)
-        # NOTE: clamping at zero means no braking force above no-load speed.
-        torque = ca.fmax(0, torque)
-        force = (torque / self.wheel_radius) * self.gearing
-        if apply_headroom:
-            force *= self.torque_headroom
-        return force
+        headroom = self.torque_headroom if apply_headroom else 1.0
+        return motor_force_at_velocity(
+            v_wheel=v_wheel,
+            wheel_radius=self.wheel_radius,
+            gearing=self.gearing,
+            t_max=self.t_max_nm,
+            v_max_rad_s=self.v_max_rad_s,
+            torque_headroom=headroom,
+            smooth=True,
+        )
 
     def get_robust_force_params(self) -> Tuple[float, float, float]:
         """
@@ -531,20 +543,30 @@ drivebase.use_gyro(True)
         result.
         """
         r_speed, r_force, headroom = self.get_robust_force_params()
-        omega = (abs(v_wheel) / r_speed) * self.gearing
-        torque = max(0.0, self.t_max_nm * (1.0 - omega / self.v_max_rad_s))
-        force = (torque / r_force) * self.gearing
-        return force * headroom
+        return float(motor_force_at_velocity(
+            v_wheel=v_wheel,
+            wheel_radius=r_speed,
+            gearing=self.gearing,
+            t_max=self.t_max_nm,
+            v_max_rad_s=self.v_max_rad_s,
+            torque_headroom=headroom,
+            smooth=False,
+            force_radius=r_force,
+        ))
 
     def get_max_force_symbolic_robust(self, v_wheel: ca.MX) -> ca.MX:
         """CasADi symbolic version of get_max_force_at_velocity_robust."""
         r_speed, r_force, headroom = self.get_robust_force_params()
-        omega = (v_wheel / r_speed) * self.gearing
-        abs_omega = ca.sqrt(omega**2 + 1e-8)
-        torque = self.t_max_nm * (1.0 - abs_omega / self.v_max_rad_s)
-        torque = ca.fmax(0, torque)
-        force = (torque / r_force) * self.gearing
-        return force * headroom
+        return motor_force_at_velocity(
+            v_wheel=v_wheel,
+            wheel_radius=r_speed,
+            gearing=self.gearing,
+            t_max=self.t_max_nm,
+            v_max_rad_s=self.v_max_rad_s,
+            torque_headroom=headroom,
+            smooth=True,
+            force_radius=r_force,
+        )
 
     def apply_measured_motor(
         self,
@@ -722,47 +744,15 @@ class DifferentialDriveModel:
     def get_dynamics(self, vl: float, vr: float, al: float, ar: float) -> Tuple[float, float]:
         """
         Calculate required wheel forces for given velocities and accelerations.
-
-        Uses differential drive kinematics:
-        - Linear acceleration: a = (al + ar) / 2
-        - Angular acceleration: alpha = (ar - al) / track_width
-
-        Args:
-            vl: Left wheel velocity (m/s)
-            vr: Right wheel velocity (m/s)
-            al: Left wheel acceleration (m/s²)
-            ar: Right wheel acceleration (m/s²)
-
-        Returns:
-            Tuple of (fl, fr) - Left and right wheel forces (N)
+        Delegates to canonical diff_drive_wheel_forces decomposition.
         """
-        # Linear and angular acceleration
-        a = (al + ar) / 2.0
-        alpha = (ar - al) / self.cfg.track_width
-
-        # Required total force and moment
-        f_total = self.cfg.mass * a
-        m_total = self.cfg.inertia * alpha
-
-        # Solve for individual wheel forces
-        # f_total = fl + fr
-        # m_total = (fr - fl) * (track_width / 2)
-        fr = (f_total + (2.0 * m_total / self.cfg.track_width)) / 2.0
-        fl = f_total - fr
-
-        return fl, fr
+        return diff_drive_wheel_forces(al, ar, self.cfg.mass, self.cfg.inertia, self.cfg.track_width)
 
     def get_dynamics_symbolic(self, vl: ca.MX, vr: ca.MX, al: ca.MX, ar: ca.MX) -> Tuple[ca.MX, ca.MX]:
         """
         CasADi symbolic version of get_dynamics.
         """
-        a = (al + ar) / 2.0
-        alpha = (ar - al) / self.cfg.track_width
-        f_total = self.cfg.mass * a
-        m_total = self.cfg.inertia * alpha
-        fr = (f_total + (2.0 * m_total / self.cfg.track_width)) / 2.0
-        fl = f_total - fr
-        return fl, fr
+        return diff_drive_wheel_forces(al, ar, self.cfg.mass, self.cfg.inertia, self.cfg.track_width)
 
     def get_wheel_normal_forces(self, vl: float, vr: float, al: float, ar: float) -> Tuple[float, float]:
         """
@@ -781,8 +771,7 @@ class DifferentialDriveModel:
         Returns:
             Tuple of (nl, nr) - Normal forces on left and right wheels (N)
         """
-        v = (vl + vr) / 2.0
-        omega = (vr - vl) / self.cfg.track_width
+        v, omega = diff_drive_fk(vl, vr, self.cfg.track_width)
         return wheel_normal_forces(
             self.cfg.mass, self.cfg.g, CG_HEIGHT_M, self.cfg.track_width, v * omega
         )
@@ -853,9 +842,6 @@ class DifferentialDriveModel:
         """
         fl, fr = self.get_dynamics(vl, vr, al, ar)
 
-        # Motor force limits. With headroom enabled, use the same worst-case
-        # declared ranges as the optimizer and the Immrax validator. Without
-        # headroom (benchmark mode), use the nominal curve.
         if apply_headroom:
             fl_max = self.cfg.get_max_force_at_velocity_robust(vl)
             fr_max = self.cfg.get_max_force_at_velocity_robust(vr)
@@ -863,27 +849,25 @@ class DifferentialDriveModel:
             fl_max = self.cfg.get_max_force_at_velocity(vl, apply_headroom=False)
             fr_max = self.cfg.get_max_force_at_velocity(vr, apply_headroom=False)
 
-        left_motor_violation = max(0, abs(fl) - fl_max)
-        right_motor_violation = max(0, abs(fr) - fr_max)
-
-        # Individual wheel slip detection with weight transfer
         nl, nr = self.get_wheel_normal_forces(vl, vr, al, ar)
-        left_traction_limit = self.cfg.cof * nl
-        right_traction_limit = self.cfg.cof * nr
-
-        left_wheel_slip = max(0, abs(fl) - left_traction_limit)
-        right_wheel_slip = max(0, abs(fr) - right_traction_limit)
-
-        # Legacy total traction check (friction circle)
-        traction_limit = self.cfg.cof * self.cfg.mass * self.cfg.g
-        traction_violation = max(0, abs(fl) + abs(fr) - traction_limit)
-
+        res = check_drivetrain_constraints(
+            fl=fl,
+            fr=fr,
+            nl=nl,
+            nr=nr,
+            fl_max=fl_max,
+            fr_max=fr_max,
+            cof=self.cfg.cof,
+            mass=self.cfg.mass,
+            g=self.cfg.g,
+            smooth=False,
+        )
         return {
-            "left_motor_violation": left_motor_violation,
-            "right_motor_violation": right_motor_violation,
-            "left_wheel_slip": left_wheel_slip,
-            "right_wheel_slip": right_wheel_slip,
-            "traction_violation": traction_violation,
-            "left_normal_force": nl,
-            "right_normal_force": nr
+            "left_motor_violation": res["left_motor_violation"],
+            "right_motor_violation": res["right_motor_violation"],
+            "left_wheel_slip": res["left_wheel_slip"],
+            "right_wheel_slip": res["right_wheel_slip"],
+            "traction_violation": res["traction_violation"],
+            "left_normal_force": res["left_normal_force"],
+            "right_normal_force": res["right_normal_force"],
         }

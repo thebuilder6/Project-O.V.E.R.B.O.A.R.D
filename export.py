@@ -4,7 +4,7 @@ import math
 import struct
 import numpy as np
 
-from robot_model import RobotConfig
+from robot_model import RobotConfig, diff_drive_fk, wrap_angle
 
 
 # Compact Python export for Pybricks MicroPython.
@@ -162,8 +162,8 @@ def write_compact_python_file(input_traj_file: str, output_file: str) -> None:
 
 
 def _wrap_pi(angle: float) -> float:
-    """Wrap an angle to [-pi, pi]."""
-    return float((angle + np.pi) % (2.0 * np.pi) - np.pi)
+    """Wrap an angle to [-pi, pi]. Delegates to canonical wrap_angle."""
+    return float(wrap_angle(angle))
 
 
 def resample_to_fixed_dt(samples: List[Dict[str, Any]], target_dt: float = 0.02, track_width: float = 0.0965) -> List[Dict[str, Any]]:
@@ -215,8 +215,7 @@ def resample_to_fixed_dt(samples: List[Dict[str, Any]], target_dt: float = 0.02,
             break
         vl = lerp(t, t_src, vl_src)
         vr = lerp(t, t_src, vr_src)
-        v = (vl + vr) / 2.0
-        omega = (vr - vl) / track_width
+        v, omega = diff_drive_fk(vl, vr, track_width)
         
         sample_dict = {
             "t": round(float(t), 6),

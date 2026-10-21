@@ -1,9 +1,14 @@
 import math
+import threading
 import time
 from typing import List, Dict, Tuple, Any, Optional, Union, Sequence
 import numpy as np
 import casadi as ca
-from robot_model import RobotConfig, DifferentialDriveModel, CG_HEIGHT_M, wheel_normal_forces
+from robot_model import RobotConfig, DifferentialDriveModel, CG_HEIGHT_M, wheel_normal_forces, diff_drive_fk, diff_drive_ik, angle_diff, wrap_angle
+
+# MUMPS inside CasADi/IPOPT is not re-entrant across OS threads on Windows;
+# serialize the C++ MUMPS call to guarantee thread-safe solves repository-wide.
+CASADI_SOLVE_LOCK = threading.RLock()
 
 # Distinct deterministic initial guesses for candidate generation. They are
 # only guesses: IPOPT still enforces every waypoint, stop, and force limit.
@@ -613,15 +618,12 @@ class TrajectoryOptimizer:
                 epi_inertia = max(self.config.uncertainties["inertia_kg_m2"])
                 epi_tw = min(self.config.uncertainties["track_width_range"])
                 epi_cof = min(self.config.uncertainties["cof"])
-                r_speed, r_force, headroom = self.config.get_robust_force_params()
-                epi_f_stall = (self.config.t_max_nm / r_force) * self.config.gearing * headroom
-                epi_v_noload = self.config.v_max_rad_s * r_speed / max(self.config.gearing, 1e-9)
+                epi_f_stall, epi_v_noload = self.config.get_motor_linear_limits(apply_headroom=True)
             else:
                 epi_inertia = self.config.inertia
                 epi_tw = self.config.track_width
                 epi_cof = self.config.cof
-                epi_f_stall = (self.config.t_max_nm / self.config.wheel_radius) * self.config.gearing
-                epi_v_noload = self.config.v_max_rad_s * self.config.wheel_radius / max(self.config.gearing, 1e-9)
+                epi_f_stall, epi_v_noload = self.config.get_motor_linear_limits(apply_headroom=False)
 
         for k in range(N - 1):
             dt_k = interval_dt(k)
@@ -822,7 +824,8 @@ class TrajectoryOptimizer:
 
         stage_prefix = f"[stage {stage_label}] " if stage_label else ""
         try:
-            sol = opti.solve()
+            with CASADI_SOLVE_LOCK:
+                sol = opti.solve()
             if per_segment_dt:
                 dt_val = np.asarray(sol.value(dt), dtype=float).reshape(-1)
             else:
@@ -1177,14 +1180,14 @@ class TrajectoryOptimizer:
         for k in range(n - 1):
             dx = states[k + 1, 0] - states[k, 0]
             dy = states[k + 1, 1] - states[k, 1]
-            dtheta = (states[k + 1, 2] - states[k, 2] + np.pi) % (2 * np.pi) - np.pi
+            dtheta = angle_diff(states[k + 1, 2], states[k, 2])
             dt_k = float(dt[sample_to_segment[k]]) if is_dt_array else float(dt)
             dt_k = max(dt_k, 1e-4)
             v[k] = float(np.hypot(dx, dy) / dt_k)
             omega[k] = float(dtheta / dt_k)
 
-        half_track = self.config.track_width / 2.0
         cap = float(self.config.max_linear_speed(apply_headroom=True))
+        half_track = self.config.track_width / 2.0
         for k in range(n):
             states[k, 3] = float(np.clip(v[k] - omega[k] * half_track, -cap, cap))
             states[k, 4] = float(np.clip(v[k] + omega[k] * half_track, -cap, cap))
@@ -1260,7 +1263,7 @@ class TrajectoryOptimizer:
                 "heading": float(s[2]),
                 "vl": float(vl),
                 "vr": float(vr),
-                "omega": float((vr - vl) / self.config.track_width),
+                "omega": float(diff_drive_fk(vl, vr, self.config.track_width)[1]),
                 "al": float(al),
                 "ar": float(ar),
                 "fl": float(fl),

@@ -39,6 +39,7 @@ from tests.test_robot_model import (
     TestDifferentialDriveModel,
     TestMeasuredMotorConfig,
     TestUniversalRobotConfig,
+    TestUnifiedMathPrimitives,
 )
 from tests.test_validator import TestForwardIntegrate, TestAuditConstraints, TestComputeMetrics, TestValidateTrajectory
 from tests.test_random_suite import (
@@ -229,6 +230,7 @@ def test_classes():
         TestUniversalRobotConfig,
         TestDifferentialDriveModel,
         TestMeasuredMotorConfig,
+        TestUnifiedMathPrimitives,
         TestForwardIntegrate,
         TestAuditConstraints,
         TestComputeMetrics,

@@ -38,9 +38,10 @@ import numpy as np
 
 from robot_model import RobotConfig, CG_HEIGHT_M
 from optimizer import TrajectoryOptimizer
-
-# Serialization lock for MUMPS linear solver on Windows OS threads
-_MUMPS_LOCK = threading.RLock()
+from frontier_seed import (
+    compute_tangent_headings as _compute_tangent_headings,
+    generate_frontier_seed,
+)
 
 
 @dataclass
@@ -109,310 +110,31 @@ class UnifiedPathEngine:
         return self._reachability_engine
 
     # =========================================================================
-    # PILLAR I: Asymmetric Transition Geometry
+    # PILLAR I and II: Kinetic Frontier Geometry and Velocity Envelope
     # =========================================================================
 
     @staticmethod
     def compute_tangent_headings(
-        waypoints: List[Tuple[float, float, Optional[float]]],
-    ) -> List[float]:
+        waypoints: list,
+    ) -> list:
         """Compute smooth tangent bisector headings for unpinned waypoints."""
-        num_wps = len(waypoints)
-        headings: List[float] = []
-
-        chord_angles = []
-        for i in range(num_wps - 1):
-            dx = waypoints[i + 1][0] - waypoints[i][0]
-            dy = waypoints[i + 1][1] - waypoints[i][1]
-            chord_angles.append(math.atan2(dy, dx))
-
-        for i in range(num_wps):
-            if waypoints[i][2] is not None:
-                headings.append(float(waypoints[i][2]))
-            else:
-                if i == 0:
-                    headings.append(chord_angles[0])
-                elif i == num_wps - 1:
-                    headings.append(chord_angles[-1])
-                else:
-                    a_prev = chord_angles[i - 1]
-                    a_next = chord_angles[i]
-                    dth = (a_next - a_prev + math.pi) % (2.0 * math.pi) - math.pi
-                    bisector = a_prev + 0.5 * dth
-                    headings.append(bisector)
-
-        return headings
-
-    @staticmethod
-    def _asymmetric_late_apex_bump(u: np.ndarray, u_peak: float = 0.68) -> np.ndarray:
-        """
-        Asymmetric bump peaking at u = u_peak (Rule 2: Late-Apex Dynamic Law).
-        Exact zeros at endpoints u=0 and u=1.
-        """
-        bump = np.zeros_like(u, dtype=float)
-        mask = (u > 0.0) & (u < 1.0)
-        if not np.any(mask):
-            return bump
-        u_m = u[mask]
-        a = 2.0
-        b = a * (1.0 - u_peak) / u_peak
-        norm = (u_peak ** a) * ((1.0 - u_peak) ** b)
-        bump[mask] = ((u_m ** a) * ((1.0 - u_m) ** b)) / norm
-        return bump
-
-    def _generate_homotopy_path(
-        self,
-        waypoints: List[Tuple[float, float, Optional[float]]],
-        seg_samples: List[int],
-        style: str,
-        stop_indices: set[int],
-    ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
-        """Generates (points_x, points_y, headings) adhering to Pillar I."""
-        num_segments = len(waypoints) - 1
-        wp_headings = self.compute_tangent_headings(waypoints)
-
-        # Homotopy Triad Parameters (Rule 5)
-        if style == "sprint":
-            u_peak = 0.70
-            apex_mult = 1.00
-        elif style == "sweeper":
-            u_peak = 0.65
-            apex_mult = 0.85
-        elif style == "exploratory":
-            u_peak = 0.66
-            apex_mult = 1.25
-        else:  # direct_chord
-            u_peak = 0.50
-            apex_mult = 0.00
-
-        points_x: List[float] = []
-        points_y: List[float] = []
-        nominal_thetas: List[float] = []
-
-        for i in range(num_segments):
-            p1 = waypoints[i]
-            p2 = waypoints[i + 1]
-            s_i = seg_samples[i]
-            count = s_i if i < num_segments - 1 else s_i + 1
-
-            dx = p2[0] - p1[0]
-            dy = p2[1] - p1[1]
-            L = math.hypot(dx, dy)
-            chord_angle = math.atan2(dy, dx)
-
-            th1 = wp_headings[i]
-            th2 = wp_headings[i + 1]
-            dth = (th2 - th1 + math.pi) % (2.0 * math.pi) - math.pi
-
-            apex_amp = 0.0
-            if apex_mult > 0.0 and L > 0.05:
-                if i + 2 < len(waypoints):
-                    p3 = waypoints[i + 2]
-                    next_chord = math.atan2(p3[1] - p2[1], p3[0] - p2[0])
-                    corner_dth = (next_chord - chord_angle + math.pi) % (2.0 * math.pi) - math.pi
-                else:
-                    corner_dth = dth
-
-                # Outward apex offset on curves with deflection
-                if abs(corner_dth) > 0.15 and (i + 1) not in stop_indices:
-                    sign = -np.sign(corner_dth)
-                    apex_amp = sign * min(0.20 * L, 0.08) * apex_mult * math.sin(min(abs(corner_dth), math.pi / 2))
-
-            nx = -dy / max(L, 1e-6)
-            ny = dx / max(L, 1e-6)
-
-            u_arr = np.linspace(0, 1, s_i + 1)[:count]
-            bumps = self._asymmetric_late_apex_bump(u_arr, u_peak=u_peak) if abs(apex_amp) > 1e-4 else np.zeros(count)
-
-            for j in range(count):
-                u = u_arr[j]
-                bump = bumps[j]
-                px = p1[0] + dx * u + nx * apex_amp * bump
-                py = p1[1] + dy * u + ny * apex_amp * bump
-                th = th1 + dth * u
-
-                points_x.append(px)
-                points_y.append(py)
-                nominal_thetas.append(th)
-
-        points_x = np.array(points_x, dtype=float)
-        points_y = np.array(points_y, dtype=float)
-        nominal_thetas = np.array(nominal_thetas, dtype=float)
-
-        # Pin exact waypoint positions
-        wp_indices = [0] + list(np.cumsum(seg_samples))
-        N = sum(seg_samples) + 1
-        for i, idx in enumerate(wp_indices):
-            if idx < N:
-                points_x[idx] = float(waypoints[i][0])
-                points_y[idx] = float(waypoints[i][1])
-                if waypoints[i][2] is not None:
-                    nominal_thetas[idx] = float(waypoints[i][2])
-
-        return points_x, points_y, nominal_thetas
-
-    # =========================================================================
-    # PILLAR II: Composite Kinetic Velocity Envelope
-    # =========================================================================
-
-    def _compute_kinetic_velocity_profile(
-        self,
-        points_x: np.ndarray,
-        points_y: np.ndarray,
-        nominal_thetas: np.ndarray,
-        seg_samples: List[int],
-        waypoints: List[Tuple[float, float, Optional[float]]],
-        stop_indices: set[int],
-        style: str,
-    ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-        """
-        Calculates the composite velocity ceiling, applies 1D forward-backward sweep,
-        and computes diamond-boundary wheel speeds and segment dts.
-        """
-        N = len(points_x)
-        num_segments = len(seg_samples)
-        wp_indices = [0] + list(np.cumsum(seg_samples))
-
-        v_wheel_max = float(self.config.max_linear_speed())
-        track_width = float(self.config.track_width)
-        mu = float(getattr(self.config, "cof", 0.6))
-        g = 9.81
-        h_cg = float(getattr(self.config, "cg_height_m", CG_HEIGHT_M))
-
-        stall_torque = getattr(self.config, "t_max_nm", 0.138)
-        gear = getattr(self.config, "gearing", 1.0)
-        radius = float(self.config.wheel_radius)
-        mass = float(self.config.mass)
-        motor_stall_accel = (2.0 * stall_torque * gear / radius) / max(mass, 0.1)
-        traction_accel = mu * g
-        a_max = min(motor_stall_accel * 0.45, traction_accel * 0.65, 2.8)
-
-        # Style momentum fraction
-        momentum_frac = 0.72 if style == "sprint" else (0.68 if style == "sweeper" else 0.70)
-
-        # 1. Arc length and finite difference tangents
-        dx_diff = np.diff(points_x)
-        dy_diff = np.diff(points_y)
-        ds = np.hypot(dx_diff, dy_diff)
-        ds = np.maximum(ds, 1e-5)
-
-        tangent_headings = np.zeros(N, dtype=float)
-        tangent_headings[:-1] = np.arctan2(dy_diff, dx_diff)
-        tangent_headings[-1] = tangent_headings[-2] if N > 1 else nominal_thetas[-1]
-
-        headings = np.unwrap(tangent_headings)
-        for i, idx in enumerate(wp_indices):
-            if idx < N and waypoints[i][2] is not None:
-                target_th = float(waypoints[i][2])
-                diff = (target_th - headings[idx] + math.pi) % (2.0 * math.pi) - math.pi
-                headings[idx] += diff
-
-        # 2. Curvature kappa(s) = d(theta)/ds
-        dtheta = np.diff(headings)
-        kappa = np.zeros(N, dtype=float)
-        kappa[:-1] = dtheta / ds
-        kappa[-1] = kappa[-2] if N > 1 else 0.0
-        if N > 4:
-            kappa = np.convolve(kappa, [0.2, 0.6, 0.2], mode="same")
-
-        # 3. Composite Physical Velocity Ceiling
-        # Ceiling 1: Actuator Diamond Boundary (Rule 1)
-        v_frontier = v_wheel_max / (1.0 + 0.5 * track_width * np.abs(kappa))
-        # Ceiling 2: Dynamic Load Transfer / Inside-Wheel Tip Limit (Rule 8)
-        v_load_transfer = np.sqrt(g * track_width / (2.0 * h_cg * np.maximum(np.abs(kappa), 1e-3)))
-        # Ceiling 3: Tire Traction Limit
-        v_traction = np.sqrt(mu * g / np.maximum(np.abs(kappa), 1e-3))
-
-        v_ceiling = np.minimum(v_wheel_max, np.minimum(v_frontier, np.minimum(v_load_transfer, v_traction)))
-
-        # Rule 9: Stop waypoints and endpoints boundary condition
-        v_ceiling[0] = 0.0
-        v_ceiling[-1] = 0.0
-        for s_idx in stop_indices:
-            if s_idx < len(wp_indices):
-                k_stop = wp_indices[s_idx]
-                if k_stop < N:
-                    v_ceiling[k_stop] = 0.0
-
-        # 4. Forward-Backward Pass (1D Pontryagin Sweep)
-        v_profile = np.copy(v_ceiling)
-        for k in range(N - 1):
-            v_profile[k + 1] = min(v_profile[k + 1], math.sqrt(v_profile[k] ** 2 + 2.0 * a_max * ds[k]))
-
-        for k in range(N - 2, -1, -1):
-            v_profile[k] = min(v_profile[k], math.sqrt(v_profile[k + 1] ** 2 + 2.0 * a_max * ds[k]))
-
-        # Rule 3: Waypoint Momentum Preservation through unpinned waypoints
-        stop_sample_indices = {wp_indices[s] for s in stop_indices if s < len(wp_indices)}
-        stop_sample_indices.add(0)
-        stop_sample_indices.add(N - 1)
-
-        min_cruise = momentum_frac * v_wheel_max
-        for i, idx in enumerate(wp_indices):
-            if idx not in stop_sample_indices and idx < N:
-                v_profile[idx] = max(v_profile[idx], min(min_cruise, v_ceiling[idx]))
-
-        for k in range(N):
-            if k not in stop_sample_indices and v_profile[k] < 0.08:
-                v_profile[k] = 0.08
-
-        # 5. Wheel Speeds on the Diamond Boundary
-        vl = v_profile * (1.0 - 0.5 * track_width * kappa)
-        vr = v_profile * (1.0 + 0.5 * track_width * kappa)
-        vl = np.clip(vl, -v_wheel_max, v_wheel_max)
-        vr = np.clip(vr, -v_wheel_max, v_wheel_max)
-
-        # Zero speeds at stops
-        vl[0] = vr[0] = 0.0
-        vl[-1] = vr[-1] = 0.0
-        for s_idx in stop_indices:
-            if s_idx < len(wp_indices):
-                k_stop = wp_indices[s_idx]
-                if k_stop < N:
-                    vl[k_stop] = vr[k_stop] = 0.0
-
-        # 6. Physical Segment Timings
-        dt_samples = ds / np.maximum(0.5 * (v_profile[:-1] + v_profile[1:]), 0.01)
-        initial_dts = np.zeros(num_segments, dtype=float)
-        for i in range(num_segments):
-            k_start = wp_indices[i]
-            k_end = wp_indices[i + 1]
-            seg_dts = dt_samples[k_start:k_end]
-            initial_dts[i] = float(np.clip(np.mean(seg_dts), 0.01, 1.0))
-
-        return headings, vl, vr, initial_dts, v_profile
+        return _compute_tangent_headings(waypoints)
 
     def generate_seed(
         self,
-        waypoints: List[Tuple[float, float, Optional[float]]],
-        seg_samples: List[int],
+        waypoints: list,
+        seg_samples: list,
         style: str,
-        stop_indices: Optional[List[int]] = None,
-    ) -> np.ndarray:
-        """Constructs an initial guess vector combining Pillar I & Pillar II."""
-        stops = set(stop_indices or [])
-        px, py, nom_th = self._generate_homotopy_path(waypoints, seg_samples, style, stops)
-        headings, vl, vr, initial_dts, _ = self._compute_kinetic_velocity_profile(
-            px, py, nom_th, seg_samples, waypoints, stops, style
+        stop_indices: list = None,
+    ):
+        """Constructs an initial guess vector combining Pillar I and II via frontier_seed."""
+        return generate_frontier_seed(
+            waypoints=waypoints,
+            segment_samples=seg_samples,
+            robot_config=self.config,
+            stop_waypoint_indices=stop_indices,
+            style=style,
         )
-
-        N = len(px)
-        states = np.zeros((N, 5), dtype=float)
-        states[:, 0] = px
-        states[:, 1] = py
-        states[:, 2] = headings
-        states[:, 3] = vl
-        states[:, 4] = vr
-
-        wp_indices = [0] + list(np.cumsum(seg_samples))
-        for i, idx in enumerate(wp_indices):
-            if idx < N:
-                states[idx, 0] = float(waypoints[i][0])
-                states[idx, 1] = float(waypoints[i][1])
-                if waypoints[i][2] is not None:
-                    states[idx, 2] = float(waypoints[i][2])
-
-        return np.concatenate([initial_dts, states.flatten()])
 
     # =========================================================================
     # PILLAR III: Invariant Collocation Mesh & KKT Solver
@@ -473,13 +195,12 @@ class UnifiedPathEngine:
             "verbose": False,
         }
 
-        with _MUMPS_LOCK:
-            samples, stats = self.optimizer.solve(
-                waypoints=waypoints,
-                stop_waypoint_indices=stop_indices,
-                initial_guess=guess,
-                **solve_kw,
-            )
+        samples, stats = self.optimizer.solve(
+            waypoints=waypoints,
+            stop_waypoint_indices=stop_indices,
+            initial_guess=guess,
+            **solve_kw,
+        )
 
         t_wall = time.time() - t0
         if not samples or len(samples) == 0:

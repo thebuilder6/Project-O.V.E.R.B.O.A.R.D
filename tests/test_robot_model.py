@@ -539,3 +539,124 @@ class TestUniversalRobotConfig(unittest.TestCase):
             self.assertIn("AXLE_TRACK_MM = 100", synced)
             self.assertIn("motorLeft = Motor(Port.C, Direction.COUNTERCLOCKWISE)", synced)
             self.assertIn("motorRight = Motor(Port.D, Direction.CLOCKWISE)", synced)
+
+
+class TestUnifiedMathPrimitives(unittest.TestCase):
+    """Test cases for unified analytical kinematics and dynamics primitives."""
+
+    def test_diff_drive_fk_ik_roundtrip_scalar(self):
+        from robot_model import diff_drive_fk, diff_drive_ik
+        track_width = 0.100
+        v_in, omega_in = 0.45, 2.5
+        vl, vr = diff_drive_ik(v_in, omega_in, track_width)
+        v_out, omega_out = diff_drive_fk(vl, vr, track_width)
+        self.assertAlmostEqual(v_in, v_out)
+        self.assertAlmostEqual(omega_in, omega_out)
+
+    def test_diff_drive_fk_ik_roundtrip_numpy(self):
+        from robot_model import diff_drive_fk, diff_drive_ik
+        track_width = 0.0965
+        v_in = np.array([0.0, 0.2, 0.5, -0.3])
+        omega_in = np.array([0.0, 1.2, -3.4, 0.8])
+        vl, vr = diff_drive_ik(v_in, omega_in, track_width)
+        v_out, omega_out = diff_drive_fk(vl, vr, track_width)
+        np.testing.assert_allclose(v_in, v_out, atol=1e-12)
+        np.testing.assert_allclose(omega_in, omega_out, atol=1e-12)
+
+    def test_wrap_angle_and_angle_diff(self):
+        from robot_model import wrap_angle, angle_diff
+        # Wrapping tests
+        self.assertAlmostEqual(wrap_angle(0.0), 0.0)
+        self.assertAlmostEqual(wrap_angle(np.pi / 2), np.pi / 2)
+        self.assertAlmostEqual(wrap_angle(3 * np.pi), -np.pi)
+        self.assertAlmostEqual(wrap_angle(-3 * np.pi), -np.pi)
+
+        # Difference tests
+        self.assertAlmostEqual(angle_diff(np.pi / 2, 0.0), np.pi / 2)
+        self.assertAlmostEqual(angle_diff(0.0, np.pi / 2), -np.pi / 2)
+        # Across the [-pi, pi] branch seam
+        self.assertAlmostEqual(angle_diff(-3.10, 3.10), 2 * np.pi - 6.20, delta=1e-5)
+
+    def test_diff_drive_wheel_forces_decomposition(self):
+        from robot_model import diff_drive_wheel_forces
+        mass = 0.8
+        inertia = 0.002
+        track_width = 0.10
+        # Pure straight acceleration: ar = al = 2.0
+        fl_s, fr_s = diff_drive_wheel_forces(2.0, 2.0, mass, inertia, track_width)
+        self.assertAlmostEqual(fl_s, fr_s)
+        self.assertAlmostEqual(fl_s + fr_s, mass * 2.0)
+
+        # Pure angular spin: al = -2.0, ar = 2.0
+        fl_t, fr_t = diff_drive_wheel_forces(-2.0, 2.0, mass, inertia, track_width)
+        self.assertAlmostEqual(fl_t + fr_t, 0.0)
+        alpha = 4.0 / track_width
+        expected_ang_force = (inertia * alpha) / track_width
+        self.assertAlmostEqual(fr_t, expected_ang_force)
+        self.assertAlmostEqual(fl_t, -expected_ang_force)
+
+    def test_kinematic_cornering_ceiling(self):
+        from robot_model import kinematic_cornering_ceiling
+        track_width = 0.10
+        v_wheel_max = 0.80
+        # Straight path: kappa = 0 -> ceiling is v_wheel_max
+        v_straight = kinematic_cornering_ceiling(0.0, track_width, v_wheel_max)
+        self.assertAlmostEqual(float(v_straight), v_wheel_max)
+
+        # Sharp turn: kappa = 10.0 -> ceiling is reduced
+        v_curve = kinematic_cornering_ceiling(10.0, track_width, v_wheel_max)
+        self.assertLess(float(v_curve), v_wheel_max)
+
+    def test_get_motor_linear_limits(self):
+        from robot_model import RobotConfig
+        cfg = RobotConfig({"robot": {"t_max_nm": 0.04, "wheel_radius": 0.028, "v_max_rad_s": 15.7, "gearing": 1.0}})
+        f_stall, v_noload = cfg.get_motor_linear_limits(apply_headroom=False)
+        self.assertAlmostEqual(f_stall, 0.04 / 0.028)
+        self.assertAlmostEqual(v_noload, 15.7 * 0.028)
+
+    def test_drivetrain_physics_duck_typing(self):
+        """Verify drivetrain_physics operates seamlessly across all 5 backends."""
+        from drivetrain_physics import (
+            motor_force_at_velocity,
+            diff_drive_wheel_forces,
+            check_drivetrain_constraints,
+        )
+        import casadi as ca
+        import jax.numpy as jnp
+        from immrax import Interval
+
+        # 1. Float scalar
+        f_float = motor_force_at_velocity(0.1, 0.028, 1.0, 0.04, 15.7, 0.85)
+        self.assertIsInstance(f_float, float)
+        self.assertGreater(f_float, 0.5)
+
+        # 2. NumPy array
+        v_np = np.array([0.0, 0.1, 0.2])
+        f_np = motor_force_at_velocity(v_np, 0.028, 1.0, 0.04, 15.7, 0.85)
+        self.assertEqual(f_np.shape, (3,))
+
+        # 3. JAX array
+        v_jax = jnp.array([0.0, 0.1, 0.2])
+        f_jax = motor_force_at_velocity(v_jax, 0.028, 1.0, 0.04, 15.7, 0.85)
+        np.testing.assert_allclose(np.array(f_np), np.array(f_jax), rtol=1e-5)
+
+        # 4. CasADi symbolic MX
+        v_mx = ca.MX.sym("v")
+        f_mx = motor_force_at_velocity(v_mx, 0.028, 1.0, 0.04, 15.7, 0.85, smooth=True)
+        self.assertTrue(isinstance(f_mx, ca.MX))
+
+        # 5. Immrax Interval
+        r_iv = Interval(0.027, 0.029)
+        t_iv = Interval(0.035, 0.045)
+        v_iv = Interval(0.1, 0.1)
+        f_iv = motor_force_at_velocity(v_iv, r_iv, 1.0, t_iv, 15.7, 0.85)
+        self.assertTrue(isinstance(f_iv, Interval))
+        self.assertLess(f_iv.lower, f_float)
+        self.assertGreater(f_iv.upper, f_float)
+
+        # Interval diff_drive_wheel_forces
+        L_iv = Interval(0.09, 0.10)
+        I_iv = Interval(0.002, 0.003)
+        fl_iv, fr_iv = diff_drive_wheel_forces(Interval(0.5, 0.5), Interval(0.5, 0.5), 0.723, I_iv, L_iv)
+        self.assertTrue(isinstance(fl_iv, Interval))
+        self.assertTrue(isinstance(fr_iv, Interval))

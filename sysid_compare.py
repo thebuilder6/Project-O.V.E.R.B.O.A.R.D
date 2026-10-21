@@ -47,6 +47,7 @@ import sys
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from sysid_fit import load_poses, read_drivebase_profile
+from robot_model import wrap_angle as _wrap_angle
 
 
 def _load_predicted_csv(path: str) -> Dict[str, Any]:
@@ -227,8 +228,7 @@ def resolve_stop_indices(samples: Sequence[Dict[str, Any]],
     return [len(samples) - 1]
 
 
-def _wrap_angle(angle: float) -> float:
-    return (angle + math.pi) % (2.0 * math.pi) - math.pi
+# _wrap_angle imported from robot_model.wrap_angle
 
 
 def _envelope_state(sample: Dict[str, Any]) -> Optional[Tuple[float, float, float, float]]:

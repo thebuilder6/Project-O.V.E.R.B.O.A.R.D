@@ -37,7 +37,7 @@ from immrax_validator import (
 )
 from jax_robot_model import JAXRobotConfig
 from optimizer import GUESS_STYLES, TrajectoryOptimizer, _GAUSS_LEGENDRE_4
-from robot_model import RobotConfig
+from robot_model import RobotConfig, diff_drive_ik, diff_drive_fk, angle_diff, wrap_angle
 
 # Static upper bound on 20 ms control ticks per sample interval for lax.scan.
 # 28 ticks * 0.02 s = 0.56 s per sample interval (covers any trajectory sample).
@@ -49,7 +49,7 @@ STATIC_MAX_SEGMENTS = 16
 # MUMPS inside CasADi/IPOPT is not re-entrant across OS threads on Windows;
 # serialize the C++ MUMPS call while keeping all candidates in a single warm
 # ThreadPoolExecutor process (zero multiprocessing spawn or IPC overhead).
-_CASADI_SOLVE_LOCK = threading.RLock()
+from optimizer import CASADI_SOLVE_LOCK as _CASADI_SOLVE_LOCK
 _JAX_COMPILE_LOCK = threading.RLock()
 
 
@@ -783,7 +783,7 @@ def generate_homotopy_bank(
 
                         th1 = p1[2] if p1[2] is not None else (path_angle + ang_off)
                         th2 = p2[2] if p2[2] is not None else (path_angle - ang_off)
-                        dth = (th2 - th1 + math.pi) % (2.0 * math.pi) - math.pi
+                        dth = angle_diff(th2, th1)
 
                         # Clamp lateral apex shift by segment length (max 30% of length or 0.25m)
                         max_lateral = min(0.30 * seg_len, 0.25) if seg_len >= 0.15 else 0.0
@@ -812,7 +812,7 @@ def generate_homotopy_bank(
                         dt_k = max(base_dts[seg_id], 1e-4)
                         dx_k = states[k + 1, 0] - states[k, 0]
                         dy_k = states[k + 1, 1] - states[k, 1]
-                        dth_k = (states[k + 1, 2] - states[k, 2] + math.pi) % (2.0 * math.pi) - math.pi
+                        dth_k = angle_diff(states[k + 1, 2], states[k, 2])
 
                         v_lin = math.hypot(dx_k, dy_k) / dt_k
                         fwd_proj = dx_k * math.cos(states[k, 2]) + dy_k * math.sin(states[k, 2])
@@ -820,8 +820,9 @@ def generate_homotopy_bank(
                             v_lin = -v_lin
                         omega = dth_k / dt_k
 
-                        states[k, 3] = float(np.clip(v_lin - omega * track_width / 2.0, -v_max, v_max))
-                        states[k, 4] = float(np.clip(v_lin + omega * track_width / 2.0, -v_max, v_max))
+                        raw_vl, raw_vr = diff_drive_ik(v_lin, omega, track_width)
+                        states[k, 3] = float(np.clip(raw_vl, -v_max, v_max))
+                        states[k, 4] = float(np.clip(raw_vr, -v_max, v_max))
 
                     states[-1, 3] = 0.0
                     states[-1, 4] = 0.0
@@ -1008,29 +1009,28 @@ class SurrogatePolishOptimizer:
         num_segments = len(waypoints) - 1
 
         # --- STAGE 1: Macro-Solver in CasADi (Discretization Metric + Linear Epigraph) ---
-        with _CASADI_SOLVE_LOCK:
-            samples, stats = self.casadi_optimizer.solve(
-                waypoints,
-                num_samples_per_segment=num_samples_per_segment,
-                accuracy_weight=accuracy_weight,
-                stop_waypoint_indices=stop_waypoint_indices,
-                waypoint_events=waypoint_events,
-                apply_headroom=apply_headroom,
-                verbose=verbose,
-                capture_iterations=capture_iterations,
-                guess_style=guess_style,
-                per_segment_dt=per_segment_dt,
-                initial_guess=initial_guess,
-                fast_polish=fast_polish,
-                polish_iter_budget=polish_iter_budget,
-                solver_options=solver_options,
-                self_consistent=self_consistent,
-                proportional_samples=proportional_samples,
-                split_at_boundaries=split_at_boundaries,
-                force_weight=force_weight,
-                cost_metric="discretization",
-                epigraph_constraints=True,
-            )
+        samples, stats = self.casadi_optimizer.solve(
+            waypoints,
+            num_samples_per_segment=num_samples_per_segment,
+            accuracy_weight=accuracy_weight,
+            stop_waypoint_indices=stop_waypoint_indices,
+            waypoint_events=waypoint_events,
+            apply_headroom=apply_headroom,
+            verbose=verbose,
+            capture_iterations=capture_iterations,
+            guess_style=guess_style,
+            per_segment_dt=per_segment_dt,
+            initial_guess=initial_guess,
+            fast_polish=fast_polish,
+            polish_iter_budget=polish_iter_budget,
+            solver_options=solver_options,
+            self_consistent=self_consistent,
+            proportional_samples=proportional_samples,
+            split_at_boundaries=split_at_boundaries,
+            force_weight=force_weight,
+            cost_metric="discretization",
+            epigraph_constraints=True,
+        )
 
         if not stats.get("converged", False) or not samples:
             stats["surrogate_polish"] = {"polished": False, "rounds": 0}
@@ -1110,28 +1110,27 @@ class SurrogatePolishOptimizer:
 
             # Warm-started sensitivity-weighted polish pass in CasADi
             pol_opt = TrajectoryOptimizer(self.config)
-            with _CASADI_SOLVE_LOCK:
-                pol_samples, pol_stats = pol_opt.solve(
-                    waypoints,
-                    num_samples_per_segment=segment_samples,
-                    accuracy_weight=cur_acc_weight,
-                    stop_waypoint_indices=stop_waypoint_indices,
-                    waypoint_events=waypoint_events,
-                    apply_headroom=apply_headroom,
-                    verbose=False,
-                    capture_iterations=False,
-                    guess_style=guess_style,
-                    per_segment_dt=per_segment_dt,
-                    initial_guess=warm_guess,
-                    fast_polish=False,
-                    self_consistent=self_consistent,
-                    proportional_samples=proportional_samples,
-                    split_at_boundaries=False,
-                    force_weight=max(force_weight, 0.002),
-                    cost_metric="discretization",
-                    epigraph_constraints=True,
-                    sample_weights=sample_weights,
-                )
+            pol_samples, pol_stats = pol_opt.solve(
+                waypoints,
+                num_samples_per_segment=segment_samples,
+                accuracy_weight=cur_acc_weight,
+                stop_waypoint_indices=stop_waypoint_indices,
+                waypoint_events=waypoint_events,
+                apply_headroom=apply_headroom,
+                verbose=False,
+                capture_iterations=False,
+                guess_style=guess_style,
+                per_segment_dt=per_segment_dt,
+                initial_guess=warm_guess,
+                fast_polish=False,
+                self_consistent=self_consistent,
+                proportional_samples=proportional_samples,
+                split_at_boundaries=False,
+                force_weight=max(force_weight, 0.002),
+                cost_metric="discretization",
+                epigraph_constraints=True,
+                sample_weights=sample_weights,
+            )
 
             if not pol_stats.get("converged", False) or not pol_samples:
                 break
@@ -1357,27 +1356,26 @@ class SurrogatePolishOptimizer:
                 ])
 
                 pol_opt = TrajectoryOptimizer(self.config)
-                with _CASADI_SOLVE_LOCK:
-                    pol_samples, pol_stats = pol_opt.solve(
-                        waypoints,
-                        num_samples_per_segment=segment_samples,
-                        accuracy_weight=cur_acc_weight,
-                        stop_waypoint_indices=stop_waypoint_indices,
-                        waypoint_events=waypoint_events,
-                        apply_headroom=apply_headroom,
-                        verbose=False,
-                        capture_iterations=False,
-                        per_segment_dt=True,
-                        initial_guess=warm_guess,
-                        fast_polish=False,
-                        self_consistent=self_consistent,
-                        proportional_samples=proportional_samples,
-                        split_at_boundaries=False,
-                        force_weight=max(force_weight, 0.002),
-                        cost_metric="discretization",
-                        epigraph_constraints=True,
-                        sample_weights=sample_weights,
-                    )
+                pol_samples, pol_stats = pol_opt.solve(
+                    waypoints,
+                    num_samples_per_segment=segment_samples,
+                    accuracy_weight=cur_acc_weight,
+                    stop_waypoint_indices=stop_waypoint_indices,
+                    waypoint_events=waypoint_events,
+                    apply_headroom=apply_headroom,
+                    verbose=False,
+                    capture_iterations=False,
+                    per_segment_dt=True,
+                    initial_guess=warm_guess,
+                    fast_polish=False,
+                    self_consistent=self_consistent,
+                    proportional_samples=proportional_samples,
+                    split_at_boundaries=False,
+                    force_weight=max(force_weight, 0.002),
+                    cost_metric="discretization",
+                    epigraph_constraints=True,
+                    sample_weights=sample_weights,
+                )
 
                 if not pol_stats.get("converged", False) or not pol_samples:
                     break
