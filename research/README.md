@@ -23,6 +23,7 @@ JSON record per candidate so the questions can be answered from data.
 | `weight_breakdown.py` | The accuracy-weight study broken down per timing model and per mission (Q6). |
 | `run_studies.ps1` | The full campaign: the matrix, the weight ladder, the density study and the uncertainty sensitivity. |
 | `run_self_consistent.ps1` | The same matrix with and without `--self-consistent` (KI-026), for RQ-A's OQ6. The flag is two-way (`--self-consistent/--no-self-consistent`), so the comparison runs on one tree; note that the harness follows the **library** default, which is the self-consistent rule (KI-051, KI-052). |
+| `brake_slip_effect.py` | Measures what the fitted digital-twin plant does to the reachability envelope and the tracking error of one trajectory: the kinematic plant, the fitted plant, and the fitted plant with the braking shortfall. Takes a `.traj` file: `python research/brake_slip_effect.py output.traj`. |
 
 ## Measuring against a pinned tree
 
