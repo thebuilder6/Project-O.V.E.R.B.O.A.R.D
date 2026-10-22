@@ -610,6 +610,7 @@ warm-start pathology, which is where the time actually was.
 
 **Understand it**
 
+- [docs/PROJECT_GOAL.md](docs/PROJECT_GOAL.md) — what the project claims: spread first, then time, then pose error
 - [docs/WHITEPAPER.md](docs/WHITEPAPER.md) — the system end to end
 - [docs/HEURISTICS_AND_VERIFICATION.md](docs/HEURISTICS_AND_VERIFICATION.md) — every heuristic, the full gate chain, and the measurements
 - [docs/OPTIMAL_CONTROL_DERIVATION.md](docs/OPTIMAL_CONTROL_DERIVATION.md) — the control laws and the analytical Kinetic Frontier seeds
