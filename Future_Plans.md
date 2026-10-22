@@ -117,7 +117,7 @@ The fitter (`overboard/sysid/fit.py`) writes a separate `sysid_fit.json`. The CL
 
 # Part 3: Path Planner & Optimizer Architecture
 
-This architecture integrates the calibrated system parameters and interaction force profiles into the path planning pipeline, guaranteeing zero wheel slip and robust safety under real-world tracking errors [1].
+This architecture integrates the calibrated system parameters and interaction force profiles into the path planning pipeline, targeting zero wheel slip and robust safety under real-world tracking errors (a design goal, not a guarantee) [1].
 
 ```
                      [Path Planner Pipeline]

@@ -16,12 +16,12 @@ Pillar II: Composite Kinetic Velocity Envelope
   - Rule 9: Pontryagin Threshold-Braking Horizon for designated stop waypoints
 
 Pillar III: Invariant Collocation Mesh & KKT Solver
-  - Rule 4: KKT Slack Barrier Equilibrium (certified 4.3 - 4.5 mm tracking vs 5.0 mm gate)
-  - Rule 7: 80 ms Sampling Density Invariant (optimal bottom of error U-curve)
+  - Rule 4: KKT Slack Barrier Equilibrium (the plan aims the tracking error at the 5 mm gate)
+  - Rule 7: 50 ms Sampling Density Invariant (target_tick_span_s in the mesh allocator)
   - Discretization-Consistent Collocation (4-node Gauss-Legendre + linear epigraph bounds)
 
-Bypasses stochastic genetic algorithms entirely, delivering gate-certified minimum-time
-trajectories in < 1 second.
+Bypasses stochastic genetic algorithms: the seeds are analytical. Whether a plan passes
+is decided by the gates, not by this module.
 """
 
 from __future__ import annotations
@@ -156,9 +156,10 @@ class UnifiedPathEngine:
     ) -> List[int]:
         """
         Rule 7: Invariant Collocation Mesh.
-        Ensures curved apex segments have at least min_samples (default 10) nodes
-        to guarantee sagitta tracking error remains strictly < 4.0 mm, with longer
-        segments scaling up with transit time.
+        Gives curved apex segments at least min_samples (default 10) nodes, and
+        longer segments more, so the mesh spans about target_tick_span_s of
+        nominal transit each. The sample count is a discretisation choice, not a
+        tracking guarantee: the tracking gate (5 mm) decides.
         """
         num_segments = len(waypoints) - 1
         v_nom = 0.65 * float(self.config.max_linear_speed())
@@ -528,7 +529,7 @@ class UnifiedPathEngine:
     ) -> UnifiedPlanResult:
         """
         Executes the Unified 3-Pillar Trajectory Optimization:
-        1. Allocates the 80 ms invariant mesh.
+        1. Allocates the 50 ms invariant mesh.
         2. Generates the Multi-Modal Homotopy Triad (Sprint, Sweeper, Exploratory) in < 2 ms.
         3. Solves candidates with Discretization-Consistent IPOPT.
         4. Certifies the champion against Immrax reachability gates.
@@ -545,7 +546,7 @@ class UnifiedPathEngine:
         if verbose:
             print("=" * 80)
             print(f"UNIFIED PATH ENGINE: Solving {len(waypoints)} Waypoints ({sum(seg_samples)+1} samples, {len(seg_samples)} segments)")
-            print(f"Invariant 80 ms Mesh Layout: {seg_samples}")
+            print(f"Invariant 50 ms Mesh Layout: {seg_samples}")
             print("=" * 80)
 
         # 2. Generate Canonical Homotopy Triad (Pillars I & II)

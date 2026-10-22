@@ -6,7 +6,7 @@
 > cannot be regenerated from the working copy; check out the tag `archive/research-2026-10` to
 > re-run their producers. The numbers in the captions are the measurements from that campaign, not
 > current benchmark results - `benchmark.py` and `docs/HEURISTICS_AND_VERIFICATION.md` hold those.
-> The analytical laws these plots illustrate are still what the default planner uses; see
+> The analytical heuristics these plots illustrate are still what the default planner uses; see
 > `docs/OPTIMAL_CONTROL_DERIVATION.md`.
 
 This document serves as the permanent repository exhibition of all diagnostic visualizations, state-space phase portraits, geometric manifold studies, and algorithm benchmarks developed across the project.
@@ -16,7 +16,7 @@ This document serves as the permanent repository exhibition of all diagnostic vi
 ## 1. Core Optimal Control Discoveries
 
 ### 1.1 State-Space Feasibility Diamond Phase Portrait
-Shows the robot tracing the linear boundary $|\omega| \le \frac{2}{W}(v_{\max} - |v|)$ in $(v, \omega)$ state space, demonstrating Pontryagin's maximum principle saturation along time-optimal curved trajectories:
+Shows the robot tracing the linear boundary $|\omega| \le \frac{2}{W}(v_{\max} - |v|)$ in $(v, \omega)$ state space, showing the saturation Pontryagin's maximum principle predicts along time-optimal curved trajectories (consistent with it; an observation on these missions, not a proof):
 
 ![State-Space Phase Portrait](images/plot_centurion_phase_portrait.png)
 

@@ -194,6 +194,9 @@ from tests.test_suite_registry import (
 from tests.test_research_robots import (
     TestRandomRobots,
 )
+from tests.test_doc_numbers import (
+    TestDocNumbers,
+)
 
 # Regression tests (no JAX required)
 from tests.test_regressions import (
@@ -363,6 +366,7 @@ def test_classes():
         TestCacheFingerprints,
         TestCacheRecords,
         TestRandomRobots,
+        TestDocNumbers,
     ]
     if JAX_AVAILABLE:
         classes = [

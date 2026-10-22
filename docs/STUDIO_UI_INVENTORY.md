@@ -168,7 +168,7 @@ The page carries **156 element ids**: **81 controls with an id** (36 buttons, 38
 | **fast / balanced / safe** (radio cards) | A preset fills in the options the user did not set. fast: one candidate, no validation, plant propagation - seconds. balanced: the defaults (a candidate count only compares when validation is on) - seconds. safe: the comparison - three candidates, validation, the closed-loop tick map; the three frontier paths are drawn together and the operator may export the one they pick. safe costs minutes: the reachability check, not the solve, is the time. |
 | **Options** (details) | The rest of the solve options, below. |
 | **Samples per segment** | 2 to 200. Disabled while the automatic mesh is on, because the number is then not used. |
-| **Auto invariant mesh (80 ms)** | Ticked by default: `-n` is left off the command, so the 3-Pillar engine sizes the invariant 80 ms mesh from the path. Unticking it sends the number in **Samples per segment**. |
+| **Auto invariant mesh (50 ms)** | Ticked by default: `-n` is left off the command, so the 3-Pillar engine sizes the invariant 50 ms mesh from the path. Unticking it sends the number in **Samples per segment**. |
 | **Accuracy weight** | The smoothness weight (`--accuracy-weight`). |
 | **Candidates (1-3)** | How many of the planner's three frontier candidates are solved (sprint, sweeper, exploratory); clamped to 1-3 by the server. Disabled unless validation is on. |
 | **Reachability propagation** | The model the envelope gate uses (`--propagation`): the open-loop plant (fast) or the closed-loop tick map (feedback-contracted, 2-10x slower). |

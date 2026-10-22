@@ -140,7 +140,7 @@ If none of those is available, the run does not know that the plan is accurate e
 
 **What it cannot see:** a file a test reads only on a path it did not take in the recorded run, and a file that only a *subprocess* reads, when that subprocess was neither named on the command line nor named in the code the test handed it. Those are the holes. They are the reason the fingerprint is deliberately wide and the rules above are conservative.
 
-**Evidence:** Measured on 2026-10-20, the suite was 687 tests and took 251 s. A second run over the same tree takes 5 s: 671 of the tests are skipped, and the 16 that run are the ones that must not be skipped because they write into the repository (the doctor's probe, the deprecated-flag CLI runs, the hub and sysid session writers, and the cache's own tests). The saving is reported in the summary, so the number is never a guess, and a third run takes the same 5 s: the cache does not invalidate itself.
+**Evidence:** Measured on 2026-10-20, a cold full run took 251 s (`run_tests.py` prints the count; this entry does not quote one). A second run over the same tree takes 5 s: 671 of the tests are skipped, and the 16 that run are the ones that must not be skipped because they write into the repository (the doctor's probe, the deprecated-flag CLI runs, the hub and sysid session writers, and the cache's own tests). The saving is reported in the summary, so the number is never a guess, and a third run takes the same 5 s: the cache does not invalidate itself.
 
 **Workaround:** `python run_tests.py --no-cache` for the full suite. The cache is a development convenience; it is not a gate, and no release decision rests on a cached run.
 

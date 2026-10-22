@@ -541,9 +541,9 @@ python -m overboard.main -c examples/fll_choreo.json -w waypoints.json -o missio
 
 By default the optimizer is purely time-optimal (`--accuracy-weight 0.0`). This is the fastest solution but can demand rapid acceleration changes. Increasing `--accuracy-weight` adds a jerk penalty and trades time for smoother wheel commands:
 
-- `0.0`: Pure time-optimal
-- `0.5-1.0`: Balanced smoothness
-- `2.0+`: Very smooth, with a larger time cost
+- `0.0`: pure time-optimal. On some missions this misses the motor-force gate (the first-four-waypoints mission misses it by 0.006 N).
+- `0.001-0.002`: the range the candidate set uses, and the cheapest lever there is. The same seed that fails at 0 passes at 0.001.
+- `0.005-0.01`: smoother still. The retired sweep's grid spanned `0, 0.001, 0.002, 0.005, 0.01`; beyond that the time cost grows without buying passes, and the best weight differs per mission (median Spearman -0.68 between weight and tracking error, 21 of 192 steps non-monotone).
 
 The exact tradeoff depends on the path and robot. Measure it on your own trajectory rather than relying on a fixed percentage.
 
@@ -731,6 +731,7 @@ See [docs/trajectory_tools_research.md](docs/trajectory_tools_research.md) for c
 - **[docs/STUDIO_HUB_PLAN.md](docs/STUDIO_HUB_PLAN.md)**: The "push to hub" feature for the browser studio, and how it ties the missions, the robot code and the sysid loop together
 - **[docs/CALIBRATION_STUDIO_PLAN.md](docs/CALIBRATION_STUDIO_PLAN.md)**: How the sysid loop (collect, measure, fit) and the studio's compare step fit together in one browser
 - **[KNOWN_ISSUES.md](KNOWN_ISSUES.md)**: Open and fixed issues
+- **[CLAIMS.md](CLAIMS.md)**: Every public claim, marked proven / measured / assumed / predicted, with its evidence
 
 ## Pybricks Integration
 

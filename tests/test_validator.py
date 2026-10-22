@@ -283,6 +283,45 @@ class TestAuditConstraints(unittest.TestCase):
         # Should have motor violations
         self.assertGreater(audit["num_violating_samples"], 0)
 
+    def test_an_interval_is_checked_at_the_speed_it_ends_on(self):
+        """A burst's last instant is its tightest, and nothing used to look there.
+
+        Sample k carries interval k's acceleration and sample k+1 carries
+        interval k+1's, so the pair (speed at the end of interval k, interval
+        k's acceleration) was checked by nobody. The motor limit falls with
+        speed, so a burst could run over it through its whole second half and
+        still be audited clean.
+        """
+        config = RobotConfig({"robot": {
+            "mass": 0.8, "inertia": 0.002, "track_width": 0.1,
+            "wheel_radius": 0.03, "v_max_rad_s": 15.0, "t_max_nm": 0.05,
+            "gearing": 1.0, "cof": 0.5,
+        }})
+        v_end = 0.8 * config.max_linear_speed(apply_headroom=False)
+        f_start = config.get_max_force_at_velocity(0.0, apply_headroom=False)
+        f_end = config.get_max_force_at_velocity(v_end, apply_headroom=False)
+        self.assertLess(f_end, f_start)
+
+        def burst(force):
+            accel = 2.0 * force / config.mass
+            dt = v_end / accel
+            return [
+                {"t": 0.0, "x": 0.0, "y": 0.0, "heading": 0.0,
+                 "vl": 0.0, "vr": 0.0, "al": accel, "ar": accel,
+                 "fl": force, "fr": force},
+                {"t": dt, "x": 0.5 * v_end * dt, "y": 0.0, "heading": 0.0,
+                 "vl": v_end, "vr": v_end, "al": 0.0, "ar": 0.0,
+                 "fl": 0.0, "fr": 0.0},
+            ]
+
+        audit = audit_constraints(
+            burst(0.5 * (f_start + f_end)), config, apply_headroom=False)
+        self.assertEqual(audit["violating_sample_indices"], [0])
+        self.assertGreater(audit["left_motor_force"], 0.0)
+
+        audit = audit_constraints(burst(0.5 * f_end), config, apply_headroom=False)
+        self.assertEqual(audit["num_violating_samples"], 0)
+
     def test_audit_constraints_with_slip(self):
         """Test constraint audit with wheel slip."""
         config_dict = {

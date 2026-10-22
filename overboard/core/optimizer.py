@@ -564,6 +564,12 @@ class TrajectoryOptimizer:
         opti.subject_to(vr >= -v_bound)
         opti.subject_to(vr <= v_bound)
 
+        def motor_limit(v_wheel):
+            """Worst-case per-wheel force limit at a wheel speed."""
+            if apply_headroom:
+                return self.config.get_max_force_symbolic_robust(v_wheel)
+            return self.config.get_max_force_symbolic(v_wheel, apply_headroom=False)
+
         force_cost = 0
         f_stall_ref = max(
             self.config.get_max_force_at_velocity_robust(0.0)
@@ -625,33 +631,49 @@ class TrajectoryOptimizer:
                 opti.subject_to(f_b >= -f_half + split)
                 opti.subject_to(f_b >= -f_half - split)
 
-                opti.subject_to(f_b <= epi_f_stall * (1.0 - vl[k] / epi_v_noload))
-                opti.subject_to(f_b <= epi_f_stall * (1.0 + vl[k] / epi_v_noload))
-                opti.subject_to(f_b <= epi_f_stall * (1.0 - vr[k] / epi_v_noload))
-                opti.subject_to(f_b <= epi_f_stall * (1.0 + vr[k] / epi_v_noload))
+                # Bound the interval at both ends, as the plain branch does:
+                # the linear motor curve is tightest at the fastest wheel of
+                # the interval, the load transfer at the tightest v * omega.
+                for v_wheel in (vl[k], vl[k + 1], vr[k], vr[k + 1]):
+                    opti.subject_to(f_b <= epi_f_stall * (1.0 - v_wheel / epi_v_noload))
+                    opti.subject_to(f_b <= epi_f_stall * (1.0 + v_wheel / epi_v_noload))
 
                 omega_epi = (vr[k] - vl[k]) / epi_tw
                 nl_epi, nr_epi = wheel_normal_forces(
                     self.config.mass, self.config.g, CG_HEIGHT_M, epi_tw, v1 * omega_epi
                 )
-                opti.subject_to(f_b <= epi_cof * nl_epi)
-                opti.subject_to(f_b <= epi_cof * nr_epi)
-                f_traction_max = epi_cof * 0.5 * (nl_epi + nr_epi)
+                nl_end, nr_end = wheel_normal_forces(
+                    self.config.mass, self.config.g, CG_HEIGHT_M, epi_tw, v2 * omega2
+                )
+                for normal in (nl_epi, nr_epi, nl_end, nr_end):
+                    opti.subject_to(f_b <= epi_cof * normal)
+                f_traction_max = epi_cof * 0.5 * (ca.fmin(nl_epi, nl_end) + ca.fmin(nr_epi, nr_end))
             else:
                 f_bound = self.model.get_max_wheel_force_symbolic(al, ar, apply_headroom)
 
-                if apply_headroom:
-                    max_fl = self.config.get_max_force_symbolic_robust(vl[k])
-                    max_fr = self.config.get_max_force_symbolic_robust(vr[k])
-                else:
-                    max_fl = self.config.get_max_force_symbolic(vl[k], apply_headroom=False)
-                    max_fr = self.config.get_max_force_symbolic(vr[k], apply_headroom=False)
+                # One acceleration holds for the whole interval, but the limit
+                # it is measured against moves with the speed, and the motor's
+                # force limit falls as the wheel speeds up: the same burst is
+                # tightest at the interval's fast end. Bound both ends, or the
+                # solve approves a force the motor cannot make at the speed it
+                # reaches one sample later.
+                # One row per end, not one row through fmin(): the same bound
+                # as two half-spaces keeps the kink out of the expression tree,
+                # which is what keeps IPOPT from creeping at the speed bound.
+                for v_wheel in (vl[k], vl[k + 1], vr[k], vr[k + 1]):
+                    opti.subject_to(f_bound <= motor_limit(v_wheel))
 
-                opti.subject_to(f_bound <= max_fl)
-                opti.subject_to(f_bound <= max_fr)
-
-                f_traction_max = self.model.get_traction_limit_symbolic(vl[k], vr[k], apply_headroom)
-                opti.subject_to(f_bound <= f_traction_max)
+                trac_start = self.model.get_traction_limit_symbolic(vl[k], vr[k], apply_headroom)
+                trac_end = self.model.get_traction_limit_symbolic(vl[k + 1], vr[k + 1], apply_headroom)
+                opti.subject_to(f_bound <= trac_start)
+                # shortcut: the interval's traction limit at its end speed is
+                # only priced, not enforced - the extra rows pushed the
+                # 10-waypoint mission from 112 to 3145 iterations and a MUMPS
+                # crash, and at this robot's speeds the motor limit bites first.
+                # The audit checks it, so a turning plan that leans on it is
+                # refused rather than exported; upgrade when a mission turns
+                # hard enough for the transfer to unload a wheel.
+                f_traction_max = ca.fmin(trac_start, trac_end)
 
             if force_weight > 0:
                 fl_k, fr_k = diff_drive_wheel_forces(al, ar, self.config.mass, self.config.inertia, self.config.track_width)

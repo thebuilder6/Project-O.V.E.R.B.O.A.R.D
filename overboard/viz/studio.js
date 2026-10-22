@@ -2950,7 +2950,7 @@ function updateMeshField() {
     if (!auto || !samples) return;
     samples.disabled = auto.checked;
     samples.title = auto.checked
-        ? 'The 3-Pillar engine sizes the invariant 80 ms mesh from the path.'
+        ? 'The 3-Pillar engine sizes the invariant 50 ms mesh from the path.'
         : 'Samples per segment on every segment.';
 }
 

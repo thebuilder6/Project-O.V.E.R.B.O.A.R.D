@@ -173,7 +173,24 @@ def audit_constraints(samples: List[Dict[str, Any]], robot_cfg: RobotConfig, app
     max_wheel_speed = 0.0
     
     for i, s in enumerate(samples):
-        violations = model.check_constraints(s["vl"], s["vr"], s["al"], s["ar"], apply_headroom)
+        # The interval's acceleration is one number; the limit it is measured
+        # against is not. The motor's force limit falls with speed, so an
+        # acceleration that is legal at the sample's own speed can be over the
+        # limit at the speed the interval ends on - and the next sample is
+        # checked with the *next* interval's acceleration, so nothing looked
+        # there. Check both ends of the interval with the interval's own
+        # acceleration.
+        violations = model.check_constraints(
+            s["vl"], s["vr"], s["al"], s["ar"], apply_headroom)
+        if i + 1 < len(samples):
+            nxt = samples[i + 1]
+            end = model.check_constraints(
+                nxt["vl"], nxt["vr"], s["al"], s["ar"], apply_headroom)
+            for key in max_violations:
+                violations[key] = max(violations[key], end[key])
+            # The load a wheel carries is the tighter number, not the larger.
+            for key in ("left_normal_force", "right_normal_force"):
+                violations[key] = min(violations[key], end[key])
         max_wheel_speed = max(max_wheel_speed, abs(s["vl"]), abs(s["vr"]))
         
         # Update max violations

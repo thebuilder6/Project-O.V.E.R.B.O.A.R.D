@@ -5,6 +5,9 @@
 > The search itself was removed from the tree (git tag `archive/legacy-2026-10`) and nothing shipped
 > imports it, so the GA columns below cannot be re-run from the current tree; the numbers are the
 > ones that campaign produced. The analytical laws and the unified engine are live code.
+> **Status of the "laws":** they are design heuristics that reproduced well over the missions
+> tried, not theorems. The saturation observation below is consistent with Pontryagin's
+> Maximum Principle; it is not a proof of it. See [`CLAIMS.md`](../CLAIMS.md).
 
 This document details how empirical discoveries from high-generation stochastic evolutionary searches (the **5-Pillar Multi-Island Genetic Algorithm**) led directly to the formulation of analytical optimal control laws for differential-drive mobile robots, formalized in [`frontier_seed.py`](../overboard/core/frontier_seed.py).
 
@@ -28,13 +31,13 @@ $$|\omega| \le \frac{2}{W} (v_{\max} - |v|)$$
 2. **Evolutionary Discovery (Color Scatter Points)**:
    - When the 5-Pillar Genetic Algorithm optimizes for minimum time subject to physical reachability gates, it systematically pushes the robot's trajectory directly onto the **active diagonal boundary of the diamond**:
    $$|v| + \frac{W}{2}|\omega| = v_{\max}$$
-   - This proves Pontryagin's Maximum Principle in practice: along time-optimal arcs, at least one actuator operates in full saturation at all times.
+   - This is what Pontryagin's Maximum Principle predicts - along time-optimal arcs at least one actuator is saturated - and the observed paths are consistent with it. It is an observation on these missions, not a proof.
 
 ---
 
 ## 2. The 5 Analytical Principles of Differential-Drive Optimal Control
 
-By mining the genomes of the top-performing attractors across 50 generations of evolutionary optimization (over 1,200 IPOPT evaluations), five invariant physical laws were extracted:
+By mining the genomes of the top-performing attractors across 50 generations of evolutionary optimization (over 1,200 IPOPT evaluations), five recurring design heuristics were extracted (named "principles" below; they are hypotheses with a good track record, not laws):
 
 ### 1. Principle of the Active Kinematic Hypotenuse
 Time-optimal cornering requires tracing the linear boundary of the $(v, \omega)$ diamond. Rather than turning and translating in separate phases, the robot operates at:

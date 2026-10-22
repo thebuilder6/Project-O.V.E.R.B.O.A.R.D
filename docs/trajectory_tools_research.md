@@ -78,7 +78,7 @@ Reachability is still a gate and not an objective term.
 
 ### 2. Direct collocation and NLP
 
-- Hargraves and Paris, “Direct Collocation Methods for Trajectory Optimization in Constrained Robotic Systems,” 1987. The collocation foundation used here.
+- Hargraves, C. R., and Paris, S. W., “Direct trajectory optimization using nonlinear programming and collocation,” *Journal of Guidance, Control, and Dynamics*, 10(4):338-342, 1987. The collocation foundation used here.
 - Posa, Cantu, and Tedrake, “A Direct Method for Trajectory Optimization of Rigid Bodies Through Contact,” *IJRR*, 2014. Contact dynamics and direct collocation.
 - Fahroo and Ross, “DIDO: A MATLAB application package for solving optimal control problems.” Pseudospectral alternative to trapezoidal collocation.
 

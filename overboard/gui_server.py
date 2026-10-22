@@ -400,7 +400,7 @@ def build_command(job_dir, config_path, waypoints_path, output_path, options):
                "-o", str(output_path)]
 
     # The mesh is the planner's unless the operator switched the automatic
-    # one off. Without -n the 3-Pillar engine sizes the invariant 80 ms mesh
+    # one off. Without -n the 3-Pillar engine sizes the invariant 50 ms mesh
     # from the path (UnifiedPathEngine.compute_invariant_mesh_samples),
     # which is the discretization the solver is built around.
     if not bool(options.get("auto_mesh", True)):

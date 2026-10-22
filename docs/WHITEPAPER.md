@@ -526,13 +526,7 @@ The solver records `iteration_history` in the default path, and `--iteration-his
 
 ### 10.1 Test suite
 
-`python run_tests.py` with JAX installed:
-
-```text
-654 tests run, 0 failures, 0 errors, 0 skipped
-```
-
-(measured 2026-10-21; the count grows as tests are added - `run_tests.py` prints it)
+`python run_tests.py` with JAX installed prints the count in its `TEST SUMMARY`; that output is the one source of truth, and no number is quoted here because the suite grows as tests are added. Last full run on this tree (2026-10-21, `--no-cache`): 0 failures, 0 errors, 0 skipped.
 
 The three `TestRoboVibeConverter` cases skip when PyYAML is missing and pass when it is installed. The JAX-dependent modules are imported in a `try`; if JAX is missing, they are skipped rather than silently hidden behind a stale import (KI-007).
 
@@ -580,20 +574,20 @@ To address non-convex local traps on complex multi-waypoint missions with unpinn
 #### Phase portrait analysis & actuator saturation
 Analyzing the state-space phase portrait of linear speed $v$ versus yaw rate $\omega$ within the differential-drive kinematic feasibility diamond ($|\omega| \le \frac{2}{W}(v_{\max} - |v|)$) revealed the physical mechanism of time-optimal differential-drive motion:
 - **Stock Baseline Underutilization**: Naive rolling heuristics cluster passively in the interior of the diamond, decelerating excessively before turns and wasting up to 40% of available actuator capacity.
-- **Active Kinematic Hypotenuse**: The evolutionary algorithm pushes the robot directly onto the outer diagonal boundary of the diamond ($|v| + \frac{W}{2}|\omega| = v_{\max}$), demonstrating Pontryagin's Maximum Principle by maintaining 100% actuator saturation throughout cornering.
+- **Active Kinematic Hypotenuse**: The evolutionary algorithm pushes the robot directly onto the outer diagonal boundary of the diamond ($|v| + \frac{W}{2}|\omega| = v_{\max}$), which is what Pontryagin's Maximum Principle predicts (an actuator saturated throughout cornering); the observation is consistent with it, it is not a proof.
 
 ![Optimal Control Phase Portrait](images/optimal_control_phase_portrait.png)
 
-#### The 5 distilled physical laws
-Mining the top-performing evolutionary genomes across the multi-island topology revealed five invariant physical laws governing time-optimal differential drive control:
+#### The 5 distilled design heuristics
+Mining the top-performing evolutionary genomes across the multi-island topology revealed five recurring patterns ("laws" in the older write-ups). They are design heuristics that guided the analytical seeds, with a good record on the missions tried - not theorems:
 1. **Principle of the Active Kinematic Hypotenuse**: Cornering at $v_{\text{corner}} = v_{\max} - \frac{W}{2}|\omega|$ keeps actuators at maximum capacity during turns.
-2. **The Late-Apex Dynamic Law**: Asymmetric curvature peaking at $u_{\text{apex}} \in [0.65, 0.70]$ enables deep trail-braking into turns followed by instantaneous full-throttle acceleration out of corners.
+2. **The Late-Apex Dynamic Heuristic**: Asymmetric curvature peaking at $u_{\text{apex}} \in [0.65, 0.70]$ enables deep trail-braking into turns followed by instantaneous full-throttle acceleration out of corners.
 3. **Waypoint Momentum Preservation**: Passing through unpinned waypoints at $0.68 - 0.75 \cdot v_{\max}$ along the chord bisector tangent eliminates artificial deceleration at waypoint transitions.
 4. **KKT Slack Barrier Equilibrium**: Riding the $4.8\text{ mm}$ boundary of the $5.0\text{ mm}$ Immrax physical tracking gate trades excess tracking margin for longitudinal speed.
 5. **Multi-Modal Homotopy Triad**: Three distinct local attractors emerge naturally: `sprint` (maximum lateral acceleration, shortest time), `sweeper` (continuous curvature, low wheel jerk), and `exploratory` (wider clearance margin).
 
 #### Analytical Kinetic Frontier seeds (`overboard/core/frontier_seed.py`)
-Rather than paying a 280-second evolutionary computation budget for every run, these five principles were codified into closed-form mathematical equations in `overboard/core/frontier_seed.py`. The resulting seeds generate in **$< 1.5\text{ ms}$** and seed IPOPT directly into the global optimum basin.
+Rather than paying a 280-second evolutionary computation budget for every run, these five principles were codified into closed-form mathematical equations in `overboard/core/frontier_seed.py`. The resulting seeds generate in **$< 1.5\text{ ms}$** and give IPOPT a starting point in the basin its local search then improves (a local optimum; nothing here proves it is the global one).
 
 #### Quantitative benchmark on complex mission (`examples/example_complex_mission.json`)
 
@@ -655,11 +649,13 @@ The path-planning side of this list — the seed heuristics, the timing models, 
 ## 13. References
 
 1. Reeds, J. A., and Shepp, L. A. “Optimal paths for a car that goes both forwards and backwards.” *Pacific Journal of Mathematics*, 1990.
-2. Bayle, B., Fourquet, J.-Y., and Renaud, M. “Ramsete: A new trajectory tracking controller for mobile robots.” 2003.
-3. Andersson, J. A. E., et al. “CasADi: a software framework for nonlinear optimization and optimal control.” *Mathematical Programming Computation*, 2019.
-4. Wächter, A., and Biegler, L. T. “On the implementation of an interior-point filter line-search algorithm for large-scale nonlinear programming.” *Mathematical Programming*, 2006.
-5. Immrax documentation: interval analysis and mixed-monotone reachability in JAX.
-6. Choreo trajectory generation documentation: https://choreo.autos
+2. Aicardi, M., Casalino, G., Bicchi, A., and Balestrino, A. “Closed loop steering of unicycle-like vehicles via Lyapunov techniques.” *IEEE Robotics & Automation Magazine*, 2(1):27-35, 1995. The Lyapunov steering law the Ramsete controller implements.
+3. De Luca, A., Oriolo, G., and Vendittelli, M. “Control of wheeled mobile robots: an experimental overview.” In *RAMSETE - Articulated and Mobile Robotics for Services and Technologies*, Springer, 2001. Where the Ramsete controller is named and proved locally asymptotically stable.
+4. Andersson, J. A. E., et al. “CasADi: a software framework for nonlinear optimization and optimal control.” *Mathematical Programming Computation*, 2019.
+5. Wächter, A., and Biegler, L. T. “On the implementation of an interior-point filter line-search algorithm for large-scale nonlinear programming.” *Mathematical Programming*, 2006.
+6. Immrax documentation: interval analysis and mixed-monotone reachability in JAX.
+7. Hargraves, C. R., and Paris, S. W. “Direct trajectory optimization using nonlinear programming and collocation.” *Journal of Guidance, Control, and Dynamics*, 10(4):338-342, 1987. The collocation transcription used here.
+8. Choreo trajectory generation documentation: https://choreo.autos
 
 ---
 
