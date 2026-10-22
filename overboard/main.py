@@ -120,35 +120,15 @@ def _select_attempt(attempts):
 # The timing model the planner uses: one interval per waypoint segment.
 TIMING_MODEL = "per-segment"
 
-# The fallback seeds, in the order they are tried when the planner's own
-# candidates produce nothing usable (KI-048). The order is the priority: the
-# seeds that change the geometry come first, because those are the ones that
-# can find a different optimum; the plain baseline is last, because it is the
-# guess the planner's candidates already beat.
-FALLBACK_CANDIDATE_STYLES = ("rolling", "frontier_sprint", "frontier_sweeper", "frontier_exploratory",
-                             "baseline")
+# The fallback seeds the rescue used to try when the planner's own candidates
+# produced nothing usable (KI-048) are not run any more. On the 32-mission
+# suite they rescued 0 of 22 failing missions, and 95 of their 97 failures were
+# the envelope, which a seed cannot move. The specs are still in git history.
 
 # Thread limits handed to the candidate worker processes. Several candidates
 # solve at the same time, so each one keeps a single compute thread.
 _THREAD_ENV_VARS = ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS",
                     "NUMEXPR_NUM_THREADS")
-
-
-def _fallback_specs(accuracy_weight):
-    """The fallback batch: the seeds the planner's candidates cannot provide.
-
-    The planner's own candidates are three variants of one frontier family,
-    so when none of them works the other seeds have to be tried (KI-048).
-    The timing model is per-segment, because that is where the measured
-    rescues came from: of the eighteen mission-robot pairs the planner's
-    candidates lost on random paths, the stock set rescued two, both of them
-    per-segment, and the equal-duration candidates rescued none (the stress
-    run of 2026-10-20).
-    """
-    return [{"accuracy_weight": accuracy_weight,
-             "guess_style": style,
-             "per_segment_dt": True}
-            for style in FALLBACK_CANDIDATE_STYLES]
 
 
 def _solve_candidate_worker(payload):
@@ -629,6 +609,11 @@ def _emit_validation_report(attempts, selected_index, propagation=None,
             "slip_risk": _finite(attempt.get("slip_risk", 0.0)),
             "rms_force_n": _finite(attempt.get("rms_force_n", 0.0)),
             "rms_force_util": _finite(attempt.get("rms_force_util", 0.0)),
+            # Peak utilisation of the motor limit and of the traction limit,
+            # 1.0 = at the edge. Together with the envelope and tracking
+            # numbers these are the margins the plan carries (Q14).
+            "peak_force_util": _finite(attempt.get("peak_force_util", 0.0)),
+            "peak_traction_util": _finite(attempt.get("peak_traction_util", 0.0)),
             "ok": bool(attempt.get("ok")),
             "converged": bool(attempt.get("converged")),
             "reasons": list(attempt.get("reasons", [])),
@@ -1006,14 +991,13 @@ class _ScoreContext:
 
 
 def _record_candidate(spec, solve_result, cand_idx, batch_len, histories, *,
-                      is_rescue, quiet):
+                      quiet):
     """Turn one solver result into an attempt record and announce it."""
     accuracy_weight = spec["accuracy_weight"]
     guess_style = spec["guess_style"]
     per_segment_dt = spec.get("per_segment_dt", False)
     if not quiet:
-        number = (f"Rescue {cand_idx + 1}/{batch_len}" if is_rescue
-                  else f"Candidate {cand_idx + 1}/{batch_len}")
+        number = f"Candidate {cand_idx + 1}/{batch_len}"
         timing = "per-segment" if per_segment_dt else "equal-duration"
         click.echo(f"{number} "
                    f"(guess_style={guess_style}, {timing} dt, aw={accuracy_weight})...")
@@ -1034,9 +1018,9 @@ def _record_candidate(spec, solve_result, cand_idx, batch_len, histories, *,
         "iteration_history": (histories[cand_idx]
                               if cand_idx < len(histories) else []),
         "reasons": [],
-        # A rescue candidate is insurance: it is only chosen when the
-        # candidate set itself produced nothing usable.
-        "rescue": is_rescue,
+        # Nothing is a rescue any more; the field stays because the studio
+        # and the report readers still show it (KI-048 removed).
+        "rescue": False,
     }
 
 
@@ -1048,6 +1032,12 @@ def _score_attempt(attempt_record, ctx):
     such a run is final (KI-001, KI-002).
     """
     if not ctx.use_validation:
+        return False
+    if not attempt_record["converged"]:
+        # No plan, nothing to check. The reachability rollout of a solve that
+        # stopped at its budget is a minute spent on a number no reader can
+        # use, and on a rescue that is five of them.
+        attempt_record["reasons"] = ["solver did not converge"]
         return False
 
     samples_data = attempt_record["samples"]
@@ -1205,6 +1195,13 @@ def _score_attempt(attempt_record, ctx):
         # scores (Q10's step 1).
         attempt_record["peak_jerk_m_s3"] = float(
             cpu_summary.get("metrics", {}).get("max_jerk_m_s3", 0.0) or 0.0)
+        # How close the plan runs to the motor and to the traction limit,
+        # peak (not RMS). The gate only says pass or fail, so the margin to
+        # an edge is reported for the risk lever (Q14).
+        attempt_record["peak_force_util"] = float(
+            cpu_summary.get("metrics", {}).get("max_force_utilization", 0.0) or 0.0)
+        attempt_record["peak_traction_util"] = float(
+            cpu_summary.get("metrics", {}).get("peak_traction_utilization", 0.0) or 0.0)
 
     # 5-part time-equivalent path fitness score (Stage 3: precision > accuracy)
     if waypoint_bounds:
@@ -1262,12 +1259,12 @@ def _score_attempt(attempt_record, ctx):
 
 def _run_candidates(specs_to_solve, solve_ctx, score_ctx, *,
                      accuracy_weight, use_validation, quiet, progress=None):
-    """Solve the candidate set, then the fallback seeds if nothing usable came out.
+    """Solve the planner's candidate set.
 
-    The planner's own candidates come first. If they produced nothing usable
-    - no candidate passed the gates, or (without validation) none converged -
-    the fallback seeds are tried once, in priority order (KI-048). The rescue
-    costs nothing when the plan works.
+    The fallback seeds that used to follow a failed set (KI-048) are not
+    tried: on the 32-mission suite they rescued 0 of the 22 failing missions,
+    and 95 of their 97 failures were the envelope, which a seed cannot move.
+    If a rescue is ever wanted again it is in the git history of this function.
 
     ``progress`` is called with the attempts so far, once as each candidate
     leaves the solver and once when its check returns, so a caller that draws
@@ -1275,38 +1272,19 @@ def _run_candidates(specs_to_solve, solve_ctx, score_ctx, *,
     """
     attempts = []
     batch = list(specs_to_solve)
-    is_fallback = False
-    while batch:
-        solved, histories = _dispatch_solve(batch, solve_ctx)
-        if solve_ctx.polish:
-            solved = _polish_candidates(solved, solve_ctx)
-        for cand_idx, (spec, solve_result) in enumerate(zip(batch, solved)):
-            record = _record_candidate(
-                spec, solve_result, cand_idx, len(batch), histories,
-                is_rescue=is_fallback, quiet=quiet)
-            attempts.append(record)
-            if progress is not None:
-                progress(attempts)
-            if _score_attempt(record, score_ctx):
-                break
-            if progress is not None:
-                progress(attempts)
-
-        # Did the run produce something usable? With validation that means a
-        # candidate that passed every gate; without it, a candidate that
-        # converged.
-        usable = [a for a in attempts
-                  if (a.get("ok") if use_validation else a.get("converged"))]
-        if usable or is_fallback:
+    solved, histories = _dispatch_solve(batch, solve_ctx)
+    if solve_ctx.polish:
+        solved = _polish_candidates(solved, solve_ctx)
+    for cand_idx, (spec, solve_result) in enumerate(zip(batch, solved)):
+        record = _record_candidate(spec, solve_result, cand_idx, len(batch),
+                                   histories, quiet=quiet)
+        attempts.append(record)
+        if progress is not None:
+            progress(attempts)
+        if _score_attempt(record, score_ctx):
             break
-        is_fallback = True
-        batch = _fallback_specs(accuracy_weight)
-        if not quiet:
-            if use_validation:
-                click.echo("  No candidate passed the gates; trying the "
-                           "fallback seeds.")
-            else:
-                click.echo("  No candidate converged; trying the fallback seeds.")
+        if progress is not None:
+            progress(attempts)
     return attempts
 
 
@@ -1373,9 +1351,7 @@ def _choose_attempt(all_attempts, *, validate, quiet, samples, pick=None,
                     chosen.get("tube", float("inf")), pick)
         # Never silently export a failed candidate: prefer a passing one with
         # the smallest envelope, otherwise the converged candidate closest to
-        # passing. A fallback candidate is insurance: it is only in the list
-        # when the planner's own candidates produced nothing that passed
-        # (KI-048), so it cannot win over a passing one.
+        # passing.
         best, passed_any = _select_attempt(all_attempts)
         if best is None:
             raise click.ClickException(
@@ -1426,9 +1402,8 @@ def _choose_attempt(all_attempts, *, validate, quiet, samples, pick=None,
         return (best["samples"], best["stats"], passed_any, best["reasons"],
                 best.get("tube", float("inf")), selected_index)
 
-    # Without validation the first candidate is the result. After a rescue
-    # round it is the last candidate that converged, not merely the last one
-    # tried.
+    # Without validation the first candidate is the result; it is the last
+    # candidate that converged, not merely the last one tried.
     converged = [a for a in all_attempts if a.get("converged")]
     chosen = converged[-1] if converged else (
         all_attempts[-1] if all_attempts else None)

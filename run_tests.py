@@ -194,6 +194,9 @@ from tests.test_suite_registry import (
 from tests.test_research_robots import (
     TestRandomRobots,
 )
+from tests.test_risk_margins import (
+    TestRiskMargins,
+)
 from tests.test_doc_numbers import (
     TestDocNumbers,
 )
@@ -253,6 +256,8 @@ def test_classes():
         TestFitWithoutPoses,
         TestIntervalLowerBound,
         TestRandomSuiteGenerator,
+        TestRiskMargins,
+        TestDocNumbers,
         TestNoLoadSpeed,
         TestDrivebaseProfile,
         TestHubSessionPoses,
@@ -366,7 +371,6 @@ def test_classes():
         TestCacheFingerprints,
         TestCacheRecords,
         TestRandomRobots,
-        TestDocNumbers,
     ]
     if JAX_AVAILABLE:
         classes = [

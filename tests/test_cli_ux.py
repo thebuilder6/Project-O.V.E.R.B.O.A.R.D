@@ -630,7 +630,8 @@ class TestValidationReport(unittest.TestCase):
         payload = json.loads(marker[0][len(self.main.VALIDATION_MARKER):])
         for candidate in payload["candidates"]:
             for field in ("duration_s", "envelope_cm", "tracking_cm",
-                          "max_excess_cm", "peak_jerk_m_s3"):
+                          "max_excess_cm", "peak_jerk_m_s3",
+                          "peak_force_util", "peak_traction_util"):
                 self.assertIn(field, candidate)
                 self.assertIsNotNone(candidate[field], field)
             # The excess agrees with the segments it came from.

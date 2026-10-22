@@ -225,11 +225,19 @@ waypoints
    └─ export gate   : main.py              _export_block_reason
 ```
 
-This is the path the measurements in [Section 9](#9-measured-heuristic-comparison) describe. It was selected with `--no-unified` (alias `--simple`); that path is retired, and so are `--uniform-dt`, `--per-segment-dt` and `--sweep` as selectors: the CLI now rejects them as unknown options. The five seeds survive as the rescue round ([1.1c](#11c-the-rescue-round-ki-048)). The Multi-Verse system has been removed (git tag `archive/legacy-2026-10`); no CLI flag selects it.
+This is the path the measurements in [Section 9](#9-measured-heuristic-comparison) describe. It was selected with `--no-unified` (alias `--simple`); that path is retired, and so are `--uniform-dt`, `--per-segment-dt` and `--sweep` as selectors: the CLI now rejects them as unknown options. The five seeds survive in `overboard/core/optimizer.py` but nothing solves them any more ([1.1c](#11c-the-rescue-round-removed)). The Multi-Verse system has been removed (git tag `archive/legacy-2026-10`); no CLI flag selects it.
 
-### 1.1c The rescue round (KI-048)
+### 1.1c The rescue round (removed)
 
-**Entry point:** `overboard/main.py` -> `_run_candidate_rounds` -> `_rescue_specs`.
+When the planner's three candidates produced nothing usable, the CLI used to
+try the five stock seeds as a rescue (KI-048). It does not any more: over the
+32-mission suite of `research/missions` (8 per profile, `--candidates 3
+--validate --propagation plant`, records in `research/results/q14_plant.jsonl`)
+22 missions failed the gates and the rescue ran on all of them, and **no rescue
+candidate passed on any of them**. 95 of the 97 rescue candidates that were
+checked failed on the envelope, which is the same gate that stopped the set and
+is not something a seed can move; the cost was roughly double the wall time on
+every failing mission.
 
 When the planner's three candidates produce nothing usable - no candidate
 passes the gates, or (without validation) none converged - the CLI tries the

@@ -24,7 +24,6 @@ import numpy as np
 from click.testing import CliRunner
 
 from overboard.models.robot_model import RobotConfig
-from overboard.core.optimizer import GUESS_STYLES
 from overboard.deploy.export import write_python_file
 from benchmark import RandomBenchmark
 from overboard.verification.validator import check_final_waypoint, forward_integrate, validate_samples
@@ -354,24 +353,19 @@ class TestWriteGateIntegration(unittest.TestCase):
                 return samples, {"converged": True, "final_cost": 0.5}
             return super().solve(*args, **kwargs)
 
-    class _SeedFailsGateOptimizer(_Optimizer):
-        """The first candidate breaks the force limit; the other seeds do not.
-
-        KI-048: a set that fails every gate is rescued by the other seeds.
-        """
+    class _EverySeedFailsTheSameGate(_Optimizer):
+        """Every seed converges on a plan that breaks the CPU force limit."""
 
         styles = []
 
         def solve(self, *args, **kwargs):
             style = kwargs.get("guess_style", "frontier_sprint")
             type(self).styles.append(style)
-            if style == "frontier_sprint":
-                samples = _consistent_samples(n=11, dt=0.05, speed=0.2)
-                for sample in samples:
-                    sample["al"] = 100.0
-                    sample["ar"] = 100.0
-                return samples, {"converged": True, "final_cost": 0.5}
-            return super().solve(*args, **kwargs)
+            samples = _consistent_samples(n=11, dt=0.05, speed=0.2)
+            for sample in samples:
+                sample["al"] = 100.0
+                sample["ar"] = 100.0
+            return samples, {"converged": True, "final_cost": 0.5}
 
     class _FailingImmrax:
         def __init__(self, config, digital_twin=None, **kwargs):
@@ -406,6 +400,13 @@ class TestWriteGateIntegration(unittest.TestCase):
             report["max_motor_violation_N"] = 0.0
             report["max_tracking_error_m"] = 0.002
             return report
+
+    class _CountingImmrax(_PassingImmrax):
+        calls = 0
+
+        def validate_trajectory(self, *args, **kwargs):
+            type(self).calls += 1
+            return super().validate_trajectory(*args, **kwargs)
 
     class _CapturingImmrax(_PassingImmrax):
         last_ranges = None
@@ -462,37 +463,41 @@ class TestWriteGateIntegration(unittest.TestCase):
         self.assertFalse(exists)
         self.assertIn("did not converge", result.output.lower())
 
-    def test_another_seed_is_tried_when_the_first_one_stops(self):
-        """KI-048: one seed that does not converge must not end the mission."""
+    def test_a_non_converged_first_candidate_is_not_rescued(self):
+        """KI-048 is gone: nothing is solved after the planner's first guess.
+
+        On the 32-mission suite the fallback seeds rescued 0 of the 22 failing
+        missions, and 95 of their 97 failures were the envelope, which a seed
+        cannot move, so the rescue is not run at all.
+        """
         self._FirstSeedFailsOptimizer.styles = []
         result, exists = self._run(self._FirstSeedFailsOptimizer)
-        self.assertEqual(result.exit_code, 0, result.output)
-        self.assertTrue(exists)
-        styles = self._FirstSeedFailsOptimizer.styles
-        self.assertIn("frontier_sprint", styles)
-        self.assertTrue(any(style != "frontier_sprint" for style in styles),
-                        f"no other seed was tried: {styles}")
-
-    def test_a_set_that_fails_every_gate_is_rescued(self):
-        """KI-048: the other seeds are tried when the set passes nothing."""
-        self._SeedFailsGateOptimizer.styles = []
-        result, exists = self._run(self._SeedFailsGateOptimizer,
-                                   ("--validate",), self._PassingImmrax)
-        self.assertEqual(result.exit_code, 0, result.output)
-        self.assertTrue(exists)
-        styles = self._SeedFailsGateOptimizer.styles
-        self.assertTrue(any(style != "frontier_sprint" for style in styles),
-                        f"no rescue seed was tried: {styles}")
-
-    def test_the_rescue_is_bounded(self):
-        """KI-048: the rescue must end, not loop."""
-        self._NonConvergedOptimizer.calls = 0
-        result, exists = self._run(self._NonConvergedOptimizer)
         self.assertNotEqual(result.exit_code, 0)
         self.assertFalse(exists)
-        # The candidate set, then one rescue per seed the set did not use.
-        self.assertLessEqual(self._NonConvergedOptimizer.calls,
-                             1 + len(GUESS_STYLES))
+        self.assertEqual(self._FirstSeedFailsOptimizer.styles,
+                         ["frontier_sprint"],
+                         "a seed outside the candidate set was solved")
+
+    def test_a_set_that_fails_every_gate_is_not_rescued(self):
+        """Every candidate fails, and no other seed is tried."""
+        self._EverySeedFailsTheSameGate.styles = []
+        result, exists = self._run(self._EverySeedFailsTheSameGate,
+                                   ("--validate",), self._PassingImmrax)
+        self.assertNotEqual(result.exit_code, 0)
+        self.assertFalse(exists)
+        styles = set(self._EverySeedFailsTheSameGate.styles)
+        self.assertLessEqual(
+            styles, {"frontier_sprint", "frontier_sweeper", "frontier_exploratory"},
+            f"a seed outside the candidate set was solved: {sorted(styles)}")
+
+    def test_a_plan_that_did_not_converge_is_not_checked(self):
+        """A solve that stopped at its budget has no path to validate."""
+        self._CountingImmrax.calls = 0
+        result, exists = self._run(self._NonConvergedOptimizer,
+                                   ("--validate",), self._CountingImmrax)
+        self.assertNotEqual(result.exit_code, 0)
+        self.assertFalse(exists)
+        self.assertEqual(self._CountingImmrax.calls, 0)
 
     def test_failed_validation_writes_nothing(self):
         result, exists = self._run(

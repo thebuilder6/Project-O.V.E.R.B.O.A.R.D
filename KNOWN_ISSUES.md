@@ -63,7 +63,7 @@ How to use this list: refer to an item by its ID, for example "fix KI-003". The 
 | KI-045 | P2 | Cleanup | ~~`sysid_solver.py` is a superseded prototype~~ (fixed; retired prototype and dropped pandas) |
 | KI-046 | P2 | Cleanup | ~~Five smaller things the audit left open~~ (fixed; all five resolved) |
 | KI-047 | P1 | Solver | ~~The fast solve path made the solver slower, and its test failed on the tree~~ (fixed) |
-| KI-048 | P1 | Solver / output | ~~The solver gives up on a path instead of trying another candidate~~ (fixed; a rescue round tries the other seeds when the run produces nothing) |
+| KI-048 | P1 | Solver / output | ~~The solver gives up on a path instead of trying another candidate~~ (the rescue round that fixed it is removed: it rescued 0 of 22 failing missions) |
 | KI-049 | P1 | Validation | ~~The reachability envelope reported a 54 mm width that was the divergence guard's fingerprint, and the tube behind it was blown up by a dependency the interval arithmetic could not see~~ (fixed) |
 | KI-050 | P1 | Validation | ~~The closed-loop tick map could not run at all on the installed JAX: the controller unpacked the pose, and Immrax's natural inclusion has no rule for `unstack`~~ (fixed) |
 | KI-051 | P2 | CLI / solver | ~~`--self-consistent` is a no-op: the switch cannot change the plan and the trapezoidal collocation cannot be reached from the CLI~~ (fixed; switch is two-way `--self-consistent/--no-self-consistent` and default True) |
@@ -596,13 +596,15 @@ If none of those is available, the run does not know that the plan is accurate e
 
 ### KI-048 — The solver gives up on a path instead of trying another candidate
 
-**Fixed.** The CLI solves the candidates in rounds: if the run produced **nothing usable** - no candidate passed the gates, or (without validation) none converged - the seeds the set did not use are tried as a **rescue** before the mission is given up on.
+**Removed (2026-10-21).** The rescue round is gone: `_run_candidates` solves the planner's candidate set and nothing else. Over the 32-mission suite (`research/missions`, 8 per profile, `--candidates 3 --validate --propagation plant`, records in `research/results/q14_plant.jsonl`) 22 missions failed the gates, every one of them ran the rescue, and **no rescue candidate passed on any mission**. 95 of the 97 rescue candidates that were checked failed on the envelope â€” the same gate that stopped the set, and not something a seed can move â€” and the round roughly doubled the wall time of every failing mission. The seeds are still declared in `overboard/core/optimizer.py`; reviving the round means restoring the fallback batch in `_run_candidates` from git history.
+
+**Was (fixed until 2026-10-21).** The CLI solved the candidates in rounds: if the run produced **nothing usable** - no candidate passed the gates, or (without validation) none converged - the seeds the set did not use were tried as a **rescue** before the mission was given up on.
 
 **Was:** IPOPT can exhaust its 5000-iteration budget; the optimizer returns best-effort samples, the candidate is marked not converged, and a non-converged candidate is never eligible for export, so it is thrown away with its wall time spent. The stress run of 2026-10-20 found one candidate in 228 at the limit (36.5 s) - though in all 114 mission-robot pairs at least one candidate converged, so no mission was lost.
 
-**Fix:** on a validated run the rescue uses the per-segment model, because that is where the measured rescues came from. A rescue candidate is insurance: it is only selected when the candidate set itself produced nothing that passed. It costs nothing when the plan works and one parallel round when it does not.
+**Fix:** on a validated run the rescue uses the per-segment model, because that is where the measured rescues came from. A rescue candidate is insurance: it is only selected when the candidate set itself produced nothing that passed. It costs nothing when the plan works.
 
-**Files:** `overboard/core/optimizer.py` (`solve`), `overboard/main.py` (`_rescue_specs`, the candidate rounds), `tests/test_regressions.py`
+**Files:** `overboard/core/optimizer.py` (`solve`), `overboard/main.py` (`_run_candidates`), `tests/test_regressions.py` (`TestWriteGateIntegration.test_a_non_converged_first_candidate_is_not_rescued`, `test_a_set_that_fails_every_gate_is_not_rescued`)
 
 ### KI-049 — The reachability envelope reported a truncation as a width, and the tube behind it was blown up by a dependency
 
