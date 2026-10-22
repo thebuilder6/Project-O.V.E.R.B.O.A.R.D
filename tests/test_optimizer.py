@@ -548,6 +548,12 @@ class TestTrajectoryOptimizer(unittest.TestCase):
         expected_t = sum(s * dt for s, dt in zip(stats["segment_samples"], stats["segment_dt"]))
         self.assertAlmostEqual(samples[-1]["t"], expected_t, places=6)
 
+    def test_a_short_turn_gets_the_full_sample_count(self):
+        """An arc-length split starves a short turn; the chord is tracking error."""
+        waypoints = [(0.0, 0.0, 0.0), (0.5, 0.0, 0.0), (0.5, 0.3, 1.57)]
+        counts = TrajectoryOptimizer.get_segment_sample_counts(waypoints, 14)
+        self.assertEqual(counts, [17, 14])
+
     def test_uniform_dt_forces_every_segment_to_take_the_same_time(self):
         """KI-022: one shared dt also ties the SEGMENT DURATIONS together.
 

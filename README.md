@@ -655,10 +655,10 @@ With those earlier ranges the open-loop tube grew past the 2 cm gate on every cu
 |---|---|---|
 | Straight | 2.308 s, envelope 0.336 cm, tracking 0.056 cm | PASS |
 | S-curve | 3.775 s, envelope 0.495 cm, tracking 0.513 cm | FAIL (tracking) |
-| Stops | 5.389 s, envelope 0.504 cm, tracking 0.581 cm | FAIL (tracking) |
+| Stops | 5.494 s, envelope 0.503 cm, tracking 0.395 cm | PASS |
 | Complex mission | 5.661 s, envelope 0.589 cm, tracking 0.161 cm | PASS |
 
-The envelope fell by 2.2-2.6x on the same code, and it is no longer the binding constraint on these paths: the 5 mm tracking gate is. Tracking does not depend on the uncertainty intervals - it is the same 0.161 cm on the complex plan whether the track-width interval is ±0.5 or ±1.5 mm - so that is the reference/controller question in [RQ-A](docs/research/RQ-A_tracking_error.md), not a range question.
+The envelope fell by 2.2-2.6x on the same code. The stops row is the post-allocator number: the arc-length split had given its two 90-degree segments 11 samples, and raising a turning segment to the full 14 cut tracking from 0.581 to 0.395 cm at the same gate. Tracking does not depend on the uncertainty intervals - it is the same 0.161 cm on the complex plan whether the track-width interval is ±0.5 or ±1.5 mm - so the remaining S-curve failure is the reference/controller question in [RQ-A](docs/research/RQ-A_tracking_error.md), not a range question.
 
 The full gate chain, every threshold with its source line, and the measured comparison of all five initial-guess seeds under both timing models (60 candidates, with the raw logs) are in [docs/HEURISTICS_AND_VERIFICATION.md](docs/HEURISTICS_AND_VERIFICATION.md). The ledger of strategies that did not work is in [docs/STRATEGY_LEDGER.md](docs/STRATEGY_LEDGER.md), and the research agenda in [docs/RESEARCH_AGENDA.md](docs/RESEARCH_AGENDA.md).
 

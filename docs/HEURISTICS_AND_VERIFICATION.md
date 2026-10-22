@@ -16,7 +16,7 @@
 >
 > **Read this first.** Every number in this document is a **model prediction**, not a hardware measurement. No hardware logs exist in the repository. The robot-side collector (`pybricks_code/sysid_digital_twin.py`) can produce them, but nothing has been captured yet. The uncertainty ranges in `examples/fll_choreo.json` are *declared test assumptions*, not calibrated hardware values. A "PASS" in this document means "the trajectory passes the gates of an uncalibrated model", not "the robot will track it".
 >
-> **Range change, 2026-10-21.** `examples/fll_choreo.json` no longer carries the clamped ranges that most measurements below were taken with (track width ±0.1 mm, backlash 0.1 mm, COF 1.37). It now declares track width ±0.5 mm, wheel radius ±0.5 mm, backlash 0.2-0.8 mm, inertia 0.0020-0.0028 kg·m² and COF 0.95 ±10 % (KI-020). The 2026-10-19 matrix in Section 9 and the findings above are the **record of the old ranges with `plant` propagation**; they are not the current ledger. On the four roadmap missions the current ranges pass the envelope only with `--propagation tick` (straight and complex pass; the S-curve and stops now fail the 5 mm **tracking** gate at 0.51 and 0.58 cm - tracking is independent of the ranges). See the table in [README §Validation](../README.md#validation); the `safe` preset selects tick.
+> **Range change, 2026-10-21.** `examples/fll_choreo.json` no longer carries the clamped ranges that most measurements below were taken with (track width ±0.1 mm, backlash 0.1 mm, COF 1.37). It now declares track width ±0.5 mm, wheel radius ±0.5 mm, backlash 0.2-0.8 mm, inertia 0.0020-0.0028 kg·m² and COF 0.95 ±10 % (KI-020). The 2026-10-19 matrix in Section 9 and the findings above are the **record of the old ranges with `plant` propagation**; they are not the current ledger. On the four roadmap missions the current ranges pass the envelope only with `--propagation tick` (straight, stops and complex pass; the S-curve still fails the 5 mm **tracking** gate at 0.51 cm - tracking is independent of the ranges). Stops passed after the sample allocator's turn floor (it tracked 0.58 cm with 11 samples on each 90-degree segment and 0.395 cm with 14). See the table in [README §Validation](../README.md#validation); the `safe` preset selects tick.
 
 ---
 
@@ -484,16 +484,17 @@ The self-consistent rule is worth roughly half the tracking error on a curved pa
 
 ### 5.8 The sample layout: how many samples a segment gets
 
-The planner does not give every waypoint segment the same number of samples. `TrajectoryOptimizer.get_segment_sample_counts` splits the budget `segments * samples_per_segment` across the segments **in proportion to their arc length**, with a floor of three samples per segment:
+The planner does not give every waypoint segment the same number of samples. `TrajectoryOptimizer.get_segment_sample_counts` splits the budget `segments * samples_per_segment` across the segments **in proportion to their arc length**, with a floor of three samples per segment, and then raises a segment that turns by more than about 20 degrees to the full `samples_per_segment`:
 
 ```
 total_budget = segments * samples_per_segment
 m            = min(samples_per_segment, 3)          # the floor
 rem_budget   = total_budget - segments * m
 raw_i        = rem_budget * (L_i / sum(L))          # the proportional part
+if |dtheta_i| > 0.35 rad: s_i = max(s_i, samples_per_segment)
 ```
 
-Each segment gets `m` samples plus its share of `rem_budget`, rounded down, and the samples left over by the rounding go to the segments with the largest remainders. The total is unchanged - `N = 1 + sum_i(s_i) = 1 + segments * samples_per_segment` - so the **number** of samples is the same as before and only their **distribution** changes. A path with one segment, a path of zero length, or a budget too small for the floor falls back to the uniform allocation.
+Each segment gets `m` samples plus its share of `rem_budget`, rounded down, and the samples left over by the rounding go to the segments with the largest remainders. The total is usually unchanged, but the turn floor can push it above `segments * samples_per_segment`: on the stops example the split is `[17, 14, 17, 14]` instead of `[17, 11, 17, 11]`, and tracking fell from 0.581 to 0.378 cm on the same plan. The reason is RQ-A's chord: the controller follows the straight line between samples, so a short 90-degree segment with 11 samples is a coarser polyline than the tracking gate can accept. Over the 200-mission suite at the current ±0.5 mm ranges with `--propagation tick`, the floor moved 104 of 400 validations through the gates against 100 without it (5 gained, 1 lost; tracking failures 234 -> 227, envelope failures 110 -> 109). A path with one segment, a path of zero length, or a budget too small for the floor falls back to the uniform allocation.
 
 **What it buys.** A long segment gets more samples, so the path is sampled finely where it is long and coarsely where it is short; the sample-to-waypoint mapping becomes a table (`waypoint_sample_indices`) instead of `k * samples_per_segment`, and `stats["segment_samples"]` reports the counts so a reader can map a sample back to its waypoint. The equal-duration model's old penalty - one shared `dt` over equal counts gives every segment the same time, so a short segment inherits the long one's duration - is gone, because a segment's duration is now `s_i * dt` and `s_i` follows the length.
 

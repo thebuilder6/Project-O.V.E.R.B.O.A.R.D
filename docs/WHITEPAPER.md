@@ -171,7 +171,7 @@ For `N = 1 + sum_i(s_i)` samples, where `s_i` is the number of sample intervals 
 - one interval length `dt_i` per waypoint segment (the per-segment model, which is the only one)
 - for each sample `k`: `x_k, y_k, theta_k, vl_k, vr_k`
 
-**The sample count follows the path.** `TrajectoryOptimizer.get_segment_sample_counts` splits the budget `segments * samples_per_segment` across the waypoint segments in proportion to their arc length, with at least three samples each, so a long segment is sampled finely and a short one coarsely. The total is the same as before (`N = 1 + sum_i(s_i) = 1 + segments * samples_per_segment`), but the layout is not: the sample-to-waypoint mapping is a table, not `k * samples_per_segment`, and the code carries it as `waypoint_sample_indices`.
+**The sample count follows the path.** `TrajectoryOptimizer.get_segment_sample_counts` splits the budget `segments * samples_per_segment` across the waypoint segments in proportion to their arc length, with at least three samples each, so a long segment is sampled finely and a short one coarsely. A segment that turns by more than about 20° is raised to the full per-segment count: an arc-length split starves a short turn, and the controller follows the chord, so the coarser polyline is read as tracking error (on the stops example this moved tracking from 0.581 to 0.378 cm). The layout is a table, not `k * samples_per_segment`, and the code carries it as `waypoint_sample_indices`; the total can exceed `segments * samples_per_segment` when turns are raised.
 
 The per-segment variant uses `dt_i` inside segment `i`; total time is `sum_i(s_i * dt_i)`, and the interval starting at sample `k` uses the `dt` of the segment that sample belongs to. The uniform variant keeps all segments on one `dt`, and its total time is `dt * (N - 1)`. The uniform variant spends the same *interval* on every segment whatever its length, so a segment's duration is `s_i * dt` and the short segments inherit less time than the long ones - the opposite of the old layout, where equal counts gave every segment the same time. The per-segment variant is therefore the general model: setting every `dt_i` equal recovers the uniform solution exactly. Every candidate uses it; the uniform variant was retired along with `--uniform-dt` and `--per-segment-dt`.
 
@@ -324,10 +324,10 @@ With the current ±0.5 mm geometry intervals and the same command, the envelope 
 |---|---|---|
 | Straight | 2.308 s, 0.336 cm, 0.056 cm | PASS |
 | S-curve | 3.775 s, 0.495 cm, 0.513 cm | FAIL (tracking) |
-| Stops | 5.389 s, 0.504 cm, 0.581 cm | FAIL (tracking) |
+| Stops | 5.494 s, 0.503 cm, 0.395 cm | PASS |
 | Complex mission | 5.661 s, 0.589 cm, 0.161 cm | PASS |
 
-Tracking does not depend on the uncertainty intervals: on the complex plan it is 0.161 cm whether the track-width interval is ±0.5 or ±1.5 mm. The two failures are therefore the reference/controller question in [RQ-A](research/RQ-A_tracking_error.md), not a range question.
+The stops row uses the turn floor in the sample allocator: its two 90-degree segments had 11 samples each, and raising them to 14 cut tracking from 0.581 to 0.395 cm. Tracking does not depend on the uncertainty intervals: on the complex plan it is 0.161 cm whether the track-width interval is ±0.5 or ±1.5 mm. The remaining S-curve failure is therefore the reference/controller question in [RQ-A](research/RQ-A_tracking_error.md), not a range question.
 
 ### 5.4 What the validator does not prove
 
