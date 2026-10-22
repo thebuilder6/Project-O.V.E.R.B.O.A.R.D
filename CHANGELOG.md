@@ -4,7 +4,7 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the versions are
 [PEP 440](https://peps.python.org/pep-0440/): `0.1.0a1` is the first alpha.
 
-## [0.1.0a1] - 2026-10-23
+## [0.1.0a1] - 2026-10-22
 
 First alpha release. The planner, the validator and the controller export work
 end to end from the CLI and from the browser studio. The robot side is not yet

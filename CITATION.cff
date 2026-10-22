@@ -8,7 +8,7 @@ abstract: >-
   controller.
 type: software
 version: "0.1.0a1"
-date-released: "2026-10-23"
+date-released: "2026-10-22"
 authors:
   - name: "InfiniteQuery"
 repository-code: "https://github.com/thebuilder6/Project-O.V.E.R.B.O.A.R.D"
