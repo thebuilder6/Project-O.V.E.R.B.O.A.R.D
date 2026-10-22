@@ -9,7 +9,7 @@ A trajectory optimizer for LEGO differential-drive robots in FIRST LEGO League (
 **⚡ Optimal control derivation:** [docs/OPTIMAL_CONTROL_DERIVATION.md](docs/OPTIMAL_CONTROL_DERIVATION.md) — 5 invariant differential-drive control laws extracted from 50 generations of evolutionary search and the analytical Kinetic Frontier seeds (`overboard/core/frontier_seed.py`). *Historical: the evolutionary search was removed from the tree - it is in the git tag `archive/legacy-2026-10`.*
 **🖼️ Visual gallery:** [docs/VISUAL_GALLERY.md](docs/VISUAL_GALLERY.md) — gallery of state-space phase portraits, multi-shape manifolds, and multi-island convergence figures from the archived search.
 
-The audit items from KI-001 through KI-052 are resolved in the codebase, except the one still open (hardware calibration and digital-twin validation, KI-020); KI-004 is deleted and KI-032 is mitigated (see [KNOWN_ISSUES.md](KNOWN_ISSUES.md)). The 3-Pillar unified planner is the only planner, and the old Multi-Verse pipeline was removed from the tree (git tag `archive/legacy-2026-10`) and is not reachable from the CLI.
+The audit items from KI-001 through KI-054 are resolved in the codebase, except the two still open: hardware calibration and digital-twin validation (KI-020) and the envelope gate's absolute limit (KI-054). KI-004 is deleted and KI-032 is mitigated (see [KNOWN_ISSUES.md](KNOWN_ISSUES.md)). The 3-Pillar unified planner is the only planner, and the old Multi-Verse pipeline was removed from the tree (git tag `archive/legacy-2026-10`) and is not reachable from the CLI.
 
 ## Start here (first time)
 
@@ -705,6 +705,11 @@ The example plots that used to sit here were produced by the archived evolutiona
 See [docs/trajectory_tools_research.md](docs/trajectory_tools_research.md) for comparisons with Choreo, PathPlanner, and CasADi, plus academic references.
 
 ## Development Status
+
+**Alpha `0.1.0a1` (2026-10-23).** The planner, the validator and the controller
+export work end to end. The robot side is not yet validated against a calibrated
+drivebase (KI-020), so a validated plan is a prediction, not a guarantee on the
+field. [CHANGELOG.md](CHANGELOG.md) lists what is in this release and what is not.
 
 - ✅ Phase 1: CasADi + IPOPT solver
 - ✅ Phase 2: Time vs. accuracy tradeoff

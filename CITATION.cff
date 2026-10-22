@@ -7,6 +7,8 @@ abstract: >-
   against a reachability gate, and exports them for a Pybricks Ramsete
   controller.
 type: software
+version: "0.1.0a1"
+date-released: "2026-10-23"
 authors:
   - name: "InfiniteQuery"
 repository-code: "https://github.com/thebuilder6/Project-O.V.E.R.B.O.A.R.D"
