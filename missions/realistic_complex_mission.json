@@ -72,7 +72,7 @@
  {
   "x": 0.1,
   "y": 0.1,
-  "heading": null,
+  "heading": 1.5707963267948966,
   "stop": true
  }
 ]
