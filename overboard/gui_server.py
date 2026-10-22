@@ -281,6 +281,8 @@ class Job:
         round can take minutes, and an empty field for that long reads as a
         hang. The file is small and replaced atomically, so a poll may read
         it; the mtime guard keeps it off the filesystem when nothing changed.
+        On Windows this read is what makes the writer's rename fail, so the
+        CLI retries the swap (main._swap_in).
         """
         if self.status != "running":
             return
