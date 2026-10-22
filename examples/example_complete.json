@@ -2,11 +2,11 @@
   {"x": 0.0, "y": 0.0, "heading": 0.0, "stop": true},
   {"x": 0.4, "y": 0.2, "heading": 0.5, "event": "lower_arm"},
   {"x": 0.8, "y": 0.4, "heading": 0.8, "stop": true},
-  {"x": 1.2, "y": 0.3, "heading": 0.0, "event": "release"},
-  {"x": 1.5, "y": 0.0, "heading": -0.5, "stop": false},
+  {"x": 1.2, "y": 0.38, "heading": 0.0, "event": "release"},
+  {"x": 1.55, "y": 0.05, "heading": -0.5, "stop": false},
   {"x": 1.8, "y": 0.2, "heading": 0.5, "event": "intake"},
-  {"x": 2.0, "y": 0.5, "heading": 1.57, "stop": true},
-  {"x": 1.8, "y": 0.8, "heading": 3.14, "event": "deposit"},
+  {"x": 1.72, "y": 0.55, "heading": 1.57, "stop": true},
+  {"x": 1.75, "y": 0.88, "heading": 3.14, "event": "deposit"},
   {"x": 1.5, "y": 0.5, "heading": -1.57, "stop": false},
   {"x": 1.2, "y": 0.3, "heading": 0.0, "stop": true}
 ]
