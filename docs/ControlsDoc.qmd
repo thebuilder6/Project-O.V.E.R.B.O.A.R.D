@@ -126,6 +126,43 @@ $$|F_l| \le \mu N_l(v, \omega), \qquad |F_r| \le \mu N_r(v, \omega), \qquad |F_l
 
 ---
 
+# Trajectory Optimization Problem
+
+Everything above describes a physical quantity. This section states the nonlinear program the solver actually receives, because it is not a textbook optimal control problem: **there is no control variable.** The input is reconstructed from consecutive states, so the transcription is state-only.
+
+## Node State and Derived Input
+
+With $M+1$ waypoints $\mathbf{w}_0,\dots,\mathbf{w}_M$ the path has $M$ segments, and segment $i$ (the chord $\mathbf{w}_i \to \mathbf{w}_{i+1}$) is given $S_i$ collocation intervals. Writing $N = 1 + \sum_{i=0}^{M-1} S_i$ for the node count, the state at node $k$ is
+
+$$\mathbf{z}_k = \begin{bmatrix} x_k & y_k & \theta_k & v_{l,k} & v_{r,k} \end{bmatrix}^T \in \mathbb{R}^5, \qquad k = 0,\dots,N-1$$ {#eq-state-vector}
+
+The state carries the **wheel** speeds, not the chassis pair: every force bound is per wheel (@eq-wheel-forces, @eq-motor-curve, @eq-traction-envelope), so $(v,\omega)$ and the wheel accelerations are derived and never optimised:
+
+$$v_k = \frac{v_{l,k}+v_{r,k}}{2}, \qquad \omega_k = \frac{v_{r,k}-v_{l,k}}{B}, \qquad a_{l,k} = \frac{v_{l,k+1}-v_{l,k}}{\Delta t_{\sigma(k)}}, \qquad a_{r,k} = \frac{v_{r,k+1}-v_{r,k}}{\Delta t_{\sigma(k)}}$$ {#eq-derived-input}
+
+where $\sigma(k) \in \{0,\dots,M-1\}$ is the segment that owns interval $k$. The accelerations are the only place an input appears, and they are functions of $\mathbf{z}$ and $\Delta t$.
+
+## Decision Vector
+
+$$\boldsymbol{\zeta} = \left( \Delta t_0,\dots,\Delta t_{M-1}, \; \mathbf{z}_0,\dots,\mathbf{z}_{N-1}, \; f_{b,0},\dots,f_{b,N-2} \right)$$ {#eq-decision-vector}
+
+with $5N$ state entries, $M$ interval times and $N-1$ epigraph slacks. The interval time is **per segment**, not global: the $S_i$ intervals of segment $i$ share one $\Delta t_i$, so $t$ is piecewise linear and the total duration is $\sum_i S_i \Delta t_i$. Because $\Delta t$ is a decision variable, the defects and the accelerations are nonlinear in it.
+
+The problem is, for the cost $J$ of @eq-nlp-objective:
+
+- **defects** @eq-gl-pos-defect and @eq-gl-heading-defect, on every interval $k = 0,\dots,N-2$;
+- **waypoint pins** $x = x_i$, $y = y_i$, and $\theta = \theta_i$ where the waypoint pins a heading, at node $n_i = \sum_{j<i} S_j$;
+- **rest** $v_l = v_r = 0$ at node $0$, at node $N-1$, and at every stop waypoint;
+- **acceleration continuity** at a waypoint the robot drives through, where the two adjacent segments meet: $(v_{l,k}-v_{l,k-1})\Delta t_i = (v_{l,k+1}-v_{l,k})\Delta t_{i-1}$ and the same for $v_r$, so the wheel force is continuous through the node;
+- **force epigraphs** @eq-epigraph-linear with the motor and normal-force ceilings @eq-epigraph-motor and @eq-epigraph-normal;
+- **boxes** $0.001 \le \Delta t_i \le 1$, $|v_{l,k}|, |v_{r,k}| \le 0.99 \, v_{\text{wheel,max}}$, and the $[-20, 20]$ m and $[-100, 100]$ rad guards on position and heading.
+
+## Remark: what this transcription is and is not
+
+It is a **state-only direct transcription with the input eliminated**: no $\mathbf{u}$ vector, no shooting roll-out, and no separate continuity unknown for the accelerations. That is why the force-continuity rule above is written on wheel-speed differences rather than on a control, and why the solver's acceleration limits are enforced through those differences and $\Delta t$. It is **not** an implicit Gauss-Legendre collocation scheme in the Runge-Kutta sense - the defects are quadrature evaluations of the position integral over a velocity that is linear and a heading that is quadratic in $s$ (@eq-continuous-interpolants) - and the "$\mathcal{O}(\Delta t^7)$" used elsewhere in this document is the polynomial exactness of the four-node rule, not a measured convergence order.
+
+---
+
 # Pillar I: Asymmetric Transition Geometry & Analytical Seeding
 
 Rather than initializing the non-convex optimal control problem from straight chords ($v=0$) or evolutionary random walks, Pillar I deterministically generates an analytical initial guess in a few milliseconds (measured: 1.29 ms for the sprint seed, 2.51 ms for the triad). These are **design heuristics** that reproduced well on the example missions, not theorems: nothing proves the seed is Pontryagin-optimal.
