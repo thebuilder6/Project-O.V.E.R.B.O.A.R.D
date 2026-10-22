@@ -616,6 +616,7 @@ def _emit_validation_report(attempts, selected_index, propagation=None,
             "peak_traction_util": _finite(attempt.get("peak_traction_util", 0.0)),
             "ok": bool(attempt.get("ok")),
             "converged": bool(attempt.get("converged")),
+            "validation_skipped": bool(attempt.get("validation_skipped", False)),
             "reasons": list(attempt.get("reasons", [])),
             "segments": segments,
         })
@@ -647,6 +648,7 @@ def _candidate_summary(attempts, selected_index):
             "ok": bool(attempt.get("ok")),
             "converged": bool(attempt.get("converged")),
             "rescue": bool(attempt.get("rescue")),
+            "validation_skipped": bool(attempt.get("validation_skipped", False)),
             "duration_s": _finite(attempt.get("duration")),
             "envelope_cm": _finite(attempt.get("tube", 0.0) * 100.0),
             "tracking_cm": _finite(attempt.get("tracking_m", 0.0) * 100.0),
@@ -1012,6 +1014,9 @@ class _ScoreContext:
     quiet: bool
     envelope_limit: float = DEFAULT_ENVELOPE_LIMIT_M
     envelope_limit_per_metre: float = DEFAULT_ENVELOPE_LIMIT_PER_METRE
+    # One validator per run: its compiled scan is reused by every candidate,
+    # and a fresh one per candidate pays the XLA compile again (KI-049).
+    validator: Any = None
 
 
 def _record_candidate(spec, solve_result, cand_idx, batch_len, histories, *,
@@ -1042,10 +1047,31 @@ def _record_candidate(spec, solve_result, cand_idx, batch_len, histories, *,
         "iteration_history": (histories[cand_idx]
                               if cand_idx < len(histories) else []),
         "reasons": [],
+        # True when a faster candidate already passed, so this plan was not
+        # checked; the verdict is "not needed", never "failed".
+        "validation_skipped": False,
         # Nothing is a rescue any more; the field stays because the studio
         # and the report readers still show it (KI-048 removed).
         "rescue": False,
     }
+
+
+def _immrax_validator(ctx):
+    """The run's one validator, built on first use.
+
+    The compiled rollout lives inside the validator and is keyed by shape, so
+    building a fresh validator per candidate recompiles the same graph. The
+    validator holds no per-trajectory state beyond that cache.
+    """
+    if ctx.validator is not None:
+        return ctx.validator
+    validator_cls, robot_config_cls = _ensure_jax_classes()
+    jax_cfg = robot_config_cls(ctx.robot_cfg)
+    kwargs = {"control_dt": ctx.control_dt, "propagation": ctx.propagation}
+    if ctx.digital_twin is not None:
+        kwargs["digital_twin"] = ctx.digital_twin
+    ctx.validator = validator_cls(jax_cfg, **kwargs)
+    return ctx.validator
 
 
 def _score_attempt(attempt_record, ctx):
@@ -1079,15 +1105,7 @@ def _score_attempt(attempt_record, ctx):
     travelled = _travelled_m(samples_data)
 
     try:
-        validator_cls, robot_config_cls = _ensure_jax_classes()
-        jax_cfg = robot_config_cls(ctx.robot_cfg)
-        if ctx.digital_twin is None:
-            immrax_val = validator_cls(jax_cfg, control_dt=ctx.control_dt,
-                                       propagation=ctx.propagation)
-        else:
-            immrax_val = validator_cls(jax_cfg, digital_twin=ctx.digital_twin,
-                                       control_dt=ctx.control_dt,
-                                       propagation=ctx.propagation)
+        immrax_val = _immrax_validator(ctx)
 
         # Use the uncertainty ranges declared in the config (KI-009).
         cof_range = ctx.robot_cfg.uncertainties["cof"]
@@ -1282,7 +1300,8 @@ def _score_attempt(attempt_record, ctx):
 
 
 def _run_candidates(specs_to_solve, solve_ctx, score_ctx, *,
-                     accuracy_weight, use_validation, quiet, progress=None):
+                     accuracy_weight, use_validation, quiet, progress=None,
+                     early_stop=True):
     """Solve the planner's candidate set.
 
     The fallback seeds that used to follow a failed set (KI-048) are not
@@ -1299,14 +1318,34 @@ def _run_candidates(specs_to_solve, solve_ctx, score_ctx, *,
     solved, histories = _dispatch_solve(batch, solve_ctx)
     if solve_ctx.polish:
         solved = _polish_candidates(solved, solve_ctx)
+
     for cand_idx, (spec, solve_result) in enumerate(zip(batch, solved)):
-        record = _record_candidate(spec, solve_result, cand_idx, len(batch),
-                                   histories, quiet=quiet)
-        attempts.append(record)
+        attempts.append(_record_candidate(
+            spec, solve_result, cand_idx, len(batch), histories, quiet=quiet))
         if progress is not None:
             progress(attempts)
+
+    # Check the fastest solved candidate first. Once one passes, a slower
+    # candidate cannot win the duration rule, so its check is skipped; an
+    # equal duration is still checked because the envelope breaks that tie.
+    # A compare run (--candidates-out) or an explicit --pick-candidate wants
+    # every candidate's verdict, so it turns the skip off.
+    order = (sorted(range(len(attempts)), key=lambda i: attempts[i]["duration"])
+             if early_stop else range(len(attempts)))
+    best_passing = None
+    for index in order:
+        record = attempts[index]
+        if (early_stop and best_passing is not None
+                and record["duration"] > best_passing):
+            record["validation_skipped"] = True
+            record["reasons"] = [
+                "validation skipped: a faster candidate already passed"]
+            continue
         if _score_attempt(record, score_ctx):
             break
+        if record["ok"] and (best_passing is None
+                             or record["duration"] < best_passing):
+            best_passing = record["duration"]
         if progress is not None:
             progress(attempts)
     return attempts
@@ -1995,7 +2034,8 @@ def main(ctx, config, waypoints, output, gui, gui_port, doctor, preset,
         accuracy_weight=accuracy_weight,
         use_validation=use_validation, quiet=quiet,
         progress=(lambda made: _write_candidates(candidates_out, made, None, True))
-        if candidates_out else None)
+        if candidates_out else None,
+        early_stop=not (pick_candidate or candidates_out))
 
     (samples_data, stats, attempt_passed, best_reasons, selected_tube,
      selected_index) = _choose_attempt(

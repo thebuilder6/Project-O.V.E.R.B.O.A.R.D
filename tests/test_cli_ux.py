@@ -960,6 +960,77 @@ class TestCandidateComparison(unittest.TestCase):
         self.assertNotEqual(result.exit_code, 0)
         self.assertIn("--pick-candidate needs --validate", result.output)
 
+    def test_one_validator_serves_every_candidate(self):
+        """A fresh validator per candidate pays the XLA compile again."""
+        import overboard.main as main
+
+        class FakeValidator:
+            built = []
+
+            def __init__(self, cfg, **kwargs):
+                self.cfg = cfg
+                self.kwargs = kwargs
+                FakeValidator.built.append(self)
+
+        class Ctx:
+            validator = None
+            robot_cfg = object()
+            control_dt = 0.02
+            propagation = "plant"
+            digital_twin = None
+
+        with patch.object(main, "_ensure_jax_classes",
+                          return_value=(FakeValidator, lambda cfg: cfg)):
+            first = main._immrax_validator(Ctx)
+            second = main._immrax_validator(Ctx)
+
+        self.assertIs(first, second)
+        self.assertEqual(len(FakeValidator.built), 1)
+
+    def test_a_slower_candidate_is_not_checked_after_a_faster_one_passes(self):
+        """Validation is skipped when the solved duration can no longer win."""
+        import overboard.main as main
+
+        class Ctx:
+            polish = False
+
+        specs = [
+            {"accuracy_weight": 0.001, "guess_style": "frontier_sprint"},
+            {"accuracy_weight": 0.002, "guess_style": "frontier_sweeper"},
+        ]
+        solved = [
+            ([{"t": duration}], {"converged": True, "final_cost": duration})
+            for duration in (3.0, 1.0)
+        ]
+        checked = []
+
+        def fake_dispatch(batch, ctx):
+            return solved, [[], []]
+
+        def fake_score(record, ctx):
+            checked.append(record["duration"])
+            record["ok"] = record["duration"] == 1.0
+            return False
+
+        with patch.object(main, "_dispatch_solve", fake_dispatch), \
+                patch.object(main, "_score_attempt", fake_score):
+            attempts = main._run_candidates(
+                specs, Ctx(), object(), accuracy_weight=0.001,
+                use_validation=True, quiet=True)
+
+        self.assertEqual(checked, [1.0])
+        self.assertTrue(attempts[1]["ok"])
+        self.assertTrue(attempts[0]["validation_skipped"])
+
+        # A compare run or an explicit pick needs every verdict.
+        checked.clear()
+        with patch.object(main, "_dispatch_solve", fake_dispatch), \
+                patch.object(main, "_score_attempt", fake_score):
+            main._run_candidates(
+                specs, Ctx(), object(), accuracy_weight=0.001,
+                use_validation=True, quiet=True, early_stop=False)
+        self.assertEqual(checked, [3.0, 1.0])
+
 
 class TestStudioEntryPoints(unittest.TestCase):
     """--gui opens the studio, and the CLI keeps no wrapper for it."""

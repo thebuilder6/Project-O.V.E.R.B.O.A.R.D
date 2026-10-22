@@ -13,12 +13,30 @@ verification so that:
 from __future__ import annotations
 
 import math
+import os
+import tempfile
 import threading
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 import jax
 jax.config.update("jax_enable_x64", True)
+
+# Keep the compiled rollout across CLI runs. Without this the validator pays
+# the XLA compile again in every process, and on a small mission that compile
+# is most of the validation time.
+_JAX_CACHE_SETTING = os.environ.get("OVERBOARD_JAX_CACHE", "").strip()
+_JAX_CACHE_DIR = Path(_JAX_CACHE_SETTING or
+                      str(Path(tempfile.gettempdir()) / "overboard-jax-cache"))
+if _JAX_CACHE_SETTING.lower() not in ("0", "off", "none", "disabled"):
+    try:
+        _JAX_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+        jax.config.update("jax_compilation_cache_dir", str(_JAX_CACHE_DIR))
+        jax.config.update("jax_persistent_cache_min_compile_time_secs", 0.5)
+    except OSError:
+        # A read-only temp directory must not take validation down with it.
+        pass
 import jax.numpy as jnp
 from jax import jit, value_and_grad, vmap
 from immrax import Interval
