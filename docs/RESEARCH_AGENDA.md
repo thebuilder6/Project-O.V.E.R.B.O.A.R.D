@@ -3,7 +3,7 @@
 **Status:** 2026-10-21, as measured on that tree. Part IV of the heuristics document.
 **Scope:** the questions that are still open, each with the current evidence, the hypothesis, the
 experiment, the metric and the success criterion; [24.1](#241-suggested-order) is the order, cheapest
-decisive experiment first. The ten that are answered are closed in
+decisive experiment first. The eleven that are answered are closed in
 [24.0](#240-the-closed-questions---do-not-re-litigate) with the measurement that closed them, so
 nobody runs them again.
 **Audience:** anyone about to spend an afternoon on the planner.
@@ -26,12 +26,14 @@ nobody runs them again.
   - [Q9 — What would make the validator a real digital twin?](#q9--what-would-make-the-validator-a-real-digital-twin)
   - [Q11 — Should the executor be part of the planner?](#q11--should-the-executor-be-part-of-the-planner)
   - [Q13 — Should the measured matrix be re-measured on the unified path?](#q13--should-the-measured-matrix-be-re-measured-on-the-unified-path)
+  - [Q15 — Should the tracking gate be a constraint instead of a price?](#q15--should-the-tracking-gate-be-a-constraint-instead-of-a-price)
+  - [Q16 — Does the gradient polish ever change a verdict?](#q16--does-the-gradient-polish-ever-change-a-verdict)
   - [24.1 Suggested order](#241-suggested-order)
 - [25. How to report a result](#25-how-to-report-a-result)
 
 ## 24. The open questions
 
-Fourteen questions were asked. Ten are measured and closed; four are open. Each open one has the
+Sixteen questions were asked. Eleven are measured and closed; five are open. Each open one has the
 current evidence, a hypothesis, and an experiment with a metric and a success criterion, ordered so
 that the cheap, decisive ones come first.
 
@@ -95,6 +97,30 @@ survive the wider suite, which is why the campaign exists.
 | **Success criterion** | Every claim in Section 9 is either reproduced on the shipping planner or stamped as a stock-set measurement. A tie is a result too |
 | **Cost** | Low to run, one matrix. This is a measurement, not an experiment: nothing in the tree changes |
 
+### Q15 — Should the tracking gate be a constraint instead of a price?
+
+| | |
+|---|---|
+| **Question** | The shipping planner prices the three discretisation mechanisms in the objective (`cost_metric="discretization"`) and lets the validator reject afterwards. Should the gate be an inequality on the mesh instead of a price? (The refinement half is answered, below.) |
+| **Current evidence** | Every candidate runs on `cost_metric="discretization"` (`overboard/core/unified_planner.py`, `solve_candidate` and `candidate_specs`), and `w_disc = max(10 * w_acc, 0.02)` is fixed by construction, so the candidates differ only in the jerk weight. The price is not the guarantee: the gate is the verdict, and a candidate that misses it is not exported. **The refinement half is closed by RQ-A F6.** The mesh does miss its own name - `compute_invariant_mesh_samples` sizes on `v_nom = 0.65 * 0.477 = 0.310 m/s` and clamps to 10-18, which saturates at 18 for any segment over 0.27 m, so `example_s_curve` asks for 38 per segment and gets 18 (a 102 ms interval, not 50 ms) and `example_straight` asks for 64 and gets 18 - but density is not the lever: the tracking error is U-shaped in density with its floor at 4-5 controller ticks per interval, the shipped 102 ms is 5.1 ticks, and on F6's reference 86 and 118 ms tracked 0.245 and 0.489 cm. F6's 0.271 cm at 40 intervals per segment is no better than 86 ms for five times the solve, so raising the clamp is not the experiment. What F6 does point at and what does not ship is the interval-average reference (0.098 cm against 0.271 on the same plan, `_interpolated_reference` ships the tick midpoint instead); RQ-A owns that, not this question. The constraint arm is untested, and the 112 -> 3145 iteration blow-up in `optimizer.py` is the *traction row at the interval's end speed*, not this inequality - a warning about dense rows, not a measurement of this constraint |
+| **Hypothesis** | A hard inequality is infeasible wherever the plan misses the gate by more than the margin, because the deviation is the plan's own chord rather than slack the solver can retract, and it costs duration where it does not. The price is the cheaper of the two until measured, and deleting `w_disc` before that would remove the only term that makes the solver slow where the chord lags |
+| **Experiment** | 1. An opt-in `disc_constraints=True` writing the three mechanisms as inequalities against the gate with a margin, on the shipping mesh. 2. The six examples, then the 32-mission suite. 3. Report the infeasible solves separately: they are the answer, not a failure |
+| **Metric** | Gate pass count, duration, iterations, wall time, and the number of infeasible solves |
+| **Success criterion** | More missions pass at a stated duration cost, or the arm is retired with the count of infeasibilities and the price stays |
+| **Cost** | Low - the three expressions already exist in the objective |
+
+### Q16 — Does the gradient polish ever change a verdict?
+
+| | |
+|---|---|
+| **Question** | `--polish`, and the engine's automatic pass near the gate, re-solve the plan with sample weights taken from the reachability gradient. Has that ever turned a failing candidate into a passing one? |
+| **Current evidence** | The mechanism is described in five places (`overboard/core/unified_planner.py`, `gradient_polish` / `polish_candidate_sensitivities` / `_sensitivity_weights`; ControlsDoc §5.2; `WHITEPAPER.md` 4.5; `AGENT_OPS.md`; `CONFIGURATION.md`) and **no measurement of its effect is recorded in `docs/`** - no before/after duration, tracking error or pass count. The weights are heuristic (`1 + 4 * grad_norm / peak + 6 * excess^2`); the acceptance rule is not (a polished plan is kept only when it is not slower and not worse in the reachability). The engine calls it on its own when the champion rides within 10 % of the gate, so the S-curve champion (0.51 cm against the 0.50 cm gate) is exactly the case it exists for, and the S-curve still fails |
+| **Hypothesis** | It buys nothing on the paths that fail, because the error is the plan's own chord ([RQ-A](research/RQ-A_tracking_error.md)) and re-weighting the samples does not change the reference the controller follows; it may buy a little on the paths that already pass |
+| **Experiment** | Solve the six examples with and without `--polish`, recording champion duration, tracking, envelope and the number of solves; the 32-mission suite only if the six say something |
+| **Metric** | Verdict flips per mission, duration and tracking delta, extra wall time |
+| **Success criterion** | At least one verdict flip or a measured improvement; otherwise delete the path and the JAX dependency it puts on a self-healing solve |
+| **Cost** | Low - it is a flag |
+
 ### 24.1 Suggested order
 
 ```text
@@ -102,6 +128,8 @@ survive the wider suite, which is why the campaign exists.
   Q11 executor in the planner, step 1: the documented DriveBase
       acceleration limit into the default digital twin            DONE
   Q13 re-measure the matrix on the shipping planner               (measurement)
+  Q16 does the gradient polish change any verdict                 (measurement, one flag)
+  Q15 constrain the gate instead of pricing it                    (refinement closed by F6)
   Q11 steps 2-3: acceleration bound, then quantisation            (large)
   Q9  hardware-calibrated twin                                    (needs hardware)
 ```

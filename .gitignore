@@ -88,3 +88,8 @@ scratch/
 *.png
 !docs/images/
 !docs/images/**
+
+# ControlsDoc build output (the source is docs/ControlsDoc.qmd)
+docs/ControlsDoc.html
+docs/ControlsDoc.pdf
+docs/ControlsDoc_files/
