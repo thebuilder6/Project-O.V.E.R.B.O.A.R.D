@@ -304,7 +304,8 @@ port from another program: if 8000 is busy it moves to the next free one.
    validates them: minutes, not seconds, because the reachability check is the
    cost - pick it only to ship.
 4. **Solve.** The header carries the answer whatever tab you are on:
-   `2.10 s | 0.47 m | envelope 0.6 cm - validated`.
+   `12.4 s | 3.7 m - not validated` for the fast preset, or the same line ending
+   `- validated` once the check has run.
 5. **Read the result.** The **Result** tab has the numbers, the envelope, the
    per-segment table and, when a check fails, the reason and the segment that
    failed, marked in red on the field. The **Plots** tab draws the profiles
@@ -313,7 +314,7 @@ port from another program: if 8000 is busy it moves to the next free one.
    controller JSON, the Python module, the stats and the one-page mission
    report. A validated plan can then be pushed from the **Run** tab.
 
-![A validated solve: the Solve tab's levers on the left, the numbers and the per-segment table on the right](docs/images/studio/studio-solved.png)
+![A fast solve of the same mission: 3.70 m and eight stops in 12.4 s, so the header and the Result tab both say it was not checked](docs/images/studio/studio-solved.png)
 
 The page is three columns. The left one is what you set (tabs: **Mission**, **Robot**, **Field**, **Solve**), the canvas in the middle is the work, and the right one is what you read (tabs: **Result**, **Waypoint**, **Plots**, **Run**). The line in the header always carries the result, so a tabbed column can never hide the answer, and the field carries a key to its own colours. Every control is listed in [docs/STUDIO_UI_INVENTORY.md](docs/STUDIO_UI_INVENTORY.md), with the structure and how to extend it.
 
