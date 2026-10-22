@@ -1,10 +1,10 @@
 # Known Issues
 
-Last reviewed: 2026-10-21
+Last reviewed: 2026-10-22
 
 Scope: whole repository, reviewed as a single-user, offline desktop tool for one FLL robot. This is not a multi-user or server-scale review.
 
-Status: KI-001 through KI-003, KI-005 through KI-019, KI-021 through KI-031, KI-033 through KI-044, KI-045, KI-046, KI-047 through KI-053 are **fixed**. KI-032 is **mitigated** (test cache). KI-004 is **deleted** (the Multi-Verse pipeline was removed; archived in git tag `archive/legacy-2026-10`). Open: KI-020 (hardware calibration & digital twin validation), KI-054 (the envelope gate's absolute limit is a duration gate).
+Status: KI-001 through KI-003, KI-005 through KI-019, KI-021 through KI-031, KI-033 through KI-044, KI-045, KI-046, KI-047 through KI-053 are **fixed**. KI-032 is **mitigated** (test cache). KI-004 is **deleted** (the Multi-Verse pipeline was removed; archived in git tag `archive/legacy-2026-10`). Open: KI-020 (hardware calibration & digital twin validation), KI-054 (the envelope gate's absolute limit is a duration gate), KI-055 (a failing check refuses the whole mission instead of scoring it).
 
 How to use this list: refer to an item by its ID, for example "fix KI-003". The **Quick triage** table is the index - read that, then open the entry you are working on. The entries are now short records: what was wrong, what changed, and which files carry the fix. The long narrative each entry used to carry is in the git history - this file before the 2026-10-21 pruning - so `git log -p KNOWN_ISSUES.md` reads any entry in full.
 
@@ -70,6 +70,7 @@ How to use this list: refer to an item by its ID, for example "fix KI-003". The 
 | KI-052 | P2 | CLI / solver | ~~The CLI and the library plan different trajectories for the same mission: the CLI was self-consistent by default, the library was not~~ (fixed; both default to the self-consistent rule now) |
 | KI-053 | P2 | Physics / safety model | ~~The interval force model passed an interval through unchanged, so a signed velocity could produce a negative force bound~~ (fixed) |
 | KI-054 | P1 | Validation | The envelope gate compares an absolute radius against a tube that grows with path length, so a long path fails for being long and a failure usually has no remedy but a better model |
+| KI-055 | P1 | Validation / export | A failing check writes nothing: the verdict is a boolean against thresholds the operator did not choose, so a mission they mean to run cannot be exported at all. It should be a score with named levers |
 
 ## Open
 
@@ -117,6 +118,27 @@ How to use this list: refer to an item by its ID, for example "fix KI-003". The 
 If none of those is available, the run does not know that the plan is accurate enough, and `--best-effort` is for inspection, not approval.
 
 **The smarter rule, not built:** compare the tube against the mission's tolerance per sample - the clearance to the nearest mission model or wall - which needs a field model the planner does not have. Until then a per-waypoint `error_threshold` is the manual form of that rule, and the 2 cm default is a placeholder, not a requirement.
+
+### KI-055 — A binary gate refuses missions the operator means to run
+
+**Status:** Open, not started. Requested 2026-10-22: a failing check should cost points against a score the operator can trade against, not stop the solve.
+
+**Files:** `overboard/main.py` (the export gate, `_score_attempt`, `_segment_report`, `_emit_validation_report`), `overboard/gui_server.py`, `overboard/viz/studio.html`, `overboard/viz/studio.js`, `docs/HEURISTICS_AND_VERIFICATION.md`, `tests/test_cli_ux.py`, `tests/test_studio_honesty.py`
+
+**Problem:** With `--validate`, the verdict is pass/fail on three unrelated things at once - envelope, tracking, and force/slip - against limits the operator did not choose (2 cm and 0.5 cm by default). One centimetre over on any of them writes no `.traj`, no controller and no `_stats.json`, so a mission the operator intends to run cannot be produced at all. The plan and its numbers are computed and then thrown away. The only ways to get the file back are to drop `--validate` entirely, which throws the numbers away with the verdict, or `--best-effort`, which forgives an accuracy excess only and still refuses force, slip, integration, divergence and non-convergence.
+
+The selection rule already computes a score vector per candidate (`duration_s`, `envelope_cm`, `tracking_cm`, `max_excess_cm`, `peak_jerk_m_s3`, `fitness_s` and its parts), but it only ranks candidates that already passed; it never decides whether anything is written. The threshold is therefore doing a job the report was built to do better.
+
+**Evidence:** `examples/example_complete.json` (10 waypoints, 3.70 m, 8 stops) under `--validate --candidates 1 --propagation tick --envelope-limit 0.05`: envelope 5.01 cm against 5.00 cm and tracking 0.53 cm against 0.50 cm - a miss of 0.1 mm and 0.3 mm - and the run exits 1 with nothing written, for a 12.4 s plan that solves cleanly. `missions/realistic_complex_mission.json` (14 waypoints) misses by more for the same reason: 5.10 cm / 1.52 cm on `tick`, 41.8 cm / 2.09 cm on `plant` (KI-054). Two missions, two empty fields.
+
+**Fix (proposed, not built):** make the verdict a score the operator can see and move.
+
+1. **Score, not gate.** Every candidate gets a 0-100 score from the vector it already reports, with each miss weighted and named. A default acceptance threshold replaces the boolean.
+2. **The threshold is a floor, not a wall.** A candidate under it is still written when the operator asks (`--accept-score N`, and the studio's equivalent), and the `.traj` root, `_stats.json` and the studio status carry `validation: {passed: false, accepted: true, score: N, excess: ...}`. A reader can never mistake it for an approved plan, and no existing file changes shape.
+3. **Levers priced in the score's terms.** Each lever says what it would buy before it runs: propagation (`plant|tick`), `--envelope-limit` and `--envelope-limit-per-metre`, a waypoint's `error_threshold` / `precision_mode`, `--accuracy-weight`, `--force-weight`, `-n`, `--polish`, `--candidates`, and the robot's declared ranges. The studio already has the **Try** buttons for four of them; the change is to rank them by points per second and let the score, not a boolean, say when to stop.
+4. **The hub push stays gated** unless the operator opens it deliberately: a score is a judgement about a plan, and driving a plan the robot cannot follow is a different decision with a different answer.
+
+**Workaround while open:** omit `--validate` to get the files (the `.traj` then records `{status: "unvalidated", passed: false}` and is not approved for the hub); use `--best-effort` when the only failure is an accuracy excess, so the plan is still on the field marked failed; and move the limits to their maxima - `--envelope-limit 0.05 --envelope-limit-per-metre 0.05 --propagation tick` - before giving up on the gate.
 
 ## Mitigated
 
