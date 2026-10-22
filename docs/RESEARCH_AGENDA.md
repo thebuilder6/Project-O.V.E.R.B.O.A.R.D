@@ -25,15 +25,13 @@ nobody runs them again.
   - [24.0 The closed questions - do not re-litigate](#240-the-closed-questions---do-not-re-litigate)
   - [Q9 — What would make the validator a real digital twin?](#q9--what-would-make-the-validator-a-real-digital-twin)
   - [Q11 — Should the executor be part of the planner?](#q11--should-the-executor-be-part-of-the-planner)
-  - [Q13 — Should the measured matrix be re-measured on the unified path?](#q13--should-the-measured-matrix-be-re-measured-on-the-unified-path)
   - [Q15 — Should the tracking gate be a constraint instead of a price?](#q15--should-the-tracking-gate-be-a-constraint-instead-of-a-price)
-  - [Q16 — Does the gradient polish ever change a verdict?](#q16--does-the-gradient-polish-ever-change-a-verdict)
   - [24.1 Suggested order](#241-suggested-order)
 - [25. How to report a result](#25-how-to-report-a-result)
 
 ## 24. The open questions
 
-Sixteen questions were asked. Eleven are measured and closed; five are open. Each open one has the
+Sixteen questions were asked. Thirteen are measured and closed; three are open. Each open one has the
 current evidence, a hypothesis, and an experiment with a metric and a success criterion, ordered so
 that the cheap, decisive ones come first.
 
@@ -51,7 +49,9 @@ that the cheap, decisive ones come first.
 | Q8 | is the baseline's dominance an artefact? | **Yes.** The baseline is the speed winner (11 of 32) *and* the gate loser (lowest pass rate); on the six example paths those two roles did not conflict | F1 |
 | Q10 | is "smallest envelope" the right selection rule? | **It does not matter**: five rules pick the same trajectory. The rule has since changed twice (the fitness score, then "fastest passing"); see [7.3](HEURISTICS_AND_VERIFICATION.md#73-the-selection-rule) | F6, [7.3](HEURISTICS_AND_VERIFICATION.md#73-the-selection-rule) |
 | Q12 | what should the Multi-Verse path become? | **Archived** (KI-004): measured as a seed provider it rescued nothing over 30 missions | §5 |
-| Q14 | how much risk should a plan carry? | **Not a choice between candidates.** On the 32-mission suite (8 per profile, `--candidates 3 --validate --propagation plant`) 10 missions pass, and on every one of them all three candidates pass and no rescue candidate ever does: the set passes or fails as a block. Inside a mission the three differ by 0.89 % in duration (max 1.68 %) and 0.005 of normalised margin (max 0.013), so a margin floor never changes the pick - it only drops missions, and the balanced rule moves 2 of 10 for +0.001 s. A passing plan runs at 54 % of its accuracy limit (mean margin 0.46); the 161 failing candidates need the limit multiplied by 2.9 (median), 14.7 (p90) and 34 (worst), and 49 also break the 5 mm tracking gate. Force is not a dial: every candidate sits at 0.84 of the motor limit. **The risk is in the limit, not in the pick**, so there is nothing for a `--risk` flag to choose between. Plant propagation only; `tick` unmeasured | `research/results/q14_plant.jsonl`, `research/risk_margins.py`, `tests/test_risk_margins.py` |
+| Q14 | how much risk should a plan carry? | **Not a choice between candidates.** On the 32-mission suite (8 per profile, `--candidates 3 --validate --propagation plant`) 10 missions pass, and on every one of them all three candidates pass and no rescue candidate ever does: the set passes or fails as a block. Inside a mission the three differ by 0.89 % in duration (max 1.68 %) and 0.005 of normalised margin (max 0.013), so a margin floor never changes the pick - it only drops missions, and the balanced rule moves 2 of 10 for +0.001 s. A passing plan runs at 54 % of its accuracy limit (mean margin 0.46); the 161 failing candidates need the limit multiplied by 2.9 (median), 14.7 (p90) and 34 (worst), and 49 also break the 5 mm tracking gate. Force is not a dial: every candidate sits at 0.84 of the motor limit. **The risk is in the limit, not in the pick**, so there is nothing for a `--risk` flag to choose between. Measured on the **stock** candidate sets, `plant` only; on the shipping planner the same suite passes 5 of 32 with **one** passing candidate per mission, never three (Q13) | `research/results/q14_plant.jsonl`, `research/risk_margins.py`, `tests/test_risk_margins.py` |
+| Q13 | should the measured matrix be re-measured on the unified path? | **Re-measured, and the stock matrix does not carry over.** The shipping planner at `--candidates 3 --validate` and the default limits passes **5 of 32 missions under `plant` and 6 under `tick`** (the five plus m008), 96 candidates solved per arm, 86 checked / 10 skipped and 84 / 12. The stock sets passed 10 of 32, but with 3-8 candidates per mission - a different candidate family, so this is not a regression measurement, it is the answer to "what does the planner that ships actually do". **Every passing mission has exactly one passing candidate**, never two of three. Of the 27 plant failures, 9 are within 0.5 cm of the local limit, 3 within 1-2 cm and 15 beyond 2 cm; 11 of the selected plans were cut off at the validator's guard, so their envelope is a lower bound (KI-049). The two models disagree on one mission and in the counter-intuitive direction - `tick` passes m008 and `plant` does not - because the closed-loop map contracts the tube instead of widening it (KI-049, KI-050) | `research/results/q13_plant.jsonl`, `q13_tick.jsonl`, `research/cli_matrix.py`, `research/q13_report.py` |
+| Q16 | does the gradient polish change a verdict? | **No, on any plan measured.** The six examples and the five nearest-miss missions from Q13 (m012, m020, m023, m026, m030) solved with and without `--polish`: **zero verdict flips and byte-identical candidate reports** in all 11, for 2-7x the wall time (the complex mission 11.4 s -> 86.2 s). A probe on the polish itself shows why: on a converged plan the two rounds are run and the plan comes back unchanged (`in_duration == out_duration`, `changed=False`), and the engine records `polish: {rounds: 2}` whether or not a round was kept. The path's success criterion is not met, so the delete branch is the evidence-backed consequence; it is a separate change (it removes `gradient_polish`, `_replan`, `_sensitivity_weights`, `_polish_key`, the flag and the JAX requirement it puts on a self-healing solve) and has not been taken | `research/results/q16_off.jsonl`, `q16_on.jsonl`, `q16_near_off.jsonl`, `q16_near_on.jsonl` |
 
 In the last column, `F<n>` and `§<n>` are sections of [FINDINGS](research/pq_b/FINDINGS.md),
 `archive tag` means the raw records in `archive/research-2026-10`. The answers, question by question,
@@ -85,18 +85,6 @@ survive the wider suite, which is why the campaign exists.
 | **Success criterion** | The plans the hub cannot execute stop passing, at a stated duration cost |
 | **Cost** | Low for step 1, medium for step 2, high for step 3 |
 
-### Q13 — Should the measured matrix be re-measured on the unified path?
-
-| | |
-|---|---|
-| **Question** | The tables in [Section 9](HEURISTICS_AND_VERIFICATION.md#9-measured-heuristic-comparison) are the **retired stock** candidate set's measurement: five seeds × two timing models. The 3-Pillar unified engine is the only planner and solves its own frontier candidates, so those tables describe a planner the tree no longer has. What do they still tell us? |
-| **Current evidence** | The stock set is gone, so the comparison this question used to ask ("which set ships") is settled by deletion: the unified path ships. What is left is that Section 9, the ledger and Q1-Q8 were measured on the stock set, and the unified path has only its own campaign numbers (the complex mission at 5.365 s / 3.6 mm / 1.16 cm) rather than a matrix. The candidate-for-candidate comparison is not possible anyway: the frontier triad carries its own accuracy weights, timing model and cost metric, so it would compare different objectives |
-| **Hypothesis** | The unified path's numbers land in the same place as the stock set's on every claim the agenda still leans on (the timing model is the lever, the tracking gate is the binding one, Q1-Q8's orderings), so Section 9 needs a provenance stamp rather than a replacement |
-| **Experiment** | 1. The wait is over: KI-026 has landed and the collocation is unconditional, so the tree is stable enough to measure. 2. Run the 32-mission suite (`research/suite.py`, `research/harness.py`) through the unified path with `--candidates 3 --validate`, both `--propagation plant` and `tick`. 3. Report per mission: candidates solved, candidates passing, selected duration / envelope / tracking, wall time, and where no candidate passes. 4. Mark Section 9 with the set it came from, and correct any claim the unified set contradicts |
-| **Metric** | Pass rate and selected duration / envelope / tracking per mission, on one tree and one config |
-| **Success criterion** | Every claim in Section 9 is either reproduced on the shipping planner or stamped as a stock-set measurement. A tie is a result too |
-| **Cost** | Low to run, one matrix. This is a measurement, not an experiment: nothing in the tree changes |
-
 ### Q15 — Should the tracking gate be a constraint instead of a price?
 
 | | |
@@ -109,26 +97,12 @@ survive the wider suite, which is why the campaign exists.
 | **Success criterion** | More missions pass at a stated duration cost, or the arm is retired with the count of infeasibilities and the price stays |
 | **Cost** | Low - the three expressions already exist in the objective |
 
-### Q16 — Does the gradient polish ever change a verdict?
-
-| | |
-|---|---|
-| **Question** | `--polish`, and the engine's automatic pass near the gate, re-solve the plan with sample weights taken from the reachability gradient. Has that ever turned a failing candidate into a passing one? |
-| **Current evidence** | The mechanism is described in five places (`overboard/core/unified_planner.py`, `gradient_polish` / `polish_candidate_sensitivities` / `_sensitivity_weights`; ControlsDoc's adjoint-polish section; `WHITEPAPER.md` 4.5; `AGENT_OPS.md`; `CONFIGURATION.md`) and **no measurement of its effect is recorded in `docs/`** - no before/after duration, tracking error or pass count. The weights are heuristic (`1 + 4 * grad_norm / peak + 6 * excess^2`); the acceptance rule is not (a polished plan is kept only when it is not slower and not worse in the reachability). The engine calls it on its own when the champion rides within 10 % of the gate, so the S-curve champion (0.51 cm against the 0.50 cm gate) is exactly the case it exists for, and the S-curve still fails |
-| **Hypothesis** | It buys nothing on the paths that fail, because the error is the plan's own chord ([RQ-A](research/RQ-A_tracking_error.md)) and re-weighting the samples does not change the reference the controller follows; it may buy a little on the paths that already pass |
-| **Experiment** | Solve the six examples with and without `--polish`, recording champion duration, tracking, envelope and the number of solves; the 32-mission suite only if the six say something |
-| **Metric** | Verdict flips per mission, duration and tracking delta, extra wall time |
-| **Success criterion** | At least one verdict flip or a measured improvement; otherwise delete the path and the JAX dependency it puts on a self-healing solve |
-| **Cost** | Low - it is a flag |
-
 ### 24.1 Suggested order
 
 ```text
-  CLOSED (§24.0, do not re-run): Q1 Q2 Q3 Q4 Q5 Q6 Q7 Q8 Q10 Q12 Q14
+  CLOSED (§24.0, do not re-run): Q1 Q2 Q3 Q4 Q5 Q6 Q7 Q8 Q10 Q12 Q13 Q14 Q16
   Q11 executor in the planner, step 1: the documented DriveBase
       acceleration limit into the default digital twin            DONE
-  Q13 re-measure the matrix on the shipping planner               (measurement)
-  Q16 does the gradient polish change any verdict                 (measurement, one flag)
   Q15 constrain the gate instead of pricing it                    (refinement closed by F6)
   Q11 steps 2-3: acceleration bound, then quantisation            (large)
   Q9  hardware-calibrated twin                                    (needs hardware)
