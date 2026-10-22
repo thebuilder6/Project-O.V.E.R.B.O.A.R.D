@@ -595,10 +595,9 @@ the 6.07 s one stayed bounded. Do not reintroduce it.
 | Preset | samples | accuracy weight | candidates | validate | propagation | export |
 |---|---|---|---|---|---|---|
 | `fast` | 8 | 0.0 | 1 | no | plant | none |
-| `balanced` | 10 | 0.0 | 2 | no | plant | none |
 | `safe` | 14 | 0.005 | 3 | **yes** | **tick** | controller |
 
-`safe` is the only preset that turns on the gate. `fast` and `balanced` both leave `--validate` off, which means they solve only candidate 1. `safe` validates with the closed-loop tick map: the open-loop `plant` tube grows with distance and can exceed the 2 cm gate on a curved path (KI-049/KI-050). An explicit `--propagation` still wins.
+`safe` is the only preset that turns on the gate. `fast` leaves `--validate` off, so it solves one candidate. A middle preset (`balanced`: 10 samples, 2 candidates, no validation) existed and was collapsed into `fast` - 2 candidates without validation is the same run as 1. `safe` validates with the closed-loop tick map: the open-loop `plant` tube grows with distance and can exceed the 2 cm gate on a curved path (KI-049/KI-050). An explicit `--propagation` still wins.
 
 ## 7. Scoring and selection
 

@@ -65,13 +65,6 @@ PRESETS = {
         "validate": False,
         "export_format": "none",
     },
-    "balanced": {
-        "samples": 10,
-        "accuracy_weight": 0.0,
-        "candidates": 2,
-        "validate": False,
-        "export_format": "none",
-    },
     "safe": {
         "samples": 14,
         "accuracy_weight": 0.005,
@@ -1577,10 +1570,10 @@ def _render(output, samples_data, wps, optimizer, all_attempts, selected_index, 
               help='Port for the browser studio.')
 @click.option('--doctor', is_flag=True,
               help='Check the install, dependencies, examples and ports, then exit.')
-@click.option('--preset', type=click.Choice(['fast', 'balanced', 'safe'], case_sensitive=False),
+@click.option('--preset', type=click.Choice(['fast', 'safe'], case_sensitive=False),
               default=None,
-              help='Named starting point. fast: 1 candidate, no validation. '
-                   'balanced: the defaults. safe: 3 candidates, --validate with the '
+              help='Named starting point. fast: 8 samples per segment, 1 candidate, '
+                   'no validation. safe: 3 candidates, --validate with the '
                    'closed-loop tick propagation, and a controller export. '
                    'Options you set yourself always win.')
 

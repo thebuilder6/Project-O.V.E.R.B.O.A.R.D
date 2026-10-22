@@ -47,7 +47,7 @@ The docs describe the current tree, but the source is still the authority. The o
 
 - The **3-Pillar Unified Trajectory Engine** (`overboard/core/unified_planner.py`) is the only planner: it allocates the 50 ms invariant mesh ($\ge 10$ nodes/segment on curved apexes), generates the three candidates (`frontier_sprint`, `frontier_sweeper`, `frontier_exploratory`) with the Kinetic Frontier analytical seed generator in a few milliseconds, and solves with discretization-consistent collocation and linear epigraph force bounds. `--candidates` only truncates the three. `--unified` and `--no-unified` are removed and rejected. **It is not a certification claim**: whether a given mission passes is decided by the gates, and the measured pass/fail ledger is in `docs/HEURISTICS_AND_VERIFICATION.md`. The GA comparison it used to quote (5.365 s against the 44-gene champion's 5.417 s) predates the narrowed test ranges and is kept in the whitepaper's research record, not here.
 
-- `--preset fast|balanced|safe` fills in options the user did not set: fast = 1 candidate without validation, balanced = the defaults, safe = 3 candidates, `--validate`, `--propagation tick` and a controller export. Explicit flags always win. `safe` uses the closed-loop model because the open-loop tube grows with distance (KI-049/KI-050).
+- `--preset fast|safe` fills in options the user did not set: fast = 8 samples per segment, 1 candidate without validation, safe = 3 candidates, `--validate`, `--propagation tick` and a controller export. Explicit flags always win. `safe` uses the closed-loop model because the open-loop tube grows with distance (KI-049/KI-050).
 
 ## Validation, selection and the propagation model
 

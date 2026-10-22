@@ -818,8 +818,8 @@ The browser opens at `http://127.0.0.1:8000` (use `--gui-port` for a different p
 
 **Steps:**
 
-1. Click the field to add waypoints, drag them to move them, and use the right-hand panel to set a heading, a stop, an event name or an envelope limit.
-2. Pick a preset: **fast** (one candidate, no validation), **balanced** (the defaults) or **safe** (three candidates, validated with the closed-loop tick map, controller export).
+1. Double-click the field to add waypoints, drag them to move them, and use the right-hand panel to set a heading, a stop, an event name or an envelope limit.
+2. Pick a preset: **fast** (one candidate with the default settings, no validation) or **safe** (three candidates, validated with the closed-loop tick map, controller export).
 3. Press **Solve**. The solver log streams into the panel; the trajectory, the reachability envelope and the numbers appear on the field.
 4. Download the trajectory, the controller profile or the Python module from the result panel.
 5. **Save** writes the mission to `missions/<name>.json`; the file shows up in the mission list next time. **Download** gives you the same JSON as a file.
@@ -827,7 +827,7 @@ The browser opens at `http://127.0.0.1:8000` (use `--gui-port` for a different p
 **Before you solve:**
 
 - The mission panel shows the path length and the fastest the robot could possibly do it: *"Path 1.36 m | at least 2.85 s at 0.48 m/s top speed"*. A waypoint dragged 5 m away shows up here, not in the solve time.
-- **Fast polish** in the Advanced section gives the warm-start solve an iteration budget, and solves the mission cold from the warm stage's iterate if the budget runs out. On the ten-waypoint complex mission the plain solve takes about 1257 iterations and 33 s on the current tree, and the fast path 433 iterations and 12.5 s, for a trajectory within 1 % of the plain one (6.096 s against 6.087 s). Leave it off when you want the plain solver.
+- **Fast polish** in the Solve tab's Solved group gives the warm-start solve an iteration budget, and solves the mission cold from the warm stage's iterate if the budget runs out. On the ten-waypoint complex mission the plain solve takes about 1257 iterations and 33 s on the current tree, and the fast path 433 iterations and 12.5 s, for a trajectory within 1 % of the plain one (6.096 s against 6.087 s). Leave it off when you want the plain solver.
 
 **On the field:**
 

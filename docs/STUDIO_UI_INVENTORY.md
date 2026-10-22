@@ -24,7 +24,7 @@ removed).
 
 **Three columns, two of them tabbed.** The left column is what you set, the canvas is the work, the right column is what you read. Each side column is a strip of tabs over one panel, so a column holds one topic at a time.
 
-The page carries **156 element ids**: **81 controls with an id** (36 buttons, 38 inputs, 7 selects), of which 8 are the tab buttons themselves. Twelve regions are filled in at run time:
+The page carries **153 element ids**: **77 controls with an id** (37 buttons, 33 inputs, 7 selects), of which 8 are the tab buttons themselves. Twelve regions are filled in at run time:
 
 | Generated region | Element id | Where |
 |---|---|---|
@@ -153,46 +153,63 @@ The page carries **156 element ids**: **81 controls with an id** (36 buttons, 38
 |---|---|
 | **Season** (select) | Picks the field's mission models (`fields/<season>.json`). |
 | **Mat image** (file) | The operator's own picture of the mat. |
-| **Download the mat** | Composes the mat picture from FIRST's own field guide, fetched from the URL the field file records and kept in `mats/` (untracked; the artwork is not ours to ship). |
+| **Download the mat** | Composes the mat picture from FIRST's own field guide, fetched from the URL the field file records and kept in `mats/` (untracked; the artwork is not ours to ship). It also runs by itself on load and on a season change, so a fresh studio opens on the field: the server answers from `mats/` after the first time, and a failure is still said out loud in a toast. |
 | **Width** / **Height** (mm) | The mat's size, so the picture and the footprints share one frame. |
-| **Show the mat** (check) | Draws the mat under the field. |
-| **Earlier runs** (check) | Draws the earlier solves as faint paths. |
-| **Actuator saturation** (check) | Colours the trajectory by how much of the actuator diamond it asks for: blue below 0.85, amber from 0.85 to 1.0, red above 1.0. |
-| **Late-apex cues** (check) | Draws the late-apex diamond on a turning segment and the momentum bisector at a free-heading waypoint. |
 | *mat name* / *credit* / *run history* | Readouts. |
+
+The overlays on the canvas - mat, earlier runs, actuator saturation, late-apex cues, envelope, path, placement band - are switched from the **legend**, not from here: the key is where the operator looks to see what is drawn.
 
 ### Solve tab
 
+The panel reads in the order a command is built: the **preset**, then three groups. **Solved** is what the solver is given, **Checked** is the gate and everything only it uses, **Written** is the export. A flat list of the flags put the gate below the export settings it gates, and left four controls that looked live with validation off. The line at the top of the tab repeats the header's status - "Solving...", the elapsed time and candidate of a running job, the finished run's duration and envelope, or the failure - so the panel the operator just filled in is never silent about how the run it started went.
+
+**Preset**
+
 | Control | What it does |
 |---|---|
-| **fast / balanced / safe** (radio cards) | A preset fills in the options the user did not set. fast: one candidate, no validation, plant propagation - seconds. balanced: the defaults (a candidate count only compares when validation is on) - seconds. safe: the comparison - three candidates, validation, the closed-loop tick map; the three frontier paths are drawn together and the operator may export the one they pick. safe costs minutes: the reachability check, not the solve, is the time. |
-| **Options** (details) | The rest of the solve options, below. |
+| **fast / safe** (radio cards) | A preset fills in the options the user did not set. fast: one candidate with the default settings, no validation, plant propagation - seconds. safe: the comparison - three candidates, validation, the closed-loop tick map; the three frontier paths are drawn together and the operator may export the one they pick. safe costs minutes: the reachability check, not the solve, is the time. |
+
+**Solved**
+
+| Control | What it does |
+|---|---|
 | **Samples per segment** | 2 to 200. Disabled while the automatic mesh is on, because the number is then not used. |
 | **Auto invariant mesh (50 ms)** | Ticked by default: `-n` is left off the command, so the 3-Pillar engine sizes the invariant 50 ms mesh from the path. Unticking it sends the number in **Samples per segment**. |
 | **Accuracy weight** | The smoothness weight (`--accuracy-weight`). |
-| **Candidates (1-3)** | How many of the planner's three frontier candidates are solved (sprint, sweeper, exploratory); clamped to 1-3 by the server. Disabled unless validation is on. |
-| **Reachability propagation** | The model the envelope gate uses (`--propagation`): the open-loop plant (fast) or the closed-loop tick map (feedback-contracted, 2-10x slower). |
 | **Soft force weight** | A weight above zero prices wheel-force utilisation (`--force-weight`); zero is the default and sends nothing. |
-| **Export format** | None / controller JSON / Python / Python compact. |
-| **Controller timestep** | The export's sample interval. |
-| **Validate before export** | The gate; needs JAX. |
-| **Accuracy limit (cm)** | How far the reachable set may spread around the plan at any sample (`--envelope-limit`, default 2 cm, 0.1-5 cm). A waypoint's error threshold still wins. Disabled unless validation is on, and sent only with `--validate`. The limit is absolute here, so a long path can fail for being long; declaring the mission's real tolerance is what it is for (KI-054). The CLI can grow it with distance (`--envelope-limit-per-metre`), but the studio has no field for that slope yet. |
-| **Keep the best path when validation fails** | Ticked by default: adds `--best-effort` next to `--validate`, so a run whose only failure is an accuracy excess (envelope or tracking) exports the best candidate and draws it on the field, marked failed. A force, slip, integration or convergence failure still blocks, and the push stays gated on the verdict. |
 | **Fast polish** | The budgeted solve. |
 | **Gradient sensitivity polish** | The post-solve gradient polish (`--polish`); needs JAX. |
+
+**Checked**
+
+Every field below the switch is the gate's: the server passes none of them without `--validate`, so all of them are disabled while it is off, and each says in its tooltip what it does when it is on.
+
+| Control | What it does |
+|---|---|
+| **Validate before export** | The gate; needs JAX. |
+| **Candidates (1-3)** | How many of the planner's three frontier candidates are solved (sprint, sweeper, exploratory); clamped to 1-3 by the server. The number is kept while the gate is off, so turning validation back on keeps the count. |
+| **Reachability propagation** | The model the envelope gate uses (`--propagation`): the open-loop plant (fast) or the closed-loop tick map (feedback-contracted, 2-10x slower). |
+| **Accuracy limit (cm)** | How far the reachable set may spread around the plan at any sample (`--envelope-limit`, default 2 cm, 0.1-5 cm). A waypoint's error threshold still wins. The limit is absolute, so a long path can fail for being long (KI-054); the next field is how to price that distance. |
+| **Allowance per metre (cm/m)** | How much further the reachable set may spread for every metre travelled, on top of the accuracy limit (`--envelope-limit-per-metre`, default 0, 0-5 cm/m). Zero keeps the gate absolute; a slope stops a long mission failing for being long. A waypoint's error threshold still wins. |
+| **Keep the best path when validation fails** | Ticked by default: adds `--best-effort` next to `--validate`, so a run whose only failure is an accuracy excess (envelope or tracking) exports the best candidate and draws it on the field, marked failed. A force, slip, integration or convergence failure still blocks, and the push stays gated on the verdict. |
+
+**Written**
+
+| Control | What it does |
+|---|---|
+| **Export format** | None / controller JSON / Python / Python compact. |
+| **Controller timestep** | The export's sample interval. |
 
 ## Field canvas
 
 | Control | What it does |
 |---|---|
-| **Legend** (details) | The key to the field's colours, built from the list the drawing uses. Live: an entry for something that is not on the field is hidden. |
+| **Legend** (details) | The key to the field's colours, built from the list the drawing uses. Live: an entry for something that is not on the field is hidden. It is the single home of the canvas overlays: a row with a box before its label is a switch - mat picture, earlier solves, the actuator-limit colouring (both its rows), late-apex cues and the momentum bisector (both its rows), reachability envelope, path, placement uncertainty. Clicking one hides that overlay; the dimmed row (`aria-pressed="false"`) stays in the key to bring it back, so the key says both what the colours mean and what is drawn. The box is filled when the overlay is on and empty when it is off. A row the run cannot draw (an envelope on a run that was not validated) is dimmed, not clickable, and says why in its tooltip. The switches survive a reload with the mission: they are saved in the same session record as the solver options. |
 | **Frame all** | Fits the view to the mission. |
-| **Envelope** (check) | The reachable set around the plan, drawn *over* the trajectory (it is only a few millimetres wide on the tick map, so under it it vanished). There is none on a run that was not validated; the key hides it then. |
-| **Path** (check) | The straight-line path between the waypoints. |
 | **Play** + slider + time | The playback of the solved trajectory. |
-| *hint* | "Click the field to add a waypoint. Drag a waypoint to move it." |
+| *hint* | "Double-click the field to add a waypoint. Drag a waypoint to move it." A single click on the mat is a click, not a waypoint: it used to place one. The pointer agrees with it: a crosshair over the empty field (place), `move` over a waypoint (drag), `pointer` over a mission model (hover). |
 
-Canvas contents: the mat, the grid, the mission models, the earlier runs, the path, the trajectory (coloured by actuator saturation when that is on), the other candidates' paths from a comparison (one hue per seed, the clicked one stronger), the envelope (whose key names the propagation that produced it), the failing segments (red), the worst-drift segment (amber), the solver's first guess (dashed), the late-apex diamonds and the momentum bisectors, the waypoints with their stop and event badges, the selected waypoint, the measured pose from the hub, and the collisions.
+Canvas contents: the mat, the grid, the mission models - each with the field's placement-uncertainty band as a dashed amber halo (click its key entry to hide it), the same 20-50 mm the collision report uses to call a hit uncertain - the earlier runs, the path, the trajectory (coloured by actuator saturation when that is on), the other candidates' paths from a comparison (one hue per seed, the clicked one stronger), the envelope (whose key names the propagation that produced it), the failing segments (red), the worst-drift segment (amber), the solver's first guess (dashed), the late-apex diamonds and the momentum bisectors, the waypoints with their stop and event badges, the selected waypoint, the measured pose from the hub, and the collisions.
 
 ## Right column - the tabs
 
@@ -210,6 +227,7 @@ Canvas contents: the mat, the grid, the mission models, the earlier runs, the pa
 | *downloads* | The trajectory, the controller, the Python module, the stats, the session, and the report. |
 | **Mission report** | Writes the one-page report next to the trajectory and opens it: the mission, the robot and the result on one printable page. |
 | **Solver log** (details) | The command line's output. |
+| **Copy log** | Puts the whole log on the clipboard, not the selection. Where the browser refuses the clipboard (a plain http page), it selects the text instead so Ctrl+C finishes it. |
 
 ### Waypoint tab
 
@@ -264,7 +282,7 @@ The keys are ignored while a text field has the focus, so typing a heading does 
 |---|---|
 | A tab | A `<button role="tab" aria-controls="...">` and a `<section class="tabpanel">`. The controller wires it. |
 | A plot | One entry in `PLOTS`: a key, a label and a build function. The tab strip and the drawing both come from it. |
-| Something on the field | Draw it, then add one entry to `CANVAS_LEGEND` so the key stays right. |
+| Something on the field | Draw it, then add one entry to `CANVAS_LEGEND` so the key stays right. A `toggle: '<state flag>'` on the entry makes it a switch the operator can click off and on - that is the only place an overlay switch goes, so the key and the control cannot disagree. The row shows while the thing exists in the data whether or not it is drawn, so the dimmed row is always the way back. |
 | A control | Markup with an id, and the id in the script. The inventory test fails until this document names it. |
 | A section in the report | A block in `overboard/viz/report.js`. The report is built from the numbers the Result tab shows, so it cannot disagree with the studio. |
 

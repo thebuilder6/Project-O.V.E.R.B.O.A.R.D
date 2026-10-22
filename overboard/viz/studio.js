@@ -91,6 +91,9 @@ const state = {
     seasons: [],
     season: '',
     collisions: [],
+    /* The band around each mission model: the field's placement uncertainty.
+       It is drawn until the operator clicks it off in the key. */
+    showPlacement: true,
 };
 
 /* Undo/redo history: a stack of mission snapshots. */
@@ -98,6 +101,10 @@ const history = { stack: [], index: -1, limit: 100 };
 
 /* The mission is kept in the browser so a reload never loses the work. */
 const SESSION_KEY = 'overboard.studio.session.v1';
+// The canvas overlays the legend switches; they ride in the session too, so a
+// reload does not quietly switch the mat or the envelope back on.
+const OVERLAY_FLAGS = ['showMat', 'showEnvelope', 'showPath', 'showRuns',
+    'showSaturation', 'showApex', 'showPlacement'];
 let sessionTimer = null;
 
 /* Camera: pixels per metre plus a device-pixel offset. */
@@ -190,25 +197,30 @@ const PLOTS = [
     { key: 'convergence', label: 'Convergence', build: buildConvergencePlot },
 ];
 
-/* The key to the field's colours. The legend is built from this list, so a
-   new drawn thing has one entry here and the key cannot go stale. The key
-   is live: an entry for something that is not on the field is hidden, so the
-   list is a key to what the operator can see, not a list of possibilities. */
+/* The key to the field's colours, and the one home of the overlay switches.
+   The legend is built from this list, so a new drawn thing has one entry here
+   and the key cannot go stale. The key is live: an entry for something that
+   is not on the field is hidden, so the list is a key to what the operator
+   can see, not a list of possibilities. A `toggle` on an entry makes it the
+   switch for that overlay: the key is where the operator looks to see what
+   is drawn, so the switch belongs there and nowhere else. */
 const CANVAS_LEGEND = [
+    { key: 'mat', color: 'rgba(148, 163, 184, 0.35)', label: 'Mat picture', toggle: 'showMat' },
     { key: 'trajectory', color: '#38bdf8', label: 'Planned trajectory' },
     { key: 'candidates', color: '#a78bfa', label: 'Compared candidates', dash: true },
-    { key: 'envelope', color: 'rgba(52, 211, 153, 0.65)', label: 'Reachability envelope', dash: true },
-    { key: 'saturation', color: 'rgba(251, 191, 36, 0.95)', label: 'At the actuator limit' },
-    { key: 'slipping', color: 'rgba(248, 113, 113, 0.95)', label: 'Over the actuator limit' },
-    { key: 'apex', color: '#f59e0b', label: 'Late-apex target', dot: true },
-    { key: 'bisector', color: 'rgba(226, 232, 240, 0.8)', label: 'Momentum bisector', dash: true },
-    { key: 'path', color: 'rgba(148, 163, 184, 0.85)', label: 'Path between waypoints', dash: true },
+    { key: 'envelope', color: 'rgba(52, 211, 153, 0.65)', label: 'Reachability envelope', dash: true, toggle: 'showEnvelope' },
+    { key: 'saturation', color: 'rgba(251, 191, 36, 0.95)', label: 'At the actuator limit', toggle: 'showSaturation' },
+    { key: 'slipping', color: 'rgba(248, 113, 113, 0.95)', label: 'Over the actuator limit', toggle: 'showSaturation' },
+    { key: 'apex', color: '#f59e0b', label: 'Late-apex target', dot: true, toggle: 'showApex' },
+    { key: 'bisector', color: 'rgba(226, 232, 240, 0.8)', label: 'Momentum bisector', dash: true, toggle: 'showApex' },
+    { key: 'path', color: 'rgba(148, 163, 184, 0.85)', label: 'Path between waypoints', dash: true, toggle: 'showPath' },
     { key: 'ghost', color: 'rgba(226, 232, 240, 0.6)', label: "Solver's first guess", dash: true },
-    { key: 'runs', color: 'rgba(148, 163, 184, 0.5)', label: 'Earlier solves' },
+    { key: 'runs', color: 'rgba(148, 163, 184, 0.5)', label: 'Earlier solves', toggle: 'showRuns' },
     { key: 'heading', color: '#f472b6', label: 'Waypoint with a heading', dot: true },
     { key: 'free', color: '#94a3b8', label: 'Waypoint, heading free', dot: true },
     { key: 'measured', color: '#34d399', label: 'Measured pose from the robot', dot: true },
     { key: 'models', color: 'rgba(56, 189, 248, 0.95)', label: 'Mission model on the mat' },
+    { key: 'placement', color: 'rgba(251, 191, 36, 0.7)', label: 'Placement uncertainty', dash: true, toggle: 'showPlacement' },
     { key: 'collision', color: 'rgba(248, 113, 113, 0.95)', label: 'Collision with a mission model' },
     { key: 'failing', color: 'rgba(251, 191, 36, 0.95)', label: 'Failing segment, uncertain collision' },
 ];
@@ -291,6 +303,9 @@ function setStatus(text, kind = '') {
     const node = el('header-status');
     node.textContent = text;
     node.className = `status ${kind}`;
+    // The Solve panel says the same thing, so filling it in is not blind.
+    const mirror = el('solve-status');
+    if (mirror) mirror.textContent = text;
 }
 
 /* The result line: a badge and a sentence. The sentence comes from the
@@ -495,6 +510,7 @@ function saveSession() {
             matWidthM: state.mat.widthM,
             matHeightM: state.mat.heightM,
             season: state.season,
+            overlays: Object.fromEntries(OVERLAY_FLAGS.map((key) => [key, state[key]])),
         }));
     } catch (err) {
         // Storage can be full or blocked; the mission is still undoable.
@@ -532,6 +548,9 @@ function applyOptionsToForm(options) {
     if (options.envelope_limit !== undefined) {
         el('opt-envelope-limit').value = Number(options.envelope_limit) * 100;
     }
+    if (options.envelope_limit_per_metre !== undefined) {
+        el('opt-envelope-limit-per-metre').value = Number(options.envelope_limit_per_metre) * 100;
+    }
     if (options.best_effort !== undefined) {
         el('opt-best-effort').checked = Boolean(options.best_effort);
     }
@@ -539,7 +558,7 @@ function applyOptionsToForm(options) {
     if (options.polish !== undefined) el('opt-polish').checked = Boolean(options.polish);
     if (options.export_format !== undefined) el('opt-export').value = options.export_format;
     if (options.controller_dt !== undefined) el('opt-controller-dt').value = options.controller_dt;
-    updateCandidatesHint();
+    updateGateFields();
     updateMeshField();
     syncPresetRadio();
 }
@@ -1137,7 +1156,7 @@ function openProjectFile(file) {
                 state.useModel = true;
                 el('opt-use-model').checked = true;
                 renderModel();
-                updateCandidatesHint();
+                updateGateFields();
             }
             if (data.field) {
                 if (data.field.season) {
@@ -1549,7 +1568,7 @@ function useModel(model) {
     if (state.useModel) {
         // The fitted plant is only used by the validator, so validation is on.
         el('opt-validate').checked = true;
-        updateCandidatesHint();
+        updateGateFields();
     }
     renderModel();
     scheduleSessionSave();
@@ -1953,6 +1972,15 @@ function updateLegendLabels() {
     if (legendLabels.envelope) {
         legendLabels.envelope.textContent = `Reachability envelope (${envelopeModelName()})`;
     }
+    /* The band is the field's own number, and the collision report judges
+       hits by it, so the key names the value it is drawn at. */
+    const field = state.fields[state.season];
+    const band = field && field.placement_uncertainty_m;
+    if (legendLabels.placement) {
+        legendLabels.placement.textContent = band
+            ? `Placement uncertainty (±${Math.round(band * 1000)} mm)`
+            : 'Placement uncertainty';
+    }
 }
 
 function renderLegend() {
@@ -1976,6 +2004,18 @@ function renderLegend() {
         box.appendChild(row);
         legendRows[item.key] = row;
         legendLabels[item.key] = label;
+        if (item.toggle) {
+            row.dataset.toggle = item.toggle;
+            row.setAttribute('role', 'button');
+            row.tabIndex = 0;
+            row.title = 'Click to show or hide it on the field.';
+            row.addEventListener('click', () => toggleLegend(item, row));
+            row.addEventListener('keydown', (event) => {
+                if (event.key !== 'Enter' && event.key !== ' ') return;
+                event.preventDefault();
+                toggleLegend(item, row);
+            });
+        }
     });
     updateLegendLabels();
     updateLegend();
@@ -2053,8 +2093,6 @@ function bisectorWaypoints() {
 function legendVisibility() {
     const samples = state.trajectory || [];
     const field = state.fields[state.season];
-    const withEnvelope = (envelopeSamples() || [])
-        .filter((sample) => sample.reachability_envelope).length >= 2;
     const hasHeading = state.waypoints.some(
         (point) => point.heading !== null && point.heading !== undefined);
     const hasFree = state.waypoints.some(
@@ -2064,48 +2102,65 @@ function legendVisibility() {
     const saturations = limit
         ? samples.map((sample) => actuatorSaturation(sample, limit, track)) : [];
     return {
+        mat: Boolean(state.mat.image),
         trajectory: samples.length > 0,
         candidates: state.candidatePaths.length > 1
             || (state.candidatePaths.length > 0 && samples.length === 0),
-        envelope: state.showEnvelope && withEnvelope,
-        saturation: state.showSaturation
-            && saturations.some((value) => value >= 0.85 && value <= 1.0),
-        slipping: state.showSaturation && saturations.some((value) => value > 1.0),
-        apex: state.showApex && curvedSegments().length > 0,
-        bisector: state.showApex && bisectorWaypoints().length > 0 && samples.length > 1,
-        path: state.showPath && state.waypoints.length > 1,
+        envelope: samples.length > 0,
+        saturation: saturations.some((value) => value >= 0.85 && value <= 1.0),
+        slipping: saturations.some((value) => value > 1.0),
+        apex: curvedSegments().length > 0,
+        bisector: bisectorWaypoints().length > 0 && samples.length > 1,
+        path: state.waypoints.length > 1,
         ghost: Boolean(state.ghostStates && state.ghostStates.length),
-        runs: state.showRuns && state.runs.length > 0,
+        runs: state.runs.length > 0,
         heading: hasHeading,
         free: hasFree,
         measured: state.measuredPoses.length > 0,
         models: Boolean(field && field.obstacles && field.obstacles.length),
+        placement: Boolean(field && field.obstacles && field.obstacles.length
+            && field.placement_uncertainty_m > 0),
         collision: state.collisions.length > 0,
         failing: state.failingSegments.size > 0 || state.worstSegment >= 0,
     };
 }
 
-/* The envelope switch says why it is off when there is nothing to draw: only
-   a validated run carries a reachable set, and fast/balanced do not validate.
-   A control that looks live and does nothing reads as a bug. */
-function updateEnvelopeToggle() {
-    const toggle = el('toggle-envelope');
-    if (!toggle) return;
-    const has = (envelopeSamples() || [])
-        .filter((sample) => sample.reachability_envelope).length >= 2;
-    toggle.disabled = !has;
-    toggle.title = has
-        ? 'The reachable set around the plan.'
-        : 'No envelope yet: only a validated run has one (fast and balanced do not validate).';
+/* Only a validated run carries a reachable set, and the fast preset does not
+   validate. A switch that looks live and does nothing reads as a bug, so the
+   envelope entry says why it is off. */
+function envelopeMissing() {
+    return (envelopeSamples() || [])
+        .filter((sample) => sample.reachability_envelope).length < 2;
 }
 
 function updateLegend() {
+    updateLegendLabels();
     const visible = legendVisibility();
     Object.keys(legendRows).forEach((key) => {
         const row = legendRows[key];
-        if (row) row.hidden = !visible[key];
+        if (!row) return;
+        row.hidden = !visible[key];
+        if (!row.dataset.toggle) return;
+        const on = Boolean(state[row.dataset.toggle]);
+        row.setAttribute('aria-pressed', String(on));
+        const blocked = key === 'envelope' && envelopeMissing();
+        if (blocked) row.setAttribute('aria-disabled', 'true');
+        else row.removeAttribute('aria-disabled');
+        /* The entry stays in the key while it is off - it is the switch
+           back on - and the dimmed row says the field is not drawing it. */
+        row.title = blocked
+            ? 'No envelope yet: only a validated run has one (the fast preset does not validate).'
+            : on ? 'Click to hide it on the field.' : 'Click to show it on the field.';
     });
-    updateEnvelopeToggle();
+}
+
+/* A key entry that is also a switch: the key is where the operator looks to
+   see what is on the field, so the switch belongs there too. */
+function toggleLegend(item, row) {
+    if (row && row.getAttribute('aria-disabled') === 'true') return;
+    state[item.toggle] = !state[item.toggle];
+    scheduleSessionSave();
+    draw();
 }
 
 function drawPlotFrame(ctx, width, height, series, xlabel, ylabel, title, horizontal) {
@@ -2625,7 +2680,10 @@ function renderCollisions(rows) {
     const unsure = state.collisions.length - solid;
     let text = `${solid} collision${solid === 1 ? '' : 's'}`;
     if (unsure) {
-        text += `, ${unsure} within the placement uncertainty`;
+        const field = state.fields[state.season];
+        const band = field && field.placement_uncertainty_m;
+        text += `, ${unsure} within the placement uncertainty`
+            + (band ? ` (±${Math.round(band * 1000)} mm)` : '');
     }
     rows.push(['Field', text]);
 
@@ -2877,13 +2935,10 @@ function downloadConfig() {
 function renderPresets() {
     const box = el('presets');
     box.innerHTML = '';
-    const order = ['fast', 'balanced', 'safe'];
-    /* What each card actually runs. Without validation the CLI solves one
-       candidate whatever the count says, so balanced is the same run as fast
-       today - the count only compares when the validator is on. */
+    const order = ['fast', 'safe'];
+    /* What each card actually runs. */
     const descriptions = {
-        fast: 'One candidate, no validation. Seconds.',
-        balanced: 'One candidate with the default settings; no validation. Seconds.',
+        fast: 'One candidate with the default settings, no validation. Seconds.',
         safe: 'Three candidates compared and validated: minutes, not seconds - the '
             + 'reachability check is the cost, so pick this only to ship.',
     };
@@ -2912,6 +2967,9 @@ function applyPreset(name) {
     const preset = state.presets[name];
     if (!preset) return;
     el('opt-samples').value = preset.samples;
+    // A preset's sample count only reaches the solver when the automatic mesh
+    // is off (gui_server passes -n in exactly that case), and the CLI does the
+    // same for --preset, so the tick goes with it.
     el('opt-auto-mesh').checked = false;
     el('opt-accuracy').value = preset.accuracy_weight;
     el('opt-candidates').value = preset.candidates;
@@ -2922,23 +2980,35 @@ function applyPreset(name) {
     document.querySelectorAll('#presets input[type=radio]').forEach((radio) => {
         radio.checked = radio.value === name;
     });
-    updateCandidatesHint();
+    updateGateFields();
     updateMeshField();
     scheduleSessionSave();
 }
 
-function updateCandidatesHint() {
-    const candidates = el('opt-candidates');
-    const validate = el('opt-validate');
-    candidates.disabled = !validate.checked;
-    candidates.title = validate.checked
-        ? 'Every candidate is solved and checked.'
-        : 'Candidates are only compared when validation is on.';
-    const limit = el('opt-envelope-limit');
-    limit.disabled = !validate.checked;
-    limit.title = validate.checked
-        ? 'How far the reachable set may spread around the plan. A waypoint error threshold still wins.'
-        : 'The accuracy limit is only applied by validation.';
+/* The gate owns its block: every field under "Checked" is only sent with
+   --validate (gui_server refuses to pass them on their own), so off the gate
+   they are dead controls. A control that looks live and does nothing reads
+   as a bug. */
+function updateGateFields() {
+    const on = el('opt-validate').checked;
+    const fields = {
+        'opt-candidates': ['Every candidate is solved and checked.',
+            'Candidates are only compared when validation is on.'],
+        'opt-propagation': ['The model the envelope gate uses.',
+            'The propagation model is only used by validation.'],
+        'opt-envelope-limit': ['How far the reachable set may spread around the plan. '
+            + 'A waypoint error threshold still wins.',
+            'The accuracy limit is only applied by validation.'],
+        'opt-envelope-limit-per-metre': ['How much the limit may grow per metre travelled.',
+            'The allowance is only applied by validation.'],
+        'opt-best-effort': ['A failed validation still writes the best path, marked failed.',
+            'Only a validation can fail, so there is nothing to keep.'],
+    };
+    Object.keys(fields).forEach((id) => {
+        const control = el(id);
+        control.disabled = !on;
+        control.title = fields[id][on ? 0 : 1];
+    });
 }
 
 /* The manual samples field only means something when the automatic mesh is
@@ -2967,6 +3037,9 @@ function collectOptions() {
         validate: el('opt-validate').checked,
         /* The page asks in cm, the command line takes metres. */
         envelope_limit: Number(el('opt-envelope-limit').value) / 100,
+        /* What the tube may grow per metre travelled: 0 keeps the limit
+           absolute. The server only forwards this with --validate. */
+        envelope_limit_per_metre: Number(el('opt-envelope-limit-per-metre').value || 0) / 100,
         /* A failed validation still has a plan worth looking at: the best
            candidate is exported and marked failed instead of leaving the
            field empty. The server only forwards this with --validate, and
@@ -3288,6 +3361,11 @@ function worldToScreen(x, y) {
 
 function frameAll() {
     const points = state.waypoints.slice();
+    /* The mat is the frame everything else is read against, so it is part of
+       what "all" means - and a fresh studio then shows the field, not a void. */
+    if (state.showMat) {
+        points.push({ x: 0, y: 0 }, { x: state.mat.widthM, y: state.mat.heightM });
+    }
     if (state.trajectory) {
         state.trajectory.forEach((sample) => points.push(sample));
     }
@@ -3507,12 +3585,33 @@ function drawObstacles() {
     const field = state.fields[state.season];
     if (!field) return;
     const ratio = window.devicePixelRatio || 1;
+    const band = state.showPlacement ? (field.placement_uncertainty_m || 0) : 0;
     field.obstacles.forEach((obstacle) => {
         const half = { x: obstacle.w_m / 2, y: obstacle.h_m / 2 };
+        const w = obstacle.w_m * camera.scale;
+        const h = obstacle.h_m * camera.scale;
+        const pad = band * camera.scale;
         const hovered = state.hoverObstacle === obstacle.id;
         ctx.save();
         ctx.translate(...Object.values(worldToScreen(obstacle.x_m, obstacle.y_m)));
         ctx.rotate(-obstacle.rot_deg * Math.PI / 180);
+        /* The model's own position on the mat is not known to better than the
+           field's placement uncertainty, so the dashed band around it is
+           where a hit is only a maybe. */
+        if (band > 0) {
+            ctx.save();
+            ctx.setLineDash([5 * ratio, 4 * ratio]);
+            ctx.strokeStyle = 'rgba(251, 191, 36, 0.7)';
+            ctx.lineWidth = 1.25 * ratio;
+            if (obstacle.kind === 'circle') {
+                ctx.beginPath();
+                ctx.arc(0, 0, half.x * camera.scale + pad, 0, Math.PI * 2);
+                ctx.stroke();
+            } else {
+                ctx.strokeRect(-w / 2 - pad, -h / 2 - pad, w + 2 * pad, h + 2 * pad);
+            }
+            ctx.restore();
+        }
         if (hovered) {
             ctx.strokeStyle = 'rgba(56, 189, 248, 0.95)';
             ctx.fillStyle = 'rgba(56, 189, 248, 0.25)';
@@ -3528,8 +3627,6 @@ function drawObstacles() {
             ctx.fill();
             ctx.stroke();
         } else {
-            const w = obstacle.w_m * camera.scale;
-            const h = obstacle.h_m * camera.scale;
             ctx.fillRect(-w / 2, -h / 2, w, h);
             ctx.strokeRect(-w / 2, -h / 2, w, h);
         }
@@ -3540,7 +3637,9 @@ function drawObstacles() {
             ctx.font = `${12 * ratio}px system-ui, sans-serif`;
             ctx.fillStyle = '#38bdf8';
             ctx.textAlign = 'center';
-            ctx.fillText(obstacle.name, at.x, at.y - 10 * ratio);
+            const name = band > 0
+                ? `${obstacle.name} ±${Math.round(band * 1000)} mm` : obstacle.name;
+            ctx.fillText(name, at.x, at.y - 10 * ratio);
             ctx.restore();
         }
     });
@@ -4052,8 +4151,10 @@ canvas.addEventListener('pointermove', (event) => {
                 || waypointIndex !== state.hoverWaypoint) {
             state.hoverObstacle = obstacleId;
             state.hoverWaypoint = waypointIndex;
-            canvas.style.cursor = (obstacleId !== null || waypointIndex >= 0)
-                ? 'pointer' : 'default';
+            // A waypoint drags, a model answers a hover, and the empty
+            // field takes a double-click to place one.
+            canvas.style.cursor = waypointIndex >= 0 ? 'move'
+                : obstacleId !== null ? 'pointer' : 'crosshair';
             draw();
         }
         return;
@@ -4082,27 +4183,12 @@ canvas.addEventListener('pointerleave', () => {
     if (state.hoverObstacle === null && state.hoverWaypoint < 0) return;
     state.hoverObstacle = null;
     state.hoverWaypoint = -1;
-    canvas.style.cursor = 'default';
+    canvas.style.cursor = '';
     draw();
 });
 
-canvas.addEventListener('pointerup', (event) => {
-    const ratio = window.devicePixelRatio || 1;
-    if (drag && drag.kind === 'pan' && !drag.moved) {
-        const world = screenToWorld(event.offsetX * ratio, event.offsetY * ratio);
-        if (state.waypoints.length === 0) {
-            state.waypoints.push(blankWaypoint(0, 0, 0));
-        } else {
-            state.waypoints.push(blankWaypoint(
-                Math.round(world.x * 1000) / 1000,
-                Math.round(world.y * 1000) / 1000,
-                null));
-        }
-        state.selected = state.waypoints.length - 1;
-        markMissionChanged();
-        renderAll();
-        pushHistory();
-    } else if (drag && drag.kind === 'waypoint' && drag.moved) {
+canvas.addEventListener('pointerup', () => {
+    if (drag && drag.kind === 'waypoint' && drag.moved) {
         // One history entry per drag, not one per mouse move.
         updatePathSummary();
         pushHistory();
@@ -4112,6 +4198,27 @@ canvas.addEventListener('pointerup', (event) => {
         showPanel('panel-waypoint');
     }
     drag = null;
+    draw();
+});
+
+/* A double click on the mat adds a waypoint. A single click used to, and a
+   stray click on the mat placed one nobody meant. */
+canvas.addEventListener('dblclick', (event) => {
+    const ratio = window.devicePixelRatio || 1;
+    if (hitTest(event.offsetX * ratio, event.offsetY * ratio) >= 0) return;
+    const world = screenToWorld(event.offsetX * ratio, event.offsetY * ratio);
+    if (state.waypoints.length === 0) {
+        state.waypoints.push(blankWaypoint(0, 0, 0));
+    } else {
+        state.waypoints.push(blankWaypoint(
+            Math.round(world.x * 1000) / 1000,
+            Math.round(world.y * 1000) / 1000,
+            null));
+    }
+    state.selected = state.waypoints.length - 1;
+    markMissionChanged();
+    renderAll();
+    pushHistory();
     draw();
 });
 
@@ -4267,7 +4374,7 @@ el('btn-validate').addEventListener('click', () => {
     /* The lever the result names: turn the validator on and solve again.
        The Solve tab comes forward, so the switch that changed is visible. */
     el('opt-validate').checked = true;
-    updateCandidatesHint();
+    updateGateFields();
     showPanel('panel-solve');
     solve();
 });
@@ -4301,7 +4408,7 @@ el('opt-use-model').addEventListener('change', (e) => {
     state.useModel = e.target.checked && Boolean(state.model);
     if (state.useModel) {
         el('opt-validate').checked = true;
-        updateCandidatesHint();
+        updateGateFields();
     }
     scheduleSessionSave();
 });
@@ -4324,35 +4431,16 @@ el('btn-cancel').addEventListener('click', async () => {
 });
 
 el('btn-frame').addEventListener('click', () => { frameAll(); draw(); });
-el('toggle-envelope').addEventListener('change', (e) => {
-    state.showEnvelope = e.target.checked;
-    draw();
-});
-el('toggle-path').addEventListener('change', (e) => {
-    state.showPath = e.target.checked;
-    draw();
-});
-el('toggle-mat').addEventListener('change', (e) => {
-    state.showMat = e.target.checked;
-    draw();
-});
-el('toggle-runs').addEventListener('change', (e) => {
-    state.showRuns = e.target.checked;
-    draw();
-});
-el('toggle-saturation').addEventListener('change', (e) => {
-    state.showSaturation = e.target.checked;
-    draw();
-});
-el('toggle-apex').addEventListener('change', (e) => {
-    state.showApex = e.target.checked;
-    draw();
-});
 el('field-season').addEventListener('change', (e) => {
     state.season = e.target.value;
     state.collisions = [];
+    /* The mat belongs to the season: the old picture would sit under the
+       new field's models. The new one comes by itself. */
+    state.mat.image = null;
+    el('mat-name').textContent = 'No mat image.';
     scheduleSessionSave();
     draw();
+    fetchMat(true);
 });
 
 /* The mat image is the user's: FIRST's artwork is not ours to ship. The
@@ -4374,11 +4462,14 @@ el('file-mat').addEventListener('change', (event) => {
 });
 
 /* Fetch the season's mat picture. FIRST's mat artwork is not ours to ship,
-   so the server downloads it on request and keeps it outside the repo. */
-el('btn-fetch-mat').addEventListener('click', async () => {
+   so the server downloads it on request and keeps it outside the repo. It
+   runs by itself on load and on a season change: a blank mat is the first
+   thing an operator sees, and the server caches the picture in mats/ after
+   the first download. */
+async function fetchMat(quiet) {
     if (!state.season) {
-        toast('Pick a season first.', true);
-        return;
+        if (!quiet) toast('Pick a season first.', true);
+        return false;
     }
     const button = el('btn-fetch-mat');
     button.disabled = true;
@@ -4396,14 +4487,19 @@ el('btn-fetch-mat').addEventListener('click', async () => {
         el('mat-height').value = String(Math.round(result.height_m * 1000));
         el('mat-credit').textContent = result.credit || '';
         await loadMatImage(result.url);
-        toast('The mat is ready.');
+        if (!quiet) toast('The mat is ready.');
+        return true;
     } catch (err) {
+        // A failed automatic download still has to be said out loud: the
+        // field then draws without a mat, and that is worth knowing.
         toast(err.message, true);
+        return false;
     } finally {
         button.disabled = false;
         button.textContent = 'Download the mat';
     }
-});
+}
+el('btn-fetch-mat').addEventListener('click', () => fetchMat(false));
 
 function loadMatImage(url) {
     return new Promise((resolve, reject) => {
@@ -4452,6 +4548,31 @@ el('btn-new').addEventListener('click', () => {
 
 el('btn-undo').addEventListener('click', undo);
 el('btn-redo').addEventListener('click', redo);
+el('btn-copy-log').addEventListener('click', copyLog);
+
+/* The log is what an operator pastes into an issue, so the copy takes the
+   whole thing rather than the selection. The clipboard needs a secure
+   context, so a plain http page selects the text instead and Ctrl+C finishes
+   it. */
+async function copyLog() {
+    const node = el('log');
+    const text = node.textContent || '';
+    if (!text.trim()) {
+        toast('The log is empty.');
+        return;
+    }
+    try {
+        await navigator.clipboard.writeText(text);
+        toast('The solver log is on the clipboard.');
+    } catch (err) {
+        const range = document.createRange();
+        range.selectNodeContents(node);
+        const selection = window.getSelection();
+        selection.removeAllRanges();
+        selection.addRange(range);
+        toast('Clipboard blocked here: the log is selected, press Ctrl+C.');
+    }
+}
 el('btn-download').addEventListener('click', downloadMission);
 
 el('btn-save').addEventListener('click', saveMission);
@@ -4612,14 +4733,15 @@ el('file-config').addEventListener('change', async (e) => {
 });
 
 el('opt-validate').addEventListener('change', () => {
-    updateCandidatesHint();
+    updateGateFields();
     scheduleSessionSave();
 });
 
 ['opt-samples', 'opt-accuracy', 'opt-candidates', 'opt-export', 'opt-controller-dt',
- 'opt-force-weight', 'opt-propagation', 'opt-polish', 'opt-envelope-limit']
+ 'opt-force-weight', 'opt-propagation', 'opt-polish', 'opt-fast-polish', 'opt-best-effort',
+ 'opt-envelope-limit', 'opt-envelope-limit-per-metre']
     .forEach((id) => el(id).addEventListener('change', () => {
-        updateCandidatesHint();
+        updateGateFields();
         syncPresetRadio();
         scheduleSessionSave();
     }));
@@ -4744,17 +4866,24 @@ async function init() {
             if (session.season) {
                 state.season = session.season;
             }
+            if (session.overlays) {
+                OVERLAY_FLAGS.forEach((key) => {
+                    if (typeof session.overlays[key] === 'boolean') {
+                        state[key] = session.overlays[key];
+                    }
+                });
+            }
         } else if (initial.waypoints) {
             setWaypoints(initial.waypoints);
             el('mission-name').value = state.configName || 'mission';
             if (initial.options && Object.keys(initial.options).length) {
                 applyOptionsToForm(initial.options);
             } else {
-                applyPreset('balanced');
+                applyPreset('fast');
             }
         } else {
             setWaypoints([blankWaypoint(0, 0, 0)]);
-            applyPreset('balanced');
+            applyPreset('fast');
         }
         resetHistory();
 
@@ -4774,7 +4903,7 @@ async function init() {
         }
         renderModel();
         updatePushButton();
-        updateCandidatesHint();
+        updateGateFields();
         updateMeshField();
         el('mat-width').value = String(Math.round(state.mat.widthM * 1000));
         el('mat-height').value = String(Math.round(state.mat.heightM * 1000));
@@ -4809,6 +4938,10 @@ async function init() {
             const select = el('field-season');
             if (select) select.value = state.season;
         }
+        /* The mat picture comes by itself, so a new studio is a field and not
+           a void. It is not awaited: the models draw first, the picture lands
+           when the server has it (and it is cached there after that). */
+        fetchMat(true);
 
         camera.offsetX = canvas.width / 2;
         camera.offsetY = canvas.height / 2;

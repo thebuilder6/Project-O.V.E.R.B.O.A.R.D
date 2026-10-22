@@ -299,11 +299,11 @@ The studio runs the same command line in the background, so the export gate, the
 
 The studio also draws the plots the command line can make, from the same samples: the velocity profiles, the wheel forces against the force limit, the accelerations, the heading over time, and how the solve converged. The solver's first guess is drawn on the field as a dashed path, so you can see what the optimizer changed.
 
-The Advanced section has the same levers the command line has: **fast polish**, **gradient polish**, the force weight and the number of candidates. The candidate chips are the leaderboard, and they say which weight each candidate used. The timing model is no longer a control: the planner uses the per-segment model for every candidate.
+The Solve tab keeps the levers the command line has, split by what they touch: **Solved** holds fast polish, gradient polish and the force weight, **Checked** holds the gate and the candidates it compares, **Written** holds the export. The candidate chips are the leaderboard, and they say which weight each candidate used. The timing model is no longer a control: the planner uses the per-segment model for every candidate.
 
 When a validation fails, the studio shows **where**: a row per path segment with the reachability envelope, the local limit and the drift, the failing segment marked in red on the field, and the reason the gate gave. Under the table it names the lever that might fix it - the closed-loop tick propagation, the gradient polish, the soft force weight, or a smaller accuracy weight - and each one is a button that re-solves. The robot itself is editable in the studio — mass, wheel and track size, motor limits, friction and the uncertainty ranges — so the last JSON file you need to open by hand is gone.
 
-Before you solve, the mission panel shows the path length and the fastest the robot could possibly do it, so a waypoint dragged five metres away is obvious. The Advanced section has the **fast polish** switch, which cuts the ten-waypoint complex mission from 26 s to 15 s for the same trajectory.
+Before you solve, the mission panel shows the path length and the fastest the robot could possibly do it, so a waypoint dragged five metres away is obvious. The **fast polish** switch, in the Solve tab's **Solved** group, cuts the ten-waypoint complex mission from 26 s to 15 s for the same trajectory.
 
 When a solve passes, the **Run on the robot** section can push the approved trajectory to a Pybricks hub over Bluetooth or USB. The hub's console streams into the studio while the robot drives, and the pose it reports comes back as a marker on the field next to the plan, with the error in millimetres. The session is written next to the mission as `missions/<name>.session.csv`, so the plan and what the robot actually did travel together. The studio also checks the plan against the robot's own files: the event names the robot has actions for, and the wheel size it really has.
 
@@ -354,8 +354,8 @@ Options:
   --gui-port INTEGER              Port for the browser studio.
   --doctor                        Check the install, dependencies, examples
                                   and ports, then exit.
-  --preset [fast|balanced|safe]   Named starting point. fast: 1 candidate, no
-                                  validation. balanced: the defaults. safe: 3
+  --preset [fast|safe]            Named starting point. fast: 8 samples per
+                                  segment, 1 candidate, no validation. safe: 3
                                   candidates, --validate with the closed-loop
                                   tick propagation, and a controller export.
                                   Options you set yourself always win.

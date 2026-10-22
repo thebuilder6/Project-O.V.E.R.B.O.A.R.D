@@ -699,7 +699,7 @@ The path-planning side of this list — the seed heuristics, the timing models, 
 --gui                           browser studio: draw, solve, export
 --gui-port INTEGER              studio port (default 8000)
 --doctor                        report the environment, then exit
---preset [fast|balanced|safe]  named starting point; explicit options win
+--preset [fast|safe]           named starting point; explicit options win
 -n, --samples INTEGER          samples per segment
 -a, --accuracy-weight FLOAT    smoothness/jerk weight
 --candidates INTEGER RANGE     candidates to solve and compare with --validate

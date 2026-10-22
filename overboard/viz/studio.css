@@ -235,7 +235,9 @@ input:disabled, select:disabled {
 
 /* ------------------------------------------------------------- viewport */
 .viewport { position: relative; min-width: 0; }
-.viewport canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+/* Waypoints are placed here, so the pointer says so until a hover over
+   something draggable or clickable replaces it. */
+.viewport canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; cursor: crosshair; }
 
 .viewport-tools, .viewport-playback, .legend {
   position: absolute;
@@ -296,6 +298,27 @@ input:disabled, select:disabled {
   border-radius: 2px;
 }
 .legend-swatch.dot { width: 9px; height: 9px; border-radius: 50%; }
+/* An entry that is also a switch: it stays in the key while it is off, so
+   the operator can click it back on, and the dimmed row is the "off". */
+.legend-item[role="button"] { cursor: pointer; border-radius: 3px; }
+/* The box says "switch": filled is on, empty is off, so the dimmed row is a
+   state and not a missing feature. */
+.legend-item[role="button"]::before {
+  content: "";
+  flex: 0 0 auto;
+  width: 9px;
+  height: 9px;
+  border: 1px solid var(--accent);
+  border-radius: 2px;
+  background: var(--accent);
+}
+.legend-item[role="button"][aria-pressed="false"]::before { background: transparent; }
+.legend-item[role="button"]:hover { color: var(--text); }
+.legend-item[aria-pressed="false"] { opacity: 0.45; }
+/* An entry the run cannot draw - no envelope without a validated run - says
+   why in its tooltip and does not pretend to be a live switch. */
+.legend-item[aria-disabled="true"] { opacity: 0.45; cursor: default; }
+.legend-item[role="button"]:focus-visible { outline: 1px solid var(--accent); }
 /* The key grows as the field draws more: it stops at the canvas edge
    instead of covering the mat. */
 .legend { max-height: calc(100% - 24px); overflow-y: auto; }
@@ -461,7 +484,9 @@ table.report tr.warn td { color: var(--warn); }
 /* --------------------------------------------------------------- toast */
 .toast {
   position: fixed;
-  bottom: 18px;
+  /* Above the playback bar, which owns the bottom edge of the viewport: a
+     toast over it hides the time readout exactly when a run is being read. */
+  bottom: 74px;
   right: 18px;
   max-width: 420px;
   padding: 12px 14px;
