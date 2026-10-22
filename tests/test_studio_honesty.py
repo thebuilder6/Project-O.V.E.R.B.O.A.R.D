@@ -389,6 +389,13 @@ class TestTheResultExplainsItself(unittest.TestCase):
         body = self._function("describeCandidates")
         self.assertIn("did not win", body)
 
+    def test_a_candidate_that_was_not_checked_does_not_read_as_failed(self):
+        """A slower candidate is skipped once a faster one passed. The check
+        never ran, so the line must not accuse it of failing (KI-030)."""
+        body = self._function("describeCandidates")
+        self.assertIn("validation_skipped", body)
+        self.assertIn("was not checked", body)
+
     def test_the_chip_names_the_seed(self):
         """Two candidates with the same timing model are the same chip
         without it."""

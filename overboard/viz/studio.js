@@ -705,7 +705,8 @@ function describeCandidates(report, winner) {
     if (candidates.length > 4) {
         // More candidates than a chip row can name: summarise them.
         const passed = candidates.filter((entry) => entry.ok).length;
-        const failed = candidates.filter((entry) => !entry.ok && entry.duration_s !== null)
+        const failed = candidates.filter((entry) => !entry.ok && !entry.validation_skipped
+            && entry.duration_s !== null)
             .sort((a, b) => a.duration_s - b.duration_s);
         const weightOf = (entry) => (entry.accuracy_weight ? ` at weight ${entry.accuracy_weight}` : '');
         if (winner) {
@@ -752,7 +753,7 @@ function describeCandidates(report, winner) {
         const why = entry.reasons && entry.reasons.length ? `: ${entry.reasons.join('; ')}` : '';
         /* A candidate that passed but did not win needs the reason, or the
            reader is left with a faster one that lost. */
-        let tail = why;
+        let tail = entry.validation_skipped ? '' : why;
         if (entry.ok && winner && winner.ok && other !== null && other !== undefined
                 && mine !== null && mine !== undefined && other <= mine) {
             const hasEnvelope = winner.envelope_cm !== null && winner.envelope_cm !== undefined
@@ -770,7 +771,8 @@ function describeCandidates(report, winner) {
                     : ', but it did not win');
         }
         parts.push(`${timingName(entry)} ${entry.style || 'baseline'}${difference} `
-            + `${entry.ok ? 'and passed' : 'but failed'}${tail}`);
+            + `${entry.validation_skipped ? 'and was not checked'
+                : (entry.ok ? 'and passed' : 'but failed')}${tail}`);
     });
     return parts.join('. ');
 }
@@ -835,7 +837,9 @@ function renderValidationReport(report) {
            the list when the triad failed (KI-048). */
         const style = entry.style || 'baseline';
         const rescue = Boolean(entry.rescue) || isRescueCandidate(style);
-        chip.className = `chip ${entry.ok ? 'ok' : 'bad'}${i === index ? ' active' : ''}`
+        const verdict = entry.ok ? 'ok' : (entry.validation_skipped ? 'not checked' : 'failed');
+        chip.className = `chip ${entry.ok ? 'ok' : (entry.validation_skipped ? '' : 'bad')}`
+            + `${i === index ? ' active' : ''}`
             + (rescue ? ' is-rescue' : '');
         const timing = entry.timing === 'per-segment' ? 'per-seg' : 'equal-dur';
         const duration = entry.duration_s === null || entry.duration_s === undefined
@@ -843,7 +847,7 @@ function renderValidationReport(report) {
         const weight = (entry.accuracy_weight !== null && entry.accuracy_weight !== undefined
             && entry.accuracy_weight > 0) ? ` @${entry.accuracy_weight}` : '';
         chip.textContent = `${i + 1}. ${candidateName(style, rescue)} ${timing}${weight}${duration} `
-            + `${entry.ok ? 'ok' : 'failed'}`;
+            + `${verdict}`;
         // One title: the candidate's identity and why it failed. The second
         // assignment used to overwrite the first, so the tooltip never
         // showed the style or the weight.
