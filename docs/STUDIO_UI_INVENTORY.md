@@ -246,7 +246,7 @@ The tab carries a badge with the selected waypoint's number, and clicking a wayp
 
 ### Plots tab
 
-The plot tabs - Speed, Force, Acceleration, Heading, Convergence - are built from the plot registry, over one canvas, with a note under it. Adding a plot is one entry in the registry.
+The plot tabs - Speed, Force, Acceleration, Turn rate, Heading, Envelope, Convergence - are built from the plot registry, over one canvas whose title and legend sit on separate rows, with a note under it. Adding a plot is one entry in the registry. Every plot that carries a limit names it in the legend.
 
 ### Run tab
 

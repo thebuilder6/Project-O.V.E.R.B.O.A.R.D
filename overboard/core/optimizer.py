@@ -280,6 +280,17 @@ class TrajectoryOptimizer:
                 for _, _, hist in sub_results[1:]:
                     stitched_guess_traj = np.vstack([stitched_guess_traj, hist[0]["trajectory"][1:]])
                     stitched_final_traj = np.vstack([stitched_final_traj, hist[-1]["trajectory"][1:]])
+                # The per-iteration costs of every sub-solve, in order. They
+                # carry no trajectory, so they ride between the two stitched
+                # ends: the ghost path and the final plan read the ends, and
+                # the convergence curve keeps the shape of the whole solve.
+                curve = []
+                for _, _, hist in sub_results:
+                    for entry in hist:
+                        if entry.get("phase") == "ipopt":
+                            curve.append({"iteration": len(curve) + 1,
+                                          "cost": float(entry["cost"]),
+                                          "phase": "ipopt"})
                 self.iteration_history = [
                     {
                         "iteration": 0,
@@ -288,8 +299,9 @@ class TrajectoryOptimizer:
                         "dt": stats["segment_dt"],
                         "phase": "initial_guess",
                     },
+                    *curve,
                     {
-                        "iteration": 1,
+                        "iteration": len(curve) + 1,
                         "cost": stats["final_cost"],
                         "trajectory": stitched_final_traj,
                         "dt": stats["segment_dt"],
@@ -809,6 +821,35 @@ class TrajectoryOptimizer:
         if solver_options:
             s_opts.update(solver_options)
         opti.solver("ipopt", p_opts, s_opts)
+
+        if capture_iterations:
+            # The cost at each IPOPT iterate, so the Convergence plot is a
+            # curve and not two dots. Decimated: the log feeds a plot, and
+            # every iterate of an iteration-budgeted solve is not needed.
+            def record_iteration(iteration):
+                if not iteration or iteration % 5:
+                    return
+                try:
+                    if per_segment_dt:
+                        dt_val = np.asarray(opti.debug.value(dt), dtype=float).reshape(-1)
+                    else:
+                        dt_val = np.full(num_segments, float(opti.debug.value(dt)))
+                    states = np.asarray(opti.debug.value(X), dtype=float).flatten()
+                    cost = self._compute_cost(
+                        np.concatenate([dt_val, states]), N, segment_samples,
+                        accuracy_weight, waypoints, force_weight=force_weight)
+                except Exception:
+                    # A plot is not worth losing the solve.
+                    return
+                self.iteration_history.append({
+                    "iteration": len(self.iteration_history),
+                    "cost": float(cost),
+                    "phase": "ipopt",
+                })
+            try:
+                opti.callback(record_iteration)
+            except Exception:
+                pass
 
         stage_prefix = f"[stage {stage_label}] " if stage_label else ""
         try:

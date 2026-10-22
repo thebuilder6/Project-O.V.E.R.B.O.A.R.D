@@ -193,7 +193,9 @@ const PLOTS = [
     { key: 'speed', label: 'Speed', build: buildSpeedPlot },
     { key: 'force', label: 'Force', build: buildForcePlot },
     { key: 'accel', label: 'Acceleration', build: buildAccelPlot },
+    { key: 'turn', label: 'Turn rate', build: buildTurnPlot },
     { key: 'heading', label: 'Heading', build: buildHeadingPlot },
+    { key: 'envelope', label: 'Envelope', build: buildEnvelopePlot },
     { key: 'convergence', label: 'Convergence', build: buildConvergencePlot },
 ];
 
@@ -1817,6 +1819,8 @@ const PLOT_COLORS = {
     linear: '#e2e8f0',
     limit: '#fbbf24',
     convergence: '#38bdf8',
+    turn: '#a78bfa',
+    envelope: 'rgba(52, 211, 153, 0.9)',
 };
 
 function drawPlot() {
@@ -1896,30 +1900,88 @@ function buildAccelPlot({ samples, times }) {
     };
 }
 
+function buildTurnPlot({ samples, times }) {
+    return {
+        title: 'Turn rate over time',
+        xlabel: 'Time (s)',
+        ylabel: 'Turn rate (rad/s)',
+        series: [
+            { label: 'Angular velocity', color: PLOT_COLORS.turn,
+                x: times, y: samples.map((s) => s.omega) },
+        ],
+    };
+}
+
+/* The heading is the plan's angle in (-pi, pi], so a path that crosses the
+   range would jump 180 -> -180. The plot holds one continuous turn instead,
+   which is how the robot's own odometry reads it. */
+function unwrapHeading(samples) {
+    let offset = 0;
+    let previous = null;
+    return samples.map((sample) => {
+        const heading = sample.heading;
+        if (previous !== null) {
+            const delta = heading - previous;
+            if (delta > Math.PI) offset -= 2 * Math.PI;
+            else if (delta < -Math.PI) offset += 2 * Math.PI;
+        }
+        previous = heading;
+        return (heading + offset) * 180 / Math.PI;
+    });
+}
+
 function buildHeadingPlot({ samples, times }) {
     return {
         title: 'Heading over time',
         xlabel: 'Time (s)',
         ylabel: 'Heading (deg)',
         series: [
-            { label: 'Heading', color: PLOT_COLORS.convergence,
-                x: times, y: samples.map((s) => s.heading * 180 / Math.PI) },
+            { label: 'Heading, unwrapped', color: PLOT_COLORS.convergence,
+                x: times, y: unwrapHeading(samples) },
         ],
+    };
+}
+
+/* The per-sample radius the gate compares with each segment's limit: half the
+   diagonal of the envelope box, in cm (main.py measures the same radius). */
+function buildEnvelopePlot({ samples, times }) {
+    const radius = samples.map((sample) => {
+        const env = sample.reachability_envelope;
+        if (!env) return NaN;
+        return Math.hypot((env.x_max - env.x_min) / 2, (env.y_max - env.y_min) / 2) * 100;
+    });
+    return {
+        title: 'Reachability envelope',
+        xlabel: 'Time (s)',
+        ylabel: 'Envelope (cm)',
+        series: [{ label: 'Half-diagonal radius', color: PLOT_COLORS.envelope,
+                   x: times, y: radius }],
+        note: radius.some(Number.isFinite)
+            ? `The uncertainty the validator propagated. Its limit is per segment, `
+              + `so the Result tab holds the verdict.`
+            : 'Only a validated run has an envelope. Turn validation on in the Solve tab and solve again.',
     };
 }
 
 function buildConvergencePlot({ iterations }) {
     const costs = iterations.map((entry) => entry.cost);
+    /* One phase label per run of phases: the per-iteration points all say
+       "ipopt", and repeating it would bury the note. */
+    const phases = iterations.reduce((list, entry) => {
+        if (list[list.length - 1] !== entry.phase) list.push(entry.phase);
+        return list;
+    }, []);
     return {
         title: 'How the solve converged',
         xlabel: 'Step',
         ylabel: 'Cost (s)',
         series: costs.length
             ? [{ label: 'Cost', color: PLOT_COLORS.convergence,
-                 x: iterations.map((entry, index) => index), y: costs, points: true }]
+                 x: iterations.map((entry, index) => index), y: costs,
+                 points: costs.length <= 20 }]
             : [],
         note: costs.length
-            ? `${iterations.map((entry) => entry.phase).join(' -> ')}. `
+            ? `${phases.join(' -> ')}. `
               + `The dashed path on the field is the solver's first guess.`
             : 'The solver did not record its iterations for this run.',
     };
@@ -2166,12 +2228,26 @@ function toggleLegend(item, row) {
 function drawPlotFrame(ctx, width, height, series, xlabel, ylabel, title, horizontal) {
     const left = 46;
     const right = width - 10;
-    const top = 16;
-    const bottom = height - 26;
+    const bottom = height - 30;
     ctx.font = '10px system-ui, sans-serif';
     ctx.fillStyle = '#93a4bf';
     ctx.textAlign = 'left';
     ctx.fillText(title, left, 11);
+    /* The legend gets its own row(s) under the title. It used to start at the
+       title's baseline, so the two were printed over each other; a wrap keeps
+       it inside the box when the panel is narrow and the key is long. */
+    const legend = series.concat(horizontal && horizontal.label
+        ? [{ label: horizontal.label, color: PLOT_COLORS.limit, dash: true }] : []);
+    const legendEntries = [];
+    let lx = left;
+    let row = 0;
+    legend.forEach((entry) => {
+        const w = 13 + ctx.measureText(entry.label).width;
+        if (lx > left && lx + w > right) { row += 1; lx = left; }
+        legendEntries.push({ entry, x: lx, y: 25 + row * 14 });
+        lx += w;
+    });
+    const top = 25 + row * 14 + 8;
     if (!series.length || !series.some((s) => s.x && s.x.length)) {
         return;
     }
@@ -2221,6 +2297,8 @@ function drawPlotFrame(ctx, width, height, series, xlabel, ylabel, title, horizo
     ctx.textAlign = 'center';
     for (let i = 0; i <= 3; i++) {
         const value = xMin + ((xMax - xMin) * i) / 3;
+        /* The last tick would be cut by the canvas edge if it stayed centred. */
+        ctx.textAlign = i === 3 ? 'right' : 'center';
         ctx.fillText(value.toFixed(2), px(value), bottom + 13);
     }
     ctx.strokeStyle = 'rgba(255,255,255,0.18)';
@@ -2270,14 +2348,16 @@ function drawPlotFrame(ctx, width, height, series, xlabel, ylabel, title, horizo
 
     // The legend.
     ctx.textAlign = 'left';
-    let lx = left;
-    const ly = top - 4;
-    series.forEach((entry) => {
-        ctx.fillStyle = entry.color;
-        ctx.fillRect(lx, ly - 5, 8, 2);
+    legendEntries.forEach(({ entry, x, y }) => {
+        ctx.strokeStyle = entry.color;
+        ctx.setLineDash(entry.dash ? [3, 3] : []);
+        ctx.beginPath();
+        ctx.moveTo(x, y - 3);
+        ctx.lineTo(x + 8, y - 3);
+        ctx.stroke();
+        ctx.setLineDash([]);
         ctx.fillStyle = '#93a4bf';
-        ctx.fillText(entry.label, lx + 11, ly);
-        lx += 13 + ctx.measureText(entry.label).width;
+        ctx.fillText(entry.label, x + 11, y);
     });
 
     ctx.fillStyle = '#64748b';

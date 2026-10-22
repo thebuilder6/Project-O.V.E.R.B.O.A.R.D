@@ -829,11 +829,17 @@ class TestIterationHistory(unittest.TestCase):
             self.assertTrue(os.path.exists(history))
             with open(history, "r", encoding="utf-8") as handle:
                 entries = json.load(handle)
-        self.assertEqual(len(entries), 2)
+        self.assertGreaterEqual(len(entries), 2)
         self.assertEqual(entries[0]["phase"], "initial_guess")
-        self.assertEqual(entries[1]["phase"], "final_solution")
+        self.assertEqual(entries[-1]["phase"], "final_solution")
         self.assertIn("cost", entries[0])
         self.assertTrue(entries[0]["trajectory"])
+        # Between the ends are the decimated IPOPT iterates the Convergence
+        # plot draws: a cost, and no trajectory (the ghost path reads the ends).
+        for entry in entries[1:-1]:
+            self.assertEqual(entry["phase"], "ipopt")
+            self.assertIn("cost", entry)
+            self.assertNotIn("trajectory", entry)
 
     def test_the_history_survives_parallel_candidates(self):
         """The candidates may be solved in worker processes.
@@ -855,10 +861,11 @@ class TestIterationHistory(unittest.TestCase):
             self.assertEqual(result.exit_code, 0, result.output)
             with open(history, "r", encoding="utf-8") as handle:
                 entries = json.load(handle)
-        self.assertEqual(len(entries), 2)
+        self.assertGreater(len(entries), 2)
         self.assertEqual(entries[0]["phase"], "initial_guess")
-        self.assertEqual(entries[1]["phase"], "final_solution")
+        self.assertEqual(entries[-1]["phase"], "final_solution")
         self.assertTrue(entries[0]["trajectory"])
+        self.assertIn("ipopt", [entry["phase"] for entry in entries])
 
 class TestCandidateComparison(unittest.TestCase):
     """--candidates-out writes every candidate, and --pick-candidate chooses.
