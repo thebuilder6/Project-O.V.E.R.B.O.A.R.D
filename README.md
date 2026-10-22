@@ -285,9 +285,35 @@ python -m overboard.main --gui
 
 Or double-click `start_studio.bat` (Windows) / `sh start_studio.sh`
 (macOS/Linux), which uses the `.venv` from `install.bat` and opens the same
-studio.
+studio. The server blocks until you stop it with Ctrl+C, and it never takes a
+port from another program: if 8000 is busy it moves to the next free one.
 
-The studio opens in your browser: draw the mission on the field, set headings, stops and events, pick a preset, and solve. The result shows the trajectory, the reachability envelope and the numbers, and you can download the trajectory and the controller file.
+![The studio with a mission loaded](docs/images/studio/studio-overview.png)
+
+**The five-minute tour**
+
+1. **Load or draw the mission.** Every example and saved mission is in the
+   **Mission** tab's list; picking one replaces what is on the field.
+   Double-click the field to add a waypoint, drag one to move it, and use the
+   **Waypoint** tab for its exact x/y, heading, stop and event.
+2. **Set the robot.** The **Robot** tab holds the config, the geometry and the
+   uncertainty ranges the validator plans for. If the plan's wheel or track
+   differs from the robot's, the tab says so and offers to copy the robot's.
+3. **Choose how hard to check.** **Fast** solves one candidate with no
+   validation, in seconds. **Safe** compares the three frontier candidates and
+   validates them: minutes, not seconds, because the reachability check is the
+   cost - pick it only to ship.
+4. **Solve.** The header carries the answer whatever tab you are on:
+   `2.10 s | 0.47 m | envelope 0.6 cm - validated`.
+5. **Read the result.** The **Result** tab has the numbers, the envelope, the
+   per-segment table and, when a check fails, the reason and the segment that
+   failed, marked in red on the field. The **Plots** tab draws the profiles
+   from the same samples.
+6. **Write the files.** The **Result** tab downloads the `.traj`, the
+   controller JSON, the Python module, the stats and the one-page mission
+   report. A validated plan can then be pushed from the **Run** tab.
+
+![A validated solve: the Solve tab's levers on the left, the numbers and the per-segment table on the right](docs/images/studio/studio-solved.png)
 
 The page is three columns. The left one is what you set (tabs: **Mission**, **Robot**, **Field**, **Solve**), the canvas in the middle is the work, and the right one is what you read (tabs: **Result**, **Waypoint**, **Plots**, **Run**). The line in the header always carries the result, so a tabbed column can never hide the answer, and the field carries a key to its own colours. Every control is listed in [docs/STUDIO_UI_INVENTORY.md](docs/STUDIO_UI_INVENTORY.md), with the structure and how to extend it.
 
@@ -320,14 +346,6 @@ Your work is never lost: every edit can be undone (Ctrl+Z / Ctrl+Shift+Z) - the 
 The missions folder is **its own git repository**: every save is a commit, so the **History** list under the mission name shows every version and can put an earlier one back. The commits need no git configuration on your machine, and your project repository is never touched.
 
 The arrow keys nudge the selected waypoint (1 cm; Shift is 10 cm, Alt is 1 mm), and a held key counts as one undo step.
-
-### 6. Solve in the browser (optional)
-
-```bash
-python -m overboard.main --gui
-```
-
-`--gui` opens the studio, where the mission is drawn, solved and exported. The server blocks until you stop it, and it never takes a port from another program.
 
 ## CLI Options
 
