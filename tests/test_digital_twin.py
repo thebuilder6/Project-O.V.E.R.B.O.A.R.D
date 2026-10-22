@@ -139,6 +139,16 @@ class TestDigitalTwinConfig(unittest.TestCase):
         self.assertEqual(twin.actuator_gain_range(), (1.0, 1.0))
         self.assertEqual(twin.actuator_tau_s(), 0.0)
 
+    def test_a_documented_accel_limit_enables_the_twin(self):
+        twin = DigitalTwinConfig.from_dict({
+            "actuator": {"straight": {"accel_limit": 7.8}},
+        })
+        self.assertTrue(twin.enabled)
+        self.assertEqual(twin.actuator_gain_range(), (1.0, 1.0))
+        self.assertEqual(twin.actuator_tau_s(), 0.0)
+        self.assertAlmostEqual(twin.actuator_accel_limit(), 7.8)
+        self.assertTrue(twin.summary()["applied"]["actuator_accel_limit"])
+
     def test_loads_from_file(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = os.path.join(tmp, "sysid_fit.json")
@@ -465,6 +475,63 @@ class TestDigitalTwinMechanisms(unittest.TestCase):
 
         self.assertLessEqual(abs(float(dx[3])), 1.2 + 1e-6)
         self.assertGreater(float(dx[3]), 0.0)
+
+    def test_a_documented_limit_selects_the_ramped_plant(self):
+        """A documented DriveBase limit needs no calibration (Q11)."""
+        twin = DigitalTwinConfig.from_dict({
+            "actuator": {"straight": {"accel_limit": 7.8}},
+        })
+        validator = self._validator(twin)
+        self.assertEqual(type(validator.plant).__name__, "DigitalTwinOpenLoop")
+
+        w = jnp.array([1.37, 0.85, 0.0004, 0.0965, 0.028, 0.001, 1.0])
+        dx = validator.plant.f(0.0, jnp.array([0.0, 0.0, 0.0, 0.0, 0.0]),
+                                jnp.array([5.0, 5.0]), w)
+
+        self.assertLessEqual(abs(float(dx[3])), 7.8 + 1e-6)
+        self.assertGreater(float(dx[3]), 0.0)
+
+    def test_the_default_config_declares_the_drivebase_limit(self):
+        from overboard.main import _config_digital_twin, _load_config
+        config = os.path.join(
+            os.path.dirname(__file__), "..", "examples", "fll_choreo.json")
+        config_data, _ = _load_config(config)
+        twin = _config_digital_twin(config_data)
+
+        self.assertIsNotNone(twin)
+        self.assertTrue(twin.enabled)
+        self.assertAlmostEqual(twin.actuator_accel_limit(), 7.8)
+
+    def test_a_plan_above_the_documented_limit_fails_tracking(self):
+        """Q11: the gate now sees a plan the hub cannot accelerate along.
+
+        The samples ask for 0 to 0.6 m/s in 20 ms (30 m/s^2). The kinematic
+        plant follows that exactly, so the plan passes. The documented
+        7.8 m/s^2 limit makes the plant lag, and the tracking error crosses
+        the 5 mm gate.
+        """
+        samples = [
+            {"t": 0.0, "x": 0.0, "y": 0.0, "heading": 0.0,
+             "vl": 0.0, "vr": 0.0},
+            {"t": 0.02, "x": 0.006, "y": 0.0, "heading": 0.0,
+             "vl": 0.6, "vr": 0.6},
+            {"t": 0.22, "x": 0.126, "y": 0.0, "heading": 0.0,
+             "vl": 0.6, "vr": 0.6},
+        ]
+        args = ((0.0, 0.0), (0.0965, 0.0965), (0.028, 0.028),
+                (1.37, 1.37), (1.0, 1.0), (0.001, 0.001))
+
+        nominal = ImmraxValidator(JAXRobotConfig(_TEST_ROBOT))
+        documented = self._validator(DigitalTwinConfig.from_dict({
+            "actuator": {"straight": {"accel_limit": 7.8}},
+        }))
+        nominal_error = nominal.compute_reachability(
+            samples, *args)["max_tracking_error_m"]
+        documented_error = documented.compute_reachability(
+            samples, *args)["max_tracking_error_m"]
+
+        self.assertLess(nominal_error, 0.005)
+        self.assertGreater(documented_error, 0.005)
 
     def test_summary_reports_what_is_applied(self):
         twin = self._twin()

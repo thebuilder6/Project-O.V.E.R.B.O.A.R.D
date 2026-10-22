@@ -98,7 +98,7 @@ Each entry has the same fields:
 | **Mechanism** | `overboard/core/optimizer.py`, `amplitude = min(0.10 * length, 0.03)` |
 | **Outcome** | The amplitude is uncorrelated with the turn angle. On a 90° turn over 1 m it bows 3 cm — a slight curve, not a quarter circle. On a 10° turn over 2 m it bows the same 3 cm — a large relative deviation |
 | **Status** | dormant |
-| **What would revive it** | Compute the bow from the turn: the circular arc that connects the two endpoints with the given headings, then sample it. That is a real path family, not a nudge — see Q1 in [Part IV](RESEARCH_AGENDA.md#24-the-open-questions) |
+| **What would revive it** | Compute the bow from the turn: the circular arc that connects the two endpoints with the given headings, then sample it. That is a real path family, not a nudge — and it was tried: Q1 in [Part IV](RESEARCH_AGENDA.md#240-the-closed-questions---do-not-re-litigate) is closed, because the measured family is cheaper to solve but not faster |
 
 ## 18. Ledger: timing models
 

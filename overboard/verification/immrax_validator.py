@@ -250,9 +250,11 @@ class RobotOpenLoop(immrax.system.OpenLoopSystem):
     (``drivebase.settings(straight_acceleration=..., turn_acceleration=...)``,
     about 7800 mm/s² and 9300 deg/s² for 56 mm wheels) above the accelerations
     the planner uses, so the inner reference follows the command instead of
-    ramping behind it. Instant tracking is therefore a fair model of the hub.
-    The DriveBase PID and the whole-millimeter distance reading are still not
-    modeled (KI-020).
+    ramping behind it. Instant tracking is therefore a fair model of the hub
+    until the plan asks for more than that limit; a first-order lag or a
+    declared acceleration limit selects the five-state plant (Q11), which
+    ramps. The DriveBase PID and the whole-millimeter distance reading are
+    still not modeled (KI-020).
     """
 
     def __init__(self, config: JAXRobotConfig):
@@ -314,7 +316,11 @@ class RobotOpenLoop(immrax.system.OpenLoopSystem):
 
 
 class DigitalTwinOpenLoop(immrax.system.OpenLoopSystem):
-    """Actuator-aware plant used only when ``--sysid-fit`` is enabled.
+    """Actuator-aware plant used when the digital twin supplies one.
+
+    The twin may come from ``--sysid-fit`` or from the robot config's
+    ``digital_twin`` section. The documented DriveBase acceleration limit
+    needs no calibration, so it alone is enough to select this plant.
 
     State: [x, y, heading, vl_actual, vr_actual]. The two wheel-speed states
     follow the held controller command through a first-order lag. The command
@@ -823,7 +829,9 @@ class ImmraxValidator:
         # Sampled-data path: hold the controller command for one 20 ms tick,
         # then integrate the physical plant. This mirrors ramsete_fast.py
         # instead of evaluating the controller continuously.
-        if self._digital_twin_active and digital_twin.actuator_tau_s() > 0.0:
+        if self._digital_twin_active and (
+                digital_twin.actuator_tau_s() > 0.0
+                or digital_twin.actuator_accel_limit() is not None):
             self.plant = DigitalTwinOpenLoop(config, digital_twin,
                                              wheel_state=wheel_state)
         else:

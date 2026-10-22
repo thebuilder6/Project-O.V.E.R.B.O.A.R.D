@@ -461,6 +461,11 @@ def build_command(job_dir, config_path, waypoints_path, output_path, options):
         # Passing it only with --validate keeps the flag from meaning nothing.
         if options.get("envelope_limit") is not None:
             command += ["--envelope-limit", f"{float(options['envelope_limit']):g}"]
+        # The tube widens with distance, so a long path fails an absolute
+        # limit for being long (KI-054). A slope prices the distance instead.
+        if options.get("envelope_limit_per_metre") is not None:
+            command += ["--envelope-limit-per-metre",
+                        f"{float(options['envelope_limit_per_metre']):g}"]
         # The studio draws the best path a failed validation produced, marked
         # as failed, instead of an empty field. Push and approval still read
         # the validator's verdict, so this only affects what is displayed.
@@ -521,6 +526,14 @@ def start_job(server, payload):
         if not 0.001 <= limit <= 0.05:
             raise ValueError("The accuracy limit must be between 0.1 and 5 cm.")
         options["envelope_limit"] = limit
+    if options.get("envelope_limit_per_metre") is not None:
+        try:
+            per_metre = float(options["envelope_limit_per_metre"])
+        except (TypeError, ValueError):
+            raise ValueError("The allowance per metre must be a number.")
+        if not 0.0 <= per_metre <= 0.05:
+            raise ValueError("The allowance per metre must be between 0 and 5 cm/m.")
+        options["envelope_limit_per_metre"] = per_metre
     if str(options.get("propagation") or "plant").lower() not in ("plant", "tick"):
         raise ValueError("The propagation must be plant or tick.")
     if options.get("pick_candidate") not in (None, ""):

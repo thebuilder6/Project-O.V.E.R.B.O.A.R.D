@@ -457,9 +457,14 @@ class DigitalTwinConfig:
         drivetrain = _drivetrain_from_dict(data.get("drivetrain", {}))
         drivebase = _drivebase_from_dict(data.get("drivebase"), data)
 
+        # A documented limit is usable without a calibration: the DriveBase
+        # declares its acceleration ceiling, so the plant can model it.
+        documented_accel = (
+            straight.accel_limit is not None and straight.accel_limit > 0.0)
         calibrated = any((
             straight.calibrated,
             odometry.calibrated,
+            documented_accel,
         ))
         if enabled is None:
             enabled = calibrated
@@ -511,13 +516,13 @@ class DigitalTwinConfig:
         return max(0.0, float(self.actuator_straight.delay_s or 0.0))
 
     def actuator_accel_limit(self) -> Optional[float]:
-        """Measured wheel-acceleration limit in m/s^2, or None if unknown.
+        """Wheel-acceleration limit in m/s^2, or None if unknown.
 
         The plant clamps the wheel-speed state to this rate, so the model
-        cannot accelerate faster than the robot did.
+        cannot accelerate faster than the robot did. A measured limit is
+        preferred, but the DriveBase documents its own ceiling, so a
+        documented limit needs no calibration (Q11).
         """
-        if not self.actuator_straight.calibrated:
-            return None
         value = self.actuator_straight.accel_limit
         if value is None:
             return None

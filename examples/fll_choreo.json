@@ -23,5 +23,15 @@
       "wheel_radius_range": [0.0275, 0.0285]
     }
   },
+  "digital_twin": {
+    "source": [
+      "DriveBase straight_acceleration, 80% of the 20000 deg/s^2 motor ceiling on 56 mm wheels (KI-021)"
+    ],
+    "actuator": {
+      "straight": {
+        "accel_limit": 7.8
+      }
+    }
+  },
   "interactions": {}
 }

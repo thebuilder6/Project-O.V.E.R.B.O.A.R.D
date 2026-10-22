@@ -539,13 +539,13 @@ python -m overboard.main -c examples/fll_choreo.json -w waypoints.json -o missio
 
 ## Accuracy vs. Speed Tradeoff
 
-By default the optimizer is purely time-optimal (`--accuracy-weight 0.0`). This is the fastest solution but can demand rapid acceleration changes. Increasing `--accuracy-weight` adds a jerk penalty and trades time for smoother wheel commands:
+By default the optimizer is purely time-optimal (`--accuracy-weight 0.0`). This is the fastest solution but can demand rapid acceleration changes. Increasing `--accuracy-weight` adds a jerk penalty and trades time for smoother wheel commands. The weight has no upper bound; what matters is the scale it is on:
 
 - `0.0`: pure time-optimal. On some missions this misses the motor-force gate (the first-four-waypoints mission misses it by 0.006 N).
 - `0.001-0.002`: the range the candidate set uses, and the cheapest lever there is. The same seed that fails at 0 passes at 0.001.
 - `0.005-0.01`: smoother still. The retired sweep's grid spanned `0, 0.001, 0.002, 0.005, 0.01`; beyond that the time cost grows without buying passes, and the best weight differs per mission (median Spearman -0.68 between weight and tracking error, 21 of 192 steps non-monotone).
 
-The exact tradeoff depends on the path and robot. Measure it on your own trajectory rather than relying on a fixed percentage.
+The exact tradeoff depends on the path and robot. Measure it on your own trajectory rather than relying on a fixed number.
 
 With `--validate`, the tradeoff is measured, not assumed: `--candidates N` (default 2) solves N candidates from the planner's three frontier candidates (`frontier_sprint`, `frontier_sweeper`, `frontier_exploratory`, all per-segment at a low accuracy weight), validates and scores every one, and keeps the **fastest passing** one - the reachability envelope breaks a duration tie. The 5-part path fitness score is reported for every candidate, so the rule can be re-run offline, but it does not decide. `--candidates 1` disables the comparison. A slower or differently shaped candidate that scores worse is discarded; nothing is escalated silently.
 

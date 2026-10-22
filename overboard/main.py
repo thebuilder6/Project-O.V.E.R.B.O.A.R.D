@@ -655,7 +655,12 @@ def _candidate_summary(attempts, selected_index):
             "reasons": list(attempt.get("reasons", [])),
             "samples": attempt.get("samples") or [],
         })
-    return {"selected": selected_index, "candidates": candidates}
+    rescues = [entry for entry in candidates if entry["rescue"]]
+    return {"selected": selected_index, "candidates": candidates,
+            # How the insurance did. A rescue that never pays is a cost with
+            # no number attached until someone counts it.
+            "rescue": {"tried": len(rescues),
+                       "passed": sum(1 for entry in rescues if entry["ok"])}}
 
 
 def _write_candidates(path, attempts, selected_index, quiet):
@@ -752,6 +757,25 @@ def _load_config(path):
         return data, RobotConfig(data)
     except Exception as exc:
         raise click.ClickException(f"Invalid robot config '{path}': {exc}")
+
+
+def _config_digital_twin(config_data):
+    """The digital twin a robot config declares, or None.
+
+    A config may carry ``"digital_twin": {...}`` with documented limits
+    (the DriveBase acceleration ceiling) that need no calibration.
+    """
+    payload = (config_data.get("digital_twin")
+               if isinstance(config_data, dict) else None)
+    if not isinstance(payload, dict):
+        return None
+    from overboard.sysid.digital_twin import DigitalTwinConfig
+    try:
+        return DigitalTwinConfig.from_dict(payload)
+    except ValueError as exc:
+        raise click.ClickException(
+            f"Invalid digital_twin section in the robot config: {exc}"
+        ) from exc
 
 
 def _number(value, label, index, path):
@@ -1764,6 +1788,10 @@ def main(ctx, config, waypoints, output, gui, gui_port, doctor, preset,
         )
 
     digital_twin = None
+    if not sysid_fit and validate:
+        # The config may carry a documented twin (the DriveBase acceleration
+        # limit needs no calibration). --sysid-fit wins when both are given.
+        digital_twin = _config_digital_twin(config_data)
     if sysid_fit:
         if not validate:
             raise click.ClickException(

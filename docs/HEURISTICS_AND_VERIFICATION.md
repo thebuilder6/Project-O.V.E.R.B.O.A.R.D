@@ -30,7 +30,7 @@
 6. **The accuracy weight is the cheapest lever of all.** On the first-four-waypoints mission, the *same* `baseline` seed fails at weight 0 (it misses the motor-force limit by 0.006 N) and passes at weight 0.001 (0.26 cm tracking). The sweep grid is the only candidate-set change that has ever produced a new best trajectory, and it works because it adds a genuinely different parameter.
 7. **The Multi-Verse pipeline was dead weight; it is repaired, and it is archived.** Its JAX-refined guess used to converge to 8.1473 s against the trivial baseline's 6.0677 s. Four defects were behind that - the refinement moved the waypoints, the JAX cost graded a different motion than IPOPT produces, the intervals were hard-coded, and the refined timing was discarded - and with them fixed the probe wins (4.617 s against 6.049 s) and the pipeline is reproducible. But measured over 30 missions as a *seed provider*, the refined seed is **not** better than the stock seeds (it is faster on 2 of the 9 missions where both pass, slower on 6) and it **rescues nothing**; it is a cheaper way to reach the stock set's speed on some missions (KI-004). It has been removed from the tree (git tag `archive/legacy-2026-10`) and has no CLI entry point.
 8. **The measurement base is six hand-written paths.** The random benchmark that was supposed to supply a mission suite is fixed (KI-015), and a mission-suite harness exists under [`research/`](../research/). The six paths are still what [Section 9](#9-measured-heuristic-comparison) quotes; the wider suite is measured in `docs/research/pq_b/`.
-9. **Twelve research questions are listed in [`RESEARCH_AGENDA.md`](RESEARCH_AGENDA.md)**, ordered so that the cheapest decisive experiment comes first. The first two are measurements, not experiments.
+9. **Four research questions are still open in [`RESEARCH_AGENDA.md`](RESEARCH_AGENDA.md)**, ordered so that the cheapest decisive experiment comes first. Ten others were answered by the 32-mission campaign in [`research/pq_b/FINDINGS.md`](research/pq_b/FINDINGS.md) and are closed with one line each, so they are not re-run.
 10. **RQ-A is done, and it reorders the agenda.** [`docs/research/RQ-A_tracking_error.md`](research/RQ-A_tracking_error.md) identifies why the tracking gate binds: the optimizer's collocation, the controller's linear reference and the plant's integration are three different discretisations of the same trajectory, and on a curved path they disagree by about a centimetre. The optimizer's half of that disagreement is closed - the self-consistent collocation is the default ([5.7](#57-the-collocation-where-a-sample-is-placed)) - and the reference's half is not. The tracking error is **not** an uncertainty problem and **not** a physical tracking problem. Fix the discretisation before reaching for reachability in the objective. RQ-A also finds that with a *calibrated* model the binding gate flips to the **envelope**, because the measured actuator-gain band widens the reachable set.
 
 > **Read RQ-A before changing the tracking gate, the reference interpolation, or the optimizer's kinematics.** It contains the measurements, the refuted hypotheses, and the four instrument bugs that produced convincing nonsense along the way.
@@ -239,17 +239,9 @@ checked failed on the envelope, which is the same gate that stopped the set and
 is not something a seed can move; the cost was roughly double the wall time on
 every failing mission.
 
-When the planner's three candidates produce nothing usable - no candidate
-passes the gates, or (without validation) none converged - the CLI tries the
-seeds the set did not use before it gives the mission up. The five stock
-seeds (`baseline`, `rolling`, `bow_left`, `bow_right`, `turn_first`) are
-therefore still in the tree, and only there.
-
-The rescue uses the per-segment model on a validated run, because that is
-where the measured rescues came from, and the same model on an unvalidated
-one. A rescue candidate is only *selected* when the candidate set itself
-produced nothing that passed; it costs nothing when the plan works, and one
-parallel round of solves when it does not.
+The seeds are still declared in `overboard/core/optimizer.py`, but
+`_run_candidates` no longer solves them. Reviving the round means restoring the
+fallback batch in that function from git history.
 
 ### 1.2 The archived system: Multi-Verse
 
@@ -268,7 +260,7 @@ This is the list a newcomer most needs, because it defines the whole research sp
 | **Obstacle or field geometry.** No walls, no mat boundaries, no zone constraints. | The robot is assumed to reach every waypoint in a straight line through space. |
 | **A geometric term in the objective.** The objective is duration plus an optional jerk penalty (`overboard/core/optimizer.py`, `_compute_cost`). | The optimizer has no idea what the path *looks* like. It is pushed along by the integration constraints and the endpoint equalities. Two paths of the same length and the same smoothness are indistinguishable to it. This is the root cause of many entries in [`STRATEGY_LEDGER.md`](STRATEGY_LEDGER.md) (Part III). |
 | **Topology search.** No search over forward/reverse/point-turn combinations per segment. | The reverse and point-turn topologies existed only inside the archived JAX candidate generator (`archive/legacy-2026-10:overboard/legacy/jax_optimizer.py`), which never reached the shipped solver. |
-| **Multi-start beyond the frontier triad.** | The default path solves three frontier candidates (sprint, sweeper, exploratory); the retired stock path solved five deterministic seeds, all from the same straight-line geometry, and those seeds are now the rescue round. |
+| **Multi-start beyond the frontier triad.** | The default path solves three frontier candidates (sprint, sweeper, exploratory); the retired stock path solved five deterministic seeds, all from the same straight-line geometry; they are still declared but no longer solved ([1.1c](#11c-the-rescue-round-removed)). |
 | **A reachability term.** Reachability is computed *after* the solve. | The optimizer cannot know that a path it is about to find will fail the envelope gate. See [Section 14](#14-what-each-layer-proves-and-does-not-prove). |
 | **Motor or odometry dynamics in the optimizer.** | The optimizer is kinematic. The plant is modelled only in the validator. |
 
@@ -320,7 +312,7 @@ The export gate (`overboard/main.py`) blocks the write if the solver did not con
 
 ## 4. The stock seed heuristics
 
-The default path uses the three **frontier** seeds of [1.1](#11-the-default-system-the-3-pillar-unified-engine); the five seeds below are the stock set, retired with the stock path and kept only as the rescue round ([1.1c](#11c-the-rescue-round-ki-048)). They are declared in one line (`overboard/core/optimizer.py`):
+The default path uses the three **frontier** seeds of [1.1](#11-the-default-system-the-3-pillar-unified-engine); the five seeds below are the stock set, retired with the stock path and no longer solved ([1.1c](#11c-the-rescue-round-ki-048)). They are declared in one line (`overboard/core/optimizer.py`):
 
 ```
 GUESS_STYLES = ("baseline", "rolling", "bow_left", "bow_right", "turn_first")
@@ -701,7 +693,7 @@ better planner.
 
 **Measured 2026-10-20**, against the tree with the arc-length sample layout, the self-consistent collocation on by default (KI-026, KI-051, KI-052) and the consolidated firmware (KI-028) in place. 60 candidate solves - 6 missions x 2 timing models x 5 seeds - plus the timing-mode x accuracy-weight grid. The raw logs are in `archive/research-2026-10:docs/measurements/2026-10-20-variable-samples/`, and the exact commands are in [Appendix A](#appendix-a--reproducing-every-table). The provenance (source hashes, environment, test state) is in [S0.4](#04-measurement-conventions).
 
-**These numbers describe the stock planner** - the retired candidate set, measured before the 3-Pillar unified engine became the default. Re-measuring the matrix on the unified path is queued as [Q13](RESEARCH_AGENDA.md#q13--should-the-measured-matrix-be-re-measured-on-the-unified-path), and it waits for the optimizer to settle first. They are still the right record for the seeds, the timing models and the gates, and the unified engine's own numbers are in [19.6](STRATEGY_LEDGER.md#196-the-3-pillar-unified-trajectory-engine---unified-the-default-path) and in `docs/OPTIMAL_CONTROL_DERIVATION.md`. They are **not comparable** with the 2026-10-20-post-ki028 evidence, which was taken with the trapezoidal collocation and a uniform sample count. The changes and what they cost are in [5.7](#57-the-collocation-where-a-sample-is-placed), [5.8](#58-the-sample-layout-how-many-samples-a-segment-gets) and [7.2](#72-the-5-part-path-fitness-score); the measurement that produced this section is in `archive/research-2026-10:docs/measurements/2026-10-20-variable-samples/`, and the runner takes the tree's fingerprint before and after the run, so a run whose tree changed underneath it is refused rather than quoted.
+**These numbers describe the stock planner** - the retired candidate set, measured before the 3-Pillar unified engine became the default. Re-measuring the matrix on the shipping planner is [Q13](RESEARCH_AGENDA.md#q13--should-the-measured-matrix-be-re-measured-on-the-unified-path); the optimizer has settled (KI-026), so that run is ready to make. They are still the right record for the seeds, the timing models and the gates, and the unified engine's own numbers are in [19.6](STRATEGY_LEDGER.md#196-the-3-pillar-unified-trajectory-engine---unified-the-default-path) and in `docs/OPTIMAL_CONTROL_DERIVATION.md`. They are **not comparable** with the 2026-10-20-post-ki028 evidence, which was taken with the trapezoidal collocation and a uniform sample count. The changes and what they cost are in [5.7](#57-the-collocation-where-a-sample-is-placed), [5.8](#58-the-sample-layout-how-many-samples-a-segment-gets) and [7.2](#72-the-5-part-path-fitness-score); the measurement that produced this section is in `archive/research-2026-10:docs/measurements/2026-10-20-variable-samples/`, and the runner takes the tree's fingerprint before and after the run, so a run whose tree changed underneath it is refused rather than quoted.
 
 **The "Selected" column is the fitness score's choice**, not the envelope's ([7.3](#73-the-selection-rule)): among the candidates that pass, the one with the lowest 5-part fitness score wins, with the envelope and the duration as tie-breakers. That is the **stock** set's rule - this matrix is the stock set's measurement (see the note above).
 

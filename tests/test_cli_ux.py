@@ -868,6 +868,17 @@ class TestCandidateComparison(unittest.TestCase):
     candidate passed.
     """
 
+    def test_the_candidate_file_counts_the_rescue(self):
+        """A rescue that never pays is a cost nobody can see until it is counted."""
+        import overboard.main as main
+        attempts = [
+            {"guess_style": "frontier_sprint", "ok": True},
+            {"guess_style": "rolling", "ok": False, "rescue": True,
+             "reasons": ["envelope radius 0.55 cm exceeds the local threshold"]},
+        ]
+        payload = main._candidate_summary(attempts, 1)
+        self.assertEqual(payload["rescue"], {"tried": 1, "passed": 0})
+
     def test_every_candidate_is_written_with_its_samples(self):
         import overboard.main as main
         runner = CliRunner()
