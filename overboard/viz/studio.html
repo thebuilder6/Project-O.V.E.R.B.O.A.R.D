@@ -449,9 +449,11 @@
         </label>
         <label class="field">
           <span>Hub name (BLE only)</span>
-          <input type="text" id="hub-name" placeholder="empty for the only hub" autocomplete="off">
+          <input type="text" id="hub-name" list="hub-choices" placeholder="empty for the only hub" autocomplete="off">
+          <datalist id="hub-choices"></datalist>
         </label>
         <div class="row">
+          <button type="button" id="btn-scan" class="btn small">Scan for hubs</button>
           <button type="button" id="btn-push" class="btn small primary" disabled>Push to hub</button>
         </div>
         <p class="hint" id="push-status">Solve a mission first.</p>

@@ -24,7 +24,7 @@ removed).
 
 **Three columns, two of them tabbed.** The left column is what you set, the canvas is the work, the right column is what you read. Each side column is a strip of tabs over one panel, so a column holds one topic at a time.
 
-The page carries **153 element ids**: **77 controls with an id** (37 buttons, 33 inputs, 7 selects), of which 8 are the tab buttons themselves. Twelve regions are filled in at run time:
+The page carries **155 element ids**: **78 controls with an id** (38 buttons, 33 inputs, 7 selects), of which 8 are the tab buttons themselves. Twelve regions are filled in at run time:
 
 | Generated region | Element id | Where |
 |---|---|---|
@@ -253,7 +253,8 @@ The plot tabs - Speed, Force, Acceleration, Turn rate, Heading, Envelope, Conver
 | Control | What it does |
 |---|---|
 | **Connection** (select) | Bluetooth or USB. |
-| **Hub name** (text) | The hub's name or address (BLE only). |
+| **Hub name** (text) | The hub's name or address (BLE only). The field carries the choices a scan found (`#hub-choices`), so picking one fills it in. |
+| **Scan for hubs** | Scans Bluetooth the way the IDE's device picker does - every visible device is asked whether it speaks the Pybricks protocol, which takes about a minute - and fills the Hub name field. A single hub is filled in and said out loud; several are offered as choices; none gets the guidance for a hub that is off or held by Pybricks Code. Refused while a job runs, because a push holds the hub's connection. |
 | **Push to hub** | Pushes the approved trajectory and runs it. Enabled only after a solve that **passed the validator**: a trajectory that was never checked is not an approved one, and the status says so. |
 | *status* | "Pushing. The robot is driving." / "This trajectory has not been validated against your robot. Turn validation on in the Solve tab and solve again before pushing it." / the hub's error. |
 | *facts* | Where the robot ended, the error, the heading error, inside the envelope, the events, the session. |

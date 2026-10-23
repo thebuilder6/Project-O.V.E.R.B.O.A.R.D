@@ -458,6 +458,57 @@ class TestStudioPush(StudioTestCase):
             for path in gui_server.MISSIONS_DIR.glob("pushable*session.csv"):
                 path.unlink()
 
+class TestStudioHubScan(StudioTestCase):
+    """The Run tab's device picker: what a Bluetooth scan reports."""
+
+    class _Device:
+        def __init__(self, name, address):
+            self.name = name
+            self.address = address
+
+    class _Advertisement:
+        def __init__(self, local_name="", uuids=()):
+            self.local_name = local_name
+            self.service_uuids = list(uuids)
+
+    def _patch_scan(self, rows):
+        from overboard.deploy import hub_ble
+
+        async def fake(seconds=0, timeout=0, limit=4):
+            for row in rows:
+                yield row
+
+        patcher = patch.object(hub_ble, "list_hubs", fake)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def test_a_scan_names_the_hubs_and_counts_what_it_saw(self):
+        named = self._Device("Technic Hub", "11:22:33:44:55:66")
+        unnamed = self._Device("", "AA:BB:CC:DD:EE:FF")
+        phone = self._Device("Phone", "99:88:77:66:55:44")
+        self._patch_scan([
+            (named, self._Advertisement("Technic Hub"), True),
+            (unnamed, self._Advertisement(), True),
+            (phone, self._Advertisement("Phone"), False),
+        ])
+        status, body = _request(f"{self.base}/api/hubs", method="POST")
+        self.assertEqual(status, 200)
+        self.assertEqual(body["seen"], 3)
+        # Only the hubs are offered, and an unnamed one is named by its
+        # address, which is what --name matches on.
+        self.assertEqual([hub["name"] for hub in body["hubs"]],
+                         ["Technic Hub", "AA:BB:CC:DD:EE:FF"])
+        self.assertIn("Technic Hub (11:22:33:44:55:66)", body["hubs"][0]["label"])
+
+    def test_a_scan_is_refused_while_a_job_runs(self):
+        job = gui_server.Job("jobscan", "solve", Path(tempfile.mkdtemp()))
+        self.addCleanup(shutil.rmtree, str(job.output_dir), True)
+        self.server.jobs[job.id] = job
+        with self.assertRaises(urllib.error.HTTPError) as ctx:
+            _request(f"{self.base}/api/hubs", method="POST")
+        self.assertEqual(ctx.exception.code, 409)
+
+
 class TestStudioReport(StudioTestCase):
     """The report the browser built is written and served back."""
 

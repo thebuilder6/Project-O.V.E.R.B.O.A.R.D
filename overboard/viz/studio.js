@@ -1332,6 +1332,48 @@ function renderComparison(report) {
     el('compare-note').textContent = notes.join(' | ');
 }
 
+async function scanHubs() {
+    /* The scan asks every device around whether it speaks the Pybricks
+       protocol, so it takes about a minute: the status says so, and the
+       button is disabled rather than looking dead. */
+    const button = el('btn-scan');
+    button.disabled = true;
+    el('push-status').textContent = 'Scanning for hubs over Bluetooth. This takes about a minute.';
+    try {
+        const found = await api('/api/hubs', { method: 'POST' });
+        const hubs = found.hubs || [];
+        const choices = el('hub-choices');
+        choices.textContent = '';
+        hubs.forEach((hub) => {
+            const option = document.createElement('option');
+            option.value = hub.name;
+            option.label = hub.label;
+            choices.appendChild(option);
+        });
+        if (!hubs.length) {
+            el('push-status').textContent = `No Pybricks hub answered among `
+                + `${found.seen} device(s). Turn the hub on, close Pybricks Code, `
+                + 'and scan again.';
+            toast('No Pybricks hub answered.', true);
+            return;
+        }
+        if (hubs.length === 1) {
+            el('hub-name').value = hubs[0].name;
+            state.hubName = hubs[0].name;
+            scheduleSessionSave();
+        }
+        el('push-status').textContent = hubs.length === 1
+            ? `Found ${hubs[0].label}.`
+            : `Found ${hubs.length} hubs. The Hub name field lists them.`;
+        toast(`Found ${hubs.length} hub(s).`);
+    } catch (err) {
+        el('push-status').textContent = err.message;
+        toast(err.message, true);
+    } finally {
+        button.disabled = false;
+    }
+}
+
 async function pushToHub() {
     if (!state.solveJobId || !state.solveHasTrajectory) {
         toast('Solve a mission first: the push runs an approved trajectory.', true);
@@ -4512,6 +4554,7 @@ el('file-project').addEventListener('change', (e) => {
     e.target.value = '';
 });
 el('btn-push').addEventListener('click', pushToHub);
+el('btn-scan').addEventListener('click', scanHubs);
 renderPlotTabs();
 el('btn-collect').addEventListener('click', startCollect);
 el('btn-save-sheet').addEventListener('click', saveSheet);
