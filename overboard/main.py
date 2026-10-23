@@ -22,7 +22,7 @@ if __name__ == "__main__" and missing_core_packages():
 import click
 import numpy as np
 
-from overboard.paths import HUB_MISSION_MODULE, HUB_RUNNER
+from overboard.paths import EXAMPLES_DIR, FROZEN, HUB_MISSION_MODULE, HUB_RUNNER
 from overboard.models.robot_model import RobotConfig
 from overboard.core.optimizer import TrajectoryOptimizer
 from overboard.verification.validator import (
@@ -34,6 +34,10 @@ from overboard.verification.validator import (
 from overboard.deploy.export import write_controller_file, write_python_file
 
 DEFAULT_CONFIG = "examples/fll_choreo.json"
+if FROZEN:
+    # The desktop build runs from wherever the user is, so the shipped example
+    # robot has to be named by its absolute path.
+    DEFAULT_CONFIG = str(EXAMPLES_DIR / "fll_choreo.json")
 JAX_HINT = "Install the optional dependencies with: pip install -r requirements-optional.txt"
 
 # A machine-readable validation summary on one line. The browser studio reads

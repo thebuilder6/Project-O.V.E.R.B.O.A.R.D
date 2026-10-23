@@ -32,6 +32,7 @@ from urllib.parse import parse_qs, urlparse
 
 from overboard.paths import (
     REPO_ROOT,
+    STATE_ROOT,
     VIZ_DIR,
     EXAMPLES_DIR,
     MISSIONS_DIR,
@@ -65,8 +66,24 @@ CANDIDATES_FILE = "candidates.json"
 # mission overwrote another without a word (KI-039).
 SLUG_RE = re.compile(r"[^\w-]+", re.UNICODE)
 
+# In the desktop build sys.executable is the app itself, so "-m overboard.main"
+# would only relaunch the studio. The entry point reads these flags instead.
+_FROZEN = getattr(sys, "frozen", False)
+
+
+def child_command(kind, *args):
+    """The command that runs one of our other entry points in a child process.
+
+    ``kind`` is ``"cli"`` (the solver) or ``"hub"`` (hub_deploy).
+    """
+    if _FROZEN:
+        return [sys.executable, f"--run-{kind}"] + [str(a) for a in args]
+    module = "overboard.main" if kind == "cli" else "overboard.deploy.hub_deploy"
+    return [sys.executable, "-u", "-m", module] + [str(a) for a in args]
+
+
 # The host-side push client. Can be a command list or patched with a Path/str in tests.
-HUB_DEPLOY = [sys.executable, "-u", "-m", "overboard.deploy.hub_deploy"]
+HUB_DEPLOY = child_command("hub")
 
 
 def _deploy_command(*args):
@@ -74,7 +91,7 @@ def _deploy_command(*args):
     if isinstance(HUB_DEPLOY, (list, tuple)):
         return list(HUB_DEPLOY) + [str(a) for a in args]
     if HUB_DEPLOY is None:
-        return [sys.executable, "-u", "-m", "overboard.deploy.hub_deploy"] + [str(a) for a in args]
+        return child_command("hub", *args)
     return [sys.executable, "-u", str(HUB_DEPLOY)] + [str(a) for a in args]
 
 # Files the studio is allowed to serve from viz/.
@@ -82,6 +99,8 @@ STATIC_FILES = {
     "/studio.css": ("studio.css", "text/css; charset=utf-8"),
     "/studio.js": ("studio.js", "application/javascript; charset=utf-8"),
     "/report.js": ("report.js", "application/javascript; charset=utf-8"),
+    # The manual: the app has to explain itself without the repository.
+    "/help.html": ("help.html", "text/html; charset=utf-8"),
 }
 
 
@@ -394,10 +413,9 @@ def clamp_candidates(value):
 
 def build_command(job_dir, config_path, waypoints_path, output_path, options):
     """The command line for one solve."""
-    command = [sys.executable, "-u", "-m", "overboard.main",
-               "-c", str(config_path),
-               "-w", str(waypoints_path),
-               "-o", str(output_path)]
+    command = child_command("cli", "-c", config_path,
+                            "-w", waypoints_path,
+                            "-o", output_path)
 
     # The mesh is the planner's unless the operator switched the automatic
     # one off. Without -n the 3-Pillar engine sizes the invariant 50 ms mesh
@@ -565,7 +583,7 @@ def start_job(server, payload):
     def run():
         try:
             proc = subprocess.Popen(
-                command, cwd=str(REPO_ROOT), stdout=subprocess.PIPE,
+                command, cwd=str(STATE_ROOT), stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
                 text=True, encoding="utf-8", errors="replace",
                 **_process_group_kwargs())
@@ -1144,7 +1162,7 @@ def start_collect(server, payload):
     def run():
         try:
             proc = subprocess.Popen(
-                command, cwd=str(REPO_ROOT), stdout=subprocess.PIPE,
+                command, cwd=str(STATE_ROOT), stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
                 text=True, encoding="utf-8", errors="replace",
                 **_process_group_kwargs())
@@ -1490,7 +1508,7 @@ def start_push(server, payload):
     def run():
         try:
             proc = subprocess.Popen(
-                command, cwd=str(REPO_ROOT), stdout=subprocess.PIPE,
+                command, cwd=str(STATE_ROOT), stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
                 text=True, encoding="utf-8", errors="replace",
                 **_process_group_kwargs())
@@ -1871,11 +1889,12 @@ class StudioHandler(BaseHTTPRequestHandler):
             source = source.resolve()
         except OSError:
             return self._error(400, "That path cannot be read.")
-        # Only the project folder and the calibration folder hold models.
-        # Without this, any page on this machine could ask the studio to
+        # Only the project, the writable folder and the calibration folder hold
+        # models. Without this, any page on this machine could ask the studio to
         # read an arbitrary file and copy it into the calibration folder
         # (KI-036).
-        roots = (REPO_ROOT.resolve(), CALIBRATION_DIR.resolve())
+        roots = (REPO_ROOT.resolve(), STATE_ROOT.resolve(),
+                 CALIBRATION_DIR.resolve())
         if not any(source == root or root in source.parents for root in roots):
             return self._error(400, "That path is outside the project folder.")
         try:

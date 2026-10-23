@@ -81,7 +81,9 @@ studio, the solver and JAX, as a Windows installer plus macOS and Linux archives
 studio. It is built by `.github/workflows/desktop.yml` from
 `overboard_desktop.py`. In that build the `missions/`, `calibration/` and
 `mats/` folders live in a writable state directory, not next to the read-only
-program.
+program. The app carries its own manual - **Help** in the studio - and copies
+these documents into `docs/` in that state directory on first run, so it explains
+itself on a machine that never saw the repository.
 
 ### If something is missing
 

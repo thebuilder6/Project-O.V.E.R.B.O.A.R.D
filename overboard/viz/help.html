@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>OVERBOARD - manual</title>
+<link rel="stylesheet" href="studio.css">
+<style>
+  /* studio.css makes the studio one screen; this page is a document. */
+  body { height: auto; overflow: auto; display: block; }
+  main { max-width: 46rem; margin: 0 auto; padding: 24px 20px 64px; }
+  h1 { font-size: 22px; margin: 0 0 4px; }
+  h2 { font-size: 15px; margin: 28px 0 8px; color: var(--accent); }
+  p, li { color: var(--text); }
+  p.lede { color: var(--muted); margin-top: 0; }
+  ul, ol { padding-left: 20px; }
+  li { margin: 4px 0; }
+  code { background: var(--panel-2); border-radius: 4px; padding: 1px 5px; }
+  pre { background: var(--panel-2); border: 1px solid var(--line); border-radius: 8px;
+        padding: 10px 12px; overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; margin: 8px 0; font-size: 13px; }
+  th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; }
+  .note { border-left: 3px solid var(--accent); padding: 8px 12px; background: var(--panel-2); border-radius: 0 8px 8px 0; }
+</style>
+</head>
+<body>
+<main>
+
+<h1>OVERBOARD Studio</h1>
+<p class="lede">Time-optimal mission planner for a LEGO differential-drive robot.
+It plans the motion, checks it against a reachability model, and only then lets a
+trajectory leave the machine.</p>
+
+<h2>The loop</h2>
+<ol>
+  <li><strong>Mission</strong> - name it, and give it a start pose and waypoints.
+      Click the field to add one; drag to move it. A waypoint can be marked
+      <em>stop</em> (the robot halts there) and/or carry a heading.</li>
+  <li><strong>Robot</strong> - the machine's limits: wheel size, mass, motor, gear
+      ratio, force, slip. The shipped example is a placeholder; measure yours
+      (see <em>Calibration</em> below) before you trust a plan.</li>
+  <li><strong>Solve</strong> - picks the planner's candidates, solves each with
+      CasADi/IPOPT, and validates. <em>Solve</em> in the header starts it.</li>
+  <li><strong>Result</strong> - the verdict, every candidate with its numbers, the
+      envelope, and the downloads. <strong>Run</strong> pushes to the hub.</li>
+</ol>
+
+<h2>What a verdict means</h2>
+<table>
+  <tr><th>Verdict</th><th>Reading</th></tr>
+  <tr><td><strong>Passed</strong></td><td>Every candidate gate held: envelope, tracking, force, slip. This is the only verdict that can be pushed to the robot.</td></tr>
+  <tr><td><strong>Failed</strong></td><td>Nothing is exported. The message names the failing segment and the excess. With best effort on, a plan that only misses the accuracy budget is written and marked unapproved; a force, slip or convergence failure never is.</td></tr>
+  <tr><td><strong>Unvalidated</strong></td><td>The solve ran without the validator. The trajectory exists, the push stays off.</td></tr>
+</table>
+<p class="note">A pass is a model prediction, not a measurement. The validator is not
+yet a full digital twin: motor, odometry and slip are modelled only in part. Treat
+the envelope as a budget, and check the first runs by hand.</p>
+
+<h2>Where your files are</h2>
+<p>Missions, calibration and generated firmware are kept outside the program, so an
+update never touches them. <code>OVERBOARD_HOME</code> points the whole folder
+somewhere else.</p>
+<table>
+  <tr><th>System</th><th>Folder</th></tr>
+  <tr><td>Windows</td><td><code>%LOCALAPPDATA%\OVERBOARD</code></td></tr>
+  <tr><td>macOS</td><td><code>~/Library/Application Support/OVERBOARD</code></td></tr>
+  <tr><td>Linux</td><td><code>~/.local/share/OVERBOARD</code></td></tr>
+</table>
+<ul>
+  <li><code>missions/</code> - saved missions, one JSON each, under version control.</li>
+  <li><code>calibration/</code> - the SysId session, the sheet, the fit and the digital twin.</li>
+  <li><code>pybricks_code/</code> - the firmware, including the generated <code>hub_mission.py</code> and your <code>robot_config.py</code>.</li>
+  <li><code>mats/</code> - the field artwork, downloaded on request.</li>
+  <li><code>docs/</code> - every document from the project, including the
+      calibration procedure and the design notes.</li>
+</ul>
+<p>A trajectory is written into the folder of the solve that produced it, and is
+listed with the other artifacts under <em>Result</em>.</p>
+
+<h2>Calibration</h2>
+<p>The SysId loop measures the real robot and writes the numbers the planner needs:
+collect a session over Bluetooth, run the reference tests when the hub asks, fill in
+the sheet, fit, then compare against the digital twin. Until that is done the
+envelope describes the example robot, not yours. <code>docs/CALIBRATION_PROCEDURE.md</code>
+walks through it.</p>
+
+<h2>Pushing to the robot</h2>
+<p><em>Run</em> imports the trajectory and pushes <code>hub_runner.py</code> with
+<code>pybricksdev</code>. It needs the robot connected over Bluetooth or USB, and it
+refuses a trajectory that is not a pass, or a mission that changed after the solve.
+The hub reports its own odometry back, which the studio compares with the plan.</p>
+
+<h2>Command line</h2>
+<p>The same program without the browser. Every option the studio sets has a flag:</p>
+<pre>overboard -w mission.json -o out.traj --validate
+overboard --doctor
+overboard --gui</pre>
+<p><code>--doctor</code> prints the Python, the packages, the example files, the
+folders and the ports, with the command that fixes anything missing. Run it first
+when something does not work.</p>
+
+<h2>If something goes wrong</h2>
+<ul>
+  <li><strong>The solve never finishes.</strong> Cancel, cut the sample count under
+      <em>Solve</em>, or use the fast preset; a long mission with many candidates is
+      the usual cause.</li>
+  <li><strong>Nothing is exported.</strong> Read the verdict: a failure is a refusal,
+      not a glitch. The named lever - a wider accuracy limit, one more candidate,
+      another propagation model - is the thing to change.</li>
+  <li><strong>The push button is off.</strong> The trajectory has to be a pass, and
+      the mission on screen has to be the one that was solved.</li>
+  <li><strong>The port is busy.</strong> The studio takes the next free one and says
+      which.</li>
+</ul>
+
+<h2>More</h2>
+<p>The project folder in <code>docs/</code> carries the rest: the whitepaper, the
+heuristics and verification chain, the strategy ledger, the calibration procedure,
+and the known issues with what each one means in practice. The claims made here, and
+the evidence behind each, are listed in <code>CLAIMS.md</code>.</p>
+
+</main>
+</body>
+</html>
