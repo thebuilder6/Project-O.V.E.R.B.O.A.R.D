@@ -1,10 +1,12 @@
 # FLL Trajectory Optimizer: Technical Whitepaper
 
-**Version:** 2.0<br>
-**Date:** October 19, 2026<br>
+**Version:** 3.0<br>
+**Date:** October 22, 2026<br>
 **Author:** Johnathan Pollard
 
 This document describes the current implementation in the working tree. It replaces the earlier version, which mixed implemented code with aspirational designs and unreproducible performance numbers. The code, `KNOWN_ISSUES.md`, and the test suite are the authority if this document drifts again.
+
+This version is organised around the project's objective rather than around its modules. The objective — **spread first, then time, then pose error** — is stated in [`docs/PROJECT_GOAL.md`](PROJECT_GOAL.md), which is the claim; this document is the implementation of that claim, and §1.1 is the short form of it. Read the goal document first if you want to know why any of the rest exists.
 
 > **Scope and safety status:** this is an offline desktop tool for one FLL differential-drive robot. The simple optimizer and safety gate work. The validation model is not yet a full digital twin, and some representative curved paths still fail the Immrax gate (KI-020). The old Multi-Verse pipeline was removed from the tree (git tag `archive/legacy-2026-10`) and has no CLI entry point (KI-004). Only output that has passed `--validate` should be treated as safety-checked.
 
@@ -18,6 +20,34 @@ This document describes the current implementation in the working tree. It repla
 
 The optimizer generates time-optimal trajectories for a LEGO/FLL differential-drive robot and exports them for a Pybricks Ramsete controller. The core is a CasADi/IPOPT direct-collocation solve with per-wheel motor, normal-force, and traction constraints. A CPU validator and an Immrax interval-reachability validator run before output is written.
 
+### 1.1 The objective, and the three ways a run goes wrong
+
+"Time-optimal" in this document means **the fastest plan whose predicted spread at the required poses stays inside the budget**. Speed is the objective; spread is what bounds it. Read §5.2 with that in mind, because the gate there is not a filter bolted on after the solve — it is the objective written as a constraint, and it is the only place the project's central claim is tested.
+
+Three terms are used strictly, and never as synonyms:
+
+| Term | Meaning | Can it be fixed after the run? |
+|---|---|---|
+| **Spread** | how much the executed pose varies across repeated runs of the same path | **No.** It is bought by the path, or not at all |
+| **Time** | duration of the run | — |
+| **Pose error** | offset between the executed pose and the requested pose, on an average run | Yes, by calibration |
+
+That is the whole ordering: spread, then time, then pose error. A tight execution with a constant offset can be calibrated out; scatter cannot, so scatter is what a path is chosen for.
+
+**Two clocks, and why this is a planning problem at all.** Planning runs offline, on a PC, and takes seconds to minutes per solve. Execution runs online, on the hub, and has 20 ms per tick: read the gyroscope and the encoders, evaluate Ramsete, write the wheel commands. The robot cannot re-plan, filter or re-estimate while it drives, and it does no computation between power-on and the first move. Every method in this document therefore lives on the offline side of that line, and the reference path is the last place precision can be bought — because it is the last place anything is computed. §6 is what runs on the robot, and it is deliberately small.
+
+**Three classes of failure.** The loop closes on measured error, so it corrects only what it can measure:
+
+1. **Recoverable disturbance.** Ramsete removes cross-track and heading error against the reference, at a rate set by its gain. This is the class the controller owns.
+2. **Control failure.** The reference asks for more than the wheels can deliver — traction, wheel acceleration, turn rate — and no controller can track it. The reference is the problem, not the tracking.
+3. **Measurement failure.** Slip and drift corrupt the odometry the loop corrects against, so it corrects toward a pose that is wrong.
+
+The classes interact, and the interaction is why the gain is not a free parameter: a hard correction is a demand for wheel force, wheel force is what breaks traction, and broken traction destroys the odometry the correction depends on. A path that provokes corrections damages the sensing it needs.
+
+Classes 2 and 3 are fixed at plan time — by where the path turns hard, accelerates hard, or dead-reckons over a long stretch — and no tuning of the controller changes them. That is the opening this project takes: the actuator and traction limits of §3 and §4 are class 2, and the uncertainty box of §5.2 is what class 3 looks like once it is turned into arithmetic.
+
+**Where the objective lives in the tree, today.** It is enforced as a verdict, not as a ranking. The gate value is the bound on spread, the 5 mm tracking bound is the bound on pose error, and the solver minimises time inside both (§5.2). What does not exist yet is the ordering: candidates are not ranked by predicted spread, the thresholds are absolute rather than scaled to the path, and a near miss refuses the mission outright (KI-054, KI-055). §12 puts that first.
+
 The current tree contains uncommitted fixes for several safety and correctness issues found in an earlier audit, including KI-001, KI-002, KI-003, KI-007 through KI-010, KI-013, KI-014, and KI-019. The most important behavioral changes are:
 
 - A failed solve is never exported (KI-001).
@@ -29,8 +59,10 @@ The current tree contains uncommitted fixes for several safety and correctness i
 What is still incomplete:
 
 - The Multi-Verse pipeline was removed from the tree (git tag `archive/legacy-2026-10`) and has no CLI entry point (KI-004). The unified planner is the only planner; `--no-unified` and `--simple` are removed and rejected as unknown options.
-- The validator is kinematic and has no motor, DriveBase, odometry, or slip dynamics (KI-020).
+- The validator is kinematic and has no motor, DriveBase, odometry, or slip dynamics (KI-020). **This is the objective's binding limit**: the spread the planner reports is the model's, so it is worth exactly what the model-robot match is worth.
 - Whether a representative path passes the Immrax gate is a measurement that moves with the config and the planner (KI-020); the current pass/fail ledger is in `docs/HEURISTICS_AND_VERIFICATION.md`.
+- The hierarchy of §1.1 is a filter, not a ranking: nothing ranks candidates by predicted spread, and the envelope bound is absolute rather than scaled to path length, so a long path can fail for being long (KI-054, KI-055).
+- No hardware run has measured spread on a repeated path yet, so the central comparison in §12 — precision-aware path against time-optimal path — has not been made on a robot.
 - Convergence flags and some export edge cases remain open (KI-017). The random benchmarks work (KI-015).
 
 ---
@@ -48,8 +80,7 @@ What is still incomplete:
 | `overboard/models/drivetrain.py` | Drivetrain model behind the cross-check and the fitted plant |
 | `overboard/core/optimizer.py` | CasADi/IPOPT trajectory optimizer (`TrajectoryOptimizer`) |
 | `overboard/core/frontier_seed.py` | Analytical Kinetic Frontier seed generator |
-| `overboard/core/unified_planner.py` | The 3-Pillar Unified Trajectory Engine (`UnifiedPathEngine`) |
-| `overboard/core/unified_planner.py` | The 3-Pillar engine: the candidate set, the seeds, and the optional gradient polish |
+| `overboard/core/unified_planner.py` | The 3-Pillar Unified Trajectory Engine (`UnifiedPathEngine`): the candidate set, the seeds, and the optional gradient polish |
 | (removed) | The bootstrap/critic/JAX-refinement pipeline (`MasterTrajectoryOptimizer`) - git tag `archive/legacy-2026-10`; no CLI entry point |
 | `overboard/verification/validator.py` | CPU forward integration, constraint audit, metrics, final-waypoint and sample gates |
 | `overboard/verification/immrax_validator.py` | Interval reachability with the deployed Ramsete structure, plus optional fitted plant |
@@ -72,7 +103,7 @@ What is still incomplete:
 2. Select the 3-Pillar engine (`overboard/core/unified_planner.py`); it produces the candidate set, and `TrajectoryOptimizer` is the backend it drives.
 3. Solve the first candidate.
 4. With `--validate`, run Immrax reachability on that candidate and score its envelope.
-5. With `--validate`, repeat for the remaining `--candidates` trajectories (default 2). The planner's three frontier candidates are solved, each with its own accuracy weight, and the passing one with the shortest duration is selected (the envelope breaks a tie); otherwise keep the converged one closest to passing for reporting. The 5-part path fitness score is reported for every candidate, so the rule can be re-run offline, but it does not decide.
+5. With `--validate`, repeat for the remaining `--candidates` trajectories (default 2). The planner's three frontier candidates are solved, each with its own accuracy weight, and the passing one with the shortest duration is selected (the envelope breaks a tie); otherwise keep the converged one closest to passing for reporting. The 5-part path fitness score is reported for every candidate, so the rule can be re-run offline, but it does not decide. This is the hierarchy of §1.1 read as a filter: spread passes or fails, and time decides among the passers.
 6. Check the final waypoint, and with `--validate`, run the CPU `validate_samples` gate.
 7. Write the trajectory, then optional stats/controller/legacy-Python/compact-Python exports, then plots.
 
@@ -198,6 +229,8 @@ J = duration + accuracy_weight * dt_ref^2 * sum_k [
 
 The first term is trajectory duration. The optional second term penalizes wheel jerk, where `span_k` is the spacing between the midpoints of the two intervals that meet at boundary `k` and `dt_ref` is the mean interval over the whole path. Normalising by `dt_ref` makes the price of physical jerk independent of the timing layout, so the same `accuracy_weight` means the same smoothness in either variant; without it the raw acceleration jump is proportional to `jerk * dt`, and a short interval would be charged `dt^2` less per unit of jerk (KI-022). `accuracy_weight = 0` is pure time-optimal. The duration term is `sum_i(s_i * dt_i)`, the sum over the segments of their own sample count times their own interval.
 
+Note where the objective of §1.1 sits in this expression: **not in it.** The jerk term is the soft stand-in for smoothness, and the spread bound is the reachability tube, which is checked after the solve by §5.2 and is not yet a term or a constraint here (KI-020). That is the honest gap between the claim and the code: a plan is chosen for being fast, subject to passing the spread check, rather than chosen for having the least spread.
+
 The optional third term, `--force-weight`, prices the wheel forces: the time integral of the squared force utilisation against both the stall force and the per-wheel traction limit. The hard per-wheel limits apply regardless; the term is a *soft* penalty that charges a plan for running near the traction limit, which is the cheapest form of the reachability-driven optimisation KI-020 asks for. It is off by default.
 
 ### 4.3 Constraints
@@ -287,7 +320,7 @@ Validation has three layers.
 
 The envelope is the axis-aligned bounding box of the reachable set. The planner checks its radius against a local threshold: 2 cm for transit samples by default, 0.5 cm for `precision_mode` waypoints, or an explicit `error_threshold`. Tracking error is checked separately at 0.5 cm.
 
-The gate is a post-solve check. With `--validate`, `overboard/main.py` solves `--candidates` trajectories (default 2), validates each one, and selects the passing candidate with the **shortest duration**, the reachability envelope breaking a tie. The **5-part path fitness score** - the reachability spread at the stops and the final waypoint (200 s/m), the slip risk above a 70 % utilisation dead-zone (8 s), the RMS wheel force against the stall force (0.5 s), the tracking error (80 s/m) and the run time (1 s/s) - is reported for every candidate, so the rule can be re-run offline, but it does not decide: the planner is time-optimal, so the shortest passing plan is the one that ships. The CPU audit runs on every candidate, not only the selected one. If none pass, it selects the closest candidate for reporting but still blocks export. Reachability is not a term or constraint in the optimizer (KI-020).
+The gate is a post-solve check. With `--validate`, `overboard/main.py` solves `--candidates` trajectories (default 2), validates each one, and selects the passing candidate with the **shortest duration**, the reachability envelope breaking a tie. In the terms of §1.1, the envelope is the predicted **spread** and the tracking error the predicted **pose error**; the gate values are where each is no longer allowed to grow; and time is what the solver minimises inside them. The gate therefore *is* the objective, expressed as a verdict — with the caveat that a verdict is not a ranking (KI-054, KI-055). The **5-part path fitness score** - the reachability spread at the stops and the final waypoint (200 s/m), the slip risk above a 70 % utilisation dead-zone (8 s), the RMS wheel force against the stall force (0.5 s), the tracking error (80 s/m) and the run time (1 s/s) - is reported for every candidate, so the rule can be re-run offline, but it does not decide: the planner is time-optimal, so the shortest passing plan is the one that ships. The CPU audit runs on every candidate, not only the selected one. If none pass, it selects the closest candidate for reporting but still blocks export. Reachability is not a term or constraint in the optimizer (KI-020).
 
 Every candidate uses the per-segment timing model, and the CPU audit runs on every candidate so a partial pass cannot block a later fully passing one. The retired equal-duration mode shared one `dt` across all segments, which because every segment has the same sample count also forced every segment to take the SAME time, so on a path with unequal segment lengths the short segment inherited the long segment's duration. The per-segment mode is the general model, held to the wheel-jerk discipline (KI-022). The per-segment mode also holds the wheel force profile continuous through every waypoint the robot does not stop at, which is what makes a change of time scale at such a point legitimate (KI-024). Measured on 2026-10-19: an uneven 1.0 m + 0.2 m path passes all gates with per-segment at `accuracy_weight=0.005` in 2.784 s with envelope 0.32 cm, tracking 0.36 cm and peak wheel jerk 9.52 m/s³, versus 4.456 s / 0.37 cm / 0.36 cm / 9.52 m/s³ for the equal-duration mode at the same weight, so selection keeps the per-segment winner. At `accuracy_weight=0`, per-segment is 2.710 s / 0.32 cm but fails the Immrax and CPU gates, so selection falls back to the equal-duration candidate (4.463 s / 0.35 cm). On the complex mission at `accuracy_weight=0`, per-segment is faster (4.650 s, envelope 1.00 cm) but its tracking is 0.84 cm and its motor force is 0.074 N over the limit, so it is rejected; the equal-duration 6.068 s / 1.22 cm / 0.49 cm candidate passes and wins. The equal-duration comparison above is historical; its flags are removed.
 
@@ -348,7 +381,7 @@ Those are KI-020. The current threshold should not be relaxed to make a path pas
 
 ### 6.1 Deployed controller
 
-`pybricks_code/ramsete_fast.py` is the deployed controller. Its loop runs every 20 ms. For each tick it:
+`pybricks_code/ramsete_fast.py` is the deployed pathing controller. It is a thin wrapper: the odometry, the Ramsete maths, the kinematic limiter and the loop all live in `ramsete.py`, and `ramsete_fast.py` imports and delegates to it (the compact controllers delegate the same way, to `ramsete_compact_events.py`). Its loop runs every 20 ms. For each tick it:
 
 1. Finds the current reference segment and linearly interpolates `x, y, heading, v, omega, kr`.
 2. Reads `DriveBase.state()` and integrates odometry using the midpoint heading.
@@ -624,7 +657,9 @@ For the complete theoretical derivation and state-space formulations, see [`docs
 | KI-016 | Fixed | The live view that missed the config is gone; the studio loads the mission itself |
 | KI-017 | Partial | The convergence animate/output flags still do nothing; Multi-Verse has no history |
 | KI-018 | Fixed | The generated mission copies, the unused diagnostic API and the dead UI state are gone |
-| KI-020 | Partial | Validator is not a full digital twin; reachability is a post-solve candidate score, not an optimizer term |
+| KI-020 | Open | Validator is not a full digital twin; reachability is a post-solve candidate score, not an optimizer term. The predicted spread is only worth the model it came from |
+| KI-054 | Open | The envelope gate compares an absolute radius against a tube that grows with path length, so a long path can fail for being long; the bound wants scaling to the path |
+| KI-055 | Open | A failing check writes nothing: the verdict is boolean against thresholds the operator did not choose, where the objective wants a score with named levers |
 
 Fixed in the working tree: KI-001, KI-002, KI-003, KI-004, KI-005, KI-006, KI-007, KI-008, KI-009, KI-010, KI-011, KI-012, KI-013, KI-014, KI-015, KI-016, KI-018, KI-019, KI-021, KI-022, KI-023, KI-024, KI-025, KI-026, KI-027, KI-028, KI-029, KI-030, KI-031. KI-017 is partially fixed and KI-032 is mitigated. See `KNOWN_ISSUES.md` for evidence and fixes.
 
@@ -632,15 +667,17 @@ Fixed in the working tree: KI-001, KI-002, KI-003, KI-004, KI-005, KI-006, KI-00
 
 ## 12. Future work
 
-Priority order:
+Priority order, first the two items that decide whether the claim of §1.1 is true, then the rest:
 
-1. **KI-020:** collect and fit hardware logs, compare the fitted model with measured poses, add integrated odometry and the remaining motor/DriveBase/slip dynamics, then use reachability in optimization. Keep the current gate strict until then.
-2. **The objective, not the search:** the Multi-Verse seed provider buys speed with tracking accuracy, because its cost is duration plus a jerk term and the 5 mm gate rejects the trade. Making the objective answer the gate is the same lever as reachability in the objective.
-3. **KI-006:** done. The simple solver is the default and the optional stack lives in `requirements-optional.txt`.
-4. **KI-005/KI-016:** done - the studio never takes a port and it loads the mission itself.
-5. **KI-011/KI-012:** done - the headings unwrap across ±π and the final event fires.
-6. **KI-015:** done - the random benchmarks use an explicit config and check convergence.
-7. **KI-017:** wire or remove the convergence flags and the Multi-Verse history.
+1. **Measure the claim (§1.1).** Run the same mission repeatedly, on hardware, with a precision-aware plan and a time-optimal one, and compare the spread at the required poses. Until this exists, the project's central comparison is unmeasured; everything below makes it measurable or makes it easier to run.
+2. **KI-020:** collect and fit hardware logs, compare the fitted model with measured poses, add integrated odometry and the remaining motor/DriveBase/slip dynamics, then use reachability in optimization. Keep the current gate strict until then. The predicted spread is only worth the model it came from.
+3. **Rank by spread, then by time (KI-054, KI-055).** Today the gate is boolean and the envelope bound is absolute, so a candidate is accepted or refused rather than ordered, and a long path can fail for being long. The objective wants: score each candidate's predicted spread, scale the bound to the path, and let time break the order among the passers. This is the same lever as "the objective, not the search" — the Multi-Verse seed provider bought speed with tracking accuracy because its cost was duration plus a jerk term while the gate rejected the trade.
+4. **Then the operational goal:** a new robot goes from uncalibrated to a deployed, validated path unaided — one command each for calibrate, generate and deploy, with the deploy gated on the planner's own verdict. Ease is part of the claim, not a nicety, and it is measured by a second person doing it.
+5. **KI-006:** done. The simple solver is the default and the optional stack lives in `requirements-optional.txt`.
+6. **KI-005/KI-016:** done - the studio never takes a port and it loads the mission itself.
+7. **KI-011/KI-012:** done - the headings unwrap across ±π and the final event fires.
+8. **KI-015:** done - the random benchmarks use an explicit config and check convergence.
+9. **KI-017:** wire or remove the convergence flags and the Multi-Verse history.
 
 The path-planning side of this list — the seed heuristics, the timing models, the candidate set and the reachability objective — is in [`docs/HEURISTICS_AND_VERIFICATION.md`](HEURISTICS_AND_VERIFICATION.md); the research agenda with a suggested order is in [`docs/RESEARCH_AGENDA.md`](RESEARCH_AGENDA.md).
 

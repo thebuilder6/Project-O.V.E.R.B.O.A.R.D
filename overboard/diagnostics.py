@@ -19,7 +19,7 @@ from pathlib import Path
 # The repository's directories come from the one module that knows them.
 # This module is stdlib only, so it still works on a machine where nothing
 # is installed yet.
-from overboard.paths import REPO_ROOT
+from overboard.paths import REPO_ROOT, STATE_ROOT
 
 # (import name, pip name, required?)
 CORE_PACKAGES = [
@@ -151,12 +151,16 @@ def check_environment(config_path=None, ports=(8000,)):
             })
 
     try:
-        with open(".write_test_tmp", "w", encoding="utf-8") as handle:
+        # The writable folder, not the cwd: a desktop build runs from Program
+        # Files, and the files the user makes live under STATE_ROOT.
+        STATE_ROOT.mkdir(parents=True, exist_ok=True)
+        probe = STATE_ROOT / ".write_test_tmp"
+        with open(probe, "w", encoding="utf-8") as handle:
             handle.write("ok")
-        os.remove(".write_test_tmp")
+        probe.unlink()
         checks.append({
             "name": "output directory", "status": "ok",
-            "detail": os.getcwd(), "hint": "",
+            "detail": str(STATE_ROOT), "hint": "",
         })
     except OSError as exc:
         checks.append({
