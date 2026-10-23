@@ -24,7 +24,7 @@ removed).
 
 **Three columns, two of them tabbed.** The left column is what you set, the canvas is the work, the right column is what you read. Each side column is a strip of tabs over one panel, so a column holds one topic at a time.
 
-The page carries **153 element ids**: **77 controls with an id** (37 buttons, 33 inputs, 7 selects), of which 8 are the tab buttons themselves. Twelve regions are filled in at run time:
+The page carries **155 element ids**: **78 controls with an id** (38 buttons, 33 inputs, 7 selects), of which 8 are the tab buttons themselves. Twelve regions are filled in at run time:
 
 | Generated region | Element id | Where |
 |---|---|---|
@@ -204,12 +204,12 @@ Every field below the switch is the gate's: the server passes none of them witho
 
 | Control | What it does |
 |---|---|
-| **Legend** (details) | The key to the field's colours, built from the list the drawing uses. Live: an entry for something that is not on the field is hidden. It is the single home of the canvas overlays: a row with a box before its label is a switch - mat picture, earlier solves, the actuator-limit colouring (both its rows), late-apex cues and the momentum bisector (both its rows), reachability envelope, path, placement uncertainty. Clicking one hides that overlay; the dimmed row (`aria-pressed="false"`) stays in the key to bring it back, so the key says both what the colours mean and what is drawn. The box is filled when the overlay is on and empty when it is off. A row the run cannot draw (an envelope on a run that was not validated) is dimmed, not clickable, and says why in its tooltip. The switches survive a reload with the mission: they are saved in the same session record as the solver options. |
+| **Legend** (details) | The key to the field's colours, built from the list the drawing uses. Live: an entry for something that is not on the field is hidden. It is the single home of the canvas overlays: a row with a box before its label is a switch - mat picture, earlier solves, the actuator-limit colouring (both its rows), late-apex cues and the momentum bisector (both its rows), reachability envelope and its sample-box rendering, path, placement uncertainty. The envelope row is the overlay; the box row swaps its drawing for the union of the per-sample boxes the validator stores, which cannot fold over itself where the path turns (the corner ribbon can, and that fold is a drawing artefact, not the robot). Clicking one hides that overlay; the dimmed row (`aria-pressed="false"`) stays in the key to bring it back, so the key says both what the colours mean and what is drawn. The box is filled when the overlay is on and empty when it is off. A row the run cannot draw (an envelope on a run that was not validated) is dimmed, not clickable, and says why in its tooltip. The switches survive a reload with the mission: they are saved in the same session record as the solver options. |
 | **Frame all** | Fits the view to the mission. |
 | **Play** + slider + time | The playback of the solved trajectory. |
 | *hint* | "Double-click the field to add a waypoint. Drag a waypoint to move it." A single click on the mat is a click, not a waypoint: it used to place one. The pointer agrees with it: a crosshair over the empty field (place), `move` over a waypoint (drag), `pointer` over a mission model (hover). |
 
-Canvas contents: the mat, the grid, the mission models - each with the field's placement-uncertainty band as a dashed amber halo (click its key entry to hide it), the same 20-50 mm the collision report uses to call a hit uncertain - the earlier runs, the path, the trajectory (coloured by actuator saturation when that is on), the other candidates' paths from a comparison (one hue per seed, the clicked one stronger), the envelope (whose key names the propagation that produced it), the failing segments (red), the worst-drift segment (amber), the solver's first guess (dashed), the late-apex diamonds and the momentum bisectors, the waypoints with their stop and event badges, the selected waypoint, the measured pose from the hub, and the collisions.
+Canvas contents: the mat, the grid, the mission models - each with the field's placement-uncertainty band as a dashed amber halo (click its key entry to hide it), the same 20-50 mm the collision report uses to call a hit uncertain - the earlier runs, the path, the trajectory (coloured by actuator saturation when that is on), the other candidates' paths from a comparison (one hue per seed, the clicked one stronger), the envelope (whose key names the propagation that produced it; a second key draws it as the union of the per-sample boxes instead of the corner ribbon), the failing segments (red), the worst-drift segment (amber), the solver's first guess (dashed), the late-apex diamonds and the momentum bisectors, the waypoints with their stop and event badges, the selected waypoint, the measured pose from the hub, and the collisions.
 
 ## Right column - the tabs
 
@@ -253,7 +253,8 @@ The plot tabs - Speed, Force, Acceleration, Turn rate, Heading, Envelope, Conver
 | Control | What it does |
 |---|---|
 | **Connection** (select) | Bluetooth or USB. |
-| **Hub name** (text) | The hub's name or address (BLE only). |
+| **Hub name** (text) | The hub's name or address (BLE only). The field carries the choices a scan found (`#hub-choices`), so picking one fills it in. |
+| **Scan for hubs** | Scans Bluetooth the way the IDE's device picker does - every visible device is asked whether it speaks the Pybricks protocol, which takes about a minute - and fills the Hub name field. A single hub is filled in and said out loud; several are offered as choices; none gets the guidance for a hub that is off or held by Pybricks Code. Refused while a job runs, because a push holds the hub's connection. |
 | **Push to hub** | Pushes the approved trajectory and runs it. Enabled only after a solve that **passed the validator**: a trajectory that was never checked is not an approved one, and the status says so. |
 | *status* | "Pushing. The robot is driving." / "This trajectory has not been validated against your robot. Turn validation on in the Solve tab and solve again before pushing it." / the hub's error. |
 | *facts* | Where the robot ended, the error, the heading error, inside the envelope, the events, the session. |

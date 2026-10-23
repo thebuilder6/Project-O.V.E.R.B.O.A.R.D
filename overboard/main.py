@@ -8,6 +8,7 @@ import importlib.util
 import json
 import math
 import os
+import time
 from dataclasses import dataclass
 from typing import Any
 
@@ -669,6 +670,23 @@ def _candidate_summary(attempts, selected_index):
                        "passed": sum(1 for entry in rescues if entry["ok"])}}
 
 
+def _swap_in(temporary, target, attempts=20, delay=0.05):
+    """Rename a finished temporary file over its target.
+
+    Windows refuses the rename while another process holds the target open,
+    and the studio polls these files - so one refused rename is not a failed
+    write, it is a write that arrived while someone was reading.
+    """
+    for attempt in range(attempts):
+        try:
+            os.replace(temporary, target)
+            return
+        except PermissionError:
+            if attempt == attempts - 1:
+                raise
+            time.sleep(delay)
+
+
 def _write_candidates(path, attempts, selected_index, quiet):
     """Write the candidate comparison, when the caller asked for it.
 
@@ -683,7 +701,7 @@ def _write_candidates(path, attempts, selected_index, quiet):
     temporary = f"{path}.tmp"
     with open(temporary, "w", encoding="utf-8") as handle:
         json.dump(payload, handle)
-    os.replace(temporary, path)
+    _swap_in(temporary, path)
     if not quiet:
         click.echo(f"  wrote {len(payload['candidates'])} candidates to {path}")
 
@@ -1512,7 +1530,7 @@ def _write_outputs(output, samples_data, stats, config_data, robot_cfg, *,
     temporary = f"{output}.tmp"
     with open(temporary, 'w') as f:
         json.dump(result, f, indent=1)
-    os.replace(temporary, output)
+    _swap_in(temporary, output)
 
     written = [output]
 
@@ -2041,10 +2059,23 @@ def main(ctx, config, waypoints, output, gui, gui_port, doctor, preset,
         if candidates_out else None,
         early_stop=not (pick_candidate or candidates_out))
 
-    (samples_data, stats, attempt_passed, best_reasons, selected_tube,
-     selected_index) = _choose_attempt(
-        all_attempts, validate=validate, quiet=quiet, samples=samples,
-        pick=pick_candidate, best_effort=best_effort)
+    try:
+        (samples_data, stats, attempt_passed, best_reasons, selected_tube,
+         selected_index) = _choose_attempt(
+            all_attempts, validate=validate, quiet=quiet, samples=samples,
+            pick=pick_candidate, best_effort=best_effort)
+    except click.ClickException:
+        # A refusal is exactly when the numbers matter, and the message can
+        # only name the categories. Leave the report and the comparison
+        # behind before the error ends the run.
+        if use_validation:
+            _emit_validation_report(all_attempts, None,
+                                    propagation=propagation,
+                                    best_effort=False,
+                                    envelope_limit=envelope_limit,
+                                    envelope_limit_per_metre=envelope_limit_per_metre)
+        _write_candidates(candidates_out, all_attempts, None, quiet)
+        raise
 
     # The operator asked to see the path even though it missed the accuracy
     # gates. The verdict is still a failure, and it travels with the file.

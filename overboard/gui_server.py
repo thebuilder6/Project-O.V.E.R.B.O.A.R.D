@@ -9,6 +9,7 @@ gate, the validation rules and the file formats stay in one place.
     python -m overboard.main --gui
 """
 
+import asyncio
 import csv
 import hashlib
 import json
@@ -300,6 +301,8 @@ class Job:
         round can take minutes, and an empty field for that long reads as a
         hang. The file is small and replaced atomically, so a poll may read
         it; the mtime guard keeps it off the filesystem when nothing changed.
+        On Windows this read is what makes the writer's rename fail, so the
+        CLI retries the swap (main._swap_in).
         """
         if self.status != "running":
             return
@@ -1460,6 +1463,43 @@ def _error_headline(lines):
     return "The push failed."
 
 
+_HUB_SCAN_LOCK = threading.Lock()
+
+
+def scan_hubs():
+    """The Pybricks hubs Bluetooth can see, for the Run tab's picker.
+
+    The scan asks every visible device whether it speaks the Pybricks
+    protocol, so it takes about a minute; the page says it is scanning
+    while it waits. One scan at a time: two scans share the adapter and
+    each gets half of the answers.
+    """
+    if not _HUB_SCAN_LOCK.acquire(blocking=False):
+        raise BusyError("A hub scan is already running.")
+    try:
+        from overboard.deploy import hub_ble
+
+        async def collect():
+            hubs = []
+            seen = 0
+            async for device, advertisement, is_hub in hub_ble.list_hubs():
+                seen += 1
+                if not is_hub:
+                    continue
+                names = hub_ble.device_names(device, advertisement)
+                hubs.append({
+                    # What --name matches on: the advertised name, or the
+                    # address when Windows does not report one.
+                    "name": names[0] if names else getattr(device, "address", ""),
+                    "label": hub_ble.describe_device(device, advertisement),
+                })
+            return {"hubs": hubs, "seen": seen}
+
+        return asyncio.run(collect())
+    finally:
+        _HUB_SCAN_LOCK.release()
+
+
 def start_push(server, payload):
     """Push an already-solved trajectory to the hub."""
     source = server.get_job(str(payload.get("job_id") or ""))
@@ -1696,6 +1736,8 @@ class StudioHandler(BaseHTTPRequestHandler):
                 return self._solve()
             if path == "/api/push":
                 return self._push()
+            if path == "/api/hubs":
+                return self._hubs()
             if path == "/api/robot/model/load":
                 return self._load_model()
             if path == "/api/robot/model/store":
@@ -1875,6 +1917,20 @@ class StudioHandler(BaseHTTPRequestHandler):
         except BusyError as exc:
             return self._error(409, str(exc))
         return self._json(202, job.snapshot())
+
+    def _hubs(self):
+        """The hubs Bluetooth can see, for the Run tab's device picker."""
+        if self.server.active_job() is not None:
+            # A push holds the hub's single connection, and a scan shares
+            # the adapter, so one job at a time covers both.
+            return self._error(409, "Something is already running. Cancel it first.")
+        try:
+            return self._json(200, scan_hubs())
+        except BusyError as exc:
+            return self._error(409, str(exc))
+        except ImportError:
+            return self._error(400, "Bluetooth scanning needs pybricksdev: "
+                                    "pip install -r requirements-optional.txt")
 
     def _load_model(self):
         """Take a fitted model from somewhere and keep it with the robot."""

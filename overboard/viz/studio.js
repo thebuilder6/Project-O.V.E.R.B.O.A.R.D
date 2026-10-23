@@ -12,6 +12,7 @@ const state = {
     selected: -1,
     trajectory: null,
     showEnvelope: true,
+    showEnvelopeBoxes: false,
     showPath: true,
     jobId: null,
     // One timer per poll loop. They used to share one, so starting any
@@ -103,7 +104,7 @@ const history = { stack: [], index: -1, limit: 100 };
 const SESSION_KEY = 'overboard.studio.session.v1';
 // The canvas overlays the legend switches; they ride in the session too, so a
 // reload does not quietly switch the mat or the envelope back on.
-const OVERLAY_FLAGS = ['showMat', 'showEnvelope', 'showPath', 'showRuns',
+const OVERLAY_FLAGS = ['showMat', 'showEnvelope', 'showEnvelopeBoxes', 'showPath', 'showRuns',
     'showSaturation', 'showApex', 'showPlacement'];
 let sessionTimer = null;
 
@@ -211,6 +212,7 @@ const CANVAS_LEGEND = [
     { key: 'trajectory', color: '#38bdf8', label: 'Planned trajectory' },
     { key: 'candidates', color: '#a78bfa', label: 'Compared candidates', dash: true },
     { key: 'envelope', color: 'rgba(52, 211, 153, 0.65)', label: 'Reachability envelope', dash: true, toggle: 'showEnvelope' },
+    { key: 'envelopeBoxes', color: 'rgba(52, 211, 153, 0.45)', label: 'Envelope as its sample boxes', toggle: 'showEnvelopeBoxes' },
     { key: 'saturation', color: 'rgba(251, 191, 36, 0.95)', label: 'At the actuator limit', toggle: 'showSaturation' },
     { key: 'slipping', color: 'rgba(248, 113, 113, 0.95)', label: 'Over the actuator limit', toggle: 'showSaturation' },
     { key: 'apex', color: '#f59e0b', label: 'Late-apex target', dot: true, toggle: 'showApex' },
@@ -1330,6 +1332,48 @@ function renderComparison(report) {
     el('compare-note').textContent = notes.join(' | ');
 }
 
+async function scanHubs() {
+    /* The scan asks every device around whether it speaks the Pybricks
+       protocol, so it takes about a minute: the status says so, and the
+       button is disabled rather than looking dead. */
+    const button = el('btn-scan');
+    button.disabled = true;
+    el('push-status').textContent = 'Scanning for hubs over Bluetooth. This takes about a minute.';
+    try {
+        const found = await api('/api/hubs', { method: 'POST' });
+        const hubs = found.hubs || [];
+        const choices = el('hub-choices');
+        choices.textContent = '';
+        hubs.forEach((hub) => {
+            const option = document.createElement('option');
+            option.value = hub.name;
+            option.label = hub.label;
+            choices.appendChild(option);
+        });
+        if (!hubs.length) {
+            el('push-status').textContent = `No Pybricks hub answered among `
+                + `${found.seen} device(s). Turn the hub on, close Pybricks Code, `
+                + 'and scan again.';
+            toast('No Pybricks hub answered.', true);
+            return;
+        }
+        if (hubs.length === 1) {
+            el('hub-name').value = hubs[0].name;
+            state.hubName = hubs[0].name;
+            scheduleSessionSave();
+        }
+        el('push-status').textContent = hubs.length === 1
+            ? `Found ${hubs[0].label}.`
+            : `Found ${hubs.length} hubs. The Hub name field lists them.`;
+        toast(`Found ${hubs.length} hub(s).`);
+    } catch (err) {
+        el('push-status').textContent = err.message;
+        toast(err.message, true);
+    } finally {
+        button.disabled = false;
+    }
+}
+
 async function pushToHub() {
     if (!state.solveJobId || !state.solveHasTrajectory) {
         toast('Solve a mission first: the push runs an approved trajectory.', true);
@@ -2173,6 +2217,7 @@ function legendVisibility() {
         candidates: state.candidatePaths.length > 1
             || (state.candidatePaths.length > 0 && samples.length === 0),
         envelope: samples.length > 0,
+        envelopeBoxes: samples.length > 0,
         saturation: saturations.some((value) => value >= 0.85 && value <= 1.0),
         slipping: saturations.some((value) => value > 1.0),
         apex: curvedSegments().length > 0,
@@ -2209,7 +2254,8 @@ function updateLegend() {
         if (!row.dataset.toggle) return;
         const on = Boolean(state[row.dataset.toggle]);
         row.setAttribute('aria-pressed', String(on));
-        const blocked = key === 'envelope' && envelopeMissing();
+        const blocked = (key === 'envelope' || key === 'envelopeBoxes')
+            && envelopeMissing();
         if (blocked) row.setAttribute('aria-disabled', 'true');
         else row.removeAttribute('aria-disabled');
         /* The entry stays in the key while it is off - it is the switch
@@ -4000,6 +4046,10 @@ function envelopeSamples() {
 
 function drawEnvelope(samples) {
     if (!state.showEnvelope) return;
+    if (state.showEnvelopeBoxes) {
+        drawEnvelopeBoxes(samples);
+        return;
+    }
     const withEnv = samples.filter((s) => s.reachability_envelope);
     if (withEnv.length < 2) return;
     const ratio = window.devicePixelRatio || 1;
@@ -4022,6 +4072,39 @@ function drawEnvelope(samples) {
     ctx.closePath();
     ctx.fill();
     ctx.stroke();
+    ctx.restore();
+}
+
+/* The same tube drawn as what the validator stores: one axis-aligned box per
+   sample. The boxes go into one path and are filled once, so overlapping
+   boxes read as a single band and no outline can fold back on itself. The
+   corner ribbon above does fold: it joins two opposite corners of each box,
+   so wherever the path turns the join runs to the other side of the band and
+   the fill crosses over. That crossing is the drawing, not the robot. */
+function drawEnvelopeBoxes(samples) {
+    const withEnv = samples.filter((s) => s.reachability_envelope);
+    if (withEnv.length < 2) return;
+    const ratio = window.devicePixelRatio || 1;
+    ctx.save();
+    ctx.fillStyle = 'rgba(52, 211, 153, 0.14)';
+    ctx.strokeStyle = 'rgba(52, 211, 153, 0.45)';
+    ctx.lineWidth = 0.75 * ratio;
+    ctx.beginPath();
+    withEnv.forEach((sample) => {
+        const env = sample.reachability_envelope;
+        const a = worldToScreen(env.x_min, env.y_min);
+        const b = worldToScreen(env.x_max, env.y_max);
+        ctx.rect(a.x, a.y, b.x - a.x, b.y - a.y);
+    });
+    ctx.fill();
+    /* Struck separately: a stroke on the shared path would outline every
+       seam between two boxes and read as a grid. */
+    withEnv.forEach((sample) => {
+        const env = sample.reachability_envelope;
+        const a = worldToScreen(env.x_min, env.y_min);
+        const b = worldToScreen(env.x_max, env.y_max);
+        ctx.strokeRect(a.x, a.y, b.x - a.x, b.y - a.y);
+    });
     ctx.restore();
 }
 
@@ -4471,6 +4554,7 @@ el('file-project').addEventListener('change', (e) => {
     e.target.value = '';
 });
 el('btn-push').addEventListener('click', pushToHub);
+el('btn-scan').addEventListener('click', scanHubs);
 renderPlotTabs();
 el('btn-collect').addEventListener('click', startCollect);
 el('btn-save-sheet').addEventListener('click', saveSheet);

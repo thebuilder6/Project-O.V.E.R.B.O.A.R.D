@@ -522,6 +522,20 @@ class TestTheEnvelopeNamesItsModel(unittest.TestCase):
         body = self._function("renderValidationReport")
         self.assertIn("entry.propagation", body)
 
+    def test_the_box_overlay_cannot_fold_over_itself(self):
+        """The corner ribbon can cross over; the box overlay may not.
+
+        The ribbon joins two opposite corners of each sample's box, so where
+        the path turns the join runs to the other side of the band and the
+        fill crosses itself - the operator reads that as the robot crossing
+        something. The box overlay fills the boxes themselves in one path, so
+        its outline cannot fold.
+        """
+        boxes = self._function("drawEnvelopeBoxes")
+        self.assertIn("ctx.rect(", boxes)
+        self.assertNotIn("closePath", boxes)
+        self.assertIn("state.showEnvelopeBoxes", self._function("drawEnvelope"))
+
 
 if __name__ == "__main__":
     unittest.main()

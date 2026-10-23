@@ -547,6 +547,13 @@ class TestValidationReport(unittest.TestCase):
         self.assertNotEqual(result.exit_code, 0, result.output)
         self.assertIsNone(data)
         self.assertIn("No candidate failed on accuracy alone", result.output)
+        # The message names the categories; the report names the number that
+        # decided, so a refusal still leaves it behind.
+        marker = [line for line in result.output.splitlines()
+                  if line.startswith(self.main.VALIDATION_MARKER)]
+        self.assertEqual(len(marker), 1, result.output)
+        payload = json.loads(marker[0][len(self.main.VALIDATION_MARKER):])
+        self.assertIn("wheel slip", " ".join(payload["candidates"][0]["reasons"]))
 
     def test_best_effort_needs_validation(self):
         result = self.runner.invoke(self.main.main, [
@@ -918,6 +925,26 @@ class TestCandidateComparison(unittest.TestCase):
                 payload = json.load(handle)
             self.assertIsNone(payload["selected"])
             self.assertEqual(payload["candidates"][0]["samples"][0]["x"], 0.1)
+            self.assertEqual(sorted(os.listdir(tmp)), ["candidates.json"])
+
+    def test_a_refused_rename_is_retried(self):
+        """Windows refuses the swap while the studio holds the file open."""
+        import overboard.main as main
+        with tempfile.TemporaryDirectory() as tmp:
+            target = os.path.join(tmp, "candidates.json")
+            real_replace = os.replace
+            calls = []
+
+            def flaky(source, destination):
+                calls.append(destination)
+                if len(calls) < 3:
+                    raise PermissionError(13, "Access is denied", destination)
+                return real_replace(source, destination)
+
+            with patch("overboard.main.os.replace", flaky):
+                main._write_candidates(target, [], None, quiet=True)
+            self.assertEqual(len(calls), 3)
+            self.assertTrue(os.path.isfile(target))
             self.assertEqual(sorted(os.listdir(tmp)), ["candidates.json"])
 
     def test_a_candidate_that_failed_cannot_be_picked(self):
