@@ -4,6 +4,29 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the versions are
 [PEP 440](https://peps.python.org/pep-0440/): `0.1.0a1` is the first alpha.
 
+## [Unreleased]
+
+### Added
+
+- Desktop build for Windows, macOS and Linux: `overboard.spec` (PyInstaller, one
+  folder), `installer.iss` for the Windows installer, and
+  `.github/workflows/desktop.yml` to build all three on a `v*` tag. It opens the
+  studio with no Python and no checkout; the local-only studio and the export gate
+  are unchanged.
+- In-app manual (`overboard/viz/help.html`, **Help** in the studio) and the
+  project documents copied to `docs/` in the state folder on first run, so the
+  packaged app explains itself offline.
+- `overboard/paths.py` separates the read-only bundle (`ASSET_ROOT`) from the
+  writable folder (`STATE_ROOT`, moved with `OVERBOARD_HOME`).
+
+### Fixed
+
+- On Windows, cvxopt's bundled OpenBLAS aborted the interpreter after printing
+  nothing, so `--validate` and the test suite died without a message. The
+  process now pins `OPENBLAS_NUM_THREADS=1` before the import.
+- The optional dependency pair is `jax==0.12.0` / `immrax==0.3.8`: the previous
+  pair raised `MemoryError` in the tick propagation on this tree.
+
 ## [0.1.0a1] - 2026-10-22
 
 First alpha release. The planner, the validator and the controller export work

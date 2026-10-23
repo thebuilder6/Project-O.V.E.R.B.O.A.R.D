@@ -9,6 +9,7 @@ import json
 import math
 import os
 import shutil
+import sys
 import tempfile
 import threading
 import time
@@ -60,10 +61,17 @@ class TestStudioRoutes(StudioTestCase):
         self.assertIn(b"OVERBOARD", body)
 
     def test_static_assets_are_served(self):
-        for path in ("/studio.css", "/studio.js", "/report.js"):
+        for path in ("/studio.css", "/studio.js", "/report.js", "/help.html"):
             status, body = _request(f"{self.base}{path}")
             self.assertEqual(status, 200, path)
             self.assertTrue(body)
+
+    def test_the_page_links_to_the_manual(self):
+        """The app explains itself; a build with no repository has nothing else."""
+        status, body = _request(f"{self.base}/")
+        self.assertIn(b'href="/help.html"', body)
+        status, manual = _request(f"{self.base}/help.html")
+        self.assertIn(b"Where your files are", manual)
 
     def test_unknown_path_is_not_found(self):
         with self.assertRaises(urllib.error.HTTPError) as ctx:
@@ -159,8 +167,11 @@ class TestStudioSolve(StudioTestCase):
         self.assertIn("speed_limit_m_s", limits)
         self.assertGreater(len(limits["force_limit_n"]), 0)
         iterations = done["result"]["iterations"]
-        self.assertEqual(len(iterations), 2)
+        # The studio draws a curve, so it needs the guess and the finish. How
+        # many IPOPT steps fit between them is the solver's business.
+        self.assertGreaterEqual(len(iterations), 2)
         self.assertEqual(iterations[0]["phase"], "initial_guess")
+        self.assertEqual(iterations[-1]["phase"], "final_solution")
         # Every candidate was written with its samples, so the field can draw
         # the comparison (one candidate for this run).
         candidates = done["result"]["candidates"]
@@ -897,6 +908,20 @@ TEST_END,3
 
 
 class TestStudioHelpers(unittest.TestCase):
+    def test_the_child_command_runs_the_module_in_a_checkout(self):
+        command = gui_server.child_command("cli", "-c", "robot.json")
+        self.assertEqual(command,
+                         [sys.executable, "-u", "-m", "overboard.main",
+                          "-c", "robot.json"])
+
+    def test_frozen_the_child_command_relaunches_the_app(self):
+        """In the desktop build sys.executable is the app; -m would only reopen it."""
+        with patch.object(gui_server, "_FROZEN", True):
+            self.assertEqual(gui_server.child_command("cli", "-w", Path("m.json")),
+                             [sys.executable, "--run-cli", "-w", "m.json"])
+            self.assertEqual(gui_server.child_command("hub"),
+                             [sys.executable, "--run-hub"])
+
     def test_slugify_keeps_file_names_safe(self):
         self.assertEqual(gui_server.slugify("My Mission!"), "my-mission")
         self.assertEqual(gui_server.slugify(""), "mission")

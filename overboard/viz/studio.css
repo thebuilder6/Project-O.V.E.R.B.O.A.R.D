@@ -190,6 +190,7 @@ input:disabled, select:disabled {
   border-radius: 8px;
   font: inherit;
   cursor: pointer;
+  text-decoration: none;
 }
 .btn:hover { border-color: var(--accent); }
 .btn:disabled { opacity: 0.45; cursor: not-allowed; }
