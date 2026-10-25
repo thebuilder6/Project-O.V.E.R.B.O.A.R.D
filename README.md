@@ -13,7 +13,7 @@ mission JSON  ->  3-Pillar planner  ->  CasADi/IPOPT  ->  validation gate  ->  .
 Same program, two front ends: this command line, and the browser studio (`--gui`)
 that draws the mission on the field and runs the identical pipeline behind it.
 
-**Alpha `0.1.0a1`** · [CHANGELOG](CHANGELOG.md) · [Known issues](KNOWN_ISSUES.md) · [What we claim, and what stands behind it](CLAIMS.md)
+**Alpha `0.1.0a2`** · [CHANGELOG](CHANGELOG.md) · [Known issues](KNOWN_ISSUES.md) · [What we claim, and what stands behind it](CLAIMS.md)
 
 *Working with an AI coding agent? `AGENTS.md` is the short index of the rules and
 commands; the documents linked below are the long form.*
