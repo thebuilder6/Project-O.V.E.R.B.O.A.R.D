@@ -122,6 +122,12 @@ class TestCacheFingerprints(unittest.TestCase):
         self.assertIn("testcache.py", deps)
         self.assertIn("tests/test_testcache.py", deps)
 
+    def test_the_package_init_is_in_the_closure_of_a_module_inside_it(self):
+        """Importing a.b.c runs a/__init__.py and a/b/__init__.py first."""
+        deps = self.cache.static_deps("overboard.viz.fields")
+        self.assertIn("overboard/__init__.py", deps)
+        self.assertIn("overboard/viz/fields.py", deps)
+
     def test_the_runner_and_the_cache_are_dependencies_of_every_test(self):
         deps = self.cache.static_deps("tests.test_testcache")
         self.assertIn("run_tests.py", deps)

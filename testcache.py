@@ -178,8 +178,12 @@ def _closure(modules, roots):
             continue
         for imported in _import_names(path, name):
             resolved = _resolve(imported, modules)
-            if resolved and resolved not in seen:
-                queue.append(resolved)
+            # Importing a.b.c runs a/__init__.py and a/b/__init__.py first,
+            # and the static import graph never names them (KI-032).
+            while resolved:
+                if resolved not in seen:
+                    queue.append(resolved)
+                resolved = resolved.rpartition(".")[0]
     return {modules[name].relative_to(REPO_ROOT).as_posix()
             for name in seen if name in modules}
 
