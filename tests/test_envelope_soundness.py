@@ -324,6 +324,49 @@ class TestTheBoxContainsTheReachableSet(unittest.TestCase):
 
 
 @unittest.skipUnless(HAS_IMMRAX, "immrax not installed")
+class TestAnEmptyTrajectory(unittest.TestCase):
+    """A solve that produced no samples is a failed candidate, not a crash.
+
+    The empty list used to reach jnp.max and raise "zero-size array to
+    reduction operation max which has no identity", which the CLI reported
+    as an Immrax error and the operator could not act on (KI-056).
+    """
+
+    def test_the_empty_trajectory_is_reported_not_raised(self):
+        val = ImmraxValidator(JAXRobotConfig(_TEST_ROBOT))
+        report = val.validate_trajectory(
+            [], (1.24, 1.51), (0.75, 0.9), BACKLASH, TRACK,
+            (0.0275, 0.0285), (0.0008, 0.0011))
+        self.assertFalse(report["passed"])
+        self.assertIn("no samples", report["error"])
+        self.assertEqual(report["reachability"]["envelope"], [])
+
+    def test_the_report_has_the_same_keys_as_a_real_one(self):
+        val = ImmraxValidator(JAXRobotConfig(_TEST_ROBOT))
+        empty = val.validate_trajectory(
+            [], (1.24, 1.51), (0.75, 0.9), BACKLASH, TRACK,
+            (0.0275, 0.0285), (0.0008, 0.0011))
+        real = _validate(val, _straight())
+        # The empty report carries every key a real one has, and one more:
+        # the word that says why there is nothing to report.
+        for key in real:
+            self.assertIn(key, empty)
+        self.assertNotIn("error", real)
+        for key in ("inclusion", "propagation"):
+            self.assertEqual(empty[key], real[key])
+
+    def test_the_cli_explains_it_in_words(self):
+        from overboard.main import _immrax_failure_reasons
+        val = ImmraxValidator(JAXRobotConfig(_TEST_ROBOT))
+        report = val.validate_trajectory(
+            [], (1.24, 1.51), (0.75, 0.9), BACKLASH, TRACK,
+            (0.0275, 0.0285), (0.0008, 0.0011))
+        reasons = _immrax_failure_reasons(report)
+        self.assertEqual(len(reasons), 1)
+        self.assertIn("no samples", reasons[0])
+
+
+@unittest.skipUnless(HAS_IMMRAX, "immrax not installed")
 class TestTheTickPropagation(unittest.TestCase):
     """The closed-loop tick map, against the open-loop plant propagation.
 

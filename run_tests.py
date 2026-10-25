@@ -96,10 +96,12 @@ from tests.test_polish import (
     TestPlanGates,
 )
 from tests.test_envelope_soundness import (
+    TestAnEmptyTrajectory,
     TestNoPhantomTurnRate,
     TestTheBoxContainsTheReachableSet,
     TestTheTickPropagation,
 )
+from tests.test_runtime_footprint import TestTheRuntimeFootprint
 from tests.test_sysid_compare import TestSysIdCompare
 from tests.test_export_compact import TestCompactExport
 from tests.test_export import TestResampleHeading
@@ -329,9 +331,11 @@ def test_classes():
         TestGradientPolish,
         TestCandidatePolish,
         TestPlanGates,
+        TestTheRuntimeFootprint,
         TestNoPhantomTurnRate,
         TestTheBoxContainsTheReachableSet,
         TestTheTickPropagation,
+        TestAnEmptyTrajectory,
         TestParallelCandidates,
         TestValidationReport,
         TestVariableSampleLayout,

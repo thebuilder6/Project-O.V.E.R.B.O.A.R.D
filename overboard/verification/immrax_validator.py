@@ -968,6 +968,49 @@ class ImmraxValidator:
                 break
         return selected if selected is not None else jnp.zeros(2)
 
+    def _empty_report(self) -> Dict[str, Any]:
+        """The report for a candidate that produced no trajectory.
+
+        A failed solve is not a validation error: the report says so in
+        words, carries every key a real one has, and does not pass.
+        """
+        return {
+            "max_motor_violation_N": 0.0,
+            "max_traction_violation_N": 0.0,
+            "max_slip_l_N": 0.0,
+            "max_slip_r_N": 0.0,
+            "max_tracking_error_m": float("inf"),
+            "rms_tracking_error_m": float("inf"),
+            "max_heading_error_rad": float("inf"),
+            "rms_heading_error_rad": float("inf"),
+            "max_envelope_radius_m": float("inf"),
+            "max_wheel_speed_m_s": 0.0,
+            "wheel_speed_limit_m_s": 0.0,
+            "speed_violation_m_s": 0.0,
+            "reachability": {
+                "max_error_m": float("inf"),
+                "max_tracking_error_m": float("inf"),
+                "max_heading_error_rad": float("inf"),
+                "max_envelope_radius_m": float("inf"),
+                "envelope": [],
+                "diverged": True,
+                "envelope_truncated": True,
+                "empty": True,
+            },
+            "inclusion": {
+                "plant": self.plant_inclusion,
+                "controller": self.controller_inclusion,
+                "tick": self.tick_inclusion,
+            },
+            "propagation": getattr(self, "propagation", PROPAGATION),
+            "digital_twin": (
+                self.digital_twin.summary()
+                if self.digital_twin is not None else None
+            ),
+            "passed": False,
+            "error": "the solver produced no samples",
+        }
+
     def validate_trajectory(self, samples: List[Dict[str, Any]],
                             cof_range: Tuple[float, float],
                             torque_margin_range: Tuple[float, float],
@@ -976,6 +1019,12 @@ class ImmraxValidator:
                             wheel_radius_range: Optional[Tuple[float, float]] = None,
                             inertia_range: Optional[Tuple[float, float]] = None,
                             safety_threshold_m: float = 0.005) -> Dict[str, Any]:
+        if not samples:
+            # An empty list used to reach jnp.max and raise "zero-size array
+            # to reduction operation max", which read as an Immrax error
+            # (KI-056).
+            return self._empty_report()
+
         vl = jnp.array([s['vl'] for s in samples])
         vr = jnp.array([s['vr'] for s in samples])
         al = jnp.array([s['al'] for s in samples])

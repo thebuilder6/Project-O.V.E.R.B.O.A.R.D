@@ -13,6 +13,13 @@ from overboard.core.frontier_seed import GUESS_STYLES
 # serialize the C++ MUMPS call to guarantee thread-safe solves repository-wide.
 CASADI_IPOPT_LOCK = threading.RLock()
 
+# How much of the machine MUMPS may claim for one solve, in percent of the
+# physical memory. IPOPT's default (1000, ten times the machine) lets one
+# solve reserve everything; when the machine is busy the allocation fails
+# inside MUMPS, which aborts the process instead of reporting a failed solve.
+# These NLPs solve in a few megabytes, so a quarter is generous (KI-057).
+MUMPS_MEMORY_PERCENT = 25
+
 # Gauss-Legendre nodes and weights on [-1, 1] for the self-consistent
 # collocation. Four nodes integrate one interval's velocity profile to
 # O(dt^7); the trapezoid rule, which samples only the two endpoints, is
@@ -812,6 +819,9 @@ class TrajectoryOptimizer:
             "hessian_approximation": "limited-memory",
             "sb": "yes",
             "mu_strategy": "adaptive",
+            # Without this the default (ten times physical memory) lets a
+            # solve reserve everything and MUMPS aborts under load (KI-057).
+            "mumps_mem_percent": MUMPS_MEMORY_PERCENT,
         }
         if warm_start:
             s_opts["warm_start_init_point"] = "yes"

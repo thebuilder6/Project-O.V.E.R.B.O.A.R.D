@@ -1,10 +1,10 @@
 # Known Issues
 
-Last reviewed: 2026-10-22
+Last reviewed: 2026-10-24
 
 Scope: whole repository, reviewed as a single-user, offline desktop tool for one FLL robot. This is not a multi-user or server-scale review.
 
-Status: KI-001 through KI-003, KI-005 through KI-019, KI-021 through KI-031, KI-033 through KI-044, KI-045, KI-046, KI-047 through KI-053 are **fixed**. KI-032 is **mitigated** (test cache). KI-004 is **deleted** (the Multi-Verse pipeline was removed; archived in git tag `archive/legacy-2026-10`). Open: KI-020 (hardware calibration & digital twin validation), KI-054 (the envelope gate's absolute limit is a duration gate), KI-055 (a failing check refuses the whole mission instead of scoring it).
+Status: KI-001 through KI-003, KI-005 through KI-019, KI-021 through KI-031, KI-033 through KI-044, KI-045, KI-046, KI-047 through KI-053, KI-056, KI-057 are **fixed**. KI-032 is **mitigated** (test cache). KI-004 is **deleted** (the Multi-Verse pipeline was removed; archived in git tag `archive/legacy-2026-10`). Open: KI-020 (hardware calibration & digital twin validation), KI-054 (the envelope gate's absolute limit is a duration gate), KI-055 (a failing check refuses the whole mission instead of scoring it).
 
 How to use this list: refer to an item by its ID, for example "fix KI-003". The **Quick triage** table is the index - read that, then open the entry you are working on. The entries are now short records: what was wrong, what changed, and which files carry the fix. The long narrative each entry used to carry is in the git history - this file before the 2026-10-21 pruning - so `git log -p KNOWN_ISSUES.md` reads any entry in full.
 
@@ -71,6 +71,8 @@ How to use this list: refer to an item by its ID, for example "fix KI-003". The 
 | KI-053 | P2 | Physics / safety model | ~~The interval force model passed an interval through unchanged, so a signed velocity could produce a negative force bound~~ (fixed) |
 | KI-054 | P1 | Validation | The envelope gate compares an absolute radius against a tube that grows with path length, so a long path fails for being long and a failure usually has no remedy but a better model |
 | KI-055 | P1 | Validation / export | A failing check writes nothing: the verdict is a boolean against thresholds the operator did not choose, so a mission they mean to run cannot be exported at all. It should be a score with named levers |
+| KI-056 | P1 | Validation | ~~An empty trajectory crashed the gate and read as an Immrax error~~ (fixed; a failed solve is reported as a failed candidate) |
+| KI-057 | P1 | Runtime | ~~A busy machine made MUMPS abort the process and lose the run~~ (fixed; one thread per pool, and MUMPS is told its memory limit) |
 
 ## Open
 
@@ -96,7 +98,7 @@ How to use this list: refer to an item by its ID, for example "fix KI-003". The 
 
 **Problem:** The gate compares each sample's reachability radius with 2 cm (`DEFAULT_ENVELOPE_LIMIT_M`). Under the default `plant` propagation the tube is open-loop, so it widens with elapsed time and travelled distance: the limit is a duration budget in disguise. The same control law that passes at 2 s fails at 4 s, not because it is less accurate per metre but because the tube had more time to spread. The default is also not a mission requirement - it is the number that applies when the operator declared nothing.
 
-**Evidence:** S-curve example with the widened `fll_choreo` ranges, `--validate --candidates 1 -n 10`, `plant`: the first segment reaches 0.99 cm at 1.9 s (passes), the second 4.81 cm at 3.7 s (fails), with the same geometry in both halves; tracking is 1.01 cm and over its 0.5 cm gate too. All six candidates - the front triad and the rescue seeds - failed, so the run exited 1 and wrote nothing. Across the 204-candidate matrix the envelope correlates with duration at r = +0.97 (`docs/RESEARCH_AGENDA.md`, the selection-rule answer).
+**Evidence:** S-curve example with the widened `fll_choreo` ranges, `--validate --candidates 1 -n 10`, `plant`: the first segment reaches 0.99 cm at 1.9 s (passes), the second 4.81 cm at 3.7 s (fails), with the same geometry in both halves; tracking is 1.01 cm and over its 0.5 cm gate too. All six candidates - the front triad and the rescue seeds - failed, so the run exited 1 and wrote nothing. Across the 204-candidate matrix the envelope correlates with duration at r = +0.97 (`docs/RESEARCH_AGENDA.md`, the selection-rule answer). On 40 random paths, with the same plans and gates and only the propagation changed, **19/40 pass with `plant` and 26/40 with `tick`**: seven failures become passes, none regress, and the median envelope falls from 1.00 cm to 0.40 cm. The pass rate collapses with path length: 95 % under 1 m, 69 % between 1 and 2 m, 25 % between 2 and 4 m, 0 % above 4 m. The `tick` map is a Python loop and costs 7-10x the plant's validation time, so it stays opt-in until it is compiled into the `lax.scan` pipeline.
 
 **Why the default stays absolute:** the error budget is physical, not proportional. 4.8 cm off after 3.7 s is 4.8 cm from the mission model; dividing that by the path length would forgive exactly the error that misses a mission. The per-metre slope is therefore a declaration the operator makes about a long mission ("this much growth is acceptable"), not an automatic rescaling of a measured error. The ranges behind the tube are declared, not measured (KI-020), so a threshold chosen until a path passes is tuned against a model that is not the robot. The propagation also cuts the tube off at 5 cm (`diverged`, KI-049), so no limit above 5 cm can be measured at all - that is why the knobs stop there.
 
@@ -679,6 +681,26 @@ The selection rule already computes a score vector per candidate (`duration_s`, 
 **Also fixed here:** `overboard.models` exported a `MotorConfig` that does not exist (an `AttributeError` on access); `overboard/core/frontier_seed.py` had a dead `baseline` branch behind an early return, an unreachable `zero_velocity` flag, and no `generate_canonical_seeds` although the strategy ledger and the archived benchmark both name it; and the repository's directories were resolved in eight modules, each by counting its own parents, which is now `overboard/paths.py` with a test that keeps it that way (`tests/test_paths.py`).
 
 **Files:** `overboard/models/drivetrain_physics.py`, `overboard/models/__init__.py`, `overboard/core/frontier_seed.py`, `overboard/paths.py`, `tests/test_robot_model.py`, `tests/test_frontier_seed.py`, `tests/test_paths.py`
+
+### KI-056 - An empty trajectory was reported as an Immrax error
+
+**Fixed.** `ImmraxValidator.validate_trajectory` returns a report for an empty sample list instead of raising: `passed` is false, the reachability set is empty and diverged, and the report carries `"error": "the solver produced no samples"`. The CLI's reason builder (`overboard/main.py::_immrax_failure_reasons`) reads that word and stops there, so a failed solve reads as a failed candidate.
+
+**Was:** the empty list reached `jnp.max` over an empty array and raised `ValueError: zero-size array to reduction operation max which has no identity`. The CLI caught the exception and reported it as an *Immrax validation error*, which is not what happened and not something the operator can act on. It appeared in a stress run of 200 random paths, on solves that returned nothing.
+
+**Evidence:** the same message also reached the CPU audit, where it surfaced as "tracking error inf cm > 0.50 cm" and "forward-integration error inf cm" - a gate reporting on a trajectory that does not exist.
+
+**Files:** `overboard/verification/immrax_validator.py` (`validate_trajectory`, `_empty_report`), `overboard/main.py` (`_immrax_failure_reasons`), `tests/test_envelope_soundness.py` (`TestAnEmptyTrajectory`)
+
+### KI-057 - A busy machine made MUMPS abort the process and lose the run
+
+**Fixed.** Two changes: the package sets one BLAS/OpenMP thread per process before NumPy, JAX or Immrax is imported (`overboard/__init__.py`), and the solver tells MUMPS how much memory it may claim (`mumps_mem_percent`, 25 % in `overboard/core/optimizer.py`).
+
+**Was:** a validating run opened a BLAS pool, an Eigen pool and MUMPS's workspace, and those pools *reserved* far more than they used. Measured on the reference machine (24 logical cores, 31.8 GB): one run of the longest mission committed **4.89 GB** while touching 0.50 GB, and the `immrax` import alone accounted for 3.7 GB of it. Eight runs at once therefore commit about 40 GB. The machine's commit limit is 92.7 GB and it is shared with other work; when the limit was reached, the next allocation failed inside MUMPS and the process died: `Problem with integer stack size`, then `Wrong state during DMUMPS_DM_ISBAND`, then `MPI_ABORT`, with exit code 3221225477 (0xC0000005). In a stress run of 200 random paths at eight-way parallelism, 11 runs died this way and 3 of them were paths that would have passed.
+
+**Evidence:** the per-run commit is 4.89 GB before the change and 0.55 GB after; with one thread per pool the same import commits 0.20 GB instead of 4.53 GB. MUMPS is told its limit, so an exhausted machine produces a clean "out of memory" and a failed candidate instead of an abort.
+
+**Files:** `overboard/__init__.py`, `overboard/core/optimizer.py` (`MUMPS_MEMORY_PERCENT`, the solver options), `tests/test_runtime_footprint.py`
 
 ## The rules this list produced
 

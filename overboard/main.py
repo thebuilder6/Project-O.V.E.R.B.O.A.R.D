@@ -354,6 +354,10 @@ def _mark_best_effort(stats, attempts, selected_index):
 def _immrax_failure_reasons(report, failed_threshold=False, max_violation=0.0):
     """Explain an Immrax failure in the units a user cares about."""
     reasons = []
+    if report.get("error"):
+        # A candidate that never produced a trajectory says so; the gate
+        # numbers below would describe that trajectory (KI-056).
+        return [str(report["error"])]
     motor = float(report.get("max_motor_violation_N", 0.0))
     slip = max(float(report.get("max_slip_l_N", 0.0)),
                float(report.get("max_slip_r_N", 0.0)))
