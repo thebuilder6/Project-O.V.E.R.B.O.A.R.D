@@ -345,7 +345,7 @@ class TestTrajectoryOptimizer(unittest.TestCase):
         config = RobotConfig(config_dict)
         optimizer = TrajectoryOptimizer(config)
 
-        waypoints = [(0.0, 0.0, 0.0), (0.6, 0.0, 1.2), (1.0, 0.5, None)]
+        waypoints = [(0.0, 0.0, 0.0), (0.6, 0.0, 2.5), (1.0, 0.5, None)]
         samples = 5
         N = 2 * samples + 1
         stops = [0, 1]

@@ -36,6 +36,9 @@ GUESS_STYLES = (
     "frontier_sprint",
     "frontier_sweeper",
     "frontier_exploratory",
+    "frontier_sprint_mirror",
+    "frontier_spline",
+    "frontier_reverse",
 )
 
 
@@ -55,6 +58,10 @@ class StyleParams:
     accel_scale: float = 0.90
     momentum_frac: float = 0.50
     zero_velocity: bool = False
+    # Q17 geometry axes: the mirrored bow flips the apex amplitude, and the
+    # bezier geometry replaces the straight chords with a cubic path family.
+    apex_sign: int = 1
+    geometry: str = "straight"
 
 
 STYLE_TABLE: Dict[str, StyleParams] = {
@@ -64,6 +71,11 @@ STYLE_TABLE: Dict[str, StyleParams] = {
     "rolling": StyleParams(u_peak=0.50, apex_mult=0.00, accel_scale=0.80, momentum_frac=0.60),
     "baseline": StyleParams(u_peak=0.50, apex_mult=0.00, accel_scale=0.80, momentum_frac=0.00, zero_velocity=True),
     "direct_chord": StyleParams(u_peak=0.50, apex_mult=0.00, accel_scale=0.90, momentum_frac=0.50),
+    # Q17 tail (pre-registered, docs/RESEARCH_AGENDA.md §24): the mirrored
+    # bow, the bezier geometry, and reverse seeding on top of sprint.
+    "sprint_mirror": StyleParams(u_peak=0.70, apex_mult=1.00, accel_scale=0.95, momentum_frac=0.72, apex_sign=-1),
+    "spline": StyleParams(u_peak=0.70, apex_mult=1.00, accel_scale=0.95, momentum_frac=0.72, geometry="bezier"),
+    "reverse": StyleParams(u_peak=0.70, apex_mult=1.00, accel_scale=0.95, momentum_frac=0.72),
 }
 DEFAULT_STYLE_PARAMS = StyleParams(u_peak=0.50, apex_mult=0.00, accel_scale=0.90, momentum_frac=0.50)
 
@@ -102,6 +114,31 @@ def compute_tangent_headings(
         headings[pinned_mask] = [h for h in pinned_headings if h is not None]
 
     return [float(h) for h in headings]
+
+
+def _bezier_path_points(
+    p0: np.ndarray,
+    p1: np.ndarray,
+    th0: float,
+    th1: float,
+    u: np.ndarray,
+) -> Tuple[np.ndarray, np.ndarray]:
+    """Cubic Bezier positions with heading-aligned endpoint tangents.
+
+    The Q17 geometry axis, promoted from research/seeds.py's spline family
+    (research code may not be imported by overboard/). The handle length is a
+    third of the chord, so a straight chord with matching tangents reproduces
+    itself, and both endpoints land exactly on the waypoints.
+    """
+    handle = math.hypot(float(p1[0] - p0[0]), float(p1[1] - p0[1])) / 3.0
+    c1x = p0[0] + handle * math.cos(th0)
+    c1y = p0[1] + handle * math.sin(th0)
+    c2x = p1[0] - handle * math.cos(th1)
+    c2y = p1[1] - handle * math.sin(th1)
+    v = 1.0 - u
+    px = v ** 3 * p0[0] + 3.0 * v ** 2 * u * c1x + 3.0 * v * u ** 2 * c2x + u ** 3 * p1[0]
+    py = v ** 3 * p0[1] + 3.0 * v ** 2 * u * c1y + 3.0 * v * u ** 2 * c2y + u ** 3 * p1[1]
+    return px, py
 
 
 def _compute_segment_durations(
@@ -274,11 +311,25 @@ def generate_frontier_seed(
         if np.any(mask):
             signs = -np.sign(corner_dth[mask])
             apex_amps[mask] = (
-                signs
+                params.apex_sign
+                * signs
                 * np.minimum(0.20 * L_arr[mask], 0.08)
                 * params.apex_mult
                 * np.sin(np.minimum(np.abs(corner_dth[mask]), math.pi / 2.0))
             )
+
+    # Reverse seeding (Q17): on a segment whose pinned heading faces more
+    # than 120 degrees off the chord the robot backs through the segment,
+    # so the guess carries heading + pi and v < 0 there. Only the reverse
+    # style takes this axis; every other style is untouched.
+    reverse_seg = np.zeros(num_segments, dtype=bool)
+    if clean_style == "reverse":
+        reverse_limit = 2.0 * math.pi / 3.0
+        for i in range(num_segments):
+            for w in (waypoints[i], waypoints[i + 1]):
+                if (len(w) > 2 and w[2] is not None
+                        and abs(angle_diff(float(w[2]), chord_angles[i])) > reverse_limit):
+                    reverse_seg[i] = True
 
     # 2. Vectorized Point and Heading Generation
     points_x = np.empty(N, dtype=float)
@@ -290,11 +341,16 @@ def generate_frontier_seed(
         count = s_i if i < num_segments - 1 else s_i + 1
         u = np.arange(count, dtype=float) / float(s_i)
 
-        amp = apex_amps[i]
-        bumps = asymmetric_late_apex_bump(u, u_peak=params.u_peak) if abs(amp) > 1e-4 else 0.0
+        if params.geometry == "bezier":
+            # The curve is the shape: no apex bump on top of it.
+            px, py = _bezier_path_points(
+                pts[i], pts[i + 1], wp_headings[i], wp_headings[i + 1], u)
+        else:
+            amp = apex_amps[i]
+            bumps = asymmetric_late_apex_bump(u, u_peak=params.u_peak) if abs(amp) > 1e-4 else 0.0
 
-        px = pts[i, 0] + dx_arr[i] * u + nx_arr[i] * amp * bumps
-        py = pts[i, 1] + dy_arr[i] * u + ny_arr[i] * amp * bumps
+            px = pts[i, 0] + dx_arr[i] * u + nx_arr[i] * amp * bumps
+            py = pts[i, 1] + dy_arr[i] * u + ny_arr[i] * amp * bumps
 
         th = th1_arr[i] + dth_arr[i] * u
 
@@ -321,6 +377,15 @@ def generate_frontier_seed(
     tangent_headings[:-1] = np.arctan2(dy_diff, dx_diff)
     tangent_headings[-1] = tangent_headings[-2] if N > 1 else wp_headings[-1]
     headings = np.unwrap(tangent_headings)
+
+    # Reverse segments travel with heading + pi (the flip happens before the
+    # pin adjustment, so a pinned waypoint heading - which is what made the
+    # segment reverse - anchors the flipped field instead of fighting it).
+    for i in range(num_segments):
+        if reverse_seg[i]:
+            k_start = wp_indices[i]
+            k_end = k_start + (seg_samples[i] if i < num_segments - 1 else seg_samples[i] + 1)
+            headings[k_start:k_end] += math.pi
 
     if np.any(pinned_mask):
         pinned_idx = np.array(wp_indices)[pinned_mask]
@@ -383,6 +448,14 @@ def generate_frontier_seed(
     vr = np.clip(vr, -v_wheel_max, v_wheel_max)
     vl[stop_sample_indices] = 0.0
     vr[stop_sample_indices] = 0.0
+
+    # Backing through a reverse segment: v < 0 (stops already zeroed).
+    for i in range(num_segments):
+        if reverse_seg[i]:
+            k_start = wp_indices[i]
+            k_end = k_start + (seg_samples[i] if i < num_segments - 1 else seg_samples[i] + 1)
+            vl[k_start:k_end] *= -1.0
+            vr[k_start:k_end] *= -1.0
 
     # 7. Physical Segment Timing dt_i
     if params.zero_velocity:
