@@ -24,7 +24,7 @@ removed).
 
 **Three columns, two of them tabbed.** The left column is what you set, the canvas is the work, the right column is what you read. Each side column is a strip of tabs over one panel, so a column holds one topic at a time.
 
-The page carries **155 element ids**: **78 controls with an id** (38 buttons, 33 inputs, 7 selects), of which 8 are the tab buttons themselves. Twelve regions are filled in at run time:
+The page carries **168 element ids**: **83 controls with an id** (38 buttons, 37 inputs, 8 selects), of which 8 are the tab buttons themselves. Fourteen regions are filled in at run time:
 
 | Generated region | Element id | Where |
 |---|---|---|
@@ -38,6 +38,8 @@ The page carries **155 element ids**: **78 controls with an id** (38 buttons, 33
 | The pick button | `pick-row` | Result tab, the validation detail |
 | The fix buttons | `fix-row` | Result tab, the validation detail |
 | The download buttons | `downloads` | Result tab |
+| The score categories | `score-categories` | Result tab, score block |
+| The lever table | `lever-table` | Result tab, tried levers |
 | The history rows | `history-list` | Mission tab, the History list |
 | The waypoint list | `wp-list` | Waypoint tab |
 
@@ -178,7 +180,6 @@ The panel reads in the order a command is built: the **preset**, then three grou
 | **Accuracy weight** | The smoothness weight (`--accuracy-weight`). |
 | **Soft force weight** | A weight above zero prices wheel-force utilisation (`--force-weight`); zero is the default and sends nothing. |
 | **Fast polish** | The budgeted solve. |
-| **Gradient sensitivity polish** | The post-solve gradient polish (`--polish`); needs JAX. |
 
 **Checked**
 
@@ -187,6 +188,10 @@ Every field below the switch is the gate's: the server passes none of them witho
 | Control | What it does |
 |---|---|
 | **Validate before export** | The gate; needs JAX. |
+| **Scoring profile** | The decision score's weights: precision, balanced (default), or speed. |
+| **Target time** / **Maximum time** | The duration the score prices and the duration it will not exceed. A validated run needs both. |
+| **Jerk target** / **Jerk maximum** | The wheel-jerk pair the score prices (defaults 10/20 m/s^3). |
+| **Accept failed plan at score** | 1-100. A failed plan is accepted at or above this score and can then be hub approved; it is never called passed. |
 | **Candidates (1-3)** | How many of the planner's three frontier candidates are solved (sprint, sweeper, exploratory); clamped to 1-3 by the server. The number is kept while the gate is off, so turning validation back on keeps the count. |
 | **Reachability propagation** | The model the envelope gate uses (`--propagation`): the open-loop plant (fast) or the closed-loop tick map (feedback-contracted, 2-10x slower). |
 | **Accuracy limit (cm)** | How far the reachable set may spread around the plan at any sample (`--envelope-limit`, default 2 cm, 0.1-5 cm). A waypoint's error threshold still wins. The limit is absolute, so a long path can fail for being long (KI-054); the next field is how to price that distance. |
@@ -220,7 +225,9 @@ Canvas contents: the mat, the grid, the mission models - each with the field's p
 | *status* | "Validated - the trajectory passed the validator" / "Not validated - this trajectory has not been checked against your robot" / "Failed validation - the best path is shown for inspection ... it is not approved for the hub" (a best-effort export) / the failure. |
 | **Check it, then solve again** | The lever the status names: turns validation on, brings the Solve tab forward and solves again. Shown only after a solve that was not validated. |
 | *facts* | Duration, path, peak wheel speed, samples, max envelope, solve (wall), the time against the top-speed ideal, the field. |
+| *score* | The decision score (v1, profile), the four category scores (Physical, Accuracy, Motion Quality, Duration), and the note that it is not a probability. |
 | *solve diff* | "vs. the previous solve: 0.27 s slower, the path 48 mm longer." |
+| *tried levers* | The measured score delta, duration delta and measured points/second of the levers tried this mission session, ranked by measured improvement. No predicted estimates. |
 | *collisions* | Where the plan met a mission model. |
 | **Validation detail** (details) | The explainer, the candidate chips, the pick button, the per-segment table, the note, and the **Try** buttons. A chip names its seed by its physical role - Sprint, Sweeper, Exploratory - and a rescue seed is a dashed amber chip (🛟 Rescue). Every solved candidate's path is on the field (`--candidates-out`), the clicked chip's path drawn stronger, so the comparison is visible and not only tabulated. A path appears the moment its solve finishes, before its check and before the rescue round, so a validated run is not a blank field for its minutes; the chips and the table arrive with the report, when the run ends. The pick button (`Solve again and export: ...`) appears when the clicked candidate passed but is not the exported one: it re-solves with that candidate pinned (`--pick-candidate`), and the CLI refuses it if it no longer passes. The table carries, per segment, the envelope, the limit, the drift, and the three discretization mechanisms in mm (sagitta, heading mismatch, 20 ms hold lag). The **Try** buttons are the levers the numbers point at: the closed-loop tick map for an envelope failure, the gradient polish for a tracking error just over the gate, a soft force weight of 0.005 for a force or slip failure, and a weight of 0.001 for a rough profile. Each pulls its lever and solves again. |
 | **Mission report** | The report of the last solve, as a file. |

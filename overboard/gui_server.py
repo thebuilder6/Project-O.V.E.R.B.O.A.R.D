@@ -215,25 +215,125 @@ def _is_robot_config(data):
     return "mass" in data and "wheel_radius" in data and "track_width" in data
 
 
+# The mission file is a legacy waypoint list or an object carrying the
+# timing metadata the score is built against. The CLI accepts both; the
+# studio must round-trip the object without dropping the scoring block.
+_SCORING_KEYS = ("target_time_s", "max_time_s", "jerk_target_m_s3", "jerk_max_m_s3")
+
+
+def mission_parts(document):
+    """Return ``(waypoints, scoring)`` for a legacy list or object mission."""
+    if isinstance(document, list):
+        return document, {}
+    if isinstance(document, dict) and isinstance(document.get("waypoints"), list):
+        scoring = document.get("scoring")
+        return document["waypoints"], dict(scoring) if isinstance(scoring, dict) else {}
+    return None, {}
+
+
+def mission_document(waypoints, scoring):
+    """Write a legacy list unless scoring metadata makes the object form right."""
+    clean = {key: scoring[key] for key in _SCORING_KEYS if key in scoring}
+    if not clean:
+        return list(waypoints)
+    return {"waypoints": list(waypoints), "scoring": clean}
+
+
+def _finite_number(value, label):
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        raise ValueError(f"{label} must be a number.")
+    if not math.isfinite(number):
+        raise ValueError(f"{label} must be a finite number.")
+    return number
+
+
+def resolve_scoring(scoring, options, validate):
+    """Merge mission timing metadata with explicit solve-option overrides.
+
+    The solve controls win over the mission document. A validated run needs
+    a target and a maximum duration; ``--accept-score`` only means anything
+    with validation on, because acceptance is about a failed validation.
+    """
+    merged = {}
+    source_keys = {"target_time_s": "target_time", "max_time_s": "max_time",
+                   "jerk_target_m_s3": "jerk_target", "jerk_max_m_s3": "jerk_max"}
+    for source, key in source_keys.items():
+        if isinstance(scoring, dict) and scoring.get(source) is not None:
+            merged[key] = scoring[source]
+    for key in ("target_time", "max_time", "jerk_target", "jerk_max",
+                "scoring_profile", "accept_score"):
+        if options.get(key) is not None and options.get(key) != "":
+            merged[key] = options[key]
+
+    for key, label in (("target_time", "Target time"),
+                       ("max_time", "Maximum time"),
+                       ("jerk_target", "Jerk target"),
+                       ("jerk_max", "Jerk maximum"),
+                       ("accept_score", "Accept score")):
+        if key in merged:
+            merged[key] = _finite_number(merged[key], label)
+
+    if "target_time" in merged and "max_time" in merged \
+            and not 0.0 < merged["target_time"] < merged["max_time"]:
+        raise ValueError("The target time must be above zero and below the maximum time.")
+    if "jerk_target" in merged and "jerk_max" in merged \
+            and not merged["jerk_target"] < merged["jerk_max"]:
+        raise ValueError("The jerk target must be below the jerk maximum.")
+    if "accept_score" in merged and not 1.0 <= merged["accept_score"] <= 100.0:
+        raise ValueError("The accept score must be between 1 and 100.")
+    if "accept_score" in merged and not validate:
+        raise ValueError("The accept score needs validation on.")
+
+    profile = str(merged.get("scoring_profile") or "").lower()
+    if profile and profile not in ("precision", "balanced", "speed"):
+        raise ValueError("The scoring profile must be precision, balanced or speed.")
+    if validate:
+        if "target_time" not in merged or "max_time" not in merged:
+            raise ValueError("A validated run needs a target time and a maximum time.")
+        # The studio exposes both jerk fields, so a validated run always has
+        # a pair; the defaults are the documented 10/20 m/s^3 discipline.
+        merged.setdefault("jerk_target", 10.0)
+        merged.setdefault("jerk_max", 20.0)
+        if not merged["jerk_target"] < merged["jerk_max"]:
+            raise ValueError("The jerk target must be below the jerk maximum.")
+        merged.setdefault("scoring_profile", "balanced")
+
+    return {key: merged[key] for key in
+            ("target_time", "max_time", "jerk_target", "jerk_max",
+             "scoring_profile", "accept_score") if key in merged}
+
+
 def collect_examples():
     """Return the example robot configs and the saved missions."""
     configs = []
     missions = []
 
+    def add_mission(path, source):
+        data = _read_json(path)
+        if data is None:
+            return
+        waypoints, scoring = mission_parts(data)
+        if waypoints is None:
+            return
+        entry = {"name": path.stem, "source": source, "data": waypoints}
+        if scoring:
+            entry["scoring"] = scoring
+        missions.append(entry)
+
     for path in sorted(EXAMPLES_DIR.glob("*.json")):
         data = _read_json(path)
         if data is None:
             continue
-        if isinstance(data, list):
-            missions.append({"name": path.stem, "source": "example", "data": data})
-        elif _is_robot_config(data):
+        if _is_robot_config(data):
             configs.append({"name": path.stem, "source": "example", "data": data})
+        else:
+            add_mission(path, "example")
 
     if MISSIONS_DIR.is_dir():
         for path in sorted(MISSIONS_DIR.glob("*.json")):
-            data = _read_json(path)
-            if isinstance(data, list):
-                missions.append({"name": path.stem, "source": "saved", "data": data})
+            add_mission(path, "saved")
 
     return {"configs": configs, "missions": missions}
 
@@ -478,6 +578,19 @@ def build_command(job_dir, config_path, waypoints_path, output_path, options):
 
     if options.get("validate"):
         command.append("--validate")
+        # Score and acceptance only exist against a validated run: the score
+        # is a decision score over validator numbers, never a probability.
+        for key, flag in (("target_time", "--target-time"),
+                          ("max_time", "--max-time"),
+                          ("jerk_target", "--jerk-target"),
+                          ("jerk_max", "--jerk-max")):
+            if options.get(key) is not None:
+                command += [flag, f"{float(options[key]):g}"]
+        profile = str(options.get("scoring_profile") or "").lower()
+        if profile in ("precision", "balanced", "speed"):
+            command += ["--scoring-profile", profile]
+        if options.get("accept_score") is not None:
+            command += ["--accept-score", str(int(float(options["accept_score"])))]
         # The accuracy limit the gate applies, in metres (the page shows cm).
         # Passing it only with --validate keeps the flag from meaning nothing.
         if options.get("envelope_limit") is not None:
@@ -506,8 +619,10 @@ def start_job(server, payload):
     """Validate a solve request, then run it in the background."""
     name = slugify(payload.get("name"))
     config = payload.get("config")
-    waypoints = payload.get("waypoints")
+    mission = payload.get("mission")
+    waypoints, mission_scoring = mission_parts(mission) if mission is not None else (payload.get("waypoints"), payload.get("scoring") or {})
     options = dict(payload.get("options") or {})
+    options.update(resolve_scoring(mission_scoring, options, bool(options.get("validate"))))
     # A fitted plant is only used by the validator, so it forces validation on.
     if options.get("sysid_fit") and not options.get("validate"):
         options["validate"] = True
@@ -575,7 +690,7 @@ def start_job(server, payload):
     with open(config_path, "w", encoding="utf-8") as handle:
         json.dump(config, handle, indent=1)
     with open(waypoints_path, "w", encoding="utf-8") as handle:
-        json.dump(waypoints, handle, indent=1)
+        json.dump(mission_document(waypoints, mission_scoring), handle, indent=1)
 
     command = build_command(job_dir, config_path, waypoints_path, output_path, options)
     job = Job(server.next_job_id(), name, job_dir)
@@ -2059,9 +2174,16 @@ class StudioHandler(BaseHTTPRequestHandler):
 
     def _save_mission(self):
         payload = self._read_body()
-        waypoints = payload.get("waypoints")
+        mission = payload.get("mission")
+        if mission is not None:
+            waypoints, scoring = mission_parts(mission)
+        else:
+            waypoints, scoring = payload.get("waypoints"), payload.get("scoring") or {}
         if not isinstance(waypoints, list) or len(waypoints) < 2:
             raise ValueError("A mission needs at least two waypoints.")
+        # The score's timing metadata travels with the mission, so a save
+        # must not silently drop it.
+        resolve_scoring(scoring, {}, False)
         name = slugify(payload.get("name"))
         MISSIONS_DIR.mkdir(exist_ok=True)
         # The repository is made before the file is written, so its first
@@ -2069,7 +2191,7 @@ class StudioHandler(BaseHTTPRequestHandler):
         ensure_mission_repo()
         path = MISSIONS_DIR / f"{name}.json"
         with open(path, "w", encoding="utf-8") as handle:
-            json.dump(waypoints, handle, indent=1)
+            json.dump(mission_document(waypoints, scoring), handle, indent=1)
         # Every save is a commit, so the mission has a history.
         commit, commit_error = commit_mission(
             name, payload.get("message") or f"Mission {name}")
@@ -2094,7 +2216,12 @@ class StudioHandler(BaseHTTPRequestHandler):
         if not sha:
             raise ValueError("Give the commit to restore.")
         waypoints = restore_mission(name, sha)
-        return self._json(200, {"name": name, "waypoints": waypoints,
+        mission_waypoints, scoring = mission_parts(waypoints)
+        if mission_waypoints is None:
+            raise ValueError("That commit is not a mission.")
+        return self._json(200, {"name": name, "waypoints": mission_waypoints,
+                                "scoring": scoring,
+                                "mission": mission_document(mission_waypoints, scoring),
                                 "history": mission_history(name)})
 
 
@@ -2134,8 +2261,11 @@ def build_initial(config_path=None, waypoints_path=None, auto_solve=False, optio
         if not waypoint_file.is_absolute():
             waypoint_file = REPO_ROOT / waypoint_file
         data = _read_json(waypoint_file)
-        if isinstance(data, list):
-            initial["waypoints"] = data
+        mission_waypoints, scoring = mission_parts(data)
+        if mission_waypoints is not None:
+            initial["waypoints"] = mission_waypoints
+            if scoring:
+                initial["scoring"] = scoring
     return initial
 
 

@@ -1119,6 +1119,50 @@ class TestStudioHelpers(unittest.TestCase):
         self.assertAlmostEqual(summary["peak_wheel_speed_m_s"], 0.4)
         self.assertTrue(summary["has_envelope"])
 
+    def test_mission_documents_keep_scoring_metadata(self):
+        waypoints = [{"x": 0, "y": 0}, {"x": 1, "y": 0}]
+        scoring = {"target_time_s": 2.0, "max_time_s": 3.0}
+        document = gui_server.mission_document(waypoints, scoring)
+        self.assertEqual(document["waypoints"], waypoints)
+        self.assertEqual(document["scoring"], scoring)
+        loaded_points, loaded_scoring = gui_server.mission_parts(document)
+        self.assertEqual(loaded_points, waypoints)
+        self.assertEqual(loaded_scoring, scoring)
+        legacy, empty = gui_server.mission_parts(waypoints)
+        self.assertEqual(legacy, waypoints)
+        self.assertEqual(empty, {})
+
+    def test_scoring_overrides_and_validation(self):
+        merged = gui_server.resolve_scoring(
+            {"target_time_s": 2.0, "max_time_s": 3.0},
+            {"target_time": 1.5, "scoring_profile": "speed"}, True)
+        self.assertEqual(merged["target_time"], 1.5)
+        self.assertEqual(merged["max_time"], 3.0)
+        self.assertEqual(merged["scoring_profile"], "speed")
+        self.assertEqual(merged["jerk_target"], 10.0)
+        with self.assertRaises(ValueError):
+            gui_server.resolve_scoring({}, {"validate": True}, True)
+        with self.assertRaises(ValueError):
+            gui_server.resolve_scoring({}, {"target_time": 3, "max_time": 2}, True)
+        with self.assertRaises(ValueError):
+            gui_server.resolve_scoring({}, {"accept_score": 50}, False)
+        with self.assertRaises(ValueError):
+            gui_server.resolve_scoring({}, {"accept_score": 0}, True)
+
+    def test_scoring_flags_are_forwarded_only_with_validation(self):
+        base = (Path("."), Path("c.json"), Path("w.json"), Path("o.traj"))
+        options = {"validate": True, "target_time": 2, "max_time": 3,
+                   "jerk_target": 10, "jerk_max": 20,
+                   "scoring_profile": "precision", "accept_score": 70}
+        joined = " ".join(str(part) for part in gui_server.build_command(*base, options))
+        for flag in ("--target-time 2", "--max-time 3", "--jerk-target 10",
+                     "--jerk-max 20", "--scoring-profile precision", "--accept-score 70"):
+            self.assertIn(flag, joined)
+        joined = " ".join(str(part) for part in gui_server.build_command(
+            *base, {key: value for key, value in options.items() if key != "validate"}))
+        self.assertNotIn("--target-time", joined)
+        self.assertNotIn("--accept-score", joined)
+
     def test_saving_a_mission_writes_to_the_missions_folder(self):
         # The missions folder is the operator's own git repository. The
         # test must not commit into it: it did, and the operator's history

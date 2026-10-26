@@ -56,6 +56,14 @@ const state = {
     /* Whether the last solve passed the validator. The push to the robot
        needs it: a trajectory that was never checked is not an approved one. */
     solveValidated: false,
+    /* The score's decision output: not a probability of hardware success. */
+    hubApproved: false,
+    runOutcome: 'unvalidated',
+    jobScore: null,
+    /* Measured lever tries for this mission session; ranked only after a run. */
+    leverHistory: [],
+    pendingLever: null,
+    missionScoring: {},
     pushJobId: null,
     measuredPoses: [],
     robotInfo: { events: [], geometry: {} },
@@ -350,6 +358,8 @@ function blankWaypoint(x = 0, y = 0, heading = 0) {
    to follow. */
 function markMissionChanged() {
     state.dirty = true;
+    state.leverHistory = [];
+    renderLeverHistory();
     updatePushButton();
 }
 
@@ -506,6 +516,7 @@ function saveSession() {
             config: state.config,
             configName: state.configName,
             configEdited: state.configEdited,
+            scoring: state.missionScoring,
             options: collectOptions(),
             hubConn: state.hubConn,
             hubName: state.hubName,
@@ -559,7 +570,15 @@ function applyOptionsToForm(options) {
         el('opt-best-effort').checked = Boolean(options.best_effort);
     }
     if (options.fast_polish !== undefined) el('opt-fast-polish').checked = options.fast_polish;
-    if (options.polish !== undefined) el('opt-polish').checked = Boolean(options.polish);
+    if (options.target_time !== undefined) el('opt-target-time').value = options.target_time;
+    if (options.max_time !== undefined) el('opt-max-time').value = options.max_time;
+    if (options.jerk_target !== undefined) el('opt-jerk-target').value = options.jerk_target;
+    if (options.jerk_max !== undefined) el('opt-jerk-max').value = options.jerk_max;
+    if (options.accept_score !== undefined) el('opt-accept-score').value = options.accept_score;
+    if (options.scoring_profile !== undefined) {
+        el('opt-score-profile').value = ['precision', 'balanced', 'speed']
+            .indexOf(options.scoring_profile) >= 0 ? options.scoring_profile : 'balanced';
+    }
     if (options.export_format !== undefined) el('opt-export').value = options.export_format;
     if (options.controller_dt !== undefined) el('opt-controller-dt').value = options.controller_dt;
     updateGateFields();
@@ -581,13 +600,22 @@ function syncPresetRadio() {
             && Number(preset.candidates) === Number(current.candidates)
             && Boolean(preset.validate) === Boolean(current.validate)
             && preset.export_format === current.export_format
-            && (preset.propagation || 'plant') === current.propagation
-            && Boolean(preset.polish) === Boolean(current.polish);
+            && (preset.propagation || 'plant') === current.propagation;
     });
     radios.forEach((radio) => { radio.checked = match ? radio.value === match.value : false; });
 }
 
 /* ------------------------------------------------------ mission files */
+
+function missionDocument() {
+    const scoring = state.missionScoring || {};
+    const clean = {};
+    ['target_time_s', 'max_time_s', 'jerk_target_m_s3', 'jerk_max_m_s3'].forEach((key) => {
+        if (scoring[key] !== undefined && scoring[key] !== null) clean[key] = scoring[key];
+    });
+    const waypoints = state.waypoints.map(waypointToJson);
+    return Object.keys(clean).length ? { waypoints, scoring: clean } : waypoints;
+}
 
 function downloadMission() {
     if (state.waypoints.length < 2) {
@@ -595,7 +623,7 @@ function downloadMission() {
         return;
     }
     const name = (el('mission-name').value || 'mission').replace(/[^a-z0-9_-]+/gi, '-');
-    const blob = new Blob([JSON.stringify(state.waypoints.map(waypointToJson), null, 1)],
+    const blob = new Blob([JSON.stringify(missionDocument(), null, 1)],
         { type: 'application/json' });
     const link = document.createElement('a');
     link.href = URL.createObjectURL(blob);
@@ -703,6 +731,17 @@ function durationText(entry) {
 function describeCandidates(report, winner) {
     const candidates = report.candidates || [];
     const parts = [];
+
+    /* A scored report says the selection rule out loud: the highest score
+       wins, and the score is a decision score, never a probability. */
+    if (winner && winner.score !== undefined && winner.score !== null) {
+        const threshold = report.accept_score;
+        parts.push(`the highest score wins: ${Number(winner.score).toFixed(1)} / 100`
+            + ` (${winner.profile || report.profile || 'balanced'})`);
+        if (threshold !== undefined && threshold !== null) {
+            parts.push(`a failed plan is accepted at score ${threshold} or above`);
+        }
+    }
 
     if (candidates.length > 4) {
         // More candidates than a chip row can name: summarise them.
@@ -839,8 +878,10 @@ function renderValidationReport(report) {
            the list when the triad failed (KI-048). */
         const style = entry.style || 'baseline';
         const rescue = Boolean(entry.rescue) || isRescueCandidate(style);
-        const verdict = entry.ok ? 'ok' : (entry.validation_skipped ? 'not checked' : 'failed');
-        chip.className = `chip ${entry.ok ? 'ok' : (entry.validation_skipped ? '' : 'bad')}`
+        const verdict = entry.ok ? 'ok'
+            : (entry.accepted ? 'accepted'
+                : (entry.validation_skipped ? 'not checked' : 'failed'));
+        chip.className = `chip ${entry.ok ? 'ok' : (entry.accepted ? 'warn' : (entry.validation_skipped ? '' : 'bad'))}`
             + `${i === index ? ' active' : ''}`
             + (rescue ? ' is-rescue' : '');
         const timing = entry.timing === 'per-segment' ? 'per-seg' : 'equal-dur';
@@ -848,8 +889,11 @@ function renderValidationReport(report) {
             ? '' : ` ${entry.duration_s.toFixed(2)}s`;
         const weight = (entry.accuracy_weight !== null && entry.accuracy_weight !== undefined
             && entry.accuracy_weight > 0) ? ` @${entry.accuracy_weight}` : '';
-        chip.textContent = `${i + 1}. ${candidateName(style, rescue)} ${timing}${weight}${duration} `
-            + `${verdict}`;
+        const score = entry.score === null || entry.score === undefined
+            ? '' : ` score ${Number(entry.score).toFixed(1)}`;
+        const eligibility = entry.eligibility ? ` ${entry.eligibility}` : '';
+        chip.textContent = `${i + 1}. ${candidateName(style, rescue)} ${timing}${weight}${duration}`
+            + `${score}${eligibility} ${verdict}`;
         // One title: the candidate's identity and why it failed. The second
         // assignment used to overwrite the first, so the tooltip never
         // showed the style or the weight.
@@ -976,6 +1020,7 @@ function collectReportData() {
         mission: {
             name: el('mission-name').value,
             waypoints: state.waypoints.map(waypointToJson),
+            scoring: state.missionScoring || {},
         },
         robot: {
             name: state.configName,
@@ -999,6 +1044,12 @@ function collectReportData() {
             tracking_cm: candidate ? candidate.tracking_cm : null,
             validated: el('opt-validate').checked,
             failed: Boolean(state.jobFailed),
+            outcome: state.runOutcome,
+            score: state.jobScore,
+            score_version: state.jobScore === null ? null : 1,
+            profile: el('opt-score-profile').value,
+            hub_approved: state.hubApproved,
+            accepted: state.runOutcome === 'accepted',
             reason: state.jobFailedReason || '',
             wall_s: state.jobWallS,
             path_length_m: summary.path_length_m !== undefined
@@ -1089,6 +1140,7 @@ function collectProject() {
         mission: {
             name: el('mission-name').value,
             waypoints: state.waypoints.map(waypointToJson),
+            scoring: state.missionScoring || {},
         },
         robot: {
             name: state.configName,
@@ -1452,7 +1504,8 @@ function updatePushButton() {
        validated has no verdict, so it is not an approved one, and the
        button says so instead of calling it approved. */
     const solved = Boolean(state.solveJobId && state.solveHasTrajectory);
-    const checked = state.solveValidated;
+    const checked = state.solveValidated
+        || (state.runOutcome === 'accepted' && state.hubApproved === true);
     /* The trajectory on the field has to be the answer to the mission on
        the screen. When the mission has moved on since the solve, the
        trajectory answers an older mission and must not go to the robot. */
@@ -1464,6 +1517,9 @@ function updatePushButton() {
             + 'before pushing it.';
     } else if (!solved) {
         status.textContent = 'Solve a mission first.';
+    } else if (state.runOutcome === 'accepted' && state.hubApproved === true) {
+        status.textContent = 'This accepted plan is marked hub-ready by the score. '
+            + 'Server-side accepted-push enforcement is not integrated yet.';
     } else if (!checked && state.validationReport) {
         status.textContent = 'This trajectory failed validation, so it is not '
             + 'approved for the robot. It is on the field for inspection only.';
@@ -1471,7 +1527,8 @@ function updatePushButton() {
         status.textContent = 'This trajectory has not been validated against your robot. '
             + 'Turn validation on in the Solve tab and solve again before pushing it.';
     } else if (!status.textContent || status.textContent.startsWith('Solve a mission')
-            || status.textContent.startsWith('This trajectory')) {
+            || status.textContent.startsWith('This trajectory')
+            || status.textContent.startsWith('This accepted plan')) {
         status.textContent = 'The validated trajectory is ready to run on the robot.';
     }
 }
@@ -2451,23 +2508,18 @@ function suggestFixes(report) {
     const selected = candidates[(report.selected || 1) - 1] || candidates[0];
     if (selected && selected.ok) return fixes;
 
-    /* The plant tube does not see the feedback that contracts it. When the
-       envelope is the failure - wider than the 2 cm limit, or cut off at the
-       validator's guard - the closed-loop tick map is the lever. */
-    const envelopeFailed = candidates.some((entry) => !entry.ok
-        && (entry.envelope_truncated
-            || (Number.isFinite(entry.envelope_cm) && entry.envelope_cm > 2.0)));
+    /* The plant tube does not see the feedback that contracts it. The
+       failure is read from the per-segment excess over the active local
+       limit, not from a hard-coded 2 cm budget. */
+    const envelopeFailed = candidates.some((entry) => !entry.ok && (
+        entry.envelope_truncated
+        || (entry.segments || []).some((segment) => segment && segment.ok === false
+            && (Number.isFinite(segment.excess_m) && segment.excess_m > 0
+                || (Number.isFinite(segment.envelope_m) && Number.isFinite(segment.limit_m)
+                    && segment.envelope_m > segment.limit_m)))));
     if (envelopeFailed && el('opt-propagation').value !== 'tick') {
         fixes.push({ id: 'tick', label: 'Try Closed-Loop Tick Propagation',
                      propagation: 'tick' });
-    }
-
-    /* A tracking error just over the 5 mm gate is a sampling problem, which
-       is what the gradient polish re-solves for. */
-    const trackingError = selected ? Number(selected.tracking_cm) : NaN;
-    if (Number.isFinite(trackingError) && trackingError > 0.5 && trackingError <= 0.6
-            && !el('opt-polish').checked) {
-        fixes.push({ id: 'polish', label: 'Try Gradient Polish', polish: true });
     }
 
     /* A force or slip failure is what the soft force weight prices. */
@@ -2488,12 +2540,13 @@ function suggestFixes(report) {
     return fixes;
 }
 
-/* Pull the lever the button names, then solve again. */
+/* Pull the lever the button names, then solve again. The next result is
+   compared with the previous one, so the lever history is measured. */
 function applyFix(fix) {
     if (fix.weight !== undefined) el('opt-accuracy').value = fix.weight;
     if (fix.propagation !== undefined) el('opt-propagation').value = fix.propagation;
-    if (fix.polish) el('opt-polish').checked = true;
     if (fix.force_weight !== undefined) el('opt-force-weight').value = fix.force_weight;
+    state.pendingLever = { id: fix.id, label: fix.label };
     syncPresetRadio();
     scheduleSessionSave();
     solve();
@@ -2600,12 +2653,139 @@ function describeSolveDiff(previousEntry, currentEntry) {
     return `vs. the previous solve: ${parts.join(', ')}.`;
 }
 
+/* The run's verdict, separate from the raw validator verdict. Acceptance is
+   a decision against a threshold; it never turns a failed plan into a
+   passed one, and the score is not a probability. */
+function runVerdict(report, selected, jobFailed) {
+    const candidates = report && report.candidates;
+    const entry = selected || {};
+    const rawOk = Boolean(entry.ok);
+    const accepted = Boolean(report && (report.accepted || entry.accepted));
+    const bestEffort = Boolean(report && (report.best_effort || entry.best_effort));
+    const score = entry.score !== undefined ? entry.score
+        : (report && report.score !== undefined ? report.score : null);
+    const out = {
+        kind: 'unvalidated',
+        rawOk, accepted, bestEffort,
+        score,
+        scoreVersion: entry.score_version || (report && report.score_version) || 1,
+        profile: entry.profile || (report && report.profile) || 'balanced',
+        categories: entry.categories || (report && report.categories) || null,
+        hubApproved: Boolean(report && (report.hub_approved !== undefined
+            ? report.hub_approved : (rawOk && !jobFailed))),
+    };
+    if (jobFailed) out.kind = 'structural';
+    else if (report && candidates) {
+        if (rawOk) out.kind = 'passed';
+        else if (accepted) out.kind = 'accepted';
+        else if (bestEffort) out.kind = 'best_effort';
+        else out.kind = 'failed';
+    }
+    return out;
+}
+
+/* Measured levers only: the delta is taken from the two finished runs, so
+   there is never a predicted points/second before a solve. */
+function recordLever(previous, entry, wallS) {
+    if (!state.pendingLever || !previous || !entry) return;
+    const before = Number.isFinite(previous.score) ? previous.score : null;
+    const after = Number.isFinite(entry.score) ? entry.score : null;
+    const deltaScore = before !== null && after !== null ? after - before : null;
+    const deltaDuration = Number.isFinite(previous.summary && previous.summary.duration_s)
+            && Number.isFinite(entry.summary && entry.summary.duration_s)
+        ? entry.summary.duration_s - previous.summary.duration_s : null;
+    const wall = Number.isFinite(wallS) ? wallS : entry.wallS;
+    state.leverHistory.push({
+        id: state.pendingLever.id,
+        label: state.pendingLever.label,
+        deltaScore, deltaDuration,
+        wallS: wall,
+        pointsPerS: deltaScore !== null && Number.isFinite(wall) && wall > 0
+            ? deltaScore / wall : null,
+    });
+    state.pendingLever = null;
+}
+
+function renderScoreBlock(verdict) {
+    const box = el('score-block');
+    const value = el('score-value');
+    const meta = el('score-meta');
+    const categories = el('score-categories');
+    const note = el('score-note');
+    if (!verdict || verdict.score === null || verdict.score === undefined) {
+        box.hidden = true;
+        value.textContent = '';
+        meta.textContent = '';
+        categories.innerHTML = '';
+        note.textContent = '';
+        return;
+    }
+    box.hidden = false;
+    value.textContent = `${Number(verdict.score).toFixed(1)} / 100`;
+    meta.textContent = `Decision score v${verdict.scoreVersion}, profile ${verdict.profile}. `
+        + 'This is a decision score, not a probability of hardware success.';
+    categories.innerHTML = '';
+    const names = [['physical', 'Physical'], ['accuracy', 'Accuracy'],
+        ['quality', 'Motion Quality'], ['duration', 'Duration']];
+    const parts = verdict.categories || {};
+    names.forEach(([key, label]) => {
+        const item = document.createElement('div');
+        item.className = 'score-category';
+        const number = parts[key];
+        item.textContent = `${label}: ${Number.isFinite(Number(number))
+            ? Number(number).toFixed(1) : '-'}`;
+        categories.appendChild(item);
+    });
+    note.textContent = verdict.kind === 'accepted'
+        ? 'The plan failed validation and was accepted at this score. It is not a passed plan.'
+        : verdict.kind === 'passed'
+            ? 'The validator passed this plan.'
+            : 'The plan is on the field for inspection.';
+}
+
+function renderLeverHistory() {
+    const box = el('lever-history');
+    const table = el('lever-table');
+    const note = el('lever-note');
+    if (!state.leverHistory.length) {
+        box.hidden = true;
+        table.innerHTML = '';
+        note.textContent = '';
+        return;
+    }
+    box.hidden = false;
+    table.innerHTML = '<tr><th>Lever</th><th>Score</th><th>Time</th><th>Measured</th></tr>';
+    const ranked = state.leverHistory.slice().sort((a, b) => {
+        const left = Number.isFinite(a.deltaScore) ? a.deltaScore : -Infinity;
+        const right = Number.isFinite(b.deltaScore) ? b.deltaScore : -Infinity;
+        return right - left;
+    });
+    ranked.forEach((lever) => {
+        const row = document.createElement('tr');
+        const score = Number.isFinite(lever.deltaScore)
+            ? `${lever.deltaScore >= 0 ? '+' : ''}${lever.deltaScore.toFixed(2)}` : '-';
+        const duration = Number.isFinite(lever.deltaDuration)
+            ? `${lever.deltaDuration >= 0 ? '+' : ''}${lever.deltaDuration.toFixed(2)} s` : '-';
+        const measured = Number.isFinite(lever.pointsPerS)
+            ? `${lever.pointsPerS.toFixed(2)} points/s` : 'wall '
+                + (Number.isFinite(lever.wallS) ? `${lever.wallS.toFixed(1)} s` : '-');
+        row.innerHTML = `<td>${lever.label}</td><td>${score}</td>`
+            + `<td>${duration}</td><td>${measured}</td>`;
+        table.appendChild(row);
+    });
+    note.textContent = 'Ranked by measured score improvement. Every number here is '
+        + 'measured after the solve; there are no predicted estimates.';
+}
+
 function recordSolve(summary, verdict) {
-    const entry = { summary, verdict, at: Date.now() };
+    const entry = { summary, verdict, at: Date.now(), score: state.jobScore,
+        wallS: state.jobWallS, outcome: state.runOutcome };
     const previous = state.solveHistory[state.solveHistory.length - 1];
+    recordLever(previous, entry, state.jobWallS);
     state.solveHistory.push(entry);
     if (state.solveHistory.length > 10) state.solveHistory.shift();
     el('solve-diff').textContent = describeSolveDiff(previous, entry);
+    renderLeverHistory();
 }
 
 /* ------------------------------------------------------------- rendering */
@@ -3106,7 +3286,6 @@ function applyPreset(name) {
     el('opt-validate').checked = Boolean(preset.validate);
     el('opt-export').value = preset.export_format;
     el('opt-propagation').value = preset.propagation === 'tick' ? 'tick' : 'plant';
-    el('opt-polish').checked = Boolean(preset.polish);
     document.querySelectorAll('#presets input[type=radio]').forEach((radio) => {
         radio.checked = radio.value === name;
     });
@@ -3133,6 +3312,18 @@ function updateGateFields() {
             'The allowance is only applied by validation.'],
         'opt-best-effort': ['A failed validation still writes the best path, marked failed.',
             'Only a validation can fail, so there is nothing to keep.'],
+        'opt-score-profile': ['The weights the decision score uses.',
+            'The score is built from a validation.'],
+        'opt-target-time': ['The duration the score prices.',
+            'The target time is only used by validation.'],
+        'opt-max-time': ['The duration the score will not exceed.',
+            'The maximum time is only used by validation.'],
+        'opt-jerk-target': ['The wheel-jerk the score prices.',
+            'The jerk target is only used by validation.'],
+        'opt-jerk-max': ['The wheel-jerk the score will not exceed.',
+            'The jerk maximum is only used by validation.'],
+        'opt-accept-score': ['A failed plan is accepted at or above this score.',
+            'Acceptance only exists against a validation.'],
     };
     Object.keys(fields).forEach((id) => {
         const control = el(id);
@@ -3156,6 +3347,11 @@ function updateMeshField() {
 
 /* ----------------------------------------------------------------- solve */
 
+function optionalNumber(id) {
+    const raw = el(id).value;
+    return raw === '' ? null : Number(raw);
+}
+
 function collectOptions() {
     return {
         samples: Number(el('opt-samples').value),
@@ -3176,7 +3372,12 @@ function collectOptions() {
            the push stays gated on the verdict. */
         best_effort: el('opt-best-effort').checked,
         fast_polish: el('opt-fast-polish').checked,
-        polish: el('opt-polish').checked,
+        scoring_profile: el('opt-score-profile').value,
+        target_time: optionalNumber('opt-target-time'),
+        max_time: optionalNumber('opt-max-time'),
+        jerk_target: optionalNumber('opt-jerk-target'),
+        jerk_max: optionalNumber('opt-jerk-max'),
+        accept_score: el('opt-validate').checked ? optionalNumber('opt-accept-score') : null,
         iteration_history: true,
         sysid_fit: (el('opt-use-model').checked && state.model) ? state.model.path : null,
         export_format: el('opt-export').value,
@@ -3227,6 +3428,14 @@ async function solve() {
         refuseSolve('Choose a robot configuration first.');
         return;
     }
+    const options = collectOptions();
+    if (options.validate) {
+        if (!Number.isFinite(options.target_time) || !Number.isFinite(options.max_time)
+                || !(options.target_time > 0) || !(options.target_time < options.max_time)) {
+            refuseSolve('A validated solve needs a target time above zero and a maximum time above it.');
+            return;
+        }
+    }
     setBusy(true);
     setStatus('Solving...');
     el('result-status').textContent = 'Solving...';
@@ -3260,7 +3469,6 @@ async function solve() {
        run exports that candidate instead of the fastest passing one. It is
        consumed here, so a later solve is not quietly pinned to the same
        seed; the CLI refuses the pick if that candidate no longer passes. */
-    const options = collectOptions();
     if (state.pickCandidate) {
         options.pick_candidate = state.pickCandidate;
         options.candidates = Math.max(Number(options.candidates) || 1,
@@ -3273,6 +3481,7 @@ async function solve() {
             body: JSON.stringify({
                 name: el('mission-name').value,
                 config: state.config,
+                mission: missionDocument(),
                 waypoints: state.waypoints.map(waypointToJson),
                 options,
             }),
@@ -3335,6 +3544,11 @@ function pollJob() {
                 const selected = report && report.candidates
                     ? (report.candidates[(report.selected || 1) - 1] || {}) : {};
                 state.solveValidated = Boolean(selected.ok);
+                const verdict = runVerdict(report, selected, false);
+                state.runOutcome = verdict.kind;
+                state.hubApproved = verdict.hubApproved;
+                state.jobScore = verdict.score;
+                renderScoreBlock(verdict);
                 /* A best-effort run is a successful job whose verdict is a
                    failure: the path is on the field to be inspected, not to
                    be approved. Say which of the two it is. */
@@ -3363,15 +3577,18 @@ function pollJob() {
                 renderDownloads(job.artifacts, job.id);
                 drawPlot();
                 const validated = state.solveValidated;
-                el('result-status').innerHTML = validated
-                    ? '<span class="badge ok">Validated</span> The trajectory passed the validator '
-                        + 'and is ready to use.'
-                    : failedValidation
-                        ? '<span class="badge error">Failed validation</span> The best path is '
-                            + 'shown for inspection: ' + bestEffortDetail(selected)
-                            + ' It is not approved for the hub.'
-                        : '<span class="badge warn">Not validated</span> This trajectory has not been '
-                            + 'checked against your robot. Validate it before you drive it.';
+                el('result-status').innerHTML = verdict.kind === 'passed'
+                    ? '<span class="badge ok">Passed</span> The validator passed this plan and it is ready to use.'
+                    : verdict.kind === 'accepted'
+                        ? '<span class="badge warn">Accepted plan</span> This plan failed validation '
+                            + `and was accepted at score ${Number(verdict.score).toFixed(1)}. `
+                            + 'It is not a passed plan.'
+                        : verdict.kind === 'best_effort'
+                            ? '<span class="badge error">Failed validation</span> The best path is '
+                                + 'shown for inspection: ' + bestEffortDetail(selected)
+                                + ' It is not approved for the hub.'
+                            : '<span class="badge warn">Not validated</span> This trajectory has not been '
+                                + 'checked against your robot. Validate it before you drive it.';
                 /* One click for the lever the message names. A failed verdict
                    has already been checked, so the lever is not "check it
                    again"; the validation detail carries the levers that fit. */
@@ -4755,7 +4972,7 @@ async function saveMission() {
             method: 'POST',
             body: JSON.stringify({
                 name: el('mission-name').value,
-                waypoints: state.waypoints.map(waypointToJson),
+                mission: missionDocument(),
             }),
         });
         /* What is on disk now, so the studio can say whether the mission on
@@ -4832,6 +5049,7 @@ async function restoreMission(sha) {
             method: 'POST',
             body: JSON.stringify({ name: el('mission-name').value, sha }),
         });
+        state.missionScoring = payload.scoring || {};
         setWaypoints(payload.waypoints);
         renderHistory(payload.history || []);
         toast('Restored that version.');
@@ -4840,12 +5058,25 @@ async function restoreMission(sha) {
     }
 }
 
+function loadMissionDocument(data) {
+    if (Array.isArray(data)) {
+        state.missionScoring = {};
+        return data;
+    }
+    if (data && Array.isArray(data.waypoints)) {
+        state.missionScoring = data.scoring && typeof data.scoring === 'object'
+            ? data.scoring : {};
+        return data.waypoints;
+    }
+    throw new Error('A mission file must contain waypoints.');
+}
+
 el('mission-list').addEventListener('change', (e) => {
     const mission = (state.missions || []).find((m) => m.name === e.target.value);
     if (!mission) return;
     loadHistory(mission.name);
     // The previous mission stays in the undo history, so nothing is lost.
-    setWaypoints(mission.data);
+    setWaypoints(loadMissionDocument(mission.data));
     el('mission-name').value = mission.name;
     frameAll();
     draw();
@@ -4871,8 +5102,8 @@ el('file-mission').addEventListener('change', async (e) => {
     if (!file) return;
     try {
         const data = JSON.parse(await file.text());
-        if (!Array.isArray(data)) throw new Error('A mission file must contain a list of waypoints.');
-        setWaypoints(data);
+        const waypoints = loadMissionDocument(data);
+        setWaypoints(waypoints);
         el('mission-name').value = file.name.replace(/\.json$/i, '');
         frameAll();
         draw();
@@ -4906,8 +5137,10 @@ el('opt-validate').addEventListener('change', () => {
 });
 
 ['opt-samples', 'opt-accuracy', 'opt-candidates', 'opt-export', 'opt-controller-dt',
- 'opt-force-weight', 'opt-propagation', 'opt-polish', 'opt-fast-polish', 'opt-best-effort',
- 'opt-envelope-limit', 'opt-envelope-limit-per-metre']
+ 'opt-force-weight', 'opt-propagation', 'opt-fast-polish', 'opt-best-effort',
+ 'opt-envelope-limit', 'opt-envelope-limit-per-metre',
+ 'opt-score-profile', 'opt-target-time', 'opt-max-time', 'opt-jerk-target',
+ 'opt-jerk-max', 'opt-accept-score']
     .forEach((id) => el(id).addEventListener('change', () => {
         updateGateFields();
         syncPresetRadio();
@@ -4996,6 +5229,7 @@ async function init() {
         // over whatever this browser had open.
         const fromCli = Boolean(initial.auto_solve);
         if (fromCli && initial.waypoints) {
+            state.missionScoring = initial.scoring || {};
             setWaypoints(initial.waypoints);
             el('mission-name').value = state.configName || 'mission';
             if (initial.config) {
@@ -5042,6 +5276,7 @@ async function init() {
                 });
             }
         } else if (initial.waypoints) {
+            state.missionScoring = initial.scoring || {};
             setWaypoints(initial.waypoints);
             el('mission-name').value = state.configName || 'mission';
             if (initial.options && Object.keys(initial.options).length) {

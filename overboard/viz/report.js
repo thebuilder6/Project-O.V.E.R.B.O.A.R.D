@@ -236,18 +236,24 @@ tr.ok td.verdict-cell { color: var(--ok); }
         if (!candidates || !candidates.length) return '';
         const rows = candidates.map((entry, i) => {
             const ok = entry.ok !== false;
+            const accepted = Boolean(entry.accepted);
             const reasons = (entry.reasons || []).join('; ');
-            return `<tr class="${ok ? '' : 'bad'}">`
+            const score = entry.score === null || entry.score === undefined
+                ? '-' : num(entry.score, 1);
+            const verdict = ok ? 'pass' : (accepted ? 'accepted' : esc(reasons || 'failed'));
+            return `<tr class="${ok ? '' : (accepted ? 'warn' : 'bad')}">`
                 + `<td class="mono">${i + 1}${i === selected ? ' \u2713' : ''}</td>`
                 + `<td>${esc(entry.timing === 'per-segment' ? 'per segment' : 'equal duration')}`
                 + `${entry.accuracy_weight ? `, weight ${esc(entry.accuracy_weight)}` : ''}</td>`
                 + `<td class="num mono">${entry.duration_s === null || entry.duration_s === undefined ? '-' : `${num(entry.duration_s, 3)} s`}</td>`
                 + `<td class="num mono">${entry.envelope_cm === null || entry.envelope_cm === undefined ? '-' : `${num(entry.envelope_cm, 2)} cm`}</td>`
                 + `<td class="num mono">${entry.tracking_cm === null || entry.tracking_cm === undefined ? '-' : `${num(entry.tracking_cm, 2)} cm`}</td>`
-                + `<td class="verdict-cell">${ok ? 'pass' : esc(reasons || 'failed')}</td></tr>`;
+                + `<td class="num mono">${score}</td>`
+                + `<td class="verdict-cell">${verdict}</td></tr>`;
         });
         return `<table><thead><tr><th>#</th><th>Timing</th><th class="num">Duration</th>`
-            + `<th class="num">Envelope</th><th class="num">Tracking</th><th>Verdict</th></tr></thead>`
+            + `<th class="num">Envelope</th><th class="num">Tracking</th>`
+            + `<th class="num">Score</th><th>Verdict</th></tr></thead>`
             + `<tbody>${rows.join('')}</tbody></table>`;
     }
 
@@ -309,14 +315,20 @@ tr.ok td.verdict-cell { color: var(--ok); }
             year: 'numeric', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit',
         });
 
-        // The verdict: what the gate said, in one word.
+        // The verdict: what the gate said, in one word. Acceptance is a
+        // decision against a threshold; it is never called a pass.
         let verdictClass = 'warn';
         let verdictText = 'Not validated';
         let verdictNote = 'Validation was off, so the plan was not checked against the gates.';
-        if (result.failed) {
+        if (result.failed && result.outcome !== 'accepted') {
             verdictClass = 'bad';
             verdictText = 'Failed validation';
             verdictNote = result.reason || 'The plan did not pass the gates.';
+        } else if (result.outcome === 'accepted') {
+            verdictClass = 'warn';
+            verdictText = 'Accepted plan';
+            verdictNote = 'The plan failed validation and was accepted at the recorded score. '
+                + 'It is not a passed plan.';
         } else if (result.validated) {
             verdictClass = 'ok';
             verdictText = 'Passed validation';
@@ -324,6 +336,11 @@ tr.ok td.verdict-cell { color: var(--ok); }
         }
 
         const resultFacts = [];
+        if (result.score !== null && result.score !== undefined) {
+            resultFacts.push(fact('Score', `${num(result.score, 1)}`, '/ 100 decision score'));
+            resultFacts.push(fact('Score version', String(result.score_version || 1), ''));
+            resultFacts.push(fact('Profile', esc(result.profile || 'balanced'), ''));
+        }
         if (summary.duration_s !== undefined) resultFacts.push(fact('Duration', `${num(summary.duration_s, 3)}`, 's'));
         if (summary.path_length_m !== undefined) resultFacts.push(fact('Path', `${num(summary.path_length_m, 3)}`, 'm'));
         if (summary.peak_wheel_speed_m_s !== undefined) {

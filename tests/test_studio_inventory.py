@@ -64,7 +64,7 @@ class TestStudioInventory(unittest.TestCase):
         for element_id in ["robot-fields", "robot-range-fields", "sheet-table",
                            "plot-tabs", "legend-items", "validation-candidates",
                            "validation-table", "fix-row", "downloads", "history-list",
-                           "wp-list"]:
+                           "wp-list", "score-categories", "lever-table"]:
             self.assertIn(element_id, self.html, f"{element_id} is gone from the page")
             self.assertIn(element_id, self.doc,
                           f"{element_id} is not in the inventory document")
