@@ -208,6 +208,7 @@ from tests.test_risk_margins import (
     TestRiskMargins,
 )
 from tests.test_q18_decomposition import TestQ18Decomposition
+from tests.test_q19_oneknob import TestQ19OneKnob
 from tests.test_doc_numbers import (
     TestDocNumbers,
 )
@@ -269,6 +270,7 @@ def test_classes():
         TestRandomSuiteGenerator,
         TestRiskMargins,
         TestQ18Decomposition,
+        TestQ19OneKnob,
         TestDocNumbers,
         TestNoLoadSpeed,
         TestDrivebaseProfile,
