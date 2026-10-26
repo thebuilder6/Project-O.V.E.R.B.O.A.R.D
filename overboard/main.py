@@ -137,7 +137,8 @@ def _attempt_accepted(attempt, accept_score):
     """True when a failed candidate is eligible under an explicit --accept-score.
 
     A structural failure (non-convergence, a crashed or incomplete validator,
-    a diverged or unbounded tube, a missing final waypoint) is never accepted.
+    a diverged or unbounded tube, a missing final waypoint, a nominal body
+    inside a mission model) is never accepted.
     """
     return bool(
         accept_score is not None
@@ -427,10 +428,11 @@ def _build_validation_record(*, passed, accepted, best_effort, attempt,
         # uncertainty, alongside the run-wide limits (--field-clearance).
         "envelope_limit_field_m": (attempt or {}).get("envelope_limit_field_m"),
         "placement_uncertainty_m": (attempt or {}).get("placement_uncertainty_m"),
-        # The physical side of --field-clearance: the worst clearance
-        # utilisation (1.0 = touching), the nearest clearance the field
-        # measured, the worst penetration and the samples it could not
-        # measure (skipped, never clamped).
+        # The physical side of --field-clearance (mission models only - the
+        # mat boundary is no obstacle): the worst clearance utilisation
+        # (1.0 = touching), the nearest obstacle the field measured, the
+        # worst penetration and the samples it could not measure (skipped,
+        # never clamped). A nominal body inside an obstacle is structural.
         "field_clearance_util": (attempt or {}).get("field_clearance_util"),
         "field_clearance_min_m": (attempt or {}).get("field_clearance_min_m"),
         "penetration_m": (attempt or {}).get("penetration_m"),
@@ -562,23 +564,60 @@ def _local_limit(thresholds, index, travelled_at, default, per_metre,
     return _envelope_limit_at(default, per_metre, travelled_at)
 
 
+def _field_robot_radius(robot_cfg):
+    """The robot's disc against the field, the one the studio's overlay uses.
+
+    ``gui_server.field_collisions`` treats the robot as a disc as wide as
+    its axle track, centred on the path; the gate measures against the same
+    disc, so a clearance the operator sees and a clearance the gate gates
+    cannot disagree.
+    """
+    try:
+        return max(float(robot_cfg.track_width), 0.0) / 2.0
+    except (TypeError, ValueError, AttributeError):
+        return 0.0
+
+
 def _field_clearances(field, robot_cfg, samples_data):
     """The field's raw per-sample clearances (``--field-clearance``).
 
-    One value per sample: metres from the robot's disc (resolved
-    ``chassis_radius_m`` -> track/2 -> numeric) to the nearest mission model
-    or mat boundary, negative inside one. NaN is "the field cannot measure
-    this sample": it is never clamped, never checked, and never a clearance.
+    One value per sample: metres from the robot's disc (the axle-track disc
+    the studio's collision overlay draws) to the nearest mission model **or
+    mat boundary**, negative inside one. This is the accuracy channel: the
+    tube should stay on the mat. NaN is "the field cannot measure this
+    sample": it is never clamped, never checked, and never a clearance.
     """
     if field is None:
         return None
     values = []
-    for clearance in field.sample_clearances(samples_data, robot_cfg):
+    for clearance in field.sample_clearances(
+            samples_data, _field_robot_radius(robot_cfg)):
         try:
             values.append(float(clearance))
         except (TypeError, ValueError):
             values.append(float("nan"))
     return values
+
+
+def _field_obstacles(field, robot_cfg, samples_data):
+    """The per-sample ``(clearance, name)`` to the nearest mission model.
+
+    The physical channel (``--field-clearance``): the mat boundary is a
+    game-rule boundary, not a crash, so it is not measured here - the
+    chassis may legally overhang it. Negative means the nominal body is
+    inside that obstacle (structural); NaN means the field cannot measure
+    the sample (skipped).
+    """
+    if field is None:
+        return None
+    pairs = []
+    for clearance, name in field.obstacle_clearances(
+            samples_data, _field_robot_radius(robot_cfg)):
+        try:
+            pairs.append((float(clearance), name))
+        except (TypeError, ValueError):
+            pairs.append((float("nan"), name))
+    return pairs
 
 
 def _field_limits(clearances):
@@ -828,8 +867,9 @@ def _emit_validation_report(attempts, selected_index, propagation=None,
                # and the field's placement uncertainty (--field-clearance).
                "envelope_limit_field_m": envelope_limit_field,
                "placement_uncertainty_m": _finite(placement_uncertainty_m),
-               # The physical side of --field-clearance: the worst clearance
-               # utilisation (1.0 = touching), the nearest clearance the
+               # The physical side of --field-clearance (mission models only -
+               # the mat edge is no obstacle): the worst clearance
+               # utilisation (1.0 = touching), the nearest obstacle the
                # field measured, the worst penetration and the count of
                # samples the field could not measure.
                "field_clearance_util": _finite(
@@ -1453,12 +1493,16 @@ def _score_attempt(attempt_record, ctx):
         stats.get("segment_samples")
         or (samples if isinstance(samples, (list, tuple, np.ndarray)) else None))
     travelled = _travelled_m(samples_data)
-    # The field's raw clearances, one call per candidate (--field-clearance).
-    # The accuracy limits are the clamped ones; the physical check uses the
-    # raw clearance, so the clamp can never mask a penetration. The gate and
-    # the segment report read the same tables, so they cannot disagree.
+    # The field's raw clearances, two views of one field model
+    # (--field-clearance). The accuracy limits come from the full clearance
+    # (mat boundary included): the tube should stay on the mat. The physical
+    # channel measures mission models only - the mat boundary is a game-rule
+    # boundary, not a crash - so the clamp can never mask a penetration and
+    # the boundary can never fail anything physically. The gate and the
+    # segment report read the same tables, so they cannot disagree.
     field_clearances = _field_clearances(ctx.field, ctx.robot_cfg, samples_data)
     field_limits = _field_limits(field_clearances)
+    field_obstacles = _field_obstacles(ctx.field, ctx.robot_cfg, samples_data)
 
     try:
         immrax_val = _immrax_validator(ctx)
@@ -1500,16 +1544,20 @@ def _score_attempt(attempt_record, ctx):
     max_err_all = 0.0
     # The worst envelope-radius / local-limit ratio, for the accuracy score.
     max_env_ratio = 0.0
-    # The physical clearance channel (--field-clearance): the tube radius
-    # over the UNCLAMPED clearance, so the accuracy clamp can never mask a
+    # The physical clearance channel (--field-clearance), mission models
+    # only: the tube radius over the clearance to the nearest obstacle, on
+    # the UNCLAMPED clearance, so the accuracy clamp can never mask a
     # penetration. util > 1 is a physical failure like force or slip; a NaN
-    # clearance is not checked; max(raw, 1e-6) keeps a nominal overlap
-    # (raw <= 0) a large *finite* util - never Infinity in the report.
+    # clearance is not checked; max(raw, 1e-6) keeps a nominal overlap a
+    # large *finite* util - never Infinity in the report. A nominal body
+    # inside an obstacle (raw <= 0) is not this channel: it is structural.
     worst_clearance_util = 0.0
     worst_penetration = 0.0
     min_clearance = math.inf
     clearance_checked = 0
     clearance_skipped = 0
+    # (depth, name) of the worst nominal overlap with a mission model.
+    body_in_obstacle = None
 
     for i in range(len(samples_data)):
         # The segment's limit is the one of the waypoint the segment arrives
@@ -1524,23 +1572,34 @@ def _score_attempt(attempt_record, ctx):
             ctx.waypoint_thresholds, wp_idx, travelled[i], ctx.envelope_limit,
             ctx.envelope_limit_per_metre, field_limits, i)
 
-        raw = field_clearances[i] if field_clearances is not None else None
-        if raw is not None and math.isnan(raw):
-            clearance_skipped += 1
+        obstacle = field_obstacles[i] if field_obstacles is not None else None
+        in_obstacle = False
+        if obstacle is not None:
+            raw, obstacle_name = obstacle
+            if math.isnan(raw):
+                clearance_skipped += 1
+            else:
+                if math.isfinite(raw):
+                    min_clearance = min(min_clearance, raw)
+                if raw <= 0:
+                    # The nominal body is inside a mission model: structural
+                    # (a crash the plan already commits, never accepted).
+                    in_obstacle = True
+                    depth = -raw
+                    if body_in_obstacle is None or depth > body_in_obstacle[0]:
+                        body_in_obstacle = (depth, obstacle_name)
         env = samples_data[i].get('reachability_envelope', {})
         if env:
             err_x = (env['x_max'] - env['x_min']) / 2.0
             err_y = (env['y_max'] - env['y_min']) / 2.0
             err = np.sqrt(err_x**2 + err_y**2)
             max_err_all = max(max_err_all, err)
-            if raw is not None and not math.isnan(raw):
+            if obstacle is not None and not math.isnan(raw) and not in_obstacle:
                 clearance_checked += 1
                 worst_clearance_util = max(
                     worst_clearance_util, float(err) / max(raw, 1e-6))
                 worst_penetration = max(
                     worst_penetration, max(0.0, float(err) - raw))
-                if math.isfinite(raw):
-                    min_clearance = min(min_clearance, raw)
             if local_threshold > 0:
                 max_env_ratio = max(max_env_ratio, float(err) / local_threshold)
             if env.get('unknown'):
@@ -1562,8 +1621,9 @@ def _score_attempt(attempt_record, ctx):
         _finite(ctx.field.placement_uncertainty_m)
         if ctx.field is not None else None)
     # The physical side of --field-clearance, quantified for a re-run of the
-    # decision: the worst util, the nearest clearance the field measured, the
-    # worst penetration and how many samples the field could not measure.
+    # decision: the worst util, the nearest mission model the field measured,
+    # the worst penetration and how many samples the field could not measure.
+    # All of it is obstacle-only - the mat boundary is no physical obstacle.
     attempt_record["field_clearance_util"] = (
         float(worst_clearance_util)
         if ctx.field is not None and clearance_checked else None)
@@ -1590,6 +1650,7 @@ def _score_attempt(attempt_record, ctx):
     attempt_record["tracking_m"] = float(immrax_report.get("max_tracking_error_m", 0.0))
     attempt_record["heading_rad"] = float(immrax_report.get("max_heading_error_rad", 0.0))
     attempt_record["ok"] = (attempt_record["converged"] and not failed_threshold
+                            and body_in_obstacle is None
                             and not clearance_failed
                             and bool(immrax_report['passed']))
     # Which kind of failure this is, for --best-effort. An accuracy excess -
@@ -1602,16 +1663,19 @@ def _score_attempt(attempt_record, ctx):
     slip_violation = max(float(immrax_report.get("max_slip_l_N", 0.0)),
                          float(immrax_report.get("max_slip_r_N", 0.0)))
     speed_violation = float(immrax_report.get("speed_violation_m_s", 0.0))
-    # Structural failures (score contract): a diverged or unbounded tube and
-    # an incomplete validator result can never be scored, accepted, exported
-    # or pushed - only a *quantified* excess can.
+    # Structural failures (score contract): a diverged or unbounded tube, an
+    # incomplete validator result, and a nominal body inside a mission model
+    # can never be scored, accepted, exported or pushed - only a *quantified*
+    # excess can.
     attempt_record["structural_failure"] = bool(
         attempt_record["diverged"]
         or unknown_envelope
+        or body_in_obstacle is not None
         or immrax_report.get("error"))
     hard_failure = bool(
         attempt_record["diverged"]
         or unknown_envelope
+        or body_in_obstacle is not None
         or clearance_failed
         or motor_violation > 1e-3
         or traction_violation > 1e-3
@@ -1622,6 +1686,11 @@ def _score_attempt(attempt_record, ctx):
         and not hard_failure)
     attempt_record["reasons"] = _immrax_failure_reasons(
         immrax_report, failed_threshold, max_vio_val)
+    if body_in_obstacle is not None:
+        depth, obstacle_name = body_in_obstacle
+        attempt_record["reasons"] = list(attempt_record["reasons"]) + [
+            f"the body is inside {obstacle_name or 'a mission model'} "
+            f"({depth * 100:.2f} cm of overlap)"]
     if clearance_failed:
         # A physical failure, not an accuracy drop: the tube reaches the
         # field, which --best-effort will not export.
@@ -1696,8 +1765,10 @@ def _score_attempt(attempt_record, ctx):
     # One capped, deterministic 0-100 number. It selects candidates and can
     # authorize export and a hub push. It is NOT a probability of hardware
     # success: it prices the measured excesses against the documented limits
-    # and orders the candidates with the result.
-    if ctx.target_time_s is not None and ctx.max_time_s is not None:
+    # and orders the candidates with the result. A body inside a mission
+    # model is structural: unscoreable, so its score stays None.
+    if (ctx.target_time_s is not None and ctx.max_time_s is not None
+            and body_in_obstacle is None):
         weights = dict(SCORING_PROFILES.get(
             ctx.scoring_profile, SCORING_PROFILES[DEFAULT_SCORING_PROFILE]))
         cpu_metrics = (cpu_summary or {}).get("metrics") or {}
@@ -2232,18 +2303,22 @@ def _render(output, samples_data, wps, optimizer, all_attempts, selected_index, 
                    'instead of the elapsed time (KI-054). Recorded with the '
                    'validation report.')
 @click.option('--field-clearance', default=None, type=str,
-              help='Two field-aware gates from one clearance model (needs '
-                   '--validate). The accuracy limit becomes the robot disc '
-                   'clearance at each sample, clamped to 0.005-0.05 m (a '
-                   'waypoint error_threshold still wins locally; a sample the '
-                   'field cannot measure falls back to --envelope-limit). And '
-                   'the clearance is its own physical gate: the tube reaching '
-                   'an obstacle (tube radius over the unclamped clearance '
-                   'above 1) fails like force or slip, so --best-effort never '
-                   'exports it and only --accept-score can. The field '
-                   'footprints carry about 100 mm of placement uncertainty, '
-                   'so the limit is nominal geometry, not a survey. Recorded '
-                   'with the validation report.')
+              help='Two field-aware gates from one field model (needs '
+                   '--validate). The accuracy limit becomes the clearance of '
+                   'the robot disc - as wide as its axle track, the disc the '
+                   'studio draws - at each sample, mission models and the mat '
+                   'edge - clamped to 0.005-0.05 m (a waypoint error_threshold '
+                   'still wins locally; a sample the field cannot measure '
+                   'falls back to --envelope-limit). And the clearance to the '
+                   'mission models is its own physical gate: the tube reaching '
+                   'a model (tube radius over the unclamped clearance above 1) '
+                   'fails like force or slip, so --best-effort never exports '
+                   'it and only --accept-score can. The mat edge is a game '
+                   'boundary, not a crash, so the chassis may overhang it; a '
+                   'nominal body inside a model is a structural failure, never '
+                   'exported. The field footprints carry about 100 mm of '
+                   'placement uncertainty, so the limit is nominal geometry, '
+                   'not a survey. Recorded with the validation report.')
 @click.option('--target-time', default=None, type=click.FloatRange(min=0.0),
               help='Scoring budget: the duration worth 100 on the duration '
                    'score. Required with --validate when the mission does not '

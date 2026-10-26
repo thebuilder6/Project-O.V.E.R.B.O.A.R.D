@@ -333,6 +333,44 @@ class FieldModel:
             clearances.append(best)
         return clearances
 
+    def obstacle_clearances(
+        self,
+        samples: List[Dict[str, Any]],
+        robot_radius_m: Any = 0.0,
+    ) -> List[Tuple[float, Optional[str]]]:
+        """One ``(clearance, name)`` per sample, mission models only.
+
+        The mat boundary is deliberately **not** measured here: it is a
+        game-rule boundary, not a crash - the chassis may legally overhang
+        it - so a sample near the edge is not physically inside anything.
+        ``sample_clearances`` keeps the full clearance (boundary included)
+        for the accuracy limit, where staying on the mat matters.
+
+        The clearance is the signed distance to the nearest obstacle, less
+        the robot's radius: negative means the robot's nominal body is
+        inside that obstacle, and the name says which one. A sample without
+        a usable ``x``/``y`` gets ``(nan, None)``; a sample with nothing on
+        the field gets ``(inf, None)``.
+        """
+        eff_radius = _effective_radius(robot_radius_m)
+        out: List[Tuple[float, Optional[str]]] = []
+        for sample in samples:
+            try:
+                x = float(sample["x"])
+                y = float(sample["y"])
+            except (KeyError, TypeError, ValueError):
+                out.append((float("nan"), None))
+                continue
+            best = math.inf
+            name = None
+            for obstacle in self.obstacles:
+                distance = obstacle.signed_distance(x, y) - eff_radius
+                if distance < best:
+                    best = distance
+                    name = obstacle.name
+            out.append((best, name))
+        return out
+
     def sensor_hits(
         self,
         samples: List[Dict[str, Any]],

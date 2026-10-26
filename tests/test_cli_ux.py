@@ -664,16 +664,20 @@ class TestValidationReport(unittest.TestCase):
         return _Envelope
 
     @staticmethod
-    def _stub_field(clearance, season="stub-field"):
-        """A field that measures every sample at one clearance value.
+    def _stub_field(clearance, season="stub-field", name="the model"):
+        """A field whose nearest mission model sits at one clearance value.
 
-        NaN is "the field cannot measure this sample".
+        NaN is "the field cannot measure this sample"; the mat boundary is
+        not modelled here (the physical channel never sees it).
         """
         class _Stub:
             placement_uncertainty_m = 0.1
 
             def sample_clearances(self, samples, robot_radius_m):
                 return [float(clearance)] * len(samples)
+
+            def obstacle_clearances(self, samples, robot_radius_m):
+                return [(float(clearance), name)] * len(samples)
 
         _Stub.season = season
         return _Stub()
@@ -890,23 +894,72 @@ class TestValidationReport(unittest.TestCase):
         self.assertAlmostEqual(payload["penetration_m"], 0.0001, places=6)
         self.assertAlmostEqual(payload["field_clearance_min_m"], 0.0049, places=6)
 
-    def test_a_nominal_overlap_stays_finite(self):
-        """raw <= 0 is a large finite util - never Infinity in the JSON."""
+    def test_the_mat_edge_is_not_a_physical_obstacle(self):
+        """The gallery case: a path along the mat edge passes.
+
+        The boundary clearance is negative there (the chassis overhangs the
+        printed edge), but the mat edge is a game-rule boundary, not a
+        crash: it clamps the accuracy limit to 5 mm and fails nothing
+        physically or structurally.
+        """
         tube = self._tube_validator(0.005)
-        with patch("overboard.viz.fields.load_field",
-                   return_value=self._stub_field(-0.01)):
-            failed, data = self._invoke(
-                ["--field-clearance", "stub-field"], validator=tube)
-        self.assertNotEqual(failed.exit_code, 0, failed.output)
-        marker = [line for line in failed.output.splitlines()
+        edge = self._field({
+            "season": "edge-field", "placement_uncertainty_m": 0.1,
+            "mat": {"width_m": 2.0, "height_m": 1.0},
+            "obstacles": []})
+        with patch("overboard.viz.fields.load_field", return_value=edge):
+            passed, data = self._invoke(
+                ["--field-clearance", "edge-field"], validator=tube)
+        self.assertEqual(passed.exit_code, 0, passed.output)
+        record = data["validation"]
+        self.assertTrue(record["passed"])
+        self.assertFalse(record["best_effort"])
+        # The accuracy limit clamps to 5 mm at the edge...
+        self.assertAlmostEqual(record["envelope_limit_field_m"]["min_m"], 0.005)
+        self.assertAlmostEqual(record["envelope_limit_field_m"]["max_m"], 0.005)
+        # ...and nothing on the field is a physical obstacle here.
+        self.assertLessEqual(record["field_clearance_util"], 1.0)
+        self.assertAlmostEqual(record["penetration_m"], 0.0)
+        marker = [line for line in passed.output.splitlines()
+                  if line.startswith(self.main.VALIDATION_MARKER)]
+        payload = json.loads(marker[0][len(self.main.VALIDATION_MARKER):])
+        self.assertFalse(payload["candidates"][0]["structural_failure"])
+
+    def test_a_body_inside_an_obstacle_is_structural(self):
+        """The nominal body inside a real obstacle: never exported.
+
+        Beyond the physical channel - a crash the plan already commits -
+        so no --accept-score buys it and the score stays None (KI-055).
+        """
+        tube = self._tube_validator(0.005)
+        inside = self._stub_field(-0.01, name="the model")
+        with patch("overboard.viz.fields.load_field", return_value=inside):
+            refused, data = self._invoke(
+                ["--field-clearance", "stub-field", "--accept-score", "1"],
+                validator=tube)
+        self.assertNotEqual(refused.exit_code, 0, refused.output)
+        self.assertIsNone(data)
+        marker = [line for line in refused.output.splitlines()
                   if line.startswith(self.main.VALIDATION_MARKER)]
         self.assertEqual(len(marker), 1)
         self.assertNotIn("Infinity", marker[0])
         self.assertNotIn("NaN", marker[0])
         payload = json.loads(marker[0][len(self.main.VALIDATION_MARKER):])
-        self.assertGreater(payload["field_clearance_util"], 1e3)
-        self.assertAlmostEqual(payload["penetration_m"], 0.015, places=6)
-        self.assertAlmostEqual(payload["field_clearance_min_m"], -0.01, places=6)
+        candidate = payload["candidates"][0]
+        self.assertTrue(candidate["structural_failure"])
+        self.assertFalse(candidate["eligibility"])
+        self.assertIsNone(candidate["score"])
+        reason = " ".join(candidate["reasons"])
+        self.assertIn("the body is inside the model", reason)
+        self.assertIn("1.00 cm of overlap", reason)
+
+        # --best-effort is accuracy-only; a structural failure is not that.
+        with patch("overboard.viz.fields.load_field", return_value=inside):
+            refused, data = self._invoke(
+                ["--field-clearance", "stub-field", "--best-effort"],
+                validator=tube)
+        self.assertNotEqual(refused.exit_code, 0, refused.output)
+        self.assertIsNone(data)
 
     def test_field_clearance_needs_validation(self):
         result = self.runner.invoke(self.main.main, [

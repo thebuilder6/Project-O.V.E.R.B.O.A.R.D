@@ -235,6 +235,38 @@ class TestFieldCollisions(unittest.TestCase):
             field.sample_clearances([{"x": -0.1, "y": 0.5}], 0.0)[0],
             -0.1, places=9)
 
+    def test_the_obstacle_clearances_ignore_the_mat_edge(self):
+        """The mat edge is a game boundary, not a crash.
+
+        ``obstacle_clearances`` measures mission models only and names the
+        nearest one; ``sample_clearances`` keeps the boundary for the
+        accuracy limit, where staying on the mat matters.
+        """
+        field = self._clearance_field((), mat=(2.0, 1.14))
+        # At the west edge the boundary makes the full clearance negative...
+        edge = [{"x": 0.02, "y": 0.5}]
+        self.assertAlmostEqual(
+            field.sample_clearances(edge, 0.05)[0], -0.03, places=9)
+        # ...and the obstacle channel sees nothing there: the chassis may
+        # legally overhang the mat edge.
+        clearance, name = field.obstacle_clearances(edge, 0.05)[0]
+        self.assertTrue(math.isinf(clearance))
+        self.assertIsNone(name)
+        # At a model the channel names it, and inside it the clearance is
+        # the negative depth of the nominal body.
+        field = self._clearance_field(
+            (_circle(x=1.0, y=1.0, r=0.05),), mat=(2.0, 1.14))
+        clearance, name = field.obstacle_clearances([{"x": 1.0, "y": 1.0}],
+                                                    0.05)[0]
+        # At the circle's centre the disc sits 0.05 into the model and
+        # carries its own 0.05 radius: 0.10 m of nominal overlap.
+        self.assertAlmostEqual(clearance, -0.10, places=9)
+        self.assertEqual(name, "Circle")
+        # A sample without a position is nan, never a clearance.
+        clearance, name = field.obstacle_clearances([{"t": 0.0}], 0.05)[0]
+        self.assertTrue(math.isnan(clearance))
+        self.assertIsNone(name)
+
     def test_an_empty_field_without_a_mat_says_nothing_is_known(self):
         field = self._clearance_field((), mat=(0.0, 0.0))
         self.assertTrue(
