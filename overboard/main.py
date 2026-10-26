@@ -564,34 +564,31 @@ def _local_limit(thresholds, index, travelled_at, default, per_metre,
     return _envelope_limit_at(default, per_metre, travelled_at)
 
 
-def _field_robot_radius(robot_cfg):
-    """The robot's disc against the field, the one the studio's overlay uses.
+def _field_body(robot_cfg):
+    """The heading-aware body capsule the field gates measure.
 
-    ``gui_server.field_collisions`` treats the robot as a disc as wide as
-    its axle track, centred on the path; the gate measures against the same
-    disc, so a clearance the operator sees and a clearance the gate gates
-    cannot disagree.
+    The capsule of ``width_m``/``front_bumper_m``/``back_bumper_m`` at the
+    sample's own heading - the true body, not its circumscribed disc.
     """
-    try:
-        return max(float(robot_cfg.track_width), 0.0) / 2.0
-    except (TypeError, ValueError, AttributeError):
-        return 0.0
+    from overboard.viz.fields import Body
+    return Body.from_config(robot_cfg)
 
 
 def _field_clearances(field, robot_cfg, samples_data):
     """The field's raw per-sample clearances (``--field-clearance``).
 
-    One value per sample: metres from the robot's disc (the axle-track disc
-    the studio's collision overlay draws) to the nearest mission model **or
-    mat boundary**, negative inside one. This is the accuracy channel: the
-    tube should stay on the mat. NaN is "the field cannot measure this
-    sample": it is never clamped, never checked, and never a clearance.
+    One value per sample: metres of space around the body capsule (the
+    axle, its bumpers and half its width - at the sample's heading) to the
+    nearest mission model **or mat boundary**, negative inside one. This is
+    the accuracy channel: the tube should stay on the mat. NaN is "the
+    field cannot measure this sample": it is never clamped, never checked,
+    and never a clearance.
     """
     if field is None:
         return None
+    body = _field_body(robot_cfg)
     values = []
-    for clearance in field.sample_clearances(
-            samples_data, _field_robot_radius(robot_cfg)):
+    for clearance in field.body_clearances(samples_data, body):
         try:
             values.append(float(clearance))
         except (TypeError, ValueError):
@@ -604,15 +601,15 @@ def _field_obstacles(field, robot_cfg, samples_data):
 
     The physical channel (``--field-clearance``): the mat boundary is a
     game-rule boundary, not a crash, so it is not measured here - the
-    chassis may legally overhang it. Negative means the nominal body is
+    chassis may legally overhang it. Negative means the body capsule is
     inside that obstacle (structural); NaN means the field cannot measure
     the sample (skipped).
     """
     if field is None:
         return None
+    body = _field_body(robot_cfg)
     pairs = []
-    for clearance, name in field.obstacle_clearances(
-            samples_data, _field_robot_radius(robot_cfg)):
+    for clearance, name in field.body_obstacles(samples_data, body):
         try:
             pairs.append((float(clearance), name))
         except (TypeError, ValueError):
@@ -1582,8 +1579,12 @@ def _score_attempt(attempt_record, ctx):
                 if math.isfinite(raw):
                     min_clearance = min(min_clearance, raw)
                 if raw <= 0:
-                    # The nominal body is inside a mission model: structural
+                    # The body capsule is inside a mission model: structural
                     # (a crash the plan already commits, never accepted).
+                    # shortcut: raw <= 0 is float-exact on wireframe geometry
+                    # with ~50 mm placement uncertainty, upgrade to an
+                    # uncertainty tolerance if a marginal graze
+                    # absolute-refuses a real mission
                     in_obstacle = True
                     depth = -raw
                     if body_in_obstacle is None or depth > body_in_obstacle[0]:
@@ -2304,10 +2305,10 @@ def _render(output, samples_data, wps, optimizer, all_attempts, selected_index, 
                    'validation report.')
 @click.option('--field-clearance', default=None, type=str,
               help='Two field-aware gates from one field model (needs '
-                   '--validate). The accuracy limit becomes the clearance of '
-                   'the robot disc - as wide as its axle track, the disc the '
-                   'studio draws - at each sample, mission models and the mat '
-                   'edge - clamped to 0.005-0.05 m (a waypoint error_threshold '
+                   '--validate). The accuracy limit becomes the space around '
+                   'the robot body - its heading-aware capsule of width and '
+                   'bumper lengths - at each sample, mission models and the '
+                   'mat edge - clamped to 0.005-0.05 m (a waypoint error_threshold '
                    'still wins locally; a sample the field cannot measure '
                    'falls back to --envelope-limit). And the clearance to the '
                    'mission models is its own physical gate: the tube reaching '

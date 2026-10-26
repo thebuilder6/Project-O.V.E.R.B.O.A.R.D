@@ -973,24 +973,23 @@ def download_field_mat(season, timeout=120):
 def field_collisions(samples, config, season):
     """Where the planned path runs into a mission model.
 
-    The robot is treated as a disc as wide as its axle track, centred on the
-    path. Nothing is changed and nothing is blocked: the collisions are only
-    marked, so a human can decide what to do about them.
+    The robot is its heading-aware body capsule - the bumper segment at
+    each sample's own pose, inflated by half the body's width - the same
+    body the field-clearance gate measures, so a mark on the overlay and a
+    verdict from the gate cannot disagree. Nothing is changed and nothing
+    is blocked: the collisions are only marked, so a human can decide what
+    to do about them.
     """
     if not season or not samples:
         return []
-    from overboard.viz.fields import load_field
+    from overboard.viz.fields import Body, load_field
     from overboard.models.robot_model import RobotConfig
 
     field = load_field(season)
     if field is None:
         return []
-    try:
-        track = float(RobotConfig(config or {}).track_width)
-    except (TypeError, ValueError, KeyError):
-        track = 0.0
-    radius = max(track, 0.0) / 2.0
-    return [item.as_dict() for item in field.collisions(samples, radius)]
+    body = Body.from_config(RobotConfig(config or {}))
+    return [item.as_dict() for item in field.body_collisions(samples, body)]
 
 
 def list_fits():

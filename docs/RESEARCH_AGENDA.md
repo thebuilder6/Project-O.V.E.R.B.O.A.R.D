@@ -2,7 +2,8 @@
 
 **Status:** 2026-10-21, as measured on that tree. Part IV of the heuristics document.
 M3 (2026-10-25) closed Q15 and Q11 step 2; their records are in §24.0 and the
-Q11/Q15 entries below.
+Q11/Q15 entries below. Q17 (topology and geometry candidates) is pre-registered
+2026-10-26 and unmeasured; its entry is below Q15.
 **Scope:** the questions that are still open, each with the current evidence, the hypothesis, the
 experiment, the metric and the success criterion; [24.1](#241-suggested-order) is the order, cheapest
 decisive experiment first. The eleven that are answered are closed in
@@ -28,12 +29,14 @@ nobody runs them again.
   - [Q9 — What would make the validator a real digital twin?](#q9--what-would-make-the-validator-a-real-digital-twin)
   - [Q11 — Should the executor be part of the planner?](#q11--should-the-executor-be-part-of-the-planner)
   - [Q15 — Should the tracking gate be a constraint instead of a price?](#q15--should-the-tracking-gate-be-a-constraint-instead-of-a-price)
+  - [Q17 — Do topology and geometry candidates buy gate coverage?](#q17--do-topology-and-geometry-candidates-buy-gate-coverage)
   - [24.1 Suggested order](#241-suggested-order)
 - [25. How to report a result](#25-how-to-report-a-result)
 
 ## 24. The open questions
 
-Sixteen questions were asked. Fifteen are measured and closed; one (Q9) is open. Each open one has the
+Seventeen questions are on the record: sixteen were asked and measured (fifteen closed, Q9 open), and
+Q17 is pre-registered (2026-10-26), unmeasured. Each open one has the
 current evidence, a hypothesis, and an experiment with a metric and a success criterion, ordered so
 that the cheap, decisive ones come first.
 
@@ -99,10 +102,25 @@ survive the wider suite, which is why the campaign exists.
 | **Reproduce** | `python research/suite.py --count 32 --seed 7 --out research/missions`, then `python research/m3_matrix.py research/missions examples/example_straight.json examples/example_s_curve.json examples/example_complex_segment.json examples/example_with_stops.json examples/example_complex_mission.json examples/example_complete.json examples/example_with_events.json examples/example_mission_first4.json --out research/results/m3_suite_disc_accel.jsonl --disc --accel` (the `--disc` flag existed on the measurement tree only; the arm is retired on this tree) |
 | **Do not re-run** | The measurement is a null result on the shipping mesh and the shipping candidate set. A future inequality would need a different margin, a different mesh or a different gate - new evidence, not this experiment again |
 
+### Q17 — Do topology and geometry candidates buy gate coverage? **(pre-registered 2026-10-26, unmeasured)**
+
+| | |
+|---|---|
+| **Question** | Do candidates that differ in *topology* (reverse segments) and *geometry* (a real path family, a mirrored bow) pass missions the frontier triad cannot? |
+| **Current evidence** | The triad is not diverse: on the 32-mission suite every passing mission has exactly one passing candidate (Q13, `--candidates 3 --validate`, default limits: 5/32 `plant`, 6/32 `tick`), and the three differ by 0.89 % in duration (max 1.68 %) and 0.005 of normalised margin, so the set passes or fails as a block (Q14). Q1 (F8, 64 matched pairs on the pq_b tree) measured a cubic Bezier family (`research/seeds.py`, handed in through `initial_guess`): mean +3.0 % slower - **not a speed lever** - but 33 vs 48 IPOPT iterations and 15 vs 11 gate passes, a gate-insurance ticket; the solver walks the curve back toward the straight line because the objective has no term that prefers a curve (HEURISTICS §2, STRATEGY_LEDGER). Q3 closed multi-start *within one straight-line geometry* ("the whole seed axis buys nothing"); it did not measure differently-shaped or reverse seeds. Topology search is not in the tree at all (HEURISTICS §2), but the NLP already admits reverse motion (`overboard/core/optimizer.py`: `vl >= -v_bound`; `tests/test_optimizer.py` exercises the accel bound in reverse) - the gap is the seeds and the candidate set, not the constraints. |
+| **Hypothesis** | Candidates that change the *geometry* and the *topology* of the guess land in different NLP basins and break the pass/fail-as-a-block behaviour, buying gate coverage at a stated duration cost. Per F8's mechanism, a shaped seed without a geometric term is walked back toward the straight line; if the new candidates collapse to one path, they need the anchor term of stage 2 to stay distinct. |
+| **Experiment** | 1. Extend `overboard/core/frontier_seed.py` styles with `apex_sign: ±1` (mirrored bow), `geometry: straight|bezier` (promote `research/seeds.py:spline_guess` into `overboard/core/` - research code may not be imported by `overboard/`), and reverse seeding (`v < 0`, heading + pi on a segment whose pinned heading is more than 120° off the chord). Append three candidates after the triad (`frontier_sprint_mirror`, `frontier_spline`, `frontier_reverse`); the default solve set stays the first two candidates, so nothing new runs unless `--candidates` asks for it. 2. Measure with `research/m3_matrix.py` (it drives the library candidate loop and the production gate chain): baseline `--candidates 3` against expanded `--candidates 6`, `--validate --propagation plant`, on the same 32 missions. |
+| **Metric** | Missions passed (primary); mean selected duration; mean pairwise candidate deviation (the collapse diagnostic); IPOPT iterations and wall time. Report per [§25](#25-how-to-report-a-result). |
+| **Success criterion** | At least 2 more missions pass at no more than 5 % mean selected-duration cost, and the new candidates are geometrically distinct from the triad (mean pairwise deviation above 2 cm). If the collapse diagnostic fires, stage 2 - a geometric anchor term `w_anchor * ||p - p_seed||^2` in `_compute_cost`, priced like the discretisation term - is measured the same way before any conclusion is drawn. |
+| **Cost** | Medium: seed and candidate code plus one matrix run (32 missions x 2 arms); stage 2 touches the objective. No hardware needed. |
+| **Reproduce** | `python research/suite.py --count 32 --seed 7 --out research/missions`, then `python research/m3_matrix.py research/missions --out <arm>.jsonl --candidates 3 --propagation plant` and the same with `--candidates 6` on the change tree. |
+| **Status** | **open** - pre-registered 2026-10-26, unmeasured. Deliberately not a re-run of Q1 (which measured the family as a *speed* lever) or Q3 (which measured same-geometry seeds); a retry after a null result needs new evidence, per [§24.0](#240-the-closed-questions---do-not-re-litigate). |
+
 ### 24.1 Suggested order
 
 ```text
   CLOSED (§24.0, do not re-run): Q1 Q2 Q3 Q4 Q5 Q6 Q7 Q8 Q10 Q12 Q13 Q14 Q15 Q16
+  Q17 topology/geometry candidate axis (pre-registered)     NEXT - cheap, no hardware
   Q11 executor in the planner, step 1: the documented DriveBase
       acceleration limit into the default digital twin            DONE
   Q11 step 2: the optimizer's wheel-acceleration bound            DONE (2026-10-25)

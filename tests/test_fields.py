@@ -8,7 +8,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from overboard.viz.fields import Collision, FieldModel, Obstacle, field_from_dict, list_fields, load_all_fields, load_field
+from overboard.viz.fields import Body, Collision, FieldModel, Obstacle, field_from_dict, list_fields, load_all_fields, load_field
 
 
 def _pdf_bytes(mat_shaped=True):
@@ -235,37 +235,81 @@ class TestFieldCollisions(unittest.TestCase):
             field.sample_clearances([{"x": -0.1, "y": 0.5}], 0.0)[0],
             -0.1, places=9)
 
-    def test_the_obstacle_clearances_ignore_the_mat_edge(self):
+    def test_the_body_channels_split_the_mat_edge_from_the_models(self):
         """The mat edge is a game boundary, not a crash.
 
-        ``obstacle_clearances`` measures mission models only and names the
-        nearest one; ``sample_clearances`` keeps the boundary for the
+        ``body_obstacles`` measures mission models only and names the
+        nearest one; ``body_clearances`` keeps the boundary for the
         accuracy limit, where staying on the mat matters.
         """
+        body = Body(width_m=0.10, front_bumper_m=0.05, back_bumper_m=0.05)
         field = self._clearance_field((), mat=(2.0, 1.14))
-        # At the west edge the boundary makes the full clearance negative...
-        edge = [{"x": 0.02, "y": 0.5}]
+        # 20 mm from the west edge, the body pointing along it: 30 mm of
+        # the capsule hangs over the edge.
+        edge = [{"x": 0.02, "y": 0.5, "heading": math.pi / 2.0}]
         self.assertAlmostEqual(
-            field.sample_clearances(edge, 0.05)[0], -0.03, places=9)
-        # ...and the obstacle channel sees nothing there: the chassis may
-        # legally overhang the mat edge.
-        clearance, name = field.obstacle_clearances(edge, 0.05)[0]
+            field.body_clearances(edge, body)[0], -0.03, places=9)
+        # The obstacle channel sees nothing there: the chassis may legally
+        # overhang the mat edge.
+        clearance, name = field.body_obstacles(edge, body)[0]
         self.assertTrue(math.isinf(clearance))
         self.assertIsNone(name)
         # At a model the channel names it, and inside it the clearance is
-        # the negative depth of the nominal body.
+        # the negative depth of the body.
         field = self._clearance_field(
             (_circle(x=1.0, y=1.0, r=0.05),), mat=(2.0, 1.14))
-        clearance, name = field.obstacle_clearances([{"x": 1.0, "y": 1.0}],
-                                                    0.05)[0]
-        # At the circle's centre the disc sits 0.05 into the model and
+        clearance, name = field.body_obstacles(
+            [{"x": 1.0, "y": 1.0, "heading": 0.0}], body)[0]
+        # At the circle's centre the capsule sits 0.05 into the model and
         # carries its own 0.05 radius: 0.10 m of nominal overlap.
         self.assertAlmostEqual(clearance, -0.10, places=9)
         self.assertEqual(name, "Circle")
-        # A sample without a position is nan, never a clearance.
-        clearance, name = field.obstacle_clearances([{"t": 0.0}], 0.05)[0]
+        # A sample without a pose is nan, never a clearance.
+        clearance, name = field.body_obstacles([{"t": 0.0}], body)[0]
         self.assertTrue(math.isnan(clearance))
         self.assertIsNone(name)
+
+    def test_the_body_capsule_follows_the_heading(self):
+        """The body is not a disc: pointing at a model eats the clearance."""
+        body = Body(width_m=0.10, front_bumper_m=0.15, back_bumper_m=0.05)
+        field = self._clearance_field((_circle(x=1.0, y=1.0, r=0.05),),
+                                      mat=(0.0, 0.0))
+        # Beside the model, pointing along it: the near face is the side
+        # of the body (0.25 to the core, less the 0.05 model and 0.05 body).
+        across = [{"x": 0.75, "y": 1.0, "heading": math.pi / 2.0}]
+        self.assertAlmostEqual(
+            field.body_clearances(across, body)[0], 0.15, places=9)
+        # The same pose pointing at the model: the front bumper is near,
+        # and the capsule just touches it.
+        toward = [{"x": 0.75, "y": 1.0, "heading": 0.0}]
+        self.assertAlmostEqual(
+            field.body_clearances(toward, body)[0], 0.0, places=9)
+
+    def test_the_body_capsule_against_a_rotated_rect(self):
+        """The rectangle's own frame, so a turned model cannot drift."""
+        body = Body(width_m=0.10, front_bumper_m=0.05, back_bumper_m=0.05)
+        # A 0.2 m square turned 45 degrees is the diamond
+        # |x-1| + |y-1| <= 0.1*sqrt(2); its west vertex sits 0.1*sqrt(2)
+        # left of the centre.
+        field = self._clearance_field(
+            (_rect(x=1.0, y=1.0, w=0.2, h=0.2, rot=45.0),), mat=(0.0, 0.0))
+        west = 1.0 - 0.1 * math.sqrt(2.0)
+        # Alongside the diamond the capsule's side faces the vertex.
+        across = [{"x": 0.70, "y": 1.0, "heading": math.pi / 2.0}]
+        self.assertAlmostEqual(
+            field.body_clearances(across, body)[0], west - 0.70 - 0.05,
+            places=5)
+        # Reaching over the vertex: the inflation alone makes the overlap.
+        reach = [{"x": 0.85, "y": 1.0, "heading": math.pi / 2.0}]
+        self.assertAlmostEqual(
+            field.body_clearances(reach, body)[0], west - 0.85 - 0.05,
+            places=5)
+        # A zero-bumper body is the point case: the capsule and the disc
+        # formulas must agree exactly there.
+        point_body = Body(width_m=0.2, front_bumper_m=0.0, back_bumper_m=0.0)
+        self.assertAlmostEqual(
+            field.body_clearances(across, point_body)[0],
+            field.sample_clearances(across, 0.1)[0], places=12)
 
     def test_an_empty_field_without_a_mat_says_nothing_is_known(self):
         field = self._clearance_field((), mat=(0.0, 0.0))
@@ -415,10 +459,11 @@ class TestServerPayload(unittest.TestCase):
         from overboard.gui_server import field_collisions
         config = {"robot": {"track_width": 0.0965, "wheel_radius": 0.028}}
         # Across the middle of the mat, well clear of every model.
-        clean = [{"x": 0.3, "y": 0.2, "t": 0.0}, {"x": 0.4, "y": 0.2, "t": 0.1}]
+        clean = [{"x": 0.3, "y": 0.2, "heading": 0.0, "t": 0.0},
+                 {"x": 0.4, "y": 0.2, "heading": 0.0, "t": 0.1}]
         self.assertEqual(field_collisions(clean, config, "2026-27"), [])
         # Through the "Flip the Rock" model at (0.084, 0.657).
-        hit = [{"x": 0.084, "y": 0.657, "t": 0.0}]
+        hit = [{"x": 0.084, "y": 0.657, "heading": 0.0, "t": 0.0}]
         hits = field_collisions(hit, config, "2026-27")
         self.assertEqual(len(hits), 1)
         self.assertEqual(hits[0]["id"], "m03")
@@ -538,7 +583,8 @@ class TestRoboVibeField(unittest.TestCase):
         from overboard.gui_server import field_collisions
         config = {"robot": {"track_width": 0.0965, "wheel_radius": 0.028}}
         # Through the "Forest Elder" tree at (1.940, 0.758).
-        hits = field_collisions([{"x": 1.940, "y": 0.758, "t": 0.0}],
+        hits = field_collisions([{"x": 1.940, "y": 0.758, "heading": 0.0,
+                                  "t": 0.0}],
                                 config, "fll2026founders-robovibe")
         self.assertEqual(len(hits), 1)
         self.assertEqual(hits[0]["id"], "m121")

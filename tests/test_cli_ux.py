@@ -673,10 +673,10 @@ class TestValidationReport(unittest.TestCase):
         class _Stub:
             placement_uncertainty_m = 0.1
 
-            def sample_clearances(self, samples, robot_radius_m):
+            def body_clearances(self, samples, body):
                 return [float(clearance)] * len(samples)
 
-            def obstacle_clearances(self, samples, robot_radius_m):
+            def body_obstacles(self, samples, body):
                 return [(float(clearance), name)] * len(samples)
 
         _Stub.season = season
