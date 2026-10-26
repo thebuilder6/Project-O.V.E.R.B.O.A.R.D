@@ -1,0 +1,19 @@
+[
+  {
+    "x": 1.8666,
+    "y": 0.3628,
+    "precision_mode": true,
+    "heading": 2.3017
+  },
+  {
+    "x": 1.4768,
+    "y": 0.7976,
+    "stop": true,
+    "precision_mode": true
+  },
+  {
+    "x": 1.1062,
+    "y": 0.5837,
+    "heading": -2.6181
+  }
+]

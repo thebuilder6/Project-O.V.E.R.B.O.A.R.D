@@ -1,0 +1,62 @@
+[
+  {
+    "waypoint_file": "examples/example_straight.json",
+    "optimizer_type": "simple",
+    "samples": 10,
+    "runs": 3,
+    "avg_wall_time": 0.5784393151601156,
+    "avg_trajectory_time": null,
+    "min_wall_time": 0.4685938358306885,
+    "max_wall_time": 0.7782518863677979,
+    "validation": {
+      "avg_max_pos_error_m": 0.00042893378491543066,
+      "avg_rms_pos_error_m": 0.00024097431124326732,
+      "avg_max_heading_error_rad": 0.0,
+      "avg_num_violating_samples": 0.0,
+      "avg_num_slip_points": 0.0,
+      "avg_max_left_wheel_slip": 0.0,
+      "avg_max_right_wheel_slip": 0.0,
+      "pass_rate": 1.0
+    }
+  },
+  {
+    "waypoint_file": "examples/example_s_curve.json",
+    "optimizer_type": "simple",
+    "samples": 10,
+    "runs": 3,
+    "avg_wall_time": 0.6209211349487305,
+    "avg_trajectory_time": null,
+    "min_wall_time": 0.6143808364868164,
+    "max_wall_time": 0.6268374919891357,
+    "validation": {
+      "avg_max_pos_error_m": 0.00039816336961585397,
+      "avg_rms_pos_error_m": 0.00020170565997288322,
+      "avg_max_heading_error_rad": 0.0061891116071262076,
+      "avg_num_violating_samples": 0.0,
+      "avg_num_slip_points": 0.0,
+      "avg_max_left_wheel_slip": 0.0,
+      "avg_max_right_wheel_slip": 0.0,
+      "pass_rate": 1.0
+    }
+  },
+  {
+    "waypoint_file": "examples/example_complex_mission.json",
+    "optimizer_type": "simple",
+    "samples": 10,
+    "runs": 3,
+    "avg_wall_time": 3.4329344431559243,
+    "avg_trajectory_time": null,
+    "min_wall_time": 3.3622548580169678,
+    "max_wall_time": 3.5494308471679688,
+    "validation": {
+      "avg_max_pos_error_m": 0.000442495007010758,
+      "avg_rms_pos_error_m": 0.00019283710991338626,
+      "avg_max_heading_error_rad": 0.006406347818407543,
+      "avg_num_violating_samples": 0.0,
+      "avg_num_slip_points": 0.0,
+      "avg_max_left_wheel_slip": 0.0,
+      "avg_max_right_wheel_slip": 0.0,
+      "pass_rate": 1.0
+    }
+  }
+]

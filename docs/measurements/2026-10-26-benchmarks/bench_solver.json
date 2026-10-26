@@ -1,0 +1,74 @@
+[
+  {
+    "mission": "example_straight.json",
+    "waypoints": 2,
+    "solve_time": 0.1087636947631836,
+    "iterations": 19,
+    "traj_time": 2.4013461488316405,
+    "converged": true,
+    "fast_polish": false
+  },
+  {
+    "mission": "example_s_curve.json",
+    "waypoints": 3,
+    "solve_time": 0.27150845527648926,
+    "iterations": 40,
+    "traj_time": 3.746142240924073,
+    "converged": true,
+    "fast_polish": false
+  },
+  {
+    "mission": "example_mission_first4.json",
+    "waypoints": 4,
+    "solve_time": 3.1611783504486084,
+    "iterations": null,
+    "traj_time": 2.0666093437498327,
+    "converged": true,
+    "fast_polish": false
+  },
+  {
+    "mission": "example_with_stops.json",
+    "waypoints": 5,
+    "solve_time": 2.444758653640747,
+    "iterations": null,
+    "traj_time": 5.377668577441241,
+    "converged": true,
+    "fast_polish": false
+  },
+  {
+    "mission": "example_with_events.json",
+    "waypoints": 4,
+    "solve_time": 0.693110466003418,
+    "iterations": 37,
+    "traj_time": 4.837940925355617,
+    "converged": true,
+    "fast_polish": false
+  },
+  {
+    "mission": "example_complex_segment.json",
+    "waypoints": 5,
+    "solve_time": 1.9824528694152832,
+    "iterations": 104,
+    "traj_time": 5.157411377059319,
+    "converged": true,
+    "fast_polish": false
+  },
+  {
+    "mission": "example_complete.json",
+    "waypoints": 10,
+    "solve_time": 670.5690214633942,
+    "iterations": null,
+    "traj_time": 12.164977658744977,
+    "converged": false,
+    "fast_polish": false
+  },
+  {
+    "mission": "example_complex_mission.json",
+    "waypoints": 10,
+    "solve_time": 10.18280553817749,
+    "iterations": null,
+    "traj_time": 7.449239357044486,
+    "converged": true,
+    "fast_polish": false
+  }
+]

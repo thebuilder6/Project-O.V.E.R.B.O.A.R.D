@@ -1,0 +1,26 @@
+[
+  {
+    "waypoints": 3,
+    "simple": {
+      "solve_time": 0.1668858528137207,
+      "traj_time": 6.1561607636740545,
+      "converged": true
+    }
+  },
+  {
+    "waypoints": 3,
+    "simple": {
+      "solve_time": 0.1603844165802002,
+      "traj_time": 6.1561607636740545,
+      "converged": true
+    }
+  },
+  {
+    "waypoints": 3,
+    "simple": {
+      "solve_time": 0.15872931480407715,
+      "traj_time": 6.1561607636740545,
+      "converged": true
+    }
+  }
+]
