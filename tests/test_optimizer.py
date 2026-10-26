@@ -699,6 +699,161 @@ class TestTrajectoryOptimizer(unittest.TestCase):
         self.assertLessEqual(per_seg_obj, uniform_obj + 1e-6)
 
 
+    # ------------------------------------------------------------------
+    # Q11 step 2: the wheel-acceleration bound
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _accel_config(accel_limit):
+        cfg = {"robot": {
+            "mass": 0.8, "inertia": 0.002, "track_width": 0.1,
+            "wheel_radius": 0.03, "v_max_rad_s": 15.0, "t_max_nm": 0.2,
+            "gearing": 1.0, "cof": 0.9,
+        }}
+        if accel_limit is not None:
+            cfg["digital_twin"] = {
+                "actuator": {"straight": {"accel_limit": accel_limit}}}
+        return RobotConfig(cfg)
+
+    @staticmethod
+    def _ramping_guess(N, dt, v_end):
+        """A guess that asks for 0 -> v_end in one 20 ms interval (30 m/s^2
+        for 0.6 m/s). The optimizer has to refuse to keep it."""
+        states = np.zeros((N, 5))
+        states[:, 0] = np.linspace(0.0, 0.30, N)
+        states[1:, 3] = v_end
+        states[1:, 4] = v_end
+        return np.concatenate([np.array([dt]), states.flatten()])
+
+    def test_a_20ms_speed_request_is_refused(self):
+        """A synthetic 0 -> 0.6 m/s in 20 ms ask (30 m/s^2) cannot survive a
+        solve against the declared DriveBase ramp limit of 7.8 m/s^2."""
+        waypoints = [(0.0, 0.0, 0.0), (0.30, 0.0, 0.0)]
+        optimizer = TrajectoryOptimizer(self._accel_config(7.8))
+        N = 6
+        guess = self._ramping_guess(N, 0.02, 0.6)
+        samples, stats = optimizer.solve(
+            waypoints, num_samples_per_segment=N - 1, accuracy_weight=0.001,
+            per_segment_dt=True, cost_metric="discretization",
+            epigraph_constraints=True, initial_guess=guess, verbose=False)
+
+        self.assertGreater(len(samples), 0)
+        peak = 0.0
+        for k in range(len(samples) - 1):
+            dt = samples[k + 1]["t"] - samples[k]["t"]
+            self.assertGreater(dt, 0.0)
+            peak = max(peak, abs(samples[k + 1]["vl"] - samples[k]["vl"]) / dt,
+                       abs(samples[k + 1]["vr"] - samples[k]["vr"]) / dt)
+        self.assertLessEqual(peak, 7.8 + 1e-3)
+
+    def test_the_acceleration_bound_is_what_refuses_the_request(self):
+        """The bound is the thing doing the refusing: the same 30 m/s^2 guess
+        against a config with no declared limit keeps more of its burst than a
+        tight ramp limit allows. A limit of 1 m/s^2 is the same mechanism as
+        the 7.8 one, at a scale this short path can show."""
+        waypoints = [(0.0, 0.0, 0.0), (0.30, 0.0, 0.0)]
+        N = 6
+        guess = self._ramping_guess(N, 0.02, 0.6)
+
+        def peak(samples):
+            return max(
+                abs(samples[k + 1]["vl"] - samples[k]["vl"])
+                / (samples[k + 1]["t"] - samples[k]["t"])
+                for k in range(len(samples) - 1))
+
+        free = TrajectoryOptimizer(self._accel_config(None))
+        bounded = TrajectoryOptimizer(self._accel_config(1.0))
+        free_samples, free_stats = free.solve(
+            waypoints, num_samples_per_segment=N - 1, accuracy_weight=0.001,
+            per_segment_dt=True, cost_metric="discretization",
+            epigraph_constraints=True, initial_guess=guess, verbose=False)
+        lim_samples, lim_stats = bounded.solve(
+            waypoints, num_samples_per_segment=N - 1, accuracy_weight=0.001,
+            per_segment_dt=True, cost_metric="discretization",
+            epigraph_constraints=True, initial_guess=guess, verbose=False)
+
+        self.assertLessEqual(peak(lim_samples), 1.0 + 1e-3)
+        self.assertGreater(peak(free_samples), 1.0 + 1e-3)
+        self.assertGreaterEqual(lim_samples[-1]["t"],
+                                free_samples[-1]["t"] - 1e-9)
+
+    def test_the_acceleration_bound_slows_a_sprint(self):
+        """On a sprint the motor can ramp harder than 1 m/s^2, so the bound
+        binds and the plan pays for it in duration."""
+        waypoints = [(0.0, 0.0, 0.0), (1.0, 0.0, 0.0)]
+        free = TrajectoryOptimizer(self._accel_config(None))
+        bounded = TrajectoryOptimizer(self._accel_config(1.0))
+
+        free_samples, free_stats = free.solve(
+            waypoints, num_samples_per_segment=10, accuracy_weight=0.001,
+            per_segment_dt=True, cost_metric="discretization",
+            epigraph_constraints=True, verbose=False)
+        lim_samples, lim_stats = bounded.solve(
+            waypoints, num_samples_per_segment=10, accuracy_weight=0.001,
+            per_segment_dt=True, cost_metric="discretization",
+            epigraph_constraints=True, verbose=False)
+        self.assertTrue(free_stats["converged"] and lim_stats["converged"])
+
+        def peak(samples):
+            peak_acc = 0.0
+            for k in range(len(samples) - 1):
+                dt = samples[k + 1]["t"] - samples[k]["t"]
+                peak_acc = max(peak_acc,
+                               abs(samples[k + 1]["vl"] - samples[k]["vl"]) / dt,
+                               abs(samples[k + 1]["vr"] - samples[k]["vr"]) / dt)
+            return peak_acc
+
+        self.assertLessEqual(peak(lim_samples), 1.0 + 1e-3)
+        self.assertGreater(peak(free_samples), 1.0 + 1e-3)
+        self.assertGreater(lim_samples[-1]["t"], free_samples[-1]["t"])
+
+    def test_the_acceleration_bound_holds_in_reverse_and_per_segment_dt(self):
+        """Deceleration is the same bound, and each interval is held to its
+        own dt, including across a stop at a pinned boundary."""
+        waypoints = [(0.0, 0.0, 0.0), (0.6, 0.0, 0.0), (0.0, 0.0, 3.1416)]
+        optimizer = TrajectoryOptimizer(self._accel_config(7.8))
+        samples, stats = optimizer.solve(
+            waypoints, num_samples_per_segment=5, accuracy_weight=0.001,
+            per_segment_dt=True, cost_metric="discretization",
+            epigraph_constraints=True, stop_waypoint_indices=[1],
+            verbose=False)
+        self.assertTrue(stats["converged"])
+
+        dts = stats["segment_dt"]
+        counts = stats["segment_samples"]
+        self.assertNotEqual(dts[0], dts[1])
+        k = counts[0]
+        self.assertAlmostEqual(samples[k]["vl"], 0.0, places=3)
+        self.assertAlmostEqual(samples[k]["vr"], 0.0, places=3)
+        for i in range(len(samples) - 1):
+            dt = samples[i + 1]["t"] - samples[i]["t"]
+            self.assertLessEqual(abs(samples[i + 1]["vl"] - samples[i]["vl"]),
+                                 7.8 * dt + 1e-3)
+            self.assertLessEqual(abs(samples[i + 1]["vr"] - samples[i]["vr"]),
+                                 7.8 * dt + 1e-3)
+
+    def test_no_declared_limit_changes_nothing(self):
+        """A config without the digital-twin limit keeps the old behaviour:
+        nothing clamps the ramp the motor model allows."""
+        config = self._accel_config(None)
+        self.assertIsNone(config.accel_limit_m_s2)
+        waypoints = [(0.0, 0.0, 0.0), (0.30, 0.0, 0.0)]
+        optimizer = TrajectoryOptimizer(config)
+        samples, stats = optimizer.solve(
+            waypoints, num_samples_per_segment=5, accuracy_weight=0.001,
+            per_segment_dt=True, cost_metric="discretization",
+            epigraph_constraints=True,
+            initial_guess=self._ramping_guess(6, 0.02, 0.6), verbose=False)
+        self.assertGreater(len(samples), 0)
+        peak = max(
+            abs(samples[k + 1]["vl"] - samples[k]["vl"])
+            / (samples[k + 1]["t"] - samples[k]["t"])
+            for k in range(len(samples) - 1))
+        # No bound at 1 m/s^2 (or anywhere else): the ramp the motor model
+        # allows survives the solve.
+        self.assertGreater(peak, 1.0)
+
+
 class TestMergeConditions(unittest.TestCase):
     """KI-023: the boundary semantics of the waypoint pieces.
 
