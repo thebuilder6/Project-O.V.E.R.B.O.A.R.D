@@ -242,10 +242,6 @@
           <input type="checkbox" id="opt-fast-polish">
           <span>Fast polish (fewer IPOPT iterations on big missions)</span>
         </label>
-        <label class="check">
-          <input type="checkbox" id="opt-polish">
-          <span>Gradient sensitivity polish (needs JAX)</span>
-        </label>
       </section>
 
       <section class="block">
@@ -253,6 +249,34 @@
         <label class="check">
           <input type="checkbox" id="opt-validate">
           <span>Validate before export (needs JAX)</span>
+        </label>
+        <label class="field">
+          <span>Scoring profile</span>
+          <select id="opt-score-profile">
+            <option value="precision">Precision</option>
+            <option value="balanced" selected>Balanced</option>
+            <option value="speed">Speed</option>
+          </select>
+        </label>
+        <label class="field">
+          <span>Target time (s)</span>
+          <input type="number" id="opt-target-time" min="0" step="0.1">
+        </label>
+        <label class="field">
+          <span>Maximum time (s)</span>
+          <input type="number" id="opt-max-time" min="0" step="0.1">
+        </label>
+        <label class="field">
+          <span>Jerk target (m/s^3)</span>
+          <input type="number" id="opt-jerk-target" min="0" step="0.5" value="10">
+        </label>
+        <label class="field">
+          <span>Jerk maximum (m/s^3)</span>
+          <input type="number" id="opt-jerk-max" min="0" step="0.5" value="20">
+        </label>
+        <label class="field">
+          <span>Accept failed plan at score (1-100)</span>
+          <input type="number" id="opt-accept-score" min="1" max="100" step="1">
         </label>
         <label class="field">
           <span>Candidates (1-3)</span>
@@ -348,7 +372,19 @@
           <span class="hint">Checks the path against your robot before it is used.</span>
         </div>
         <dl class="facts" id="result-facts"></dl>
+        <div id="score-block" hidden>
+          <h3 class="sub">Score</h3>
+          <p class="score-value mono" id="score-value"></p>
+          <p class="hint" id="score-meta"></p>
+          <div class="score-categories" id="score-categories"></div>
+          <p class="hint" id="score-note"></p>
+        </div>
         <p class="hint explainer" id="solve-diff"></p>
+        <div id="lever-history" hidden>
+          <h3 class="sub">Tried levers</h3>
+          <table class="report" id="lever-table"></table>
+          <p class="hint" id="lever-note"></p>
+        </div>
         <div id="collisions"></div>
 
         <div id="validation-report" hidden>

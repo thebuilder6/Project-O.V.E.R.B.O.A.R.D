@@ -407,6 +407,49 @@ class TestTheResultExplainsItself(unittest.TestCase):
         self.assertIn("row.hidden = !visible[key]", body)
 
 
+    def test_the_polish_lever_is_gone_from_the_studio(self):
+        html = _read(VIZ / "studio.html")
+        self.assertNotIn("opt-polish", html)
+        self.assertNotIn("opt-polish", self.source)
+        self.assertNotIn("Try Gradient Polish", self.source)
+
+    def test_acceptance_is_not_called_passed(self):
+        body = self._function("runVerdict")
+        self.assertIn("accepted", body)
+        self.assertIn("passed", body)
+        poll = self._function("pollJob")
+        self.assertIn("Accepted plan", poll)
+        self.assertIn("not a passed plan", poll)
+
+    def test_the_score_says_what_it_is(self):
+        self.assertIn("not a probability", self.source)
+        self.assertIn("score_version", self.source)
+        self.assertIn("physical", self.source)
+        self.assertIn("quality", self.source)
+        self.assertIn("duration", self.source)
+
+    def test_old_reports_still_read(self):
+        """Reports before the score fields keep their old verdict."""
+        body = self._function("runVerdict")
+        self.assertIn("entry.score !== undefined", body)
+        self.assertIn("report.hub_approved !== undefined", body)
+        self.assertIn("best_effort", body)
+
+    def test_the_suggestions_use_the_configured_limit(self):
+        body = self._function("suggestFixes")
+        self.assertIn("excess_m", body)
+        self.assertIn("limit_m", body)
+        self.assertNotIn("envelope_cm > 2.0", body)
+        self.assertNotIn("polish", body)
+
+    def test_the_lever_history_is_measured_only(self):
+        body = self._function("recordLever")
+        self.assertIn("deltaScore", body)
+        self.assertIn("deltaDuration", body)
+        self.assertIn("pointsPerS", body)
+        self.assertNotIn("predict", body.lower())
+
+
 class TestTheSheetWithoutASession(unittest.TestCase):
     """No session yet is not an error: the studio asks on every load."""
 
@@ -484,8 +527,9 @@ class TestTheCandidateLabelsComeFromTheReport(unittest.TestCase):
 
     def test_the_preset_comes_from_the_server(self):
         body = self._function("applyPreset")
-        self.assertIn("preset.polish", body)
         self.assertIn("preset.propagation", body)
+        self.assertNotIn("preset.polish", body)
+        self.assertNotIn("opt-polish", body)
         self.assertIn("el('opt-auto-mesh').checked = false", body)
         self.assertNotIn("PRESET_SOLVER", self.source)
 
