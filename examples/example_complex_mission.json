@@ -1,12 +1,18 @@
-[
-  { "x": 0.0, "y": 0.0, "heading": 0.0, "stop": true },
-  { "x": 0.2, "y": 0.1, "heading": null, "event": "lower_arm" },
-  { "x": 0.3, "y": 0.15, "heading": 0.9, "stop": true },
-  { "x": 0.4, "y": 0.08, "heading": 1.57, "event": "release" },
-  { "x": 0.4, "y": 0.3, "heading": null, "stop": false },
-  { "x": 0.35, "y": 0.45, "heading": 2.0, "event": "intake" },
-  { "x": 0.25, "y": 0.55, "heading": null, "stop": true },
-  { "x": 0.15, "y": 0.5, "heading": 3.14, "event": "deposit" },
-  { "x": 0.1, "y": 0.35, "heading": null, "stop": false },
-  { "x": 0.05, "y": 0.25, "heading": -1.57, "stop": true }
-]
+{
+  "waypoints": [
+    { "x": 0.0, "y": 0.0, "heading": 0.0, "stop": true },
+    { "x": 0.2, "y": 0.1, "heading": null, "event": "lower_arm" },
+    { "x": 0.3, "y": 0.15, "heading": 0.9, "stop": true },
+    { "x": 0.4, "y": 0.08, "heading": 1.57, "event": "release" },
+    { "x": 0.4, "y": 0.3, "heading": null, "stop": false },
+    { "x": 0.35, "y": 0.45, "heading": 2.0, "event": "intake" },
+    { "x": 0.25, "y": 0.55, "heading": null, "stop": true },
+    { "x": 0.15, "y": 0.5, "heading": 3.14, "event": "deposit" },
+    { "x": 0.1, "y": 0.35, "heading": null, "stop": false },
+    { "x": 0.05, "y": 0.25, "heading": -1.57, "stop": true }
+  ],
+  "scoring": {
+    "target_time_s": 5.7744055179583045,
+    "max_time_s": 11.548811035916609
+  }
+}

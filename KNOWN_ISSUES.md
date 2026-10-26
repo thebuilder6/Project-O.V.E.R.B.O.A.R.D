@@ -4,7 +4,7 @@ Last reviewed: 2026-10-24
 
 Scope: whole repository, reviewed as a single-user, offline desktop tool for one FLL robot. This is not a multi-user or server-scale review.
 
-Status: KI-001 through KI-003, KI-005 through KI-019, KI-021 through KI-031, KI-033 through KI-044, KI-045, KI-046, KI-047 through KI-053, KI-056, KI-057 are **fixed**. KI-032 is **mitigated** (test cache). KI-004 is **deleted** (the Multi-Verse pipeline was removed; archived in git tag `archive/legacy-2026-10`). Open: KI-020 (hardware calibration & digital twin validation), KI-054 (the envelope gate's absolute limit is a duration gate), KI-055 (a failing check refuses the whole mission instead of scoring it).
+Status: KI-001 through KI-003, KI-005 through KI-019, KI-021 through KI-031, KI-033 through KI-044, KI-045, KI-046, KI-047 through KI-053, KI-055, KI-056, KI-057 are **fixed**. KI-032 is **mitigated** (test cache). KI-004 is **deleted** (the Multi-Verse pipeline was removed; archived in git tag `archive/legacy-2026-10`). Open: KI-020 (hardware calibration & digital twin validation), KI-054 (the envelope gate's absolute limit is a duration gate).
 
 How to use this list: refer to an item by its ID, for example "fix KI-003". The **Quick triage** table is the index - read that, then open the entry you are working on. The entries are now short records: what was wrong, what changed, and which files carry the fix. The long narrative each entry used to carry is in the git history - this file before the 2026-10-21 pruning - so `git log -p KNOWN_ISSUES.md` reads any entry in full.
 
@@ -70,7 +70,7 @@ How to use this list: refer to an item by its ID, for example "fix KI-003". The 
 | KI-052 | P2 | CLI / solver | ~~The CLI and the library plan different trajectories for the same mission: the CLI was self-consistent by default, the library was not~~ (fixed; both default to the self-consistent rule now) |
 | KI-053 | P2 | Physics / safety model | ~~The interval force model passed an interval through unchanged, so a signed velocity could produce a negative force bound~~ (fixed) |
 | KI-054 | P1 | Validation | The envelope gate compares an absolute radius against a tube that grows with path length, so a long path fails for being long and a failure usually has no remedy but a better model |
-| KI-055 | P1 | Validation / export | A failing check writes nothing: the verdict is a boolean against thresholds the operator did not choose, so a mission they mean to run cannot be exported at all. It should be a score with named levers |
+| KI-055 | P1 | Validation / export | ~~A failing check writes nothing: the verdict is a boolean against thresholds the operator did not choose, so a mission they mean to run cannot be exported at all. It should be a score with named levers~~ (fixed; the verdict is a decision score, `--accept-score` accepts a failed plan explicitly, and the hub push needs the approval) |
 | KI-056 | P1 | Validation | ~~An empty trajectory crashed the gate and read as an Immrax error~~ (fixed; a failed solve is reported as a failed candidate) |
 | KI-057 | P1 | Runtime | ~~A busy machine made MUMPS abort the process and lose the run~~ (fixed; one thread per pool, and MUMPS is told its memory limit) |
 
@@ -120,27 +120,6 @@ How to use this list: refer to an item by its ID, for example "fix KI-003". The 
 If none of those is available, the run does not know that the plan is accurate enough, and `--best-effort` is for inspection, not approval.
 
 **The smarter rule, not built:** compare the tube against the mission's tolerance per sample - the clearance to the nearest mission model or wall - which needs a field model the planner does not have. Until then a per-waypoint `error_threshold` is the manual form of that rule, and the 2 cm default is a placeholder, not a requirement.
-
-### KI-055 — A binary gate refuses missions the operator means to run
-
-**Status:** Open, not started. Requested 2026-10-22: a failing check should cost points against a score the operator can trade against, not stop the solve.
-
-**Files:** `overboard/main.py` (the export gate, `_score_attempt`, `_segment_report`, `_emit_validation_report`), `overboard/gui_server.py`, `overboard/viz/studio.html`, `overboard/viz/studio.js`, `docs/HEURISTICS_AND_VERIFICATION.md`, `tests/test_cli_ux.py`, `tests/test_studio_honesty.py`
-
-**Problem:** With `--validate`, the verdict is pass/fail on three unrelated things at once - envelope, tracking, and force/slip - against limits the operator did not choose (2 cm and 0.5 cm by default). One centimetre over on any of them writes no `.traj`, no controller and no `_stats.json`, so a mission the operator intends to run cannot be produced at all. The plan and its numbers are computed and then thrown away. The only ways to get the file back are to drop `--validate` entirely, which throws the numbers away with the verdict, or `--best-effort`, which forgives an accuracy excess only and still refuses force, slip, integration, divergence and non-convergence.
-
-The selection rule already computes a score vector per candidate (`duration_s`, `envelope_cm`, `tracking_cm`, `max_excess_cm`, `peak_jerk_m_s3`, `fitness_s` and its parts), but it only ranks candidates that already passed; it never decides whether anything is written. The threshold is therefore doing a job the report was built to do better.
-
-**Evidence:** `examples/example_complete.json` (10 waypoints, 3.70 m, 8 stops) under `--validate --candidates 1 --propagation tick --envelope-limit 0.05`: envelope 5.01 cm against 5.00 cm and tracking 0.53 cm against 0.50 cm - a miss of 0.1 mm and 0.3 mm - and the run exits 1 with nothing written, for a 12.4 s plan that solves cleanly. `missions/realistic_complex_mission.json` (14 waypoints) misses by more for the same reason: 5.10 cm / 1.52 cm on `tick`, 41.8 cm / 2.09 cm on `plant` (KI-054). Two missions, two empty fields.
-
-**Fix (proposed, not built):** make the verdict a score the operator can see and move.
-
-1. **Score, not gate.** Every candidate gets a 0-100 score from the vector it already reports, with each miss weighted and named. A default acceptance threshold replaces the boolean.
-2. **The threshold is a floor, not a wall.** A candidate under it is still written when the operator asks (`--accept-score N`, and the studio's equivalent), and the `.traj` root, `_stats.json` and the studio status carry `validation: {passed: false, accepted: true, score: N, excess: ...}`. A reader can never mistake it for an approved plan, and no existing file changes shape.
-3. **Levers priced in the score's terms.** Each lever says what it would buy before it runs: propagation (`plant|tick`), `--envelope-limit` and `--envelope-limit-per-metre`, a waypoint's `error_threshold` / `precision_mode`, `--accuracy-weight`, `--force-weight`, `-n`, `--polish`, `--candidates`, and the robot's declared ranges. The studio already has the **Try** buttons for four of them; the change is to rank them by points per second and let the score, not a boolean, say when to stop.
-4. **The hub push stays gated** unless the operator opens it deliberately: a score is a judgement about a plan, and driving a plan the robot cannot follow is a different decision with a different answer.
-
-**Workaround while open:** omit `--validate` to get the files (the `.traj` then records `{status: "unvalidated", passed: false}` and is not approved for the hub); use `--best-effort` when the only failure is an accuracy excess, so the plan is still on the field marked failed; and move the limits to their maxima - `--envelope-limit 0.05 --envelope-limit-per-metre 0.05 --propagation tick` - before giving up on the gate.
 
 ## Mitigated
 
@@ -701,6 +680,18 @@ The selection rule already computes a score vector per candidate (`duration_s`, 
 **Evidence:** the per-run commit is 4.89 GB before the change and 0.55 GB after; with one thread per pool the same import commits 0.20 GB instead of 4.53 GB. MUMPS is told its limit, so an exhausted machine produces a clean "out of memory" and a failed candidate instead of an abort.
 
 **Files:** `overboard/__init__.py`, `overboard/core/optimizer.py` (`MUMPS_MEMORY_PERCENT`, the solver options), `tests/test_runtime_footprint.py`
+
+### KI-055 - A binary gate refuses missions the operator means to run
+
+**Fixed.** The verdict is now one capped, deterministic 0-100 **decision score** (`score_version: 1`) that selects the candidate and can authorize the export and the hub push. The score is not a probability of hardware success: it prices the measured excesses against documented limits and orders the candidates with the result.
+
+**Was:** with `--validate` the verdict was pass/fail on several unrelated gates against limits the operator did not choose, and a miss by 0.1 mm wrote no `.traj`, no controller and no `_stats.json`, so a mission the operator meant to run could not be produced at all.
+
+**Fix:** the score is the weighted average of four categories - physical (P), accuracy (A), motion quality (Q) and duration (D) - in the named profiles `precision` 20/35/35/10, `balanced` 25/25/25/25 (default) and `speed` 20/20/20/40 (P/A/Q/D), capped at the score of any category the candidate failed. Every validated run needs a scoring timing budget (`target_time_s`, `max_time_s`), from the mission's `scoring` section or `--target-time`/`--max-time`; the shipped missions carry measured migration budgets (target = the fastest converged candidate on the baseline planner, max = twice it). An ordinary validator pass is eligible automatically; a failed candidate is eligible only under an explicit `--accept-score N` and a score at or above N; a structural failure (non-convergence, a crashed or incomplete validator result, a diverged or unbounded tube, a missed final waypoint) is never eligible, exported or pushed. Every trajectory push - `main.py --push-hub` and `hub_deploy.py --trajectory` / `push_trajectory` - requires `validation.hub_approved` with `score_version: 1` and a `trajectory_sha256` that still matches the file; the hash and approval helpers live in `overboard/deploy/hub_deploy.py`, so the writer and the pusher cannot drift. Four verdicts travel with the file: ordinary pass (approved), accepted failure (approved), best-effort inspection export (not approved) and unvalidated/structural (not approved).
+
+**Not built:** the studio side - scoring controls, the levers priced in the score's terms (the "Try" ranking) and the push integration. `overboard/gui_server.py` and `overboard/viz/*` still read plain-list mission files and start validated jobs without a scoring budget, so the mission gallery, `build_initial` and validated studio solves need the schema-aware follow-up (`tests/test_gui_server.py` shows the three call sites).
+
+**Files:** `overboard/main.py` (scoring, selection, export gate, validation record), `overboard/verification/validator.py` (score helpers, checkpoint spreads), `overboard/verification/immrax_validator.py` (structured utilisation ratios), `overboard/deploy/hub_deploy.py` (`trajectory_sha256`, `check_trajectory_approval`, the push gate), `examples/*.json`, `missions/*.json`, `docs/CONFIGURATION.md`, `tests/test_cli_ux.py`, `tests/test_validator.py`, `tests/test_hub_deploy.py`
 
 ## The rules this list produced
 

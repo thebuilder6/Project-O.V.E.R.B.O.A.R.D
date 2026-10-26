@@ -433,10 +433,14 @@ class TestWriteGateIntegration(unittest.TestCase):
             wp = os.path.join(tmp, "wp.json")
             out = os.path.join(tmp, "out.traj")
             with open(wp, "w") as f:
-                json.dump([
-                    {"x": 0.0, "y": 0.0, "heading": 0.0},
-                    {"x": 0.1, "y": 0.0, "heading": 0.0},
-                ], f)
+                json.dump({
+                    "waypoints": [
+                        {"x": 0.0, "y": 0.0, "heading": 0.0},
+                        {"x": 0.1, "y": 0.0, "heading": 0.0},
+                    ],
+                    # A validated run needs the scoring timing (score contract).
+                    "scoring": {"target_time_s": 1.0, "max_time_s": 2.0},
+                }, f)
 
             args = list(extra_args)
             if fit_data is not None:

@@ -73,6 +73,13 @@ The output is an executable trajectory for that robot, together with the evidenc
 it: the predicted spread at each required pose. A path is only a result when it comes with its own
 uncertainty.
 
+The decision score is the machine-readable form of that contract: one capped, deterministic 0-100
+number per candidate (physical, accuracy, motion quality, duration, in weights the operator names
+with a profile) that selects the candidate and can authorise the export and the hub push. It is a
+decision score, not a probability of hardware success; the spread evidence travels beside it in
+the report, and a failed plan is only ever exported or pushed when the operator accepts its score
+explicitly.
+
 ## Approach
 
 1. **System identification** captures the specific robot: motor characteristics, friction and its
@@ -102,7 +109,8 @@ rather than a nicety. Three touchpoints, each of which should be one command:
 - **Generate.** Sensible defaults, honest presets, and no hand-written configuration to get a first
   path out.
 - **Execute.** Generated code runs on the robot as-is, with no manual retuning; a push to hardware
-  is gated on the same verdict the planner produced.
+  is gated on the same verdict the planner produced - an ordinary validator pass, or a failed plan
+  whose score the operator accepted explicitly.
 
 "Easy" here is testable: a new robot goes from uncalibrated to a deployed, validated path without
 anyone editing code or understanding the optimiser, and every failure message names the step to

@@ -1,6 +1,12 @@
-[
-  {"x": 0.0, "y": 0.0, "heading": 0.0},
-  {"x": 0.5, "y": 0.3, "heading": 0.5, "event": "lower_arm"},
-  {"x": 1.0, "y": 0.0, "heading": -0.5},
-  {"x": 1.5, "y": 0.3, "heading": 0.0, "event": "release"}
-]
+{
+  "waypoints": [
+    {"x": 0.0, "y": 0.0, "heading": 0.0},
+    {"x": 0.5, "y": 0.3, "heading": 0.5, "event": "lower_arm"},
+    {"x": 1.0, "y": 0.0, "heading": -0.5},
+    {"x": 1.5, "y": 0.3, "heading": 0.0, "event": "release"}
+  ],
+  "scoring": {
+    "target_time_s": 4.453385011684768,
+    "max_time_s": 8.906770023369535
+  }
+}

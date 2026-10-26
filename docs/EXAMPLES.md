@@ -2,7 +2,7 @@
 
 This document provides practical examples for using the FLL Trajectory Optimizer.
 
-> **Optimizer choice:** CasADi/IPOPT is the backend and the 3-Pillar unified planner is the only planner on top of it, so every example below works with a core `requirements.txt` install. The old Multi-Verse pipeline was removed (git tag `archive/legacy-2026-10`) and has no CLI entry point. `--validate` needs JAX/Immrax. With `--validate`, `--candidates N` (default 2) solves N of the planner's frontier candidates and exports the passing one with the shortest duration; the 5-part fitness score is reported for every candidate. Use `--candidates 1` for a single solve. Without `--validate`, only the first candidate is solved.
+> **Optimizer choice:** CasADi/IPOPT is the backend and the 3-Pillar unified planner is the only planner on top of it, so every example below works with a core `requirements.txt` install. The old Multi-Verse pipeline was removed (git tag `archive/legacy-2026-10`) and has no CLI entry point. `--validate` needs JAX/Immrax and a scoring timing budget (the shipped missions carry one; a mission of your own declares it in its `scoring` section or gets it from `--target-time`/`--max-time`). With `--validate`, `--candidates N` (default 2) solves N of the planner's frontier candidates, scores each one, and exports the eligible candidate with the highest decision score (a failed one only under `--accept-score N`); the 5-part fitness score is reported for every candidate as a diagnostic. Use `--candidates 1` for a single solve. Without `--validate`, only the first candidate is solved. The score is a 0-100 decision number (see [CONFIGURATION.md](CONFIGURATION.md)), not a probability of hardware success.
 
 ## Table of Contents
 
@@ -122,6 +122,32 @@ python -m overboard.main --validate -c examples/fll_choreo.json -w examples/exam
 ```
 
 With `--validate`, the open-loop `plant` tube grows with distance, so a curved mission can exceed the 2 cm envelope gate: add `--propagation tick` (the `--preset safe` shortcut sets it for you). The straight line still passes with the default `plant`.
+
+### Measured scoring budgets of the shipped missions
+
+Every shipped mission carries its scoring timing in its `scoring` section, so
+a `--validate` run needs no extra flags. The budgets are **measured, not
+guessed**: `target_time_s` is `T_ref`, the duration of the fastest converged
+candidate of the shipping planner on the clean baseline tree (the 3-Pillar
+candidates `frontier_sprint`, `frontier_sweeper`, `frontier_exploratory`,
+solved with the CLI defaults: `examples/fll_choreo.json`, automatic mesh,
+per-segment dt, no validation), and `max_time_s` is `2 * T_ref`.
+
+| Mission | `T_ref` (s) | `target_time_s` | `max_time_s` |
+|---|---|---|---|
+| `examples/example_straight.json` | 2.299253443234989 | 2.299253443234989 | 4.598506886469978 |
+| `examples/example_s_curve.json` | 3.817753723929007 | 3.817753723929007 | 7.635507447858014 |
+| `examples/example_mission_first4.json` | 2.051747299801067 | 2.051747299801067 | 4.103494599602134 |
+| `examples/example_complex_segment.json` | 2.1818234038781523 | 2.1818234038781523 | 4.363646807756305 |
+| `examples/example_with_events.json` | 4.453385011684768 | 4.453385011684768 | 8.906770023369535 |
+| `examples/example_with_stops.json` | 5.431187277994541 | 5.431187277994541 | 10.862374555989081 |
+| `examples/example_complex_mission.json` | 5.7744055179583045 | 5.7744055179583045 | 11.548811035916609 |
+| `examples/example_complete.json` | 11.674326703354728 | 11.674326703354728 | 23.348653406709456 |
+| `missions/realistic_complex_mission.json` | 18.87646664557883 | 18.87646664557883 | 37.75293329115766 |
+
+Re-measure and rewrite the budgets when the planner or the robot config
+changes: the duration score only means something against the plan the current
+tree produces.
 
 ---
 
@@ -363,7 +389,7 @@ python -m overboard.main -c examples/fll_choreo.json -w waypoints.json -o high_r
 - `-n 10`: Good balance for most FLL paths
 - `-n 20`: Slower optimization, smoother curves, better for complex paths
 
-The three frontier candidates are solved and the fastest passing one is kept. A waypoint is a legitimate timing boundary only when the robot stops there *and* the heading is pinned; at every other waypoint the per-segment model keeps the wheel force profile continuous through the point (KI-024).
+The three frontier candidates are solved and the decision score picks the one to export: the eligible candidate with the highest score, with an ordinary pass preferred over an accepted one when the scores tie (see [CONFIGURATION.md](CONFIGURATION.md)). A waypoint is a legitimate timing boundary only when the robot stops there *and* the heading is pinned; at every other waypoint the per-segment model keeps the wheel force profile continuous through the point (KI-024).
 
 The planner always uses the per-segment model, so there is no timing flag to choose: the
 `--per-segment-dt` and `--uniform-dt` flags are removed and rejected as unknown options. What the

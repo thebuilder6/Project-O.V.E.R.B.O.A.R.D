@@ -29,6 +29,80 @@ DEFAULT_FITNESS_WEIGHTS: Dict[str, float] = {
 SLIP_RISK_DEADZONE: float = 0.70
 
 
+# --- Decision score (score_version 1) -------------------------------------
+#
+# One capped, deterministic 0-100 number per candidate. It selects candidates
+# and can authorize export and a hub push. It is NOT a probability of hardware
+# success: it only orders candidates and prices the documented excesses.
+SCORE_VERSION: int = 1
+# The gates the accuracy ratios are measured against.
+TRACKING_GATE_M: float = 0.005
+INTEGRATION_GATE_M: float = 0.01
+# Peak wheel jerk: fully smooth at the target, unusable at the max.
+DEFAULT_JERK_TARGET_M_S3: float = 10.0
+DEFAULT_JERK_MAX_M_S3: float = 20.0
+# Category weights per named profile, in percent (P/A/Q/D order).
+SCORING_PROFILES: Dict[str, Dict[str, float]] = {
+    "precision": {"physical": 20.0, "accuracy": 35.0, "quality": 35.0, "duration": 10.0},
+    "balanced": {"physical": 25.0, "accuracy": 25.0, "quality": 25.0, "duration": 25.0},
+    "speed": {"physical": 20.0, "accuracy": 20.0, "quality": 20.0, "duration": 40.0},
+}
+DEFAULT_SCORING_PROFILE: str = "balanced"
+
+
+def ratio_score(ratio: float) -> float:
+    """100 at or inside the limit, 0 at twice it, linear between.
+
+    ``ratio`` is a utilisation: 1.0 is exactly at the limit. A ratio of 1.5
+    scores 50 and a ratio of 2 or more scores 0.
+    """
+    if ratio != ratio:  # NaN
+        return 0.0
+    if ratio <= 1.0:
+        return 100.0
+    return max(0.0, 100.0 * (2.0 - float(ratio)))
+
+
+def duration_score(duration_s: float, target_time_s: float, max_time_s: float) -> float:
+    """100 at the target or faster, 0 at the max or slower, linear between."""
+    if max_time_s <= target_time_s:
+        return 100.0 if duration_s <= target_time_s else 0.0
+    span = float(max_time_s) - float(target_time_s)
+    return max(0.0, min(100.0, 100.0 * (float(max_time_s) - float(duration_s)) / span))
+
+
+def jerk_score(peak_jerk_m_s3: float, jerk_target_m_s3: float,
+               jerk_max_m_s3: float) -> float:
+    """100 at the target jerk or below, 0 at the max or above, linear between."""
+    if jerk_max_m_s3 <= jerk_target_m_s3:
+        return 100.0 if peak_jerk_m_s3 <= jerk_target_m_s3 else 0.0
+    if peak_jerk_m_s3 <= jerk_target_m_s3:
+        return 100.0
+    if peak_jerk_m_s3 >= jerk_max_m_s3:
+        return 0.0
+    span = float(jerk_max_m_s3) - float(jerk_target_m_s3)
+    return 100.0 * (float(jerk_max_m_s3) - float(peak_jerk_m_s3)) / span
+
+
+def spread_score(spread_m: float, limit_m: float) -> float:
+    """A stop/final spread against its local envelope limit.
+
+    100 at zero spread, 50 at the limit, 0 at twice the limit.
+    """
+    if limit_m <= 0.0:
+        return 0.0
+    return 100.0 * max(0.0, min(1.0, 1.0 - float(spread_m) / (2.0 * float(limit_m))))
+
+
+def weighted_score(categories: Dict[str, float], weights: Dict[str, float]) -> float:
+    """The weighted average of the four category scores."""
+    total = sum(float(weights.get(name, 0.0)) for name in categories)
+    if total <= 0.0:
+        return 0.0
+    return sum(float(weights.get(name, 0.0)) * float(score)
+               for name, score in categories.items()) / total
+
+
 def forward_integrate(samples: List[Dict[str, Any]], robot_cfg: RobotConfig, fine_dt: float = 0.001) -> Tuple[List[Dict[str, Any]], Dict[str, float]]:
     """
     Forward-integrate differential-drive kinematics from the optimized
@@ -407,6 +481,8 @@ def compute_path_fitness(
             "tracking_error_m": float("inf"),
             "rms_tracking_error_m": float("inf"),
             "stop_tracking_error_m": float("inf"),
+            "checkpoint_indices": [],
+            "checkpoint_spreads_m": [],
         }
 
     w = dict(DEFAULT_FITNESS_WEIGHTS)
@@ -534,6 +610,10 @@ def compute_path_fitness(
         "tracking_error_m": float(tracking_error_m),
         "rms_tracking_error_m": float(rms_tracking_error_m),
         "stop_tracking_error_m": float(stop_tracking_error_m),
+        # Where the stop/final precision spreads were measured, so a caller
+        # can price each one against its own local envelope limit.
+        "checkpoint_indices": [int(i) for i in checkpoints],
+        "checkpoint_spreads_m": [float(s) for s in stop_spreads],
     }
 
 

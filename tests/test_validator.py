@@ -8,7 +8,12 @@ import json
 import tempfile
 import os
 from overboard.models.robot_model import RobotConfig
-from overboard.verification.validator import forward_integrate, audit_constraints, compute_metrics
+from overboard.verification.validator import (
+    forward_integrate, audit_constraints, compute_metrics,
+    SCORING_PROFILES, DEFAULT_SCORING_PROFILE, SCORE_VERSION,
+    DEFAULT_JERK_TARGET_M_S3, DEFAULT_JERK_MAX_M_S3,
+    ratio_score, duration_score, jerk_score, spread_score, weighted_score,
+)
 
 
 class TestForwardIntegrate(unittest.TestCase):
@@ -491,6 +496,76 @@ class TestComputeMetrics(unittest.TestCase):
         
         # Should have non-zero jerk
         self.assertGreater(metrics["max_jerk_m_s3"], 0)
+
+    # --- Decision score math (score_version 1) -----------------------------
+
+    def test_ratio_score_is_capped_and_linear(self):
+        """100 inside the limit, 0 at twice it, linear between."""
+        self.assertEqual(ratio_score(0.0), 100.0)
+        self.assertEqual(ratio_score(1.0), 100.0)
+        self.assertEqual(ratio_score(1.5), 50.0)
+        self.assertAlmostEqual(ratio_score(1.999), 0.1)
+        self.assertEqual(ratio_score(2.0), 0.0)
+        self.assertEqual(ratio_score(10.0), 0.0)
+        self.assertEqual(ratio_score(float("inf")), 0.0)
+
+    def test_ratio_score_never_leaves_the_hundred_band(self):
+        for value in (0.0, 0.5, 1.0, 1.1, 1.7, 2.5, 100.0):
+            score = ratio_score(value)
+            self.assertGreaterEqual(score, 0.0)
+            self.assertLessEqual(score, 100.0)
+
+    def test_duration_score_hits_the_endpoints(self):
+        """100 at the target or faster, 0 at the max or slower."""
+        self.assertEqual(duration_score(1.0, 2.0, 4.0), 100.0)
+        self.assertEqual(duration_score(0.5, 2.0, 4.0), 100.0)
+        self.assertEqual(duration_score(2.0, 2.0, 4.0), 100.0)
+        self.assertEqual(duration_score(3.0, 2.0, 4.0), 50.0)
+        self.assertEqual(duration_score(4.0, 2.0, 4.0), 0.0)
+        self.assertEqual(duration_score(9.0, 2.0, 4.0), 0.0)
+
+    def test_jerk_score_hits_the_endpoints(self):
+        self.assertEqual(jerk_score(0.0, 10.0, 20.0), 100.0)
+        self.assertEqual(jerk_score(10.0, 10.0, 20.0), 100.0)
+        self.assertEqual(jerk_score(15.0, 10.0, 20.0), 50.0)
+        self.assertEqual(jerk_score(20.0, 10.0, 20.0), 0.0)
+        self.assertEqual(jerk_score(50.0, 10.0, 20.0), 0.0)
+
+    def test_spread_score_is_half_at_the_limit(self):
+        self.assertEqual(spread_score(0.0, 0.02), 100.0)
+        self.assertAlmostEqual(spread_score(0.02, 0.02), 50.0)
+        self.assertEqual(spread_score(0.04, 0.02), 0.0)
+        self.assertEqual(spread_score(0.1, 0.02), 0.0)
+        self.assertEqual(spread_score(0.01, 0.0), 0.0)
+
+    def test_the_profiles_are_the_documented_weights(self):
+        self.assertEqual(SCORING_PROFILES["precision"],
+                         {"physical": 20.0, "accuracy": 35.0,
+                          "quality": 35.0, "duration": 10.0})
+        self.assertEqual(SCORING_PROFILES["balanced"],
+                         {"physical": 25.0, "accuracy": 25.0,
+                          "quality": 25.0, "duration": 25.0})
+        self.assertEqual(SCORING_PROFILES["speed"],
+                         {"physical": 20.0, "accuracy": 20.0,
+                          "quality": 20.0, "duration": 40.0})
+        self.assertEqual(DEFAULT_SCORING_PROFILE, "balanced")
+        for name, weights in SCORING_PROFILES.items():
+            self.assertEqual(sum(weights.values()), 100.0, name)
+
+    def test_the_weighted_score_is_the_weighted_average(self):
+        categories = {"physical": 100.0, "accuracy": 80.0,
+                      "quality": 60.0, "duration": 40.0}
+        self.assertAlmostEqual(
+            weighted_score(categories, SCORING_PROFILES["balanced"]), 70.0)
+        self.assertAlmostEqual(
+            weighted_score(categories, SCORING_PROFILES["speed"]),
+            (20 * 100 + 20 * 80 + 20 * 60 + 40 * 40) / 100.0)
+        self.assertAlmostEqual(
+            weighted_score(categories, SCORING_PROFILES["precision"]),
+            (20 * 100 + 35 * 80 + 35 * 60 + 10 * 40) / 100.0)
+
+    def test_the_score_version_is_the_contract_one(self):
+        self.assertEqual(SCORE_VERSION, 1)
 
 
 class TestValidateTrajectory(unittest.TestCase):

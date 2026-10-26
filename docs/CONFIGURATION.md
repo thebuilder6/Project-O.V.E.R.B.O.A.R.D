@@ -128,6 +128,33 @@ Waypoints can be dictionaries or `[x, y, heading]` arrays:
 ]
 ```
 
+A mission may instead be an object that wraps the waypoints and carries the
+scoring timing the decision score is measured against:
+
+```json
+{
+  "waypoints": [
+    { "x": 0.0, "y": 0.0, "heading": 0.0 },
+    { "x": 1.0, "y": 0.5, "heading": 0.5 }
+  ],
+  "scoring": {
+    "target_time_s": 2.3,
+    "max_time_s": 4.6
+  }
+}
+```
+
+| Scoring field | Type | Meaning |
+|---|---|---|
+| `target_time_s` | float | The duration worth 100 on the duration score. Required for `--validate` (with `max_time_s`). |
+| `max_time_s` | float | The duration worth 0. Must satisfy `0 < target_time_s < max_time_s`. |
+| `jerk_target_m_s3` | float | Peak wheel jerk worth 100 on the motion-quality score (default 10). |
+| `jerk_max_m_s3` | float | Peak wheel jerk worth 0 (default 20). Must be above the target. |
+
+The CLI flags `--target-time`, `--max-time`, `--jerk-target` and `--jerk-max`
+override these fields. Every `--validate` run needs a target and a max after
+the merge; an unvalidated solve does not.
+
 ### Fields
 
 | Field | Type | Meaning |
@@ -173,7 +200,7 @@ python -m overboard.main -c examples/fll_choreo.json -w examples/example_straigh
 - `-a, --accuracy-weight`: Smoothness/jerk weight (0 = time-optimal).
 - `--force-weight`: Soft wheel-force and traction-utilisation penalty in the NLP objective (0 = none, the default). The hard per-wheel limits apply either way.
 - `--polish`: The post-solve gradient polish. The reachability rollout is differentiated, and the plan is re-solved with the samples the gradient points at weighted; the better of the two plans is kept. Off by default; needs JAX.
-- `--candidates`: Candidates to solve and compare with `--validate` (default 2). The planner's three frontier candidates (`frontier_sprint`, `frontier_sweeper`, `frontier_exploratory`) are solved and `N` shortens that list; the fastest passing one wins, with the envelope breaking a duration tie. `1` disables the comparison.
+- `--candidates`: Candidates to solve and compare with `--validate` (default 2). The planner's three frontier candidates (`frontier_sprint`, `frontier_sweeper`, `frontier_exploratory`) are solved and `N` shortens that list; the decision score selects the one to export. `1` disables the comparison.
 - `--stop-waypoints "0,2,4"`: Comma-separated stop indices.
 - `--events "1:lower_arm,3:release"`: Comma-separated event mappings.
 - `--unified`, `--no-unified`, `--simple`, `--pyramid`, `--pyramid-candidates`, `--h-adaptive`, `--per-segment-dt`, `--uniform-dt` and `--sweep`: **Removed.** The 3-Pillar unified engine is the only planner, every candidate uses the per-segment model, and the equal-duration model, the pyramid, the adaptive mesh and the sweep are gone. The command line rejects these spellings as unknown options.
@@ -182,8 +209,24 @@ python -m overboard.main -c examples/fll_choreo.json -w examples/example_straigh
 
 ### Validation and export
 
-- `--validate`: CPU audit + Immrax + final-waypoint gate. Requires JAX/Immrax. With `--candidates N` (default 2), solves N of the planner's candidates and exports the passing one with the shortest duration (the envelope breaks a tie); on failure, exits 1 and writes nothing (the next flag is the one exception).
-- `--best-effort`: with `--validate`, export the best converged candidate when the only failure is an accuracy excess (the envelope radius or the tracking error). The `.traj` root and `_stats.json` carry `validation: {passed: false, best_effort: true, max_excess_m, reasons, segments}`, the summary prints the excess in red, and the studio keeps the path on the field marked *Failed validation*. A motor-force, wheel-slip, integration, divergence, `unknown`-envelope or non-convergence failure still writes nothing, and the report keeps the hard gate: a failed plan is shown for inspection, never approved for the hub.
+- `--validate`: CPU audit + Immrax + final-waypoint gate. Requires JAX/Immrax, and a scoring timing budget (`target_time_s`/`max_time_s` from the mission or `--target-time`/`--max-time`). With `--candidates N` (default 2), solves N of the planner's candidates, scores each one, and exports the eligible candidate with the highest decision score; on failure, exits 1 and writes nothing (the flags below are the exceptions).
+- **The decision score** (`score_version: 1`) is one capped, deterministic 0-100 number per candidate. It selects candidates and can authorize the export and the hub push. **It is not a probability of hardware success.** It is the weighted average of four categories, capped at the score of any category the candidate failed:
+  - **Physical (P)**: the worst motor, traction/slip and wheel-speed utilisation across the CPU audit and the Immrax interval check (a utilisation of 1.0 is exactly at the limit).
+  - **Accuracy (A)**: the worst envelope radius against its active local limit (per-metre allowance and waypoint `error_threshold` included), the tracking error against 5 mm, and the RK4 integration errors against 1 cm.
+  - **Motion quality (Q)**: the worst stop/final pose spread against its local envelope limit, the RMS force utilisation, and the peak wheel jerk against `--jerk-target`/`--jerk-max`.
+  - **Duration (D)**: 100 at `target_time_s` or faster, 0 at `max_time_s` or slower.
+
+  A ratio at or inside its limit scores 100 and twice the limit scores 0. The named profiles set the weights in P/A/Q/D order: `precision` 20/35/35/10, `balanced` 25/25/25/25 (default), `speed` 20/20/20/40 (`--scoring-profile`).
+- **Selection and eligibility.** An ordinary validator pass is eligible automatically. A failed candidate is eligible only when the operator asks for it with `--accept-score N` (1-100) and its score is at least `N`. Among the eligible candidates the highest score wins; a tie goes to the ordinary pass over the accepted one, then the higher accuracy score, the higher physical score, the shorter duration, and the lower candidate index. A structural failure - a non-converged solve, a crashed or incomplete validator result, a diverged or unbounded tube, or a missed final waypoint - is never eligible, exported or pushed. Only *quantified* physical, accuracy and RK4 integration excesses can be scored and accepted. `--accept-score` needs `--validate`.
+- **Four verdicts** travel with the file as `validation: {...}` in the `.traj` root and `_stats.json` (with `score`, `score_version: 1`, `profile`, `weights`, `categories`, `target_time_s`, `max_time_s`, `accept_score`, `trajectory_sha256`, the envelope limits, `reasons` and `segments`):
+  1. **Ordinary pass** - `passed: true, hub_approved: true`.
+  2. **Accepted failure** (`--accept-score`) - `passed: false, accepted: true, hub_approved: true`: it may drive the hub.
+  3. **Best-effort inspection export** (`--best-effort`) - `passed: false, best_effort: true, hub_approved: false`.
+  4. **Unvalidated or structural failure** - `hub_approved: false`; a structural failure writes no trajectory at all.
+- `--best-effort`: with `--validate`, export the best converged candidate when the only failure is an accuracy excess (the envelope radius or the tracking error). The summary prints the excess in red, and the studio keeps the path on the field marked *Failed validation*. A motor-force, wheel-slip, integration, divergence, `unknown`-envelope or non-convergence failure is not an accuracy drop and still writes nothing. The file is written for inspection and is **never approved for the hub**.
+- `--target-time`, `--max-time`: the scoring duration budget (see the mission `scoring` section above). `--jerk-target`, `--jerk-max`: the motion-quality jerk bounds in m/s^3 (defaults 10 and 20). `--scoring-profile precision|balanced|speed`: the category weights.
+- `--accept-score N`: accept a failed candidate whose decision score is at least `N`, so it can be exported and pushed. Needs `--validate`.
+- `--push-hub`: push the trajectory to a Pybricks hub and run it there. Refused unless the run was validated and the trajectory is approved: `validation.hub_approved` must be true with `score_version: 1`, and `hub_deploy.push_trajectory` recomputes the file's `trajectory_sha256` before it writes the mission, syncs the robot config or opens a connection. A best-effort or unvalidated file never drives the hub; a raw script push (`hub_deploy.py script.py`) is not gated.
 - `--envelope-limit METRES`: How far the reachable set may spread around the plan at any sample (default 0.02, range 0.001-0.05). It is the run-wide default: a waypoint's `error_threshold` still overrides it, and `precision_mode` still pins 0.5 cm. The cap is where the propagation cuts the tube off, so a looser limit could not fail. The value in force is recorded in the report (`envelope_limit_m`, per-segment `limit_m`) and in the `.traj`/`_stats.json` (`validation.envelope_limit_m`). The limit is absolute by default and the `plant` tube is cumulative, so a long path can fail for being long (KI-054): set it to the accuracy the mission needs, not to what makes a run pass. `--envelope-limit-per-metre M/M` (default 0, max 0.05) adds an allowance for every metre travelled; both values are recorded in the report and the file.
 - `--sysid-fit PATH`: Optional `sysid_fit.json` measured actuator/odometry model; requires `--validate`. The default kinematic model is used when omitted. The plant applies the measured actuator gain, time constant, command delay, odometry scale and braking shortfall (KI-020 keeps the un-modelled residue open).
 - `--control-dt`: The control period the validator models, in seconds (default 0.02). Set it to the period the robot actually achieves so the gate is measured against the controller that runs.
