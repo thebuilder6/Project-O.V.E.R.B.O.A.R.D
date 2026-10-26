@@ -97,6 +97,86 @@ class TestThePushNeedsAValidatedTrajectory(unittest.TestCase):
         self.assertIn("state.solveValidated = Boolean(selected.ok)", body)
 
 
+class TestThePushObeysTheApproval(unittest.TestCase):
+    """The push gate obeys the file's approval, not the verdict on screen.
+
+    The validator's verdict is what the UI shows; the approval on the
+    exported file is what the push enforces - the same rule the CLI push
+    uses (hub_approved, score_version 1, a hash that still matches the
+    file). A verdict that says ok must not open the gate on its own.
+    """
+
+    def setUp(self):
+        import shutil
+        import tempfile
+        import types
+        self.tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        self.traj = Path(self.tmp) / "pushable.traj"
+        job = types.SimpleNamespace(name="pushable", output_dir=Path(self.tmp),
+                                    lines=[])
+        self.job = job
+        self.server = types.SimpleNamespace(get_job=lambda job_id: job)
+
+    def _write(self, record):
+        from overboard.deploy import hub_deploy
+        samples = [{"t": 0.0, "x": 0.0, "y": 0.0, "heading": 0.0,
+                    "vl": 0.0, "vr": 0.0, "omega": 0.0}]
+        config = {"track_width": 0.0965, "wheel_radius": 0.028}
+        doc = {"trajectory": {"config": config, "samples": samples}}
+        if record is not None:
+            approved = {"passed": True, "hub_approved": True,
+                        "score_version": hub_deploy.SCORE_VERSION,
+                        "trajectory_sha256": hub_deploy.trajectory_sha256(
+                            config, samples)}
+            approved.update(record)
+            doc["validation"] = approved
+        self.traj.write_text(json.dumps(doc), encoding="utf-8")
+        return doc
+
+    def _push(self):
+        return gui_server.start_push(self.server,
+                                     {"job_id": "1", "connection": "ble"})
+
+    def test_a_verdict_that_says_ok_does_not_open_the_gate(self):
+        self.job.lines.append(
+            gui_server.VALIDATION_MARKER
+            + json.dumps({"selected": 1, "candidates": [{"ok": True}]}))
+        self._write({"passed": False, "best_effort": True, "hub_approved": False})
+        with self.assertRaises(ValueError) as ctx:
+            self._push()
+        self.assertIn("not approved", str(ctx.exception))
+
+    def test_an_edited_file_is_refused(self):
+        doc = self._write({})
+        doc["trajectory"]["samples"][0]["x"] = 99.0
+        self.traj.write_text(json.dumps(doc), encoding="utf-8")
+        with self.assertRaises(ValueError) as ctx:
+            self._push()
+        self.assertIn("edited", str(ctx.exception))
+
+    def test_an_unsupported_score_version_is_refused(self):
+        self._write({"score_version": 99})
+        with self.assertRaises(ValueError) as ctx:
+            self._push()
+        self.assertIn("score_version", str(ctx.exception))
+
+    def test_a_file_without_an_approval_record_is_refused(self):
+        self._write(None)
+        with self.assertRaises(ValueError) as ctx:
+            self._push()
+        self.assertIn("no validation record", str(ctx.exception))
+
+    def test_the_refusal_message_carries_no_paths(self):
+        """The operator reads the message; it must not carry the internals."""
+        self._write(None)
+        with self.assertRaises(ValueError) as ctx:
+            self._push()
+        message = str(ctx.exception)
+        self.assertNotIn("\\", message)
+        self.assertNotIn(self.tmp, message)
+
+
 class TestAFailedSolveLeavesNoPath(unittest.TestCase):
     """The field must not keep the last solve's path as the answer."""
 
@@ -579,6 +659,18 @@ class TestTheEnvelopeNamesItsModel(unittest.TestCase):
         self.assertIn("ctx.rect(", boxes)
         self.assertNotIn("closePath", boxes)
         self.assertIn("state.showEnvelopeBoxes", self._function("drawEnvelope"))
+
+    def test_the_field_limit_tooltip_names_the_placement_uncertainty(self):
+        """The field's per-sample limit is nominal geometry, not a survey.
+
+        FIRST's footprints agree only to about 100 mm. A limit read off
+        them may look tight and mean nothing, so the tooltip next to the
+        accuracy limit carries that uncertainty - it is never hidden.
+        """
+        body = self._function("updateFieldLimitNote")
+        self.assertIn("placement_uncertainty_m", body)
+        self.assertIn("placement uncertainty", body)
+        self.assertIn("nominal geometry", body)
 
 
 if __name__ == "__main__":

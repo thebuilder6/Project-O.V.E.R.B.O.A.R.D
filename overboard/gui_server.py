@@ -600,6 +600,11 @@ def build_command(job_dir, config_path, waypoints_path, output_path, options):
         if options.get("envelope_limit_per_metre") is not None:
             command += ["--envelope-limit-per-metre",
                         f"{float(options['envelope_limit_per_metre']):g}"]
+        # The per-sample accuracy limit from a field season (--envelope-from-
+        # field). Only with --validate: without a gate there is no limit.
+        season = str(options.get("envelope_from_field") or "").strip()
+        if season:
+            command += ["--envelope-from-field", season]
         # The studio draws the best path a failed validation produced, marked
         # as failed, instead of an empty field. Push and approval still read
         # the validator's verdict, so this only affects what is displayed.
@@ -622,10 +627,11 @@ def start_job(server, payload):
     mission = payload.get("mission")
     waypoints, mission_scoring = mission_parts(mission) if mission is not None else (payload.get("waypoints"), payload.get("scoring") or {})
     options = dict(payload.get("options") or {})
-    options.update(resolve_scoring(mission_scoring, options, bool(options.get("validate"))))
-    # A fitted plant is only used by the validator, so it forces validation on.
-    if options.get("sysid_fit") and not options.get("validate"):
+    # A fitted plant is only used by the validator, so it forces validation on -
+    # before the scoring resolves, so a forced run needs the timing budget too.
+    if options.get("sysid_fit"):
         options["validate"] = True
+    options.update(resolve_scoring(mission_scoring, options, bool(options.get("validate"))))
 
     if not isinstance(config, dict):
         raise ValueError("A robot configuration is required.")
@@ -1625,15 +1631,19 @@ def start_push(server, payload):
         # The export gate did not pass, so there is nothing safe to push.
         raise ValueError("That solve produced no trajectory to push.")
 
-    # Only a validated trajectory goes to the robot. The browser checked
-    # this too, but the browser is not the gate: a direct POST to this
-    # endpoint would otherwise run an unchecked plan on the mat (KI-036).
-    verdict = _validation_verdict(source)
-    if verdict is not True:
-        raise ValueError(
-            "That trajectory was never validated against your robot. "
-            "Validate it in the Solve tab and solve again before pushing it."
-        )
+    # Only an approved trajectory goes to the robot. The browser checked
+    # this too, but the browser is not the gate: the approval on the exported
+    # file is - the same rule the CLI push enforces (hub_approved with
+    # score_version 1 and a hash that still matches the file), so a direct
+    # POST cannot push an unvalidated, best-effort, stale or edited plan on
+    # the mat (KI-036). The validator's verdict is what the UI shows.
+    from overboard.deploy.hub_deploy import check_trajectory_approval
+    data = _read_json(traj) or {}
+    try:
+        check_trajectory_approval(data)
+    except ValueError as exc:
+        message = str(exc)
+        raise ValueError(message[:1].upper() + message[1:]) from exc
 
     connection = str(payload.get("connection") or "ble")
     if connection not in ("ble", "usb"):

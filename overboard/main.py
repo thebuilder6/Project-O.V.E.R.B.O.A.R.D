@@ -423,6 +423,10 @@ def _build_validation_record(*, passed, accepted, best_effort, attempt,
         "trajectory_sha256": trajectory_hash,
         "envelope_limit_m": float(envelope_limit),
         "envelope_limit_per_metre": float(envelope_limit_per_metre),
+        # The field-derived per-sample limit and the field's placement
+        # uncertainty, alongside the run-wide limits (--envelope-from-field).
+        "envelope_limit_field_m": (attempt or {}).get("envelope_limit_field_m"),
+        "placement_uncertainty_m": (attempt or {}).get("placement_uncertainty_m"),
         "reasons": list(attempt.get("reasons", [])) if attempt else [],
         "segments": list(attempt.get("segments", [])) if attempt else [],
     }
@@ -483,6 +487,11 @@ MAX_ENVELOPE_LIMIT_M = 0.05
 # widens with distance, so that is a duration budget in disguise); a positive
 # slope prices distance instead (KI-054).
 DEFAULT_ENVELOPE_LIMIT_PER_METRE = 0.0
+# The field's per-sample limit (--envelope-from-field) is the clearance
+# clamped to this band: 5 mm matters, and 50 mm is where the propagation
+# cuts the tube off (MAX_ENVELOPE_LIMIT_M), so no looser limit can be
+# measured. A NaN clearance is "no field limit" and is never clamped.
+MIN_FIELD_ENVELOPE_LIMIT_M = 0.005
 
 
 def _segment_limit(thresholds, index, default=DEFAULT_ENVELOPE_LIMIT_M):
@@ -501,13 +510,14 @@ def _segment_limit(thresholds, index, default=DEFAULT_ENVELOPE_LIMIT_M):
 
     The thresholds are keyed by waypoint index; index is the segment index,
     and segment ``index`` runs from waypoint ``index`` to waypoint
-    ``index + 1``.
+    ``index + 1``. A ``None`` default is passed through, so a caller can ask
+    whether a waypoint declared a limit at all.
     """
     if index + 1 in thresholds:
         return float(thresholds[index + 1])
     if index in thresholds:
         return float(thresholds[index])
-    return float(default)
+    return None if default is None else float(default)
 
 
 def _travelled_m(samples_data):
@@ -523,6 +533,61 @@ def _travelled_m(samples_data):
 def _envelope_limit_at(base, per_metre, travelled):
     """The limit in force ``travelled`` metres into the path (KI-054)."""
     return float(base) + float(per_metre) * float(travelled)
+
+
+def _local_limit(thresholds, index, travelled_at, default, per_metre,
+                 field_limits=None, sample=None):
+    """The envelope limit in force at one sample.
+
+    A waypoint's ``error_threshold`` / ``precision_mode`` wins locally (the
+    rule of ``_segment_limit``). Otherwise the field's per-sample limit
+    applies where the field has one (``--envelope-from-field``); a sample
+    without one falls back to the run-wide limit and its per-metre allowance.
+    """
+    declared = _segment_limit(thresholds, index, default=None)
+    if declared is not None:
+        return _envelope_limit_at(declared, per_metre, travelled_at)
+    if (field_limits is not None and sample is not None
+            and sample < len(field_limits) and field_limits[sample] is not None):
+        return float(field_limits[sample])
+    return _envelope_limit_at(default, per_metre, travelled_at)
+
+
+def _field_envelope_limits(field, robot_cfg, samples_data):
+    """The field's per-sample envelope limits (``--envelope-from-field``).
+
+    One limit per sample: the field's clearance (the robot disc resolved as
+    ``chassis_radius_m`` -> track/2 -> numeric) clamped to 5-50 mm. A NaN
+    clearance - a sample without usable geometry - means "no field limit
+    here" and falls back to the flat run-wide limit; NaN is never clamped.
+    """
+    if field is None:
+        return None
+    limits = []
+    for clearance in field.sample_clearances(samples_data, robot_cfg):
+        try:
+            value = float(clearance)
+        except (TypeError, ValueError):
+            limits.append(None)
+            continue
+        if math.isnan(value):
+            limits.append(None)
+        else:
+            limits.append(min(max(value, MIN_FIELD_ENVELOPE_LIMIT_M),
+                              MAX_ENVELOPE_LIMIT_M))
+    return limits
+
+
+def _field_limit_summary(field, field_limits):
+    """What the field's per-sample limits were over one candidate."""
+    if field is None:
+        return None
+    finite = [value for value in (field_limits or []) if value is not None]
+    return {
+        "season": str(field.season),
+        "min_m": min(finite) if finite else None,
+        "max_m": max(finite) if finite else None,
+    }
 
 
 def _waypoint_boundaries(segment_samples):
@@ -560,14 +625,17 @@ def _waypoint_of(bounds, index):
 
 def _segment_report(samples_data, samples_per_segment, thresholds, immrax_report, cpu_summary,
                     segment_samples=None, default_limit=DEFAULT_ENVELOPE_LIMIT_M,
-                    default_limit_per_metre=DEFAULT_ENVELOPE_LIMIT_PER_METRE):
+                    default_limit_per_metre=DEFAULT_ENVELOPE_LIMIT_PER_METRE,
+                    field_limits=None):
     """Per-segment validation detail: envelope radius, local limit, violations.
 
     The gate checks sample i against the threshold of the waypoint whose
     segment i is in, so a segment is judged by the threshold of the waypoint
     it starts from. The report says the same thing, per segment, instead of
     one reason string. The drift is the forward-integration error inside the
-    segment: it shows where the path drifts away from the plan.
+    segment: it shows where the path drifts away from the plan. The local
+    limit is resolved by ``_local_limit``, so the report cannot disagree
+    with the gate about a waypoint override or a field limit.
     """
     segments = []
     count = len(samples_data)
@@ -619,11 +687,11 @@ def _segment_report(samples_data, samples_per_segment, thresholds, immrax_report
     for index in range(n_segments):
         start = starts[index]
         stop = stops[index]
-        base = _segment_limit(thresholds, index, default_limit)
         radius = 0.0
         # The limit grows along the segment, so the verdict belongs to the
         # sample with the biggest excess, not to the biggest radius.
-        limit = _envelope_limit_at(base, default_limit_per_metre, travelled[start])
+        limit = _local_limit(thresholds, index, travelled[start], default_limit,
+                             default_limit_per_metre, field_limits, start)
         worst_excess = None
         for i in range(start, stop):
             env = envelopes[i] if i < len(envelopes) else None
@@ -631,7 +699,8 @@ def _segment_report(samples_data, samples_per_segment, thresholds, immrax_report
                 continue
             err = math.hypot((env["x_max"] - env["x_min"]) / 2.0,
                              (env["y_max"] - env["y_min"]) / 2.0)
-            local = _envelope_limit_at(base, default_limit_per_metre, travelled[i])
+            local = _local_limit(thresholds, index, travelled[i], default_limit,
+                                 default_limit_per_metre, field_limits, i)
             radius = max(radius, err)
             if worst_excess is None or err - local > worst_excess:
                 worst_excess = err - local
@@ -655,7 +724,8 @@ def _segment_report(samples_data, samples_per_segment, thresholds, immrax_report
 def _emit_validation_report(attempts, selected_index, propagation=None,
                             best_effort=False, envelope_limit=None,
                             envelope_limit_per_metre=None, accept_score=None,
-                            profile=None, accepted=False, hub_approved=False):
+                            profile=None, accepted=False, hub_approved=False,
+                            envelope_limit_field=None, placement_uncertainty_m=None):
     """Print the machine-readable validation summary.
 
     Every candidate carries its score vector: the duration, the reachability
@@ -726,6 +796,10 @@ def _emit_validation_report(attempts, selected_index, propagation=None,
                # it, so it is never left implicit (KI-054).
                "envelope_limit_m": _finite(envelope_limit),
                "envelope_limit_per_metre": _finite(envelope_limit_per_metre),
+               # The field-derived per-sample limit of the selected candidate
+               # and the field's placement uncertainty (--envelope-from-field).
+               "envelope_limit_field_m": envelope_limit_field,
+               "placement_uncertainty_m": _finite(placement_uncertainty_m),
                # True when a failed candidate was exported anyway, so the
                # studio can say "failed, shown" instead of "not checked".
                "best_effort": bool(best_effort),
@@ -1226,6 +1300,9 @@ class _ScoreContext:
     quiet: bool
     envelope_limit: float = DEFAULT_ENVELOPE_LIMIT_M
     envelope_limit_per_metre: float = DEFAULT_ENVELOPE_LIMIT_PER_METRE
+    # The field model behind --envelope-from-field, or None. Its per-sample
+    # clearances are the envelope limits where the field has one.
+    field: Any = None
     # One validator per run: its compiled scan is reused by every candidate,
     # and a fresh one per candidate pays the XLA compile again (KI-049).
     validator: Any = None
@@ -1332,6 +1409,9 @@ def _score_attempt(attempt_record, ctx):
         stats.get("segment_samples")
         or (samples if isinstance(samples, (list, tuple, np.ndarray)) else None))
     travelled = _travelled_m(samples_data)
+    # The field's per-sample limits, when the run asked for them. The gate
+    # and the segment report read the same table, so the two cannot disagree.
+    field_limits = _field_envelope_limits(ctx.field, ctx.robot_cfg, samples_data)
 
     try:
         immrax_val = _immrax_validator(ctx)
@@ -1383,9 +1463,9 @@ def _score_attempt(attempt_record, ctx):
         else:
             s_val = samples[0] if isinstance(samples, (list, tuple, np.ndarray)) else samples
             wp_idx = i // max(1, int(s_val))
-        local_threshold = _envelope_limit_at(
-            _segment_limit(ctx.waypoint_thresholds, wp_idx, ctx.envelope_limit),
-            ctx.envelope_limit_per_metre, travelled[i])
+        local_threshold = _local_limit(
+            ctx.waypoint_thresholds, wp_idx, travelled[i], ctx.envelope_limit,
+            ctx.envelope_limit_per_metre, field_limits, i)
 
         env = samples_data[i].get('reachability_envelope', {})
         if env:
@@ -1406,6 +1486,11 @@ def _score_attempt(attempt_record, ctx):
                 max_vio_val = max(max_vio_val, err)
 
     attempt_record["tube"] = float(max_err_all)
+    attempt_record["envelope_limit_field_m"] = _field_limit_summary(
+        ctx.field, field_limits)
+    attempt_record["placement_uncertainty_m"] = (
+        _finite(ctx.field.placement_uncertainty_m)
+        if ctx.field is not None else None)
     attempt_record["diverged"] = bool(immrax_report['reachability'].get('diverged', False))
     # A cut-off propagation reports the width the tube had when it crossed
     # the guard, not the width it would have reached, so the number is a
@@ -1568,9 +1653,9 @@ def _score_attempt(attempt_record, ctx):
                 wp_idx = int(idx) // max(1, int(s_val))
             travelled_at = (travelled[idx] if idx < len(travelled)
                             else travelled[-1] if travelled else 0.0)
-            limit = _envelope_limit_at(
-                _segment_limit(ctx.waypoint_thresholds, wp_idx, ctx.envelope_limit),
-                ctx.envelope_limit_per_metre, travelled_at)
+            limit = _local_limit(
+                ctx.waypoint_thresholds, wp_idx, travelled_at, ctx.envelope_limit,
+                ctx.envelope_limit_per_metre, field_limits, idx)
             worst_spread_score = min(
                 worst_spread_score, spread_score(float(spread), limit))
         rms_score = 100.0 * max(0.0, min(
@@ -1626,7 +1711,8 @@ def _score_attempt(attempt_record, ctx):
         samples_data, samples, ctx.waypoint_thresholds, immrax_report,
         cpu_summary, segment_samples=stats.get("segment_samples"),
         default_limit=ctx.envelope_limit,
-        default_limit_per_metre=ctx.envelope_limit_per_metre)
+        default_limit_per_metre=ctx.envelope_limit_per_metre,
+        field_limits=field_limits)
 
     if not ctx.quiet:
         score = ("envelope diverged" if attempt_record["diverged"]
@@ -2048,6 +2134,15 @@ def _render(output, samples_data, wps, optimizer, all_attempts, selected_index, 
                    'The tube widens with distance, so this prices the drift '
                    'instead of the elapsed time (KI-054). Recorded with the '
                    'validation report.')
+@click.option('--envelope-from-field', default=None, type=str,
+              help='Per-sample envelope limits from a field season model: the '
+                   'robot disc clearance at each sample, clamped to 0.005-0.05 '
+                   'm, replaces the run-wide limit where the field has one. A '
+                   'waypoint error_threshold still wins locally; a sample the '
+                   'field cannot measure falls back to --envelope-limit. The '
+                   'field footprints carry about 100 mm of placement '
+                   'uncertainty, so the limit is nominal geometry, not a '
+                   'survey. Recorded with the validation report.')
 @click.option('--target-time', default=None, type=click.FloatRange(min=0.0),
               help='Scoring budget: the duration worth 100 on the duration '
                    'score. Required with --validate when the mission does not '
@@ -2136,7 +2231,7 @@ def main(ctx, config, waypoints, output, gui, gui_port, doctor, preset,
          samples, accuracy_weight, force_weight, candidates, pick_candidate,
          stop_waypoints, events,
          no_parallel, workers, fast_polish, polish, validate, best_effort,
-         envelope_limit, envelope_limit_per_metre,
+         envelope_limit, envelope_limit_per_metre, envelope_from_field,
          target_time, max_time, jerk_target, jerk_max,
          scoring_profile, accept_score,
          sysid_fit, export_format, controller_dt, control_dt,
@@ -2413,6 +2508,16 @@ def main(ctx, config, waypoints, output, gui, gui_port, doctor, preset,
                 f"{scoring['target_time_s']} and max {scoring['max_time_s']}. "
                 "Set --target-time/--max-time or the mission scoring fields.")
 
+    # The field behind --envelope-from-field, loaded once and up front: a
+    # typo in the season must not surface after a solve.
+    field = None
+    if envelope_from_field:
+        from overboard.viz.fields import load_field
+        field = load_field(envelope_from_field)
+        if field is None:
+            raise click.ClickException(
+                f"There is no field for the season '{envelope_from_field}'.")
+
     # sorted() so the constraint order (and therefore the IPOPT iterate) is
     # reproducible; set() iteration order changes the NLP ordering.
     all_stop_indices = sorted(set(stop_indices + json_stop_indices))
@@ -2485,6 +2590,7 @@ def main(ctx, config, waypoints, output, gui, gui_port, doctor, preset,
         quiet=quiet,
         envelope_limit=float(envelope_limit),
         envelope_limit_per_metre=float(envelope_limit_per_metre),
+        field=field,
         target_time_s=scoring["target_time_s"],
         max_time_s=scoring["max_time_s"],
         jerk_target_m_s3=scoring["jerk_target_m_s3"],
@@ -2520,7 +2626,10 @@ def main(ctx, config, waypoints, output, gui, gui_port, doctor, preset,
                                     envelope_limit=envelope_limit,
                                     envelope_limit_per_metre=envelope_limit_per_metre,
                                     accept_score=accept_score,
-                                    profile=scoring["profile"])
+                                    profile=scoring["profile"],
+                                    placement_uncertainty_m=(
+                                        field.placement_uncertainty_m
+                                        if field is not None else None))
         _write_candidates(candidates_out, all_attempts, None, quiet)
         raise
 
@@ -2555,6 +2664,10 @@ def main(ctx, config, waypoints, output, gui, gui_port, doctor, preset,
             "accept_score": None,
             "envelope_limit_m": float(envelope_limit),
             "envelope_limit_per_metre": float(envelope_limit_per_metre),
+            "envelope_limit_field_m": None,
+            "placement_uncertainty_m": (
+                _finite(field.placement_uncertainty_m)
+                if field is not None else None),
             "reasons": [], "segments": [], "max_excess_m": 0.0,
         }
 
@@ -2585,7 +2698,12 @@ def main(ctx, config, waypoints, output, gui, gui_port, doctor, preset,
                                 accept_score=accept_score,
                                 profile=scoring["profile"],
                                 accepted=accepted_export,
-                                hub_approved=stats["validation"]["hub_approved"])
+                                hub_approved=stats["validation"]["hub_approved"],
+                                envelope_limit_field=(
+                                    selected_attempt.get("envelope_limit_field_m")),
+                                placement_uncertainty_m=(
+                                    field.placement_uncertainty_m
+                                    if field is not None else None))
     # Every candidate, paths included, for a tool that draws the comparison.
     # Diagnostics, so it is written before the export gate: a failed run is
     # exactly when the operator wants to see what the candidates did.

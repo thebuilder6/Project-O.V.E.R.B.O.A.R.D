@@ -634,6 +634,149 @@ class TestValidationReport(unittest.TestCase):
         payload = json.loads(marker[0][len(self.main.VALIDATION_MARKER):])
         self.assertAlmostEqual(payload["envelope_limit_per_metre"], 0.05)
 
+    @staticmethod
+    def _field(payload):
+        from overboard.viz.fields import field_from_dict
+        return field_from_dict(payload)
+
+    @staticmethod
+    def _envelope_validator(half):
+        class _Envelope:
+            def __init__(self, config, digital_twin=None, **kwargs):
+                pass
+
+            def validate_trajectory(self, samples, *ranges, **kwargs):
+                return {
+                    "passed": True,
+                    "max_motor_violation_N": 0.0,
+                    "max_traction_violation_N": 0.0,
+                    "max_slip_l_N": 0.0,
+                    "max_slip_r_N": 0.0,
+                    "max_tracking_error_m": 0.001,
+                    "reachability": {
+                        "max_error_m": half,
+                        "envelope": [{
+                            "x_min": s["x"] - half, "x_max": s["x"] + half,
+                            "y_min": s["y"] - half, "y_max": s["y"] + half,
+                        } for s in samples],
+                        "diverged": False},
+                }
+        return _Envelope
+
+    def test_the_field_limit_clamps_per_sample(self):
+        """The clearance is the limit, clamped to 0.5-5 cm (-KI-054)."""
+        validator = self._envelope_validator(0.02)
+        # The path runs along y = 0: with the mat's south edge declared there,
+        # the disc penetrates the boundary and the limit clamps down.
+        tight = self._field({
+            "season": "tight-field", "placement_uncertainty_m": 0.1,
+            "mat": {"width_m": 2.0, "height_m": 1.0},
+            "obstacles": []})
+        with patch("overboard.viz.fields.load_field", return_value=tight):
+            failed, data = self._invoke(
+                ["--envelope-from-field", "tight-field",
+                 "--envelope-limit", "0.05"], validator=validator)
+        self.assertNotEqual(failed.exit_code, 0, failed.output)
+        self.assertIsNone(data)
+        marker = [line for line in failed.output.splitlines()
+                  if line.startswith(self.main.VALIDATION_MARKER)]
+        payload = json.loads(marker[0][len(self.main.VALIDATION_MARKER):])
+        self.assertAlmostEqual(
+            payload["candidates"][0]["segments"][0]["limit_m"], 0.005)
+
+        # No mat and nothing on the field: the clearance is unbounded and
+        # clamps up to the tube's own 50 mm guard.
+        loose = self._field({
+            "season": "loose-field", "placement_uncertainty_m": 0.1,
+            "obstacles": []})
+        with patch("overboard.viz.fields.load_field", return_value=loose):
+            passed, data = self._invoke(
+                ["--envelope-from-field", "loose-field",
+                 "--envelope-limit", "0.001"], validator=validator)
+        self.assertEqual(passed.exit_code, 0, passed.output)
+        self.assertTrue(data["validation"]["passed"])
+
+    def test_a_waypoint_threshold_wins_over_the_field(self):
+        """error_threshold / precision_mode keep their local authority."""
+        validator = self._envelope_validator(0.02)
+        tight = self._field({
+            "season": "tight-field", "placement_uncertainty_m": 0.1,
+            "mat": {"width_m": 2.0, "height_m": 1.0},
+            "obstacles": []})
+        with tempfile.TemporaryDirectory() as tmp:
+            wp = os.path.join(tmp, "wp.json")
+            out = os.path.join(tmp, "out.traj")
+            with open(wp, "w", encoding="utf-8") as handle:
+                json.dump(_mission(
+                    [{"x": 0.0, "y": 0.0, "heading": 0.0},
+                     {"x": 0.1, "y": 0.0, "heading": 0.0,
+                      "error_threshold": 0.05}]), handle)
+            with patch.object(self.main, "TrajectoryOptimizer", self._Optimizer), \
+                    patch.object(self.main, "ImmraxValidator", validator), \
+                    patch("overboard.viz.fields.load_field", return_value=tight):
+                result = self.runner.invoke(self.main.main, [
+                    "-c", os.path.join(self.repo, "examples", "fll_choreo.json"),
+                    "-w", wp, "-o", out, "--validate",
+                    "--envelope-from-field", "tight-field",
+                    "--envelope-limit", "0.001"])
+            with open(out, "r", encoding="utf-8") as handle:
+                data = json.load(handle)
+        self.assertEqual(result.exit_code, 0, result.output)
+        self.assertTrue(data["validation"]["passed"])
+
+    def test_a_sample_the_field_cannot_measure_falls_back(self):
+        """NaN is no field limit - it is never clamped (KI-054)."""
+        class _Unmeasured:
+            season = "unmeasured"
+            placement_uncertainty_m = 0.1
+
+            def sample_clearances(self, samples, robot_radius_m):
+                return [float("nan")] * len(samples)
+
+        validator = self._envelope_validator(0.02)
+        with patch("overboard.viz.fields.load_field", return_value=_Unmeasured()):
+            passed, data = self._invoke(
+                ["--envelope-from-field", "unmeasured",
+                 "--envelope-limit", "0.05"], validator=validator)
+        # Clamped, a NaN would become 0.005 and fail the 2.8 cm envelope.
+        self.assertEqual(passed.exit_code, 0, passed.output)
+        self.assertTrue(data["validation"]["passed"])
+        self.assertAlmostEqual(data["validation"]["envelope_limit_m"], 0.05)
+        summary = data["validation"]["envelope_limit_field_m"]
+        self.assertIsNone(summary["min_m"])
+        self.assertIsNone(summary["max_m"])
+
+    def test_the_field_limit_and_the_uncertainty_are_recorded(self):
+        validator = self._envelope_validator(0.02)
+        loose = self._field({
+            "season": "loose-field", "placement_uncertainty_m": 0.1,
+            "obstacles": []})
+        with patch("overboard.viz.fields.load_field", return_value=loose):
+            passed, data = self._invoke(
+                ["--envelope-from-field", "loose-field"], validator=validator)
+        self.assertEqual(passed.exit_code, 0, passed.output)
+        summary = data["validation"]["envelope_limit_field_m"]
+        self.assertEqual(summary["season"], "loose-field")
+        self.assertAlmostEqual(summary["min_m"], 0.05)
+        self.assertAlmostEqual(summary["max_m"], 0.05)
+        self.assertAlmostEqual(data["validation"]["placement_uncertainty_m"], 0.1)
+
+        marker = [line for line in passed.output.splitlines()
+                  if line.startswith(self.main.VALIDATION_MARKER)]
+        self.assertEqual(len(marker), 1)
+        payload = json.loads(marker[0][len(self.main.VALIDATION_MARKER):])
+        self.assertEqual(payload["envelope_limit_field_m"]["season"], "loose-field")
+        self.assertAlmostEqual(payload["placement_uncertainty_m"], 0.1)
+        self.assertNotIn("NaN", marker[0])
+        self.assertNotIn("Infinity", marker[0])
+
+    def test_an_unknown_field_season_is_refused(self):
+        result, data = self._invoke(["--envelope-from-field", "no-such-season"])
+        self.assertNotEqual(result.exit_code, 0, result.output)
+        self.assertIsNone(data)
+        self.assertIn("There is no field for the season", result.output)
+        self.assertNotIn("Traceback", result.output)
+
     def test_every_candidate_carries_its_score_vector(self):
         """The selection rule can be re-run offline on these numbers.
 

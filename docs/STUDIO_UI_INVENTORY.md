@@ -24,7 +24,7 @@ removed).
 
 **Three columns, two of them tabbed.** The left column is what you set, the canvas is the work, the right column is what you read. Each side column is a strip of tabs over one panel, so a column holds one topic at a time.
 
-The page carries **168 element ids**: **83 controls with an id** (38 buttons, 37 inputs, 8 selects), of which 8 are the tab buttons themselves. Fourteen regions are filled in at run time:
+The page carries **169 element ids**: **83 controls with an id** (38 buttons, 37 inputs, 8 selects), of which 8 are the tab buttons themselves. Fifteen regions are filled in at run time:
 
 | Generated region | Element id | Where |
 |---|---|---|
@@ -42,6 +42,7 @@ The page carries **168 element ids**: **83 controls with an id** (38 buttons, 37
 | The lever table | `lever-table` | Result tab, tried levers |
 | The history rows | `history-list` | Mission tab, the History list |
 | The waypoint list | `wp-list` | Waypoint tab |
+| The field limit note | `field-limit-note` | Solve tab, next to the accuracy limit |
 
 ---
 
@@ -194,7 +195,7 @@ Every field below the switch is the gate's: the server passes none of them witho
 | **Accept failed plan at score** | 1-100. A failed plan is accepted at or above this score and can then be hub approved; it is never called passed. |
 | **Candidates (1-3)** | How many of the planner's three frontier candidates are solved (sprint, sweeper, exploratory); clamped to 1-3 by the server. The number is kept while the gate is off, so turning validation back on keeps the count. |
 | **Reachability propagation** | The model the envelope gate uses (`--propagation`): the open-loop plant (fast) or the closed-loop tick map (feedback-contracted, 2-10x slower). |
-| **Accuracy limit (cm)** | How far the reachable set may spread around the plan at any sample (`--envelope-limit`, default 2 cm, 0.1-5 cm). A waypoint's error threshold still wins. The limit is absolute, so a long path can fail for being long (KI-054); the next field is how to price that distance. |
+| **Accuracy limit (cm)** | How far the reachable set may spread around the plan at any sample (`--envelope-limit`, default 2 cm, 0.1-5 cm). A waypoint's error threshold still wins. The limit is absolute, so a long path can fail for being long (KI-054); the next field is how to price that distance. A run with `--envelope-from-field` replaces this with the field's per-sample clearance (clamped 0.5-5 cm), and the note beside the field (`field-limit-note`) shows that limit with its ~100 mm placement uncertainty. |
 | **Allowance per metre (cm/m)** | How much further the reachable set may spread for every metre travelled, on top of the accuracy limit (`--envelope-limit-per-metre`, default 0, 0-5 cm/m). Zero keeps the gate absolute; a slope stops a long mission failing for being long. A waypoint's error threshold still wins. |
 | **Keep the best path when validation fails** | Ticked by default: adds `--best-effort` next to `--validate`, so a run whose only failure is an accuracy excess (envelope or tracking) exports the best candidate and draws it on the field, marked failed. A force, slip, integration or convergence failure still blocks, and the push stays gated on the verdict. |
 

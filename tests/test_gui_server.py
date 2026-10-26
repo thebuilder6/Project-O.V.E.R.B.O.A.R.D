@@ -356,21 +356,41 @@ class TestStudioPush(StudioTestCase):
             status, body = _request(f"{self.base}/api/jobs/{job['id']}")
             if body["status"] != "running":
                 if validated:
-                    # The studio only pushes a validated trajectory, and the
-                    # verdict is on the solve's own output.
-                    self.server.get_job(job["id"]).log(
-                        gui_server.VALIDATION_MARKER
-                        + json.dumps({"selected": 1,
-                                      "candidates": [{"ok": True}]}))
+                    # The studio only pushes an approved trajectory, and the
+                    # approval is the record an approved export carries.
+                    self._approve(job)
                 return job, body
             time.sleep(0.3)
         self.fail("the solve did not finish in time")
+
+    def _traj(self, solve_job):
+        return gui_server.artifact_path(self.server.get_job(solve_job["id"]), "traj")
+
+    def _approve(self, solve_job, **overrides):
+        """Stamp the file with the record an approved export carries."""
+        from overboard.deploy import hub_deploy
+        path = self._traj(solve_job)
+        with open(path, "r", encoding="utf-8") as handle:
+            doc = json.load(handle)
+        traj = doc.get("trajectory") or {}
+        record = {
+            "passed": True,
+            "hub_approved": True,
+            "score_version": hub_deploy.SCORE_VERSION,
+            "trajectory_sha256": hub_deploy.trajectory_sha256(
+                traj.get("config"), traj.get("samples")),
+        }
+        record.update(overrides)
+        doc["validation"] = record
+        with open(path, "w", encoding="utf-8") as handle:
+            json.dump(doc, handle)
+        return path
 
     def test_an_unvalidated_trajectory_is_not_pushable(self):
         """The rule is the server's, not only the browser's.
 
         A page on this machine can post to the studio, so the endpoint
-        that drives the robot has to check the verdict itself (KI-036).
+        that drives the robot has to check the approval itself (KI-036).
         """
         solve_job, solved = self._solve(validated=False)
         self.assertEqual(solved["status"], "ok")
@@ -378,6 +398,53 @@ class TestStudioPush(StudioTestCase):
             _request(f"{self.base}/api/push", method="POST", payload={
                 "job_id": solve_job["id"], "connection": "ble", "hub_name": "HUB"})
         self.assertEqual(ctx.exception.code, 400)
+
+    def test_a_trajectory_without_an_approval_record_is_refused(self):
+        solve_job, _ = self._solve()
+        path = self._traj(solve_job)
+        with open(path, "r", encoding="utf-8") as handle:
+            doc = json.load(handle)
+        doc.pop("validation", None)
+        with open(path, "w", encoding="utf-8") as handle:
+            json.dump(doc, handle)
+        with self.assertRaises(urllib.error.HTTPError) as ctx:
+            _request(f"{self.base}/api/push", method="POST", payload={
+                "job_id": solve_job["id"], "connection": "ble"})
+        self.assertEqual(ctx.exception.code, 400)
+        self.assertIn("no validation record", ctx.exception.read().decode())
+
+    def test_an_edited_trajectory_is_refused(self):
+        """The approval is issued for the file's own hash (KI-036)."""
+        solve_job, _ = self._solve()
+        path = self._approve(solve_job)
+        with open(path, "r", encoding="utf-8") as handle:
+            doc = json.load(handle)
+        doc["trajectory"]["samples"][0]["x"] = 99.0
+        with open(path, "w", encoding="utf-8") as handle:
+            json.dump(doc, handle)
+        with self.assertRaises(urllib.error.HTTPError) as ctx:
+            _request(f"{self.base}/api/push", method="POST", payload={
+                "job_id": solve_job["id"], "connection": "ble"})
+        self.assertEqual(ctx.exception.code, 400)
+        self.assertIn("edited", ctx.exception.read().decode())
+
+    def test_an_unsupported_score_version_is_refused(self):
+        solve_job, _ = self._solve()
+        self._approve(solve_job, score_version=99)
+        with self.assertRaises(urllib.error.HTTPError) as ctx:
+            _request(f"{self.base}/api/push", method="POST", payload={
+                "job_id": solve_job["id"], "connection": "ble"})
+        self.assertEqual(ctx.exception.code, 400)
+        self.assertIn("score_version", ctx.exception.read().decode())
+
+    def test_a_best_effort_trajectory_is_not_pushable(self):
+        solve_job, _ = self._solve()
+        self._approve(solve_job, passed=False, best_effort=True, hub_approved=False)
+        with self.assertRaises(urllib.error.HTTPError) as ctx:
+            _request(f"{self.base}/api/push", method="POST", payload={
+                "job_id": solve_job["id"], "connection": "ble"})
+        self.assertEqual(ctx.exception.code, 400)
+        self.assertIn("not approved", ctx.exception.read().decode())
 
     def test_pushing_an_unknown_job_is_refused(self):
         with self.assertRaises(urllib.error.HTTPError) as ctx:
@@ -672,7 +739,9 @@ class TestStudioModel(StudioTestCase):
                           "wheel_radius": 0.028, "v_max_rad_s": 18.94, "t_max_nm": 0.138,
                           "gearing": 1.0, "cof": 1.37}},
             "waypoints": [{"x": 0.0, "y": 0.0}, {"x": 0.3, "y": 0.0}],
-            "options": {"samples": 4, "candidates": 1, "sysid_fit": model["path"]},
+            # A validated run needs the scoring timing budget (CLI and studio).
+            "options": {"samples": 4, "candidates": 1, "sysid_fit": model["path"],
+                        "target_time": 2.0, "max_time": 20.0},
         }
         status, job = _request(f"{self.base}/api/solve", method="POST", payload=payload)
         self.assertEqual(status, 202)
@@ -686,6 +755,29 @@ class TestStudioModel(StudioTestCase):
         log = " ".join(body["log"])
         self.assertIn("Digital twin", log)
         self.assertIn("Running the Immrax robustness check", log)
+
+    def test_a_fitted_solve_without_the_timing_budget_is_refused(self):
+        """The forced validation needs the scoring timing like any other."""
+        path = str(gui_server.calibration_paths("fitted robot")["fit"])
+        with open(path, "w", encoding="utf-8") as handle:
+            json.dump(self._fit(), handle)
+        status, model = _request(f"{self.base}/api/robot/model/load", method="POST",
+                                 payload={"path": path, "name": "fitted robot"})
+        self.assertEqual(status, 200)
+
+        payload = {
+            "name": "fitted",
+            "config": {
+                "robot": {"mass": 0.723, "inertia": 0.001, "track_width": 0.0965,
+                          "wheel_radius": 0.028, "v_max_rad_s": 18.94, "t_max_nm": 0.138,
+                          "gearing": 1.0, "cof": 1.37}},
+            "waypoints": [{"x": 0.0, "y": 0.0}, {"x": 0.3, "y": 0.0}],
+            "options": {"samples": 4, "candidates": 1, "sysid_fit": model["path"]},
+        }
+        with self.assertRaises(urllib.error.HTTPError) as ctx:
+            _request(f"{self.base}/api/solve", method="POST", payload=payload)
+        self.assertEqual(ctx.exception.code, 400)
+        self.assertIn("target time", ctx.exception.read().decode())
 
 
 class TestStudioCalibration(StudioTestCase):
@@ -1012,6 +1104,22 @@ class TestStudioHelpers(unittest.TestCase):
         command = gui_server.build_command(
             *base, {"envelope_limit_per_metre": 0.006})
         self.assertNotIn("--envelope-limit-per-metre", command)
+
+    def test_the_field_limit_is_passed_through_only_with_validation(self):
+        base = (Path("."), Path("c.json"), Path("w.json"), Path("o.traj"))
+        command = gui_server.build_command(
+            *base, {"validate": True, "envelope_from_field": "2026-27"})
+        self.assertIn("--envelope-from-field 2026-27",
+                      " ".join(str(part) for part in command))
+
+        # The field limit is the validator's gate; off it, it says nothing.
+        command = gui_server.build_command(
+            *base, {"envelope_from_field": "2026-27"})
+        self.assertNotIn("--envelope-from-field", command)
+
+        command = gui_server.build_command(
+            *base, {"validate": True, "envelope_from_field": ""})
+        self.assertNotIn("--envelope-from-field", command)
 
     def test_the_candidate_comparison_is_always_requested(self):
         command = gui_server.build_command(

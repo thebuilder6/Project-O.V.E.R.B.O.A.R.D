@@ -832,11 +832,41 @@ function bestEffortDetail(candidate) {
         + (reasons.length ? ` (${reasons.join('; ')})` : '') + '.';
 }
 
+/* The per-sample accuracy limit the field imposed (--envelope-from-field),
+   shown next to the accuracy limit it replaces. The tooltip carries the
+   field's placement uncertainty: a tight limit read off FIRST's wireframes
+   is nominal geometry, never a survey. */
+function updateFieldLimitNote(report) {
+    const note = el('field-limit-note');
+    const field = report && report.envelope_limit_field_m;
+    if (!field) {
+        note.hidden = true;
+        note.textContent = '';
+        note.title = '';
+        return;
+    }
+    const cm = (value) => (Number(value) * 100).toFixed(1);
+    const hasRange = field.min_m !== null && field.min_m !== undefined
+        && field.max_m !== null && field.max_m !== undefined;
+    note.hidden = false;
+    note.textContent = hasRange
+        ? `Field ${field.season}: ${cm(field.min_m)}-${cm(field.max_m)} cm per sample`
+        : `Field ${field.season}: per-sample limits`;
+    const unsure = Number(report.placement_uncertainty_m);
+    note.title = 'The accuracy limit becomes the field clearance at each sample, '
+        + 'clamped to 0.5-5 cm; a sample the field cannot measure falls back to '
+        + 'the limit on the left. The field footprints agree only to about '
+        + `${Number.isFinite(unsure) ? (unsure * 100).toFixed(0) : '100'} mm`
+        + ' (placement uncertainty), so this limit is nominal geometry, '
+        + 'not a survey.';
+}
+
 /* The verdict of the last run. This is the one place that owns it: a report
    draws it, and no report takes it away again. A solve without validation
    has no verdict, so the screen must not keep the one before it. */
 function renderValidationReport(report) {
     state.validationReport = report || null;
+    updateFieldLimitNote(report);
     const box = el('validation-report');
     if (!report || !report.candidates || !report.candidates.length) {
         /* No verdict: everything the last one left on the screen goes, so
