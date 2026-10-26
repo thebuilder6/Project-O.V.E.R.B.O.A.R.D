@@ -245,7 +245,7 @@ class TestFieldCollisions(unittest.TestCase):
         body = Body(width_m=0.10, front_bumper_m=0.05, back_bumper_m=0.05)
         field = self._clearance_field((), mat=(2.0, 1.14))
         # 20 mm from the west edge, the body pointing along it: 30 mm of
-        # the capsule hangs over the edge.
+        # the box hangs over the edge.
         edge = [{"x": 0.02, "y": 0.5, "heading": math.pi / 2.0}]
         self.assertAlmostEqual(
             field.body_clearances(edge, body)[0], -0.03, places=9)
@@ -260,8 +260,8 @@ class TestFieldCollisions(unittest.TestCase):
             (_circle(x=1.0, y=1.0, r=0.05),), mat=(2.0, 1.14))
         clearance, name = field.body_obstacles(
             [{"x": 1.0, "y": 1.0, "heading": 0.0}], body)[0]
-        # At the circle's centre the capsule sits 0.05 into the model and
-        # carries its own 0.05 radius: 0.10 m of nominal overlap.
+        # The box covers the circle's centre 0.05 deep, and the circle is
+        # 0.05 deep itself: 0.10 m of nominal overlap.
         self.assertAlmostEqual(clearance, -0.10, places=9)
         self.assertEqual(name, "Circle")
         # A sample without a pose is nan, never a clearance.
@@ -269,23 +269,47 @@ class TestFieldCollisions(unittest.TestCase):
         self.assertTrue(math.isnan(clearance))
         self.assertIsNone(name)
 
-    def test_the_body_capsule_follows_the_heading(self):
+    def test_the_body_box_follows_the_heading(self):
         """The body is not a disc: pointing at a model eats the clearance."""
         body = Body(width_m=0.10, front_bumper_m=0.15, back_bumper_m=0.05)
         field = self._clearance_field((_circle(x=1.0, y=1.0, r=0.05),),
                                       mat=(0.0, 0.0))
         # Beside the model, pointing along it: the near face is the side
-        # of the body (0.25 to the core, less the 0.05 model and 0.05 body).
+        # of the body (0.20 to the side face, less the 0.05 model).
         across = [{"x": 0.75, "y": 1.0, "heading": math.pi / 2.0}]
         self.assertAlmostEqual(
             field.body_clearances(across, body)[0], 0.15, places=9)
-        # The same pose pointing at the model: the front bumper is near,
-        # and the capsule just touches it.
+        # The same pose pointing at the model: the flat nose face is
+        # 0.10 away and the body is clear by 5 cm - there is no end-cap
+        # reaching past the bumper.
         toward = [{"x": 0.75, "y": 1.0, "heading": 0.0}]
         self.assertAlmostEqual(
-            field.body_clearances(toward, body)[0], 0.0, places=9)
+            field.body_clearances(toward, body)[0], 0.05, places=9)
 
-    def test_the_body_capsule_against_a_rotated_rect(self):
+    def test_the_box_reaches_hypot_and_no_further(self):
+        """The box's extremes are its corners - the chassis disc's own math."""
+        body = Body(width_m=0.10, front_bumper_m=0.15, back_bumper_m=0.05)
+        reach = math.hypot(0.15, 0.05)
+        unit = (0.15 / reach, 0.05 / reach)
+        # A 3 cm circle just touching the front corner, from outside: the
+        # corner sits hypot(bumper, width/2) from the pose.
+        field = self._clearance_field(
+            (_circle(x=0.15 + 0.03 * unit[0], y=0.05 + 0.03 * unit[1],
+                     r=0.03),),
+            mat=(0.0, 0.0))
+        self.assertAlmostEqual(
+            field.body_clearances([{"x": 0.0, "y": 0.0, "heading": 0.0}],
+                                  body)[0], 0.0, places=9)
+        # The same circle on the nose axis touches 5 cm further out: the
+        # face reaches only the bumper length, where the rounded cap of a
+        # segment body would have reached the corner distance.
+        field = self._clearance_field(
+            (_circle(x=0.15 + 0.03, y=0.0, r=0.03),), mat=(0.0, 0.0))
+        self.assertAlmostEqual(
+            field.body_clearances([{"x": 0.0, "y": 0.0, "heading": 0.0}],
+                                  body)[0], 0.0, places=9)
+
+    def test_the_body_box_against_a_rotated_rect(self):
         """The rectangle's own frame, so a turned model cannot drift."""
         body = Body(width_m=0.10, front_bumper_m=0.05, back_bumper_m=0.05)
         # A 0.2 m square turned 45 degrees is the diamond
@@ -294,22 +318,32 @@ class TestFieldCollisions(unittest.TestCase):
         field = self._clearance_field(
             (_rect(x=1.0, y=1.0, w=0.2, h=0.2, rot=45.0),), mat=(0.0, 0.0))
         west = 1.0 - 0.1 * math.sqrt(2.0)
-        # Alongside the diamond the capsule's side faces the vertex.
+        # Alongside the diamond the box's side face faces the vertex.
         across = [{"x": 0.70, "y": 1.0, "heading": math.pi / 2.0}]
         self.assertAlmostEqual(
-            field.body_clearances(across, body)[0], west - 0.70 - 0.05,
+            field.body_clearances(across, body)[0], west - 0.75,
             places=5)
-        # Reaching over the vertex: the inflation alone makes the overlap.
+        # Reaching over the vertex: the box's face past the vertex is the
+        # overlap.
         reach = [{"x": 0.85, "y": 1.0, "heading": math.pi / 2.0}]
         self.assertAlmostEqual(
-            field.body_clearances(reach, body)[0], west - 0.85 - 0.05,
+            field.body_clearances(reach, body)[0], west - 0.90,
             places=5)
-        # A zero-bumper body is the point case: the capsule and the disc
-        # formulas must agree exactly there.
-        point_body = Body(width_m=0.2, front_bumper_m=0.0, back_bumper_m=0.0)
+        # Degenerate bodies fall into the shared branches: a zero-width
+        # body is the segment, and without bumpers it is the point - the
+        # same math the disc path uses.
+        segment_body = Body(width_m=0.0, front_bumper_m=0.05,
+                            back_bumper_m=0.05)
+        obstacle = field.obstacles[0]
+        self.assertAlmostEqual(
+            field.body_obstacles(across, segment_body)[0][0],
+            obstacle.signed_distance_segment(
+                *segment_body.core(0.70, 1.0, math.pi / 2.0)),
+            places=12)
+        point_body = Body(width_m=0.0, front_bumper_m=0.0, back_bumper_m=0.0)
         self.assertAlmostEqual(
             field.body_clearances(across, point_body)[0],
-            field.sample_clearances(across, 0.1)[0], places=12)
+            field.sample_clearances(across, 0.0)[0], places=12)
 
     def test_an_empty_field_without_a_mat_says_nothing_is_known(self):
         field = self._clearance_field((), mat=(0.0, 0.0))

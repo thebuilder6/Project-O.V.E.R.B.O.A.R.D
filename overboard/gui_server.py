@@ -973,11 +973,11 @@ def download_field_mat(season, timeout=120):
 def field_collisions(samples, config, season):
     """Where the planned path runs into a mission model.
 
-    The robot is its heading-aware body capsule - the bumper segment at
-    each sample's own pose, inflated by half the body's width - the same
-    body the field-clearance gate measures, so a mark on the overlay and a
-    verdict from the gate cannot disagree. Nothing is changed and nothing
-    is blocked: the collisions are only marked, so a human can decide what
+    The robot is its heading-aware body box - the rectangle of its width
+    and bumper lengths at each sample's own pose - the same body the
+    field-clearance gate measures, so a mark on the overlay and a verdict
+    from the gate cannot disagree. Nothing is changed and nothing is
+    blocked: the collisions are only marked, so a human can decide what
     to do about them.
     """
     if not season or not samples:

@@ -565,10 +565,11 @@ def _local_limit(thresholds, index, travelled_at, default, per_metre,
 
 
 def _field_body(robot_cfg):
-    """The heading-aware body capsule the field gates measure.
+    """The heading-aware body box the field gates measure.
 
-    The capsule of ``width_m``/``front_bumper_m``/``back_bumper_m`` at the
-    sample's own heading - the true body, not its circumscribed disc.
+    The rectangle of ``width_m`` across and ``back_bumper_m``/
+    ``front_bumper_m`` along the sample's heading - the true body, whose
+    circumscribed disc is ``chassis_radius_m()``.
     """
     from overboard.viz.fields import Body
     return Body.from_config(robot_cfg)
@@ -577,12 +578,11 @@ def _field_body(robot_cfg):
 def _field_clearances(field, robot_cfg, samples_data):
     """The field's raw per-sample clearances (``--field-clearance``).
 
-    One value per sample: metres of space around the body capsule (the
-    axle, its bumpers and half its width - at the sample's heading) to the
-    nearest mission model **or mat boundary**, negative inside one. This is
-    the accuracy channel: the tube should stay on the mat. NaN is "the
-    field cannot measure this sample": it is never clamped, never checked,
-    and never a clearance.
+    One value per sample: metres of space around the body box (the axle's
+    rectangle at the sample's heading) to the nearest mission model **or
+    mat boundary**, negative inside one. This is the accuracy channel: the
+    tube should stay on the mat. NaN is "the field cannot measure this
+    sample": it is never clamped, never checked, and never a clearance.
     """
     if field is None:
         return None
@@ -601,7 +601,7 @@ def _field_obstacles(field, robot_cfg, samples_data):
 
     The physical channel (``--field-clearance``): the mat boundary is a
     game-rule boundary, not a crash, so it is not measured here - the
-    chassis may legally overhang it. Negative means the body capsule is
+    chassis may legally overhang it. Negative means the body box is
     inside that obstacle (structural); NaN means the field cannot measure
     the sample (skipped).
     """
@@ -2306,9 +2306,10 @@ def _render(output, samples_data, wps, optimizer, all_attempts, selected_index, 
 @click.option('--field-clearance', default=None, type=str,
               help='Two field-aware gates from one field model (needs '
                    '--validate). The accuracy limit becomes the space around '
-                   'the robot body - its heading-aware capsule of width and '
-                   'bumper lengths - at each sample, mission models and the '
-                   'mat edge - clamped to 0.005-0.05 m (a waypoint error_threshold '
+                   'the robot body - the heading-aware rectangle of its '
+                   'width and bumper lengths - at each sample, mission '
+                   'models and the mat edge - clamped to 0.005-0.05 m (a '
+                   'waypoint error_threshold '
                    'still wins locally; a sample the field cannot measure '
                    'falls back to --envelope-limit). And the clearance to the '
                    'mission models is its own physical gate: the tube reaching '

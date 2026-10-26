@@ -126,6 +126,59 @@ def _segment_segment_distance(
                       y0 + d1y * s - (y2 + d2y * t))
 
 
+def _point_box_signed(
+    px: float, py: float, lo_x: float, hi_x: float, lo_y: float, hi_y: float,
+) -> float:
+    """Signed distance from a point to an axis-aligned box.
+
+    Zero on the edge, positive outside, and inside the negative depth to
+    the nearest edge - the rectangle branch of ``Obstacle.signed_distance``.
+    """
+    outside_x = max(lo_x - px, px - hi_x)
+    outside_y = max(lo_y - py, py - hi_y)
+    if outside_x > 0.0 or outside_y > 0.0:
+        return math.hypot(max(outside_x, 0.0), max(outside_y, 0.0))
+    return min(max(outside_x, outside_y), 0.0)
+
+
+def _quad_aabb_signed(quad, half_w: float, half_h: float) -> float:
+    """Signed distance between a convex quad and a centred axis-aligned box.
+
+    The quad's corners are in cyclic order. Positive when disjoint (the
+    distance between the shapes), negative when they overlap (minus the
+    minimum translation that separates). The axes are the box's two and
+    the quad's edge normals - the Minkowski difference's edge normals, so
+    the penetration is exact for two convex polygons. A degenerate quad (a
+    segment or a point) keeps its own exit distances on the same axes.
+    """
+    axes = [(1.0, 0.0), (0.0, 1.0)]
+    for (ax, ay), (bx, by) in zip(quad, list(quad[1:]) + [quad[0]]):
+        dx, dy = bx - ax, by - ay
+        length = math.hypot(dx, dy)
+        if length > 0.0:
+            axes.append((-dy / length, dx / length))
+    exits = []
+    for nx, ny in axes:
+        projections = [nx * px + ny * py for px, py in quad]
+        q_lo, q_hi = min(projections), max(projections)
+        extent = half_w * abs(nx) + half_h * abs(ny)
+        if min(q_hi, extent) - max(q_lo, -extent) < 0.0:
+            break
+        exits.append(min(extent - q_lo, q_hi + extent))
+    else:
+        return -min(exits)
+    # Disjoint: the nearest feature is an edge of one of the two shapes.
+    best = math.inf
+    for (qx0, qy0), (qx1, qy1) in zip(quad, list(quad[1:]) + [quad[0]]):
+        for edge in ((-half_w, -half_h, half_w, -half_h),
+                     (half_w, -half_h, half_w, half_h),
+                     (half_w, half_h, -half_w, half_h),
+                     (-half_w, half_h, -half_w, -half_h)):
+            best = min(best, _segment_segment_distance(
+                qx0, qy0, qx1, qy1, *edge))
+    return best
+
+
 def _segment_aabb_signed(
     x0: float, y0: float, x1: float, y1: float,
     half_w: float, half_h: float,
@@ -138,11 +191,7 @@ def _segment_aabb_signed(
     the same math ``Obstacle.signed_distance`` uses for a rectangle.
     """
     if x0 == x1 and y0 == y1:
-        outside_x = abs(x0) - half_w
-        outside_y = abs(y0) - half_h
-        if outside_x > 0.0 or outside_y > 0.0:
-            return math.hypot(max(outside_x, 0.0), max(outside_y, 0.0))
-        return min(max(outside_x, outside_y), 0.0)
+        return _point_box_signed(x0, y0, -half_w, half_w, -half_h, half_h)
 
     lo_x, hi_x = min(x0, x1), max(x0, x1)
     lo_y, hi_y = min(y0, y1), max(y0, y1)
@@ -175,13 +224,13 @@ def _segment_aabb_signed(
 
 @dataclass(frozen=True)
 class Body:
-    """The heading-aware capsule the robot's body sweeps at one pose.
+    """The heading-aware box the robot's body is at one pose.
 
-    The core is the segment from ``back_bumper_m`` behind the pose to
-    ``front_bumper_m`` ahead of it along the heading (counter-clockwise
-    positive, the mat frame), inflated by ``width_m / 2``.
-    ``RobotConfig.chassis_radius_m()`` is the circumscribed disc of
-    exactly this capsule - the geometry here is the capsule itself.
+    The rectangle ``[-back_bumper_m, +front_bumper_m] x [+/- width_m / 2]``
+    at the sample's heading (counter-clockwise positive, the mat frame).
+    Its circumscribed disc is exactly ``RobotConfig.chassis_radius_m()`` -
+    ``hypot(bumper, width / 2)`` at the corners - and the gate measures
+    this box, not that disc.
     """
 
     width_m: float
@@ -197,17 +246,26 @@ class Body:
             back_bumper_m=float(config.back_bumper_m),
         )
 
-    @property
-    def inflate_m(self) -> float:
-        """The capsule's radius: half the body's width."""
-        return self.width_m / 2.0
-
     def core(self, x: float, y: float, heading: float):
-        """The capsule's core segment at one pose."""
+        """The forward-back segment at one pose (the zero-width body)."""
         cos_h = math.cos(heading)
         sin_h = math.sin(heading)
         return (x - self.back_bumper_m * cos_h, y - self.back_bumper_m * sin_h,
                 x + self.front_bumper_m * cos_h, y + self.front_bumper_m * sin_h)
+
+    def corners(self, x: float, y: float, heading: float):
+        """The rectangle's four corners at one pose, in cyclic order."""
+        cos_h = math.cos(heading)
+        sin_h = math.sin(heading)
+        half = self.width_m / 2.0
+        out = []
+        for fx, fy in ((-self.back_bumper_m, -half),
+                       (self.front_bumper_m, -half),
+                       (self.front_bumper_m, half),
+                       (-self.back_bumper_m, half)):
+            out.append((x + fx * cos_h - fy * sin_h,
+                        y + fx * sin_h + fy * cos_h))
+        return out
 
 
 @dataclass(frozen=True)
@@ -270,22 +328,19 @@ class Obstacle:
         local_x, local_y = self._local(px, py)
         half_w = self.w_m / 2.0
         half_h = self.h_m / 2.0
-        outside_x = abs(local_x) - half_w
-        outside_y = abs(local_y) - half_h
-        if outside_x > 0.0 or outside_y > 0.0:
-            return math.hypot(max(outside_x, 0.0), max(outside_y, 0.0))
-        return min(max(outside_x, outside_y), 0.0)
+        return _point_box_signed(local_x, local_y,
+                                 -half_w, half_w, -half_h, half_h)
 
     def signed_distance_segment(
         self, x0: float, y0: float, x1: float, y1: float,
     ) -> float:
         """Distance from a segment to the footprint, negative when it enters.
 
-        The zero-thickness core the body capsule is inflated from: the
-        convex signed distance - the distance between the shapes when they
-        are apart, minus the minimum translation that separates them when
-        they overlap. For a degenerate segment this is ``signed_distance``
-        of that point, so the two cannot disagree.
+        The zero-width body's own case: the convex signed distance - the
+        distance between the shapes when they are apart, minus the minimum
+        translation that separates them when they overlap. For a degenerate
+        segment this is ``signed_distance`` of that point, so the two
+        cannot disagree.
         """
         if self.kind == "circle":
             return (_point_segment_distance(self.x_m, self.y_m, x0, y0, x1, y1)
@@ -294,6 +349,38 @@ class Obstacle:
         ax1, ay1 = self._local(x1, y1)
         return _segment_aabb_signed(ax0, ay0, ax1, ay1,
                                     self.w_m / 2.0, self.h_m / 2.0)
+
+    def signed_distance_body(
+        self, x: float, y: float, heading: float, body: "Body",
+    ) -> float:
+        """Distance from the body box at one pose to the footprint.
+
+        The heading-aware rectangle, exactly: negative when the body is
+        inside the footprint. Degenerate bodies fall into the segment and
+        point branches above, so the three cannot disagree.
+        """
+        if body.width_m <= 0.0:
+            if body.front_bumper_m <= 0.0 and body.back_bumper_m <= 0.0:
+                return self.signed_distance(x, y)
+            x0, y0, x1, y1 = body.core(x, y, heading)
+            return self.signed_distance_segment(x0, y0, x1, y1)
+        if self.kind == "circle":
+            # The circle's centre into the body frame: the distance to the
+            # body's rectangle, less the circle's own radius.
+            cos_h = math.cos(heading)
+            sin_h = math.sin(heading)
+            dx = self.x_m - x
+            dy = self.y_m - y
+            half = body.width_m / 2.0
+            return (_point_box_signed(dx * cos_h + dy * sin_h,
+                                      -dx * sin_h + dy * cos_h,
+                                      -body.back_bumper_m, body.front_bumper_m,
+                                      -half, half)
+                    - self.radius_m)
+        # Two rectangles: the body's corners into this footprint's own
+        # frame, then box against box.
+        quad = [self._local(*corner) for corner in body.corners(x, y, heading)]
+        return _quad_aabb_signed(quad, self.w_m / 2.0, self.h_m / 2.0)
 
     def overlap(self, px: float, py: float, robot_radius_m: float) -> float:
         """How deep a disc at ``(px, py)`` bites into this obstacle.
@@ -498,35 +585,35 @@ class FieldModel:
                    for x, y in points)
 
     @staticmethod
-    def _body_core(sample, body):
-        """The capsule's core segment at one sample, or None if malformed."""
+    def _sample_pose(sample):
+        """One sample's ``(x, y, heading)``, or None if it is malformed."""
         try:
             x = float(sample["x"])
             y = float(sample["y"])
             heading = float(sample["heading"])
         except (KeyError, TypeError, ValueError):
             return None
-        return body.core(x, y, heading)
+        return x, y, heading
 
     def body_clearances(self, samples, body: Body) -> List[float]:
-        """One clearance per sample around the body capsule (the gate).
+        """One clearance per sample around the body box (the gate).
 
-        The signed distance from the capsule's surface to the nearest
-        mission model **or mat boundary**, negative inside: the space the
-        body has around it. A sample without a usable ``x``/``y``/``heading``
-        gets ``nan`` - a nan clearance must never be read as clearance.
+        The signed distance from the box's surface to the nearest mission
+        model **or mat boundary**, negative inside: the space the body has
+        around it. A sample without a usable ``x``/``y``/``heading`` gets
+        ``nan`` - a nan clearance must never be read as clearance.
         """
         clearances: List[float] = []
         for sample in samples:
-            core = self._body_core(sample, body)
-            if core is None:
+            pose = self._sample_pose(sample)
+            if pose is None:
                 clearances.append(float("nan"))
                 continue
-            x0, y0, x1, y1 = core
-            best = self._wall_clearance([(x0, y0), (x1, y1)]) - body.inflate_m
+            x, y, heading = pose
+            best = self._wall_clearance(body.corners(x, y, heading))
             for obstacle in self.obstacles:
-                best = min(best, obstacle.signed_distance_segment(
-                    x0, y0, x1, y1) - body.inflate_m)
+                best = min(best, obstacle.signed_distance_body(
+                    x, y, heading, body))
             clearances.append(best)
         return clearances
 
@@ -535,23 +622,22 @@ class FieldModel:
 
         The physical channel: the mat boundary is a game-rule boundary,
         not a crash - the chassis may legally overhang it - so it is not
-        measured here. Negative means the body capsule is inside that
+        measured here. Negative means the body box is inside that
         obstacle, and the name says which one. A sample without a usable
         pose gets ``(nan, None)``; one with nothing on the field gets
         ``(inf, None)``.
         """
         out: List[Tuple[float, Optional[str]]] = []
         for sample in samples:
-            core = self._body_core(sample, body)
-            if core is None:
+            pose = self._sample_pose(sample)
+            if pose is None:
                 out.append((float("nan"), None))
                 continue
-            x0, y0, x1, y1 = core
+            x, y, heading = pose
             best = math.inf
             name = None
             for obstacle in self.obstacles:
-                distance = (obstacle.signed_distance_segment(x0, y0, x1, y1)
-                            - body.inflate_m)
+                distance = obstacle.signed_distance_body(x, y, heading, body)
                 if distance < best:
                     best = distance
                     name = obstacle.name
@@ -559,7 +645,7 @@ class FieldModel:
         return out
 
     def body_collisions(self, samples, body: Body) -> List[Collision]:
-        """Where the body capsule runs into a mission model.
+        """Where the body box runs into a mission model.
 
         The same body the gate measures, at the same samples, so the
         overlay and the gate cannot disagree about what touches what.
@@ -570,13 +656,12 @@ class FieldModel:
         """
         found: Dict[str, Collision] = {}
         for index, sample in enumerate(samples):
-            core = self._body_core(sample, body)
-            if core is None:
+            pose = self._sample_pose(sample)
+            if pose is None:
                 continue
-            x0, y0, x1, y1 = core
+            x, y, heading = pose
             for obstacle in self.obstacles:
-                depth = body.inflate_m - obstacle.signed_distance_segment(
-                    x0, y0, x1, y1)
+                depth = -obstacle.signed_distance_body(x, y, heading, body)
                 if depth <= 0.0:
                     continue
                 existing = found.get(obstacle.id)
