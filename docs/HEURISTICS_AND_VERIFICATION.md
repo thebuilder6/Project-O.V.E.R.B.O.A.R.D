@@ -22,7 +22,7 @@
 
 ## Findings at a glance
 
-1. **The heuristic layer is small.** Three analytical frontier candidates (the default), or five deterministic seeds and two timing models (the stock set), a candidate set, and a selection rule. There is **no geometric path family** anywhere in the tree — no splines, clothoids, béziers or quintics — and the objective has no term that prefers one path over another. It has three terms that price the *motion* (the duration, the wheel jerk and, optionally, the wheel force), and the passing candidates are ranked by a 5-part fitness score in seconds ([7.2](#72-the-5-part-path-fitness-score)) - or, on the default path, by the shortest duration ([7.3](#73-the-selection-rule)).
+1. **The heuristic layer is small.** Three analytical frontier candidates (the default solve set), plus an opt-in tail of three more shapes that measured as a null (Q17), or five deterministic seeds and two timing models (the stock set), a candidate set, and a selection rule. There is **no geometric path family** anywhere in the tree that the objective prefers - no splines, clothoids, béziers or quintics survive the solve, and the objective has no term that prefers one path over another (Q17 stage 2's anchor measured as a null and was removed). It has three terms that price the *motion* (the duration, the wheel jerk and, optionally, the wheel force), and the passing candidates are ranked by a 5-part fitness score in seconds ([7.2](#72-the-5-part-path-fitness-score)) - or, on the default path, by the shortest duration ([7.3](#73-the-selection-rule)).
 2. **The seeds do not rescue the baseline often, but they do win on speed.** Over the 60-candidate matrix the `baseline` seed is the fastest passing candidate in 1 of the 7 cells that produce a trajectory at all; a non-baseline seed wins the other 6. The baseline fails in 9 of the 12 cells, and **four** of them are rescued by another seed: first4 under both timing models, the complex mission under equal-duration, and the events mission under per-segment. In the other 5 — the S-curve and the stops mission, under both models — no seed passes either.
 3. **The tracking gate is the binding constraint; the reachability envelope never binds.** Of 34 failing candidates, 28 failed on the 5 mm tracking gate and 11 on motor force. **Zero** failed on the forward-integration check — it went with the self-consistent collocation — and **zero** on the 2 cm envelope threshold. The largest envelope measured anywhere was 1.72 cm.
 4. **Two of the six example missions still produce no output at all.** The S-curve and the stops mission fail **every candidate** in the full sweep — 0 of 9 each, across both timing models and the whole accuracy-weight grid. Their best tracking errors are 1.27 cm and 0.75 cm against a 0.50 cm gate. The self-consistent collocation removed most of the plan's own deviation at fine sampling; at the coarse end the plan's own deviation is still the whole error. The reference's velocity half is no longer open: it ships as the tick-level midpoint lead ([RQ-A finding F8](research/RQ-A_tracking_error.md), commit `47633e9`). *(Record of the 2026-10-19 ranges with `plant`; with the widened ranges and `tick` both missions pass — see the range-change note above.)*
@@ -35,7 +35,7 @@
 
 > **Read RQ-A before changing the tracking gate, the reference interpolation, or the optimizer's kinematics.** It contains the measurements, the refuted hypotheses, and the four instrument bugs that produced convincing nonsense along the way.
 >
-> **Which planner these findings describe.** The numbers below are the **stock** candidate set - the five seeds that are now the rescue round - measured on the tree of 2026-10-20. The stock path itself was retired with the other multi-track paths; the only planner now is the 3-Pillar unified engine with the three frontier candidates ([1.1](#11-the-default-system-the-3-pillar-unified-engine)), and its own measurements are in [19.6](STRATEGY_LEDGER.md#196-the-3-pillar-unified-trajectory-engine---unified-the-default-path) and in `docs/OPTIMAL_CONTROL_DERIVATION.md`.
+> **Which planner these findings describe.** The numbers below are the **stock** candidate set - the five seeds that are now the rescue round - measured on the tree of 2026-10-20. The stock path itself was retired with the other multi-track paths; the only planner now is the 3-Pillar unified engine with the three frontier candidates and the opt-in Q17 tail ([1.1](#11-the-default-system-the-3-pillar-unified-engine)), and its own measurements are in [19.6](STRATEGY_LEDGER.md#196-the-3-pillar-unified-trajectory-engine---unified-the-default-path) and in `docs/OPTIMAL_CONTROL_DERIVATION.md`.
 
 ---
 
@@ -204,7 +204,7 @@ waypoints
    └─ export gate   : main.py              _export_block_reason
 ```
 
-This is the only path. The three frontier candidates are `frontier_sprint` (accuracy weight 0.001), `frontier_sweeper` (0.002) and `frontier_exploratory` (0.001), all per-segment timing; `--candidates N` truncates that list, and without `--validate` only the first one is solved. The derivation of the seeds is in [19.5](STRATEGY_LEDGER.md#195-the-kinetic-frontier-analytical-seed-generator--the-5-physical-principles) and of the engine in [19.6](STRATEGY_LEDGER.md#196-the-3-pillar-unified-trajectory-engine---unified-the-default-path).
+This is the only path. The candidate list is the frontier triad - `frontier_sprint` (accuracy weight 0.001), `frontier_sweeper` (0.002) and `frontier_exploratory` (0.001), all per-segment timing - followed by the **Q17 tail**: `frontier_sprint_mirror` (0.001), `frontier_spline` (0.001) and `frontier_reverse` (0.002). `--candidates N` truncates that list positionally (the shipped default 2 solves sprint and sweeper), and without `--validate` only the first one is solved. **The tail is opt-in and inert at the default** (Q17, 2026-10-26): the three shapes (mirrored bow, bezier geometry, reverse-seeded segments) solve back to one path and bought zero gate coverage on the 32-mission suite, so they are kept as an inert tail under the pre-registered null-result policy; `--candidates 6` is the gate-coverage mode if a mission ever needs the extra tickets. The derivation of the seeds is in [19.5](STRATEGY_LEDGER.md#195-the-kinetic-frontier-analytical-seed-generator--the-5-physical-principles), of the engine in [19.6](STRATEGY_LEDGER.md#196-the-3-pillar-unified-trajectory-engine---unified-the-default-path) and of the tail in [19.7](STRATEGY_LEDGER.md#197-the-q17-topology-and-geometry-candidates).
 
 ### 1.1b The stock path (retired)
 
@@ -260,7 +260,7 @@ This is the list a newcomer most needs, because it defines the whole research sp
 | **Obstacle or field geometry.** No walls, no mat boundaries, no zone constraints. | The robot is assumed to reach every waypoint in a straight line through space. |
 | **A geometric term in the objective.** The objective is duration plus an optional jerk penalty (`overboard/core/optimizer.py`, `_compute_cost`). | The optimizer has no idea what the path *looks* like. It is pushed along by the integration constraints and the endpoint equalities. Two paths of the same length and the same smoothness are indistinguishable to it. This is the root cause of many entries in [`STRATEGY_LEDGER.md`](STRATEGY_LEDGER.md) (Part III). |
 | **Topology search.** No search over forward/reverse/point-turn combinations per segment. | The reverse and point-turn topologies existed only inside the archived JAX candidate generator (`archive/legacy-2026-10:overboard/legacy/jax_optimizer.py`), which never reached the shipped solver. |
-| **Multi-start beyond the frontier triad.** | The default path solves three frontier candidates (sprint, sweeper, exploratory); the retired stock path solved five deterministic seeds, all from the same straight-line geometry; they are still declared but no longer solved ([1.1c](#11c-the-rescue-round-removed)). |
+| **Multi-start beyond the frontier triad.** | The default path solves the candidate list sliced by `--candidates N` (default 2 of the triad; the Q17 tail of mirrored/bezier/reverse shapes sits at 4-6 and measured as a null, so `--candidates 6` is opt-in tickets, not a wider basin set); the retired stock path solved five deterministic seeds, all from the same straight-line geometry; they are still declared but no longer solved ([1.1c](#11c-the-rescue-round-removed)). |
 | **A reachability term.** Reachability is computed *after* the solve. | The optimizer cannot know that a path it is about to find will fail the envelope gate. See [Section 14](#14-what-each-layer-proves-and-does-not-prove). |
 | **Motor or odometry dynamics in the optimizer.** | The optimizer is kinematic. The plant is modelled only in the validator. |
 
@@ -278,7 +278,7 @@ specs_to_solve = candidate_specs if use_validation else candidate_specs[:1]
 
 **Without `--validate`, only candidate 1 is solved.** On the default path that is `frontier_sprint`; on the stock path it is equal-duration `baseline`. This is deliberate: without the validator there is no way to tell whether a different candidate is better, so there is no reason to spend the time.
 
-**With `--validate`,** the candidates are solved and compared. On the default path the set is the three frontier candidates, truncated to `--candidates N` (the flag itself has no upper bound; `N < 3` shortens the triad). On the stock path each candidate is an independent `(seed, timing model, accuracy weight)` triple, and `--candidates N` says how many of them are solved.
+**With `--validate`,** the candidates are solved and compared. On the default path the set is the candidate list (the triad plus the opt-in Q17 tail), truncated to `--candidates N` (the flag itself has no upper bound; `N < 6` shortens the list positionally). On the stock path each candidate is an independent `(seed, timing model, accuracy weight)` triple, and `--candidates N` says how many of them are solved.
 
 ### 3.2 Solve
 
@@ -526,14 +526,18 @@ The per-wheel force limit is a `max` over the wheel's share of the longitudinal 
 
 There are two candidate sets, and the default is the first one.
 
-### 6.1 The frontier triad (default)
+### 6.1 The frontier triad and the Q17 tail (default)
 
 ```python
-# overboard/main.py, with --unified
+# overboard/core/unified_planner.py, UnifiedPathEngine.candidate_specs
 specs_to_solve = [
     {"accuracy_weight": 0.001, "guess_style": "frontier_sprint",     "per_segment_dt": True, "cost_metric": "discretization", "epigraph_constraints": True},
     {"accuracy_weight": 0.002, "guess_style": "frontier_sweeper",    "per_segment_dt": True, "cost_metric": "discretization", "epigraph_constraints": True},
     {"accuracy_weight": 0.001, "guess_style": "frontier_exploratory","per_segment_dt": True, "cost_metric": "discretization", "epigraph_constraints": True},
+    # Q17 tail (opt-in; inert at the shipped default of 2)
+    {"accuracy_weight": 0.001, "guess_style": "frontier_sprint_mirror",  "per_segment_dt": True, "cost_metric": "discretization", "epigraph_constraints": True},
+    {"accuracy_weight": 0.001, "guess_style": "frontier_spline",         "per_segment_dt": True, "cost_metric": "discretization", "epigraph_constraints": True},
+    {"accuracy_weight": 0.002, "guess_style": "frontier_reverse",        "per_segment_dt": True, "cost_metric": "discretization", "epigraph_constraints": True},
 ]
 ```
 
@@ -542,8 +546,13 @@ specs_to_solve = [
 | 1 | `frontier_sprint` | 0.001 | per-segment | discretization |
 | 2 | `frontier_sweeper` | 0.002 | per-segment | discretization |
 | 3 | `frontier_exploratory` | 0.001 | per-segment | discretization |
+| 4 | `frontier_sprint_mirror` | 0.001 | per-segment | discretization |
+| 5 | `frontier_spline` | 0.001 | per-segment | discretization |
+| 6 | `frontier_reverse` | 0.002 | per-segment | discretization |
 
-`--candidates N` truncates the list when `N < 3`; an explicit `--accuracy-weight` overrides the three weights. The sample count defaults to the engine's invariant mesh (10-18 samples per segment, a 50 ms tick span) unless `--samples` says otherwise.
+`--candidates N` truncates the list positionally when `N < 6`; the shipped default is 2 (sprint and sweeper), `--candidates 3` is the triad and `--candidates 6` is the gate-coverage mode with the Q17 tail. An explicit `--accuracy-weight` overrides the listed weights. The sample count defaults to the engine's invariant mesh (10-18 samples per segment, a 50 ms tick span) unless `--samples` says otherwise.
+
+The tail is the pre-registered Q17 experiment (2026-10-26) and its verdict is a null: the mirrored bow, the bezier geometry and the reverse-seeded segments solve back to one path (mean pairwise deviation 0.0126 cm over the suite, against a 2 cm bar - the seeds themselves start 3.03 cm apart) and buy **zero** gate coverage (6/32 in both arms). They stay in the tree as the opt-in tail per the pre-registered null-result policy - additive candidates, not optimizer rows - and nothing about the shipped default changes. Do not expect `--candidates 6` to pass a mission the triad cannot: it is the coverage mode for tickets, not a wider basin set ([Q17](RESEARCH_AGENDA.md#q17--do-topology-and-geometry-candidates-buy-gate-coverage), [19.7](STRATEGY_LEDGER.md#197-the-q17-topology-and-geometry-candidates)).
 
 ### 6.2 The stock set (retired)
 
@@ -647,26 +656,32 @@ The weights are in seconds, so they say what each defect is worth: 1 mm of sprea
 ### 7.3 The selection rule
 
 ```python
-def _select_attempt(attempts):
+def _select_attempt_scored(attempts, accept_score=None):
     candidates = [a for a in attempts if a.get("converged", False)]   # KI-001
     if not candidates:
         return None, False
-    passing = [a for a in candidates if a["ok"]]
-    if passing:
-        return min(passing, key=lambda a: (a.get("duration", a["cost"]),
-                                           a.get("tube", float("inf")))), True
-    return min(candidates, key=lambda a: (a["violation"], a["cost"])), False
+    eligible = [a for a in candidates if _attempt_eligible(a, accept_score)]
+    if eligible:
+        best = min(eligible, key=lambda a: (
+            -float(a.get("score") or 0.0),            # the decision score
+            0 if a.get("ok") else 1,                  # a pass before an accepted failure
+            -float((a.get("categories") or {}).get("accuracy") or 0.0),
+            -float((a.get("categories") or {}).get("physical") or 0.0),
+            a.get("duration", a.get("cost", float("inf")))))
+        return best, bool(best.get("ok"))
+    return min(candidates, key=lambda a: (a.get("violation", float("inf")),
+                                          a.get("cost", float("inf")))), False
 ```
 
 In words:
 
-1. **Non-converged candidates are never eligible.** (KI-001)
-2. Among the passing candidates, **the shortest duration wins**, and the reachability envelope breaks a tie.
-3. The 5-part fitness score ([7.2](#72-the-5-part-path-fitness-score)) is reported for every candidate, so the rule can be re-run offline, but it does not decide: the planner is time-optimal, so the shortest passing plan is the one that ships.
+1. **Non-converged candidates are never eligible**, and neither is a structural failure (a crashed validator, a diverged tube, a body inside a mission model). (KI-001)
+2. Among the **eligible** candidates - an ordinary pass, or a failed plan accepted under an explicit `--accept-score N` - **the highest decision score wins** (score contract, `score_version: 1`). Ties break: a pass before an accepted failure, then the higher accuracy and physical categories, then the shorter duration, then the lower candidate index.
+3. The decision score is computed per candidate against the run's scoring budget (`target_time_s`/`max_time_s`, jerk 10/20 default; research missions derive the budget measured, the M1 rule) and is capped at the score of a category the candidate failed. On a run without `--validate` there are no scores and the rule degrades to **the fastest passing plan** - the legacy rule the Q13-Q15 ledger measured, and what `selected_fastest` reports next to the production pick in the research records.
 4. If none pass, the converged candidate with the **smallest quantified violation** wins, and `passed_any` is `False` -
-5. **A candidate the rule cannot pick is not validated.** With `--validate`, the fastest solved candidate is checked first, and once one passes, a *slower* candidate's check is skipped: the rule asks for the shortest passing plan, so the check cannot change the pick, and it is the most expensive part of the run. An equal duration is still checked, because the envelope breaks that tie. A skipped record carries `validation_skipped: true` with `ok: false`, which means *not checked*, never *failed* - the CLI report, `_stats.json` and the studio's chip and summary line all say which. A compare run (`--candidates-out`) or an explicit `--pick-candidate` wants every verdict, so the skip is off there.
+5. **A candidate the rule cannot pick is not validated.** With `--validate`, the fastest solved candidate is checked first, and once one passes, a *slower* candidate's check is skipped: the rule asks for the plan that passes best, so the check cannot change the pick, and it is the most expensive part of the run. An equal duration is still checked, because the envelope breaks that tie. A skipped record carries `validation_skipped: true` with `ok: false`, which means *not checked*, never *failed* - the CLI report, `_stats.json` and the studio's chip and summary line all say which. A compare run (`--candidates-out`) or an explicit `--pick-candidate` wants every verdict, so the skip is off there.
 
-**What the rule used to be, and why it changed.** The rule was `min(tube, then duration)`, and PQ-B's Q10 measured it: five candidate rules picked the same trajectory on every mission, because the envelope is almost a proxy for the duration (`corr(duration, envelope) = +0.97`, and the tube grows with the clock through the backlash term). The fitness score replaces it because it asks a different question - not "which plan is narrowest" but "which plan's defects are worth the least time" - and the two can disagree: a plan with a wider tube at the stops but a shorter run can win. The unified path then went one step further and asked for the shortest plan that passes at all, because its candidates are all built to be fast.
+**What the rule used to be, and why it changed.** The rule was `min(tube, then duration)`, and PQ-B's Q10 measured it: five candidate rules picked the same trajectory on every mission, because the envelope is almost a proxy for the duration (`corr(duration, envelope) = +0.97`, and the tube grows with the clock through the backlash term). The fitness score replaces it because it asks a different question - not "which plan is narrowest" but "which plan's defects are worth the least time" - and the two can disagree: a plan with a wider tube at the stops but a shorter run can win. The unified path then went one step further and asked for the shortest plan that passes at all, and the score contract replaced that with the decision score, which is what ships now; the fastest-passing rule survives as the ledger-comparable `selected_fastest`.
 
 `tests/test_regressions.py` (`TestAttemptSelection`) guards the rule that a failed attempt is never preferred over a passing one.
 
@@ -1135,7 +1150,8 @@ The **chirp tests are held out of the fit** and are the only genuinely independe
 | Test module | Guards |
 |---|---|
 | `tests/test_optimizer.py` | The optimizer: seeds are distinct and keep the waypoints (`test_build_initial_guess_styles_are_distinct_and_keep_waypoints`), the timing models (`test_uniform_dt_keeps_one_interval_for_all_segments`, `test_per_segment_dt_allocates_time_by_segment`), the fast-polish parity, the iteration budget |
-| `tests/test_regressions.py` | The export gate (KI-001, KI-002), the selection rule (`TestAttemptSelection`), the candidate specs (`TestCandidateSpecs`, `TestSweepSpecs`), the envelope alignment and the divergence marking (`TestReachabilityEnvelope`) |
+| `tests/test_regressions.py` | The export gate (KI-001, KI-002), the selection rule (`TestAttemptSelection`), the envelope alignment and the divergence marking (`TestReachabilityEnvelope`) |
+| `tests/test_candidate_shapes.py` | The Q17 candidate shapes: the mirrored bow's apex sign, the bezier path through the waypoints, the reverse seeding rule, and the candidate list's ordering and slicing (`TestCandidateSpecs`) |
 | `tests/test_validator.py` | The CPU audit: forward integration, constraint audit, metrics |
 | `tests/test_cli_ux.py` | The CLI surface, parallel == sequential (`TestParallelCandidates`), the machine-readable report and its JSON validity (`TestValidationReport`) |
 | `tests/test_jax_heuristics.py` | The TEB/STOMP candidate generation (62 candidates, shape and diversity) |
