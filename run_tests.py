@@ -39,6 +39,7 @@ from tests.test_candidate_shapes import (
     TestSplineGeometry,
     TestReverseSeeding,
     TestCandidateSpecs,
+    TestAnchorTerm,
 )
 from tests.test_robot_model import (
     TestRobotConfig,
@@ -361,6 +362,7 @@ def test_classes():
         TestSplineGeometry,
         TestReverseSeeding,
         TestCandidateSpecs,
+        TestAnchorTerm,
         TestStudioRoutes,
         TestStudioSolve,
         TestStudioHelpers,
