@@ -27,6 +27,14 @@ measurement scoring rules:
 * A candidate that fails to converge is counted as infeasible, never
   dropped (Q15 discipline). Its score fields stay None.
 
+Q17 stage 2's geometric anchor arm was measured with this driver
+(`--anchor-weight` existed on the measurement tree only) and **retired**
+after the measurement: at the pre-registered w_anchor = 1000 s/m^2 it
+restored neither distinctness nor coverage (docs/RESEARCH_AGENDA.md Q17).
+The records stand in `research/results/q17_base_anchor.jsonl` and
+`q17_expanded_anchor.jsonl`; the term was removed from the optimizer with
+the verdict.
+
 One JSON record per mission, written as the run finishes. Every candidate
 carries converged/duration/iterations/wall/infeasible and the gate verdict,
 plus score/categories/eligibility.
@@ -172,7 +180,6 @@ def run_mission(mission: Path, args, robot_cfg, digital_twin) -> dict:
                 per_segment_dt=True,
                 cost_metric="discretization",
                 epigraph_constraints=True,
-                anchor_weight=args.anchor_weight,
                 verbose=False,
             )
         except Exception as exc:  # a solve that raises is a failed candidate
@@ -240,7 +247,6 @@ def run_mission(mission: Path, args, robot_cfg, digital_twin) -> dict:
         "mission_path": str(mission),
         "accel_bound": bool(args.accel),
         "propagation": args.propagation,
-        "anchor_weight": float(args.anchor_weight),
         "candidates": args.candidates,
         "mesh": mesh,
         "target_time_s": _num(t_ref, digits=None),
@@ -269,9 +275,6 @@ def main() -> int:
     parser.add_argument("--config", default=str(DEFAULT_CONFIG))
     parser.add_argument("--candidates", type=int, default=3)
     parser.add_argument("--propagation", choices=("plant", "tick"), default="plant")
-    parser.add_argument("--anchor-weight", type=float, default=0.0,
-                        help="Q17 stage 2: w_anchor of the geometric anchor "
-                             "term, 0 (default) is off.")
     parser.add_argument("--accel", dest="accel", action="store_true", default=True,
                         help="Q11: keep the declared wheel-acceleration bound (default).")
     parser.add_argument("--no-accel", dest="accel", action="store_false",

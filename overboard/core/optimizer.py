@@ -139,7 +139,6 @@ class TrajectoryOptimizer:
         cost_metric: str = "jerk",
         epigraph_constraints: bool = False,
         sample_weights: Optional[Sequence[float]] = None,
-        anchor_weight: float = 0.0,
     ) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
         """
         waypoints: list of (x, y, heading)
@@ -160,10 +159,6 @@ class TrajectoryOptimizer:
         initial_guess: optional [dt..., states...] array (the layout
                         _build_initial_guess returns) to start IPOPT from.
                         None means build the guess from guess_style.
-        anchor_weight: w_anchor of the geometric anchor term
-                        w_anchor * ||p - p_seed||^2 (Q17 stage 2), priced in
-                        the objective against the guess's own path. 0 (the
-                        default) is off: the anchor is opt-in.
         fast_polish: if True, use the fast solve path.
         polish_iter_budget: iteration budget for the warm pass in the fast path.
         solver_options: extra IPOPT options that override the defaults.
@@ -231,7 +226,6 @@ class TrajectoryOptimizer:
                             force_weight=force_weight,
                             cost_metric=cost_metric,
                             epigraph_constraints=epigraph_constraints,
-                            anchor_weight=anchor_weight,
                         )
                         if s_stats.get("converged", False):
                             best_sub_samples = s_samples
@@ -341,7 +335,6 @@ class TrajectoryOptimizer:
             cost_metric=cost_metric,
             epigraph_constraints=epigraph_constraints,
             sample_weights=sample_weights,
-            anchor_weight=anchor_weight,
         )
 
         if not fast_polish:
@@ -469,7 +462,6 @@ class TrajectoryOptimizer:
         cost_metric: str = "jerk",
         epigraph_constraints: bool = False,
         sample_weights: Optional[Sequence[float]] = None,
-        anchor_weight: float = 0.0,
     ) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
         """Build and solve the NLP for one candidate.
 
@@ -511,23 +503,6 @@ class TrajectoryOptimizer:
                 w_arr = np.pad(w_arr, (0, (N - 1) - w_arr.shape[0]), constant_values=1.0)
         else:
             w_arr = np.ones(N - 1, dtype=float)
-
-        # The guess is computed up front because the objective prices the
-        # geometric anchor against it (Q17 stage 2); the opti.set_initial
-        # calls stay below with the constraints they belong to.
-        if initial_guess is not None:
-            guess = np.asarray(initial_guess, dtype=float)
-            if guess.shape[0] != num_segments + N * 5:
-                raise ValueError(
-                    f"Initial guess has {guess.shape[0]} entries; expected "
-                    f"{num_segments + N * 5} ({num_segments} intervals + "
-                    f"{N} states x 5)"
-                )
-        else:
-            guess = self._build_initial_guess(
-                waypoints, segment_samples, N,
-                style=guess_style, stop_waypoint_indices=stop_waypoint_indices)
-        guess_states = guess[num_segments:].reshape((N, 5))
 
         start_time = time.time()
         self.iteration_history = []
@@ -608,16 +583,6 @@ class TrajectoryOptimizer:
                 hold_err = (0.5 * (v2_k - v1_k) * ctrl_dt_s) / gate_ref_m
                 w_k = float(w_arr[k])
                 discretization_cost += w_k * (sagitta_err ** 2 + parab_err ** 2 + 0.25 * (hold_err ** 2))
-
-        # Q17 stage 2: the geometric anchor w_anchor * ||p - p_seed||^2,
-        # priced in the objective like the other soft terms. Without it the
-        # solver walks a shaped seed back to the straight line (F8). Opt-in:
-        # anchor_weight 0 (the default) builds nothing.
-        anchor_cost = 0
-        if anchor_weight > 0:
-            seed_xy = guess_states[:, :2]
-            anchor_cost = (ca.sumsqr(x - seed_xy[:, 0])
-                           + ca.sumsqr(y - seed_xy[:, 1]))
 
         if per_segment_dt:
             for i in range(num_segments):
@@ -777,14 +742,12 @@ class TrajectoryOptimizer:
                 + eff_acc_w * smoothness_cost
                 + disc_w * discretization_cost
                 + force_weight * force_cost
-                + anchor_weight * anchor_cost
             )
         else:
             opti.minimize(
                 time_cost
                 + accuracy_weight * smoothness_cost
                 + force_weight * force_cost
-                + anchor_weight * anchor_cost
             )
 
         for i, wp in enumerate(waypoints):
@@ -806,11 +769,24 @@ class TrajectoryOptimizer:
             opti.subject_to(vl[sample_idx] == 0)
             opti.subject_to(vr[sample_idx] == 0)
 
+        if initial_guess is not None:
+            guess = np.asarray(initial_guess, dtype=float)
+            if guess.shape[0] != num_segments + N * 5:
+                raise ValueError(
+                    f"Initial guess has {guess.shape[0]} entries; expected "
+                    f"{num_segments + N * 5} ({num_segments} intervals + "
+                    f"{N} states x 5)"
+                )
+        else:
+            guess = self._build_initial_guess(
+                waypoints, segment_samples, N,
+                style=guess_style, stop_waypoint_indices=stop_waypoint_indices)
         guess_dt = guess[:num_segments]
         if per_segment_dt:
             opti.set_initial(dt, guess_dt)
         else:
             opti.set_initial(dt, float(np.mean(guess_dt)))
+        guess_states = guess[num_segments:].reshape((N, 5))
         opti.set_initial(X, guess_states)
         if epigraph_constraints and f_bound_vec is not None:
             guess_dt_per_sample = guess_dt[sample_to_segment] if per_segment_dt else np.full(N - 1, float(np.mean(guess_dt)))
@@ -850,8 +826,7 @@ class TrajectoryOptimizer:
         
         if capture_iterations:
             initial_cost = self._compute_cost(
-                guess, N, segment_samples, accuracy_weight, waypoints, force_weight=force_weight, anchor_weight=anchor_weight,
-                    seed_positions=guess_states[:, :2])
+                guess, N, segment_samples, accuracy_weight, waypoints, force_weight=force_weight)
             self.iteration_history.append({
                 'iteration': 0,
                 'cost': initial_cost,
@@ -901,8 +876,7 @@ class TrajectoryOptimizer:
                     states = np.asarray(opti.debug.value(X), dtype=float).flatten()
                     cost = self._compute_cost(
                         np.concatenate([dt_val, states]), N, segment_samples,
-                        accuracy_weight, waypoints, force_weight=force_weight, anchor_weight=anchor_weight,
-                    seed_positions=guess_states[:, :2])
+                        accuracy_weight, waypoints, force_weight=force_weight)
                 except Exception:
                     # A plot is not worth losing the solve.
                     return
@@ -930,8 +904,7 @@ class TrajectoryOptimizer:
             
             if capture_iterations:
                 final_cost = self._compute_cost(
-                    params, N, segment_samples, accuracy_weight, waypoints, force_weight=force_weight, anchor_weight=anchor_weight,
-                    seed_positions=guess_states[:, :2])
+                    params, N, segment_samples, accuracy_weight, waypoints, force_weight=force_weight)
                 self.iteration_history.append({
                     'iteration': len(self.iteration_history),
                     'cost': final_cost,
@@ -946,8 +919,7 @@ class TrajectoryOptimizer:
             stats = sol.stats()
             stats["total_time"] = time.time() - start_time
             stats["initial_cost"] = self._compute_cost(
-                guess, N, segment_samples, accuracy_weight, waypoints, force_weight=force_weight, anchor_weight=anchor_weight,
-                    seed_positions=guess_states[:, :2])
+                guess, N, segment_samples, accuracy_weight, waypoints, force_weight=force_weight)
             stats["final_cost"] = total_time
             stats["segment_dt"] = dt_val.tolist()
             stats["segment_samples"] = [int(s) for s in segment_samples]
@@ -970,8 +942,7 @@ class TrajectoryOptimizer:
             
             if capture_iterations:
                 failed_cost = self._compute_cost(
-                    params, N, segment_samples, accuracy_weight, waypoints, force_weight=force_weight, anchor_weight=anchor_weight,
-                    seed_positions=guess_states[:, :2])
+                    params, N, segment_samples, accuracy_weight, waypoints, force_weight=force_weight)
                 self.iteration_history.append({
                     'iteration': len(self.iteration_history),
                     'cost': failed_cost,
@@ -983,8 +954,7 @@ class TrajectoryOptimizer:
             stats = {
                 "total_time": time.time() - start_time,
                 "initial_cost": self._compute_cost(
-                    guess, N, segment_samples, accuracy_weight, waypoints, force_weight=force_weight, anchor_weight=anchor_weight,
-                    seed_positions=guess_states[:, :2]),
+                    guess, N, segment_samples, accuracy_weight, waypoints, force_weight=force_weight),
                 "final_cost": total_time,
                 "segment_dt": dt_val.tolist(),
                 "segment_samples": [int(s) for s in segment_samples],
@@ -1003,8 +973,6 @@ class TrajectoryOptimizer:
         accuracy_weight: float,
         waypoints: List[Tuple[float, float, Optional[float]]],
         force_weight: float = 0.0,
-        anchor_weight: float = 0.0,
-        seed_positions: Optional[np.ndarray] = None,
     ) -> float:
         if len(params) == 1 + N * 5:
             num_dt = 1
@@ -1058,17 +1026,8 @@ class TrajectoryOptimizer:
                     0.5 * ((fl_k / f_stall_ref) ** 2 + (fr_k / f_stall_ref) ** 2)
                     + 0.5 * ((fl_k / f_trac_ref) ** 2 + (fr_k / f_trac_ref) ** 2)
                 ) * dt_k
-
-        # Q17 stage 2: the mirror of the geometric anchor term.
-        anchor_cost = 0.0
-        if anchor_weight > 0 and seed_positions is not None:
-            seed_xy = np.asarray(seed_positions, dtype=float).reshape(N, 2)
-            anchor_cost = float(np.sum(
-                (states[:, 0] - seed_xy[:, 0]) ** 2
-                + (states[:, 1] - seed_xy[:, 1]) ** 2))
-
-        return (time_cost + accuracy_weight * smoothness_cost
-                + force_weight * force_cost + anchor_weight * anchor_cost)
+        
+        return time_cost + accuracy_weight * smoothness_cost + force_weight * force_cost
 
     def _build_initial_guess(self, waypoints: List[Tuple[float, float, Optional[float]]], num_samples_per_segment: Union[int, Sequence[int]], N: int, style: str = "baseline", stop_waypoint_indices: Optional[List[int]] = None) -> np.ndarray:
         if style not in GUESS_STYLES:

@@ -11,7 +11,6 @@ import unittest
 import numpy as np
 
 from overboard.core.frontier_seed import GUESS_STYLES, generate_frontier_seed
-from overboard.core.optimizer import TrajectoryOptimizer
 from overboard.core.unified_planner import UnifiedPathEngine
 from overboard.models.robot_model import RobotConfig
 
@@ -156,57 +155,6 @@ class TestCandidateSpecs(unittest.TestCase):
         # Every spec is a style the optimizer's guess builder accepts.
         for spec in specs:
             self.assertIn(spec["guess_style"], GUESS_STYLES)
-
-
-class TestAnchorTerm(unittest.TestCase):
-    """Q17 stage 2: the geometric anchor w_anchor * ||p - p_seed||^2."""
-
-    def test_the_term_is_off_by_default_and_prices_the_seed_distance(self):
-        opt = TrajectoryOptimizer(RobotConfig({}))
-        n = 5
-        params = np.zeros(2 + n * 5)
-        params[0] = params[1] = 0.1
-        states = params[2:].reshape(n, 5)
-        states[:, 0] = [0.0, 1.0, 2.0, 3.0, 4.0]
-        seed = np.zeros((n, 2))
-        seed[:, 0] = [0.0, 1.0, 2.0, 2.0, 3.0]  # two samples off by 1 m
-        wps = [(0.0, 0.0, None), (2.0, 0.0, None), (4.0, 0.0, None)]
-        plain = opt._compute_cost(params, n, [2, 2], 0.0, wps)
-        anchored = opt._compute_cost(params, n, [2, 2], 0.0, wps,
-                                     anchor_weight=2.5, seed_positions=seed)
-        # Off by default: no seed, no term.
-        self.assertEqual(
-            plain, opt._compute_cost(params, n, [2, 2], 0.0, wps,
-                                     anchor_weight=2.5))
-        self.assertAlmostEqual(anchored - plain, 2.5 * 2.0, places=9)
-
-    def test_an_anchored_solve_keeps_the_seeded_shape(self):
-        config = RobotConfig({})
-        wps = [(0.0, 0.0, 0.0), (0.5, 0.0, 0.0), (0.5, 0.5, math.pi / 2.0)]
-        seg = [6, 6]
-        seed = generate_frontier_seed(
-            wps, segment_samples=seg, robot_config=config, style="frontier_spline")
-        n = sum(seg) + 1
-        seed_xy = np.asarray(seed[len(seg):]).reshape(n, 5)[:, :2]
-        opt = TrajectoryOptimizer(config)
-
-        def solve(anchor_weight):
-            samples, stats = opt.solve(
-                wps, num_samples_per_segment=seg, initial_guess=seed.copy(),
-                per_segment_dt=True, cost_metric="discretization",
-                epigraph_constraints=True, anchor_weight=anchor_weight,
-                verbose=False)
-            self.assertTrue(stats.get("converged"))
-            xy = np.array([[s["x"], s["y"]] for s in samples])
-            return float(np.mean(np.hypot(xy[:, 0] - seed_xy[:, 0],
-                                          xy[:, 1] - seed_xy[:, 1])))
-
-        held = solve(1e4)
-        plain = solve(0.0)
-        # A strong anchor recovers most of the seeded shape (the un-anchored
-        # solve walks it back to the straight line, F8); it never pins it
-        # exactly, because the solver's tolerance has to settle somewhere.
-        self.assertLess(held, 0.5 * plain)
 
 
 if __name__ == "__main__":
