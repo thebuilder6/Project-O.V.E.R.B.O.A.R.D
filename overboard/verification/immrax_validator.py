@@ -1,9 +1,11 @@
 from overboard.verification.reachability_engine import (
     CompiledReachabilityEngine,
+    JAX_COMPILE_LOCK,
     unroll_trajectory_headings,
 )
 import jax.numpy as jnp
-from jax import vmap
+import numpy as np
+from jax import jit, lax, vmap
 import immrax
 from immrax import Interval, interval
 from immrax.inclusion import natif, jacif, mjacif
@@ -1153,31 +1155,14 @@ class ImmraxValidator:
             "passed": bool(is_physically_safe)
         }
 
-    def _reachability_tick(self, samples, w_interval, backlash_half):
-        """Propagate the tube through the closed-loop tick map.
+    def _tick_initial_state(self, samples):
+        """The tick map's starting box: 1 mm on the pose, the rest exact.
 
-        The "plant" propagation embeds the plant and evaluates the controller
-        *outside* the propagation, at the tube's midpoint, so the interval
-        arithmetic never sees the feedback: what it bounds is the reachable
-        set of an open-loop plant driven by a pre-recorded command, and the
-        real robot is a contracting closed loop. The tick map puts the
-        controller inside the map, so the map's Jacobian carries the feedback
-        term dF/dx = dPhi/dx + (dPhi/du)(dN/dx), and the tube contracts the
-        way the robot's does.
-
-        The model is also a different one, and in the twin's case a more
-        conservative one: the controller is fed the whole tube (or, with the
-        digital twin, the whole *belief* interval), not the robot's own best
-        estimate, so the set it bounds contains the set the real robot
-        reaches. That is also why the twin's tube is *wider* under this
-        propagation and not narrower: the belief carried in an interval state
-        grows with the wheel-speed uncertainty, and its growth is added to
-        the plant's, because the belief and the wheel speeds are perfectly
-        correlated and an interval box cannot say so.
+        The state is the plant's state, then the belief, then the delayed
+        commands (see ClosedLoopTickMap). The flat form is the lower bounds
+        followed by the upper bounds.
         """
-        N = len(samples)
         n_plant = self.plant.xlen
-        n_state = self.tick_map.xlen
         start_pose = jnp.array([samples[0]['x'], samples[0]['y'],
                                 samples[0]['heading']])
 
@@ -1210,7 +1195,37 @@ class ImmraxValidator:
             zeros = jnp.zeros(2 * self._tick_delay_ticks)
             lower = jnp.concatenate([lower, zeros])
             upper = jnp.concatenate([upper, zeros])
-        x_flat = jnp.concatenate([lower, upper])
+        return jnp.concatenate([lower, upper])
+
+    def _reachability_tick_reference(self, samples, w_interval, backlash_half):
+        """Propagate the tube through the closed-loop tick map.
+
+        This is the original Python-loop rollout, kept unaltered as the
+        parity oracle for the compiled ``_reachability_tick``. Validation no
+        longer runs it.
+
+        The "plant" propagation embeds the plant and evaluates the controller
+        *outside* the propagation, at the tube's midpoint, so the interval
+        arithmetic never sees the feedback: what it bounds is the reachable
+        set of an open-loop plant driven by a pre-recorded command, and the
+        real robot is a contracting closed loop. The tick map puts the
+        controller inside the map, so the map's Jacobian carries the feedback
+        term dF/dx = dPhi/dx + (dPhi/du)(dN/dx), and the tube contracts the
+        way the robot's does.
+
+        The model is also a different one, and in the twin's case a more
+        conservative one: the controller is fed the whole tube (or, with the
+        digital twin, the whole *belief* interval), not the robot's own best
+        estimate, so the set it bounds contains the set the real robot
+        reaches. That is also why the twin's tube is *wider* under this
+        propagation and not narrower: the belief carried in an interval state
+        grows with the wheel-speed uncertainty, and its growth is added to
+        the plant's, because the belief and the wheel speeds are perfectly
+        correlated and an interval box cannot say so.
+        """
+        N = len(samples)
+        n_state = self.tick_map.xlen
+        x_flat = self._tick_initial_state(samples)
 
         def _box(flat):
             # Slicing: the first n_state entries are lower bounds, the next
@@ -1312,6 +1327,270 @@ class ImmraxValidator:
                 envelope.append({**env, "unknown": True} if diverged else env)
             else:
                 envelope.append({**envelope[-1], "unknown": True})
+
+        return {
+            "max_error_m": max_total_error,
+            "max_tracking_error_m": max_tracking_error,
+            "rms_tracking_error_m": math.sqrt(sum_sq_tracking / n_tracked) if n_tracked else 0.0,
+            "max_heading_error_rad": max_heading_error,
+            "rms_heading_error_rad": math.sqrt(sum_sq_heading / n_tracked) if n_tracked else 0.0,
+            "max_envelope_radius_m": max_envelope_radius,
+            "envelope": envelope,
+            "diverged": diverged,
+            "envelope_truncated": bool(diverged),
+            "propagation": "tick",
+        }
+
+    def _tick_schedule(self, samples, backlash_half):
+        """Every control tick of the rollout, precomputed on the host.
+
+        The reference is a point, not an interval, so building it here keeps
+        the traced graph down to the tick map itself. The tick grid is
+        enumerated with the reference loop's own stepping rule (20 ms ticks,
+        a shortened final one), so the schedule cannot disagree with the
+        oracle. Padding with inactive zero-duration ticks gives every sample
+        interval the same tick count, so one compiled ``lax.scan`` covers the
+        whole path and the inclusion function is never rebuilt.
+        """
+        control_dt = self.control_dt
+        track_width = self.cfg.track_width
+        ramsete_b = getattr(self, "ramsete_b", 2.0)
+        t0 = samples[0]['t']
+
+        intervals = []
+        valid = []
+        for i in range(len(samples) - 1):
+            s = samples[i]
+            s_next = samples[i + 1]
+            dt = s_next['t'] - s['t']
+            ok = math.isfinite(dt) and dt > 0.0
+            valid.append(ok)
+            ticks = []
+            if ok:
+                t = s['t']
+                while t < s['t'] + dt - 1e-12:
+                    dt_ctrl = min(control_dt, s['t'] + dt - t)
+                    frac = (t - s['t']) / dt
+                    ref = _interpolated_reference(
+                        s, s_next, dt, track_width, frac, ramsete_b)
+                    ticks.append(tuple(ref) + (dt_ctrl,))
+                    t += dt_ctrl
+            intervals.append(ticks)
+
+        n_ticks = max([len(ticks) for ticks in intervals] + [1])
+        count = len(samples) - 1
+        refs = np.zeros((count, n_ticks, 7), dtype=np.float64)
+        active = np.zeros((count, n_ticks), dtype=bool)
+        spreads = np.zeros(count, dtype=np.float64)
+        targets = np.zeros((count, 3), dtype=np.float64)
+        for i, ticks in enumerate(intervals):
+            s_next = samples[i + 1]
+            targets[i] = (s_next['x'], s_next['y'], s_next['heading'])
+            if valid[i]:
+                # The gear backlash is a position dead-band, carried in the
+                # reachable set rather than in the motion (KI-025). Never let
+                # the spread go negative: that would shrink the envelope.
+                spreads[i] = backlash_half * max(0.0, s_next['t'] - t0)
+            for k, tick in enumerate(ticks):
+                refs[i, k] = tick
+                active[i, k] = True
+        return (refs, active, np.array(valid, dtype=bool), spreads,
+                targets, n_ticks)
+
+    def _tick_rollout(self, num_ticks):
+        """The jitted ``lax.scan`` rollout of the closed-loop tick map.
+
+        Cached per tick count: the inclusion function is built once here and
+        called once per tick by the scan, never rebuilt per tick.
+        """
+        cache = getattr(self, "_tick_rollout_cache", None)
+        if cache is None:
+            cache = self._tick_rollout_cache = {}
+        if num_ticks in cache:
+            return cache[num_ticks]
+        with JAX_COMPILE_LOCK:
+            if num_ticks in cache:
+                return cache[num_ticks]
+            fn = jit(self._tick_rollout_body())
+            cache[num_ticks] = fn
+            return fn
+
+    def _tick_rollout_body(self):
+        emb_f = self.tick_emb_sys.f
+        n_state = self.tick_map.xlen
+
+        def rollout(refs, active, valid, spreads, targets, x_init,
+                    w_lower, w_upper):
+            w_interval = Interval(w_lower, w_upper)
+
+            def interval_step(carry, inp):
+                x_flat, diverged, last_box, last_track, last_head = carry
+                u_refs, tick_active, is_valid, spread, target = inp
+                # Once the tube is cut off, or on a non-monotone time vector,
+                # nothing is propagated and the last box is carried forward.
+                run = is_valid & (~diverged)
+
+                def tick_step(x_cur, tick_inp):
+                    u_ref, act = tick_inp
+                    x_next = emb_f(0.0, x_cur, u_ref, w_interval)
+                    return jnp.where(act, x_next, x_cur), None
+
+                x_end, _ = lax.scan(tick_step, x_flat,
+                                    (u_refs, tick_active & run))
+
+                x_min = x_end[0] - spread
+                x_max = x_end[n_state] + spread
+                y_min = x_end[1] - spread
+                y_max = x_end[n_state + 1] + spread
+                mid_x = 0.5 * (x_end[0] + x_end[n_state])
+                mid_y = 0.5 * (x_end[1] + x_end[n_state + 1])
+                mid_h = 0.5 * (x_end[2] + x_end[n_state + 2])
+                tracking = jnp.sqrt(
+                    (mid_x - target[0]) ** 2 + (mid_y - target[1]) ** 2)
+                # The heading difference is taken the short way, as the
+                # firmware does (KI-027).
+                heading = jnp.abs(
+                    jnp.mod(mid_h - target[2] + jnp.pi, 2.0 * jnp.pi)
+                    - jnp.pi)
+                radius = jnp.sqrt(
+                    ((x_max - x_min) * 0.5) ** 2
+                    + ((y_max - y_min) * 0.5) ** 2)
+
+                computed_box = jnp.array(
+                    [x_min, x_max, y_min, y_max,
+                     x_end[2], x_end[n_state + 2]])
+                box = jnp.where(run, computed_box, last_box)
+                track = jnp.where(run, tracking, last_track)
+                head = jnp.where(run, heading, last_head)
+                # The same 50 mm guard as the plant propagation: a cut-off
+                # propagation is reported as a lower bound, not as a width.
+                new_diverged = diverged | (~is_valid) | (run & (radius > 0.05))
+
+                outs = (
+                    box,
+                    track,
+                    head,
+                    jnp.where(run, tracking, 0.0),
+                    jnp.where(run, heading, 0.0),
+                    jnp.where(run, radius, 0.0),
+                    run,
+                    new_diverged,
+                )
+                return (x_end, new_diverged, box, track, head), outs
+
+            init_box = jnp.array(
+                [x_init[0], x_init[n_state],
+                 x_init[1], x_init[n_state + 1],
+                 x_init[2], x_init[n_state + 2]])
+            (_, diverged, _, _, _), outs = lax.scan(
+                interval_step,
+                (x_init, jnp.array(False), init_box,
+                 jnp.array(0.0), jnp.array(0.0)),
+                (refs, active, valid, spreads, targets))
+            return {
+                "boxes": outs[0],
+                "emitted_tracking": outs[1],
+                "emitted_heading": outs[2],
+                "m_tracking": outs[3],
+                "m_heading": outs[4],
+                "m_radius": outs[5],
+                "contrib": outs[6],
+                "unknown": outs[7],
+                "diverged": diverged,
+            }
+
+        return rollout
+
+    def _reachability_tick(self, samples, w_interval, backlash_half):
+        """Propagate the tube through the closed-loop tick map, compiled.
+
+        The "plant" propagation embeds the plant and evaluates the controller
+        *outside* the propagation, at the tube's midpoint, so the interval
+        arithmetic never sees the feedback: what it bounds is the reachable
+        set of an open-loop plant driven by a pre-recorded command, and the
+        real robot is a contracting closed loop. The tick map puts the
+        controller inside the map, so the map's Jacobian carries the feedback
+        term dF/dx = dPhi/dx + (dPhi/du)(dN/dx), and the tube contracts the
+        way the robot's does.
+
+        The model is also a different one, and in the twin's case a more
+        conservative one: the controller is fed the whole tube (or, with the
+        digital twin, the whole *belief* interval), not the robot's own best
+        estimate, so the set it bounds contains the set the real robot
+        reaches. That is also why the twin's tube is *wider* under this
+        propagation and not narrower: the belief carried in an interval state
+        grows with the wheel-speed uncertainty, and its growth is added to
+        the plant's, because the belief and the wheel speeds are perfectly
+        correlated and an interval box cannot say so.
+
+        The rollout is a ``jax.lax.scan`` over a precomputed tick schedule
+        (see ``_tick_schedule``); the semantics - the reference and its
+        midpoint lead, the shortened final tick, delayed commands, the belief
+        state, the interval state layout, the backlash spread, the tracking
+        and heading errors, the 50 mm guard and the unknown marking - are the
+        ones ``_reachability_tick_reference`` computes, and the parity tests
+        compare the two.
+        """
+        N = len(samples)
+        n_state = self.tick_map.xlen
+        x_init = self._tick_initial_state(samples)
+        refs, active, valid, spreads, targets, num_ticks = \
+            self._tick_schedule(samples, backlash_half)
+        out = self._tick_rollout(num_ticks)(
+            jnp.asarray(refs), jnp.asarray(active), jnp.asarray(valid),
+            jnp.asarray(spreads), jnp.asarray(targets), x_init,
+            w_interval.lower, w_interval.upper)
+
+        envelope = [{
+            "x_min": float(x_init[0]), "x_max": float(x_init[n_state]),
+            "y_min": float(x_init[1]), "y_max": float(x_init[n_state + 1]),
+            "theta_min": float(x_init[2]),
+            "theta_max": float(x_init[n_state + 2]),
+            "tracking_error_m": 0.0,
+            "heading_error_rad": 0.0,
+        }]
+        max_tracking_error = 0.0
+        max_heading_error = 0.0
+        max_envelope_radius = 0.0
+        max_total_error = 0.0
+        sum_sq_tracking = 0.0
+        sum_sq_heading = 0.0
+        n_tracked = 0
+        for i in range(N - 1):
+            if bool(out["contrib"][i]):
+                tracking = float(out["m_tracking"][i])
+                heading = float(out["m_heading"][i])
+                radius = float(out["m_radius"][i])
+                max_tracking_error = max(max_tracking_error, tracking)
+                max_heading_error = max(max_heading_error, heading)
+                max_envelope_radius = max(max_envelope_radius, radius)
+                max_total_error = max(max_total_error, tracking + radius)
+                sum_sq_tracking += tracking ** 2
+                sum_sq_heading += heading ** 2
+                n_tracked += 1
+            env = {
+                "x_min": float(out["boxes"][i, 0]),
+                "x_max": float(out["boxes"][i, 1]),
+                "y_min": float(out["boxes"][i, 2]),
+                "y_max": float(out["boxes"][i, 3]),
+                "theta_min": float(out["boxes"][i, 4]),
+                "theta_max": float(out["boxes"][i, 5]),
+                "tracking_error_m": float(out["emitted_tracking"][i]),
+                "heading_error_rad": float(out["emitted_heading"][i]),
+            }
+            if bool(out["unknown"][i]):
+                env["unknown"] = True
+            envelope.append(env)
+
+        diverged = bool(out["diverged"])
+        if not all(valid):
+            # A failed solve can produce a non-monotone time vector. Do not
+            # integrate backwards; report the tube as unknown so the caller
+            # cannot export it. The heading error is left alone, as the
+            # reference does: it is not a tube measurement.
+            max_tracking_error = float("inf")
+            max_envelope_radius = float("inf")
+            max_total_error = float("inf")
 
         return {
             "max_error_m": max_total_error,

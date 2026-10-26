@@ -63,6 +63,19 @@ def _steps_between(x0: float, y0: float, x1: float, y1: float,
     return max(1, min(MAX_STEPS_PER_SEGMENT, int(math.ceil(length / spacing))))
 
 
+def _effective_radius(robot_radius_m: Any) -> float:
+    """The robot's body radius, from a number or a RobotConfig-like object.
+
+    ``RobotConfig`` may carry a chassis radius, or only an axle track to
+    halve; anything else is read as a radius in metres.
+    """
+    if hasattr(robot_radius_m, "chassis_radius_m"):
+        return float(robot_radius_m.chassis_radius_m())
+    if hasattr(robot_radius_m, "track_width"):
+        return float(robot_radius_m.track_width) / 2.0
+    return float(robot_radius_m or 0.0)
+
+
 @dataclass(frozen=True)
 class Obstacle:
     """One thing standing on the mat.
@@ -101,21 +114,14 @@ class Obstacle:
         """The distance from the centre to the edge, for a circle."""
         return self.w_m / 2.0
 
-    def overlap(self, px: float, py: float, robot_radius_m: float) -> float:
-        """How deep a disc at ``(px, py)`` bites into this obstacle.
+    def signed_distance(self, px: float, py: float) -> float:
+        """Distance from a point to the footprint, negative inside it.
 
-        Args:
-            px: the point's x, in the mat's frame.
-            py: the point's y, in the mat's frame.
-            robot_radius_m: the radius of the disc.
-
-        Returns:
-            The overlap depth in metres. Zero means no overlap, and the
-            number is how far inside the footprint the disc reached.
+        This is the same geometry ``overlap`` is built on: zero on the edge,
+        positive outside, and inside the negative depth from the edge.
         """
         if self.kind == "circle":
-            distance = math.hypot(px - self.x_m, py - self.y_m) - self.radius_m
-            return max(0.0, robot_radius_m - distance)
+            return math.hypot(px - self.x_m, py - self.y_m) - self.radius_m
 
         # A rectangle: turn the point into the rectangle's own frame, then
         # measure the distance to the rectangle.
@@ -130,10 +136,22 @@ class Obstacle:
         outside_x = abs(local_x) - half_w
         outside_y = abs(local_y) - half_h
         if outside_x > 0.0 or outside_y > 0.0:
-            distance = math.hypot(max(outside_x, 0.0), max(outside_y, 0.0))
-        else:
-            distance = min(max(outside_x, outside_y), 0.0)
-        return max(0.0, robot_radius_m - distance)
+            return math.hypot(max(outside_x, 0.0), max(outside_y, 0.0))
+        return min(max(outside_x, outside_y), 0.0)
+
+    def overlap(self, px: float, py: float, robot_radius_m: float) -> float:
+        """How deep a disc at ``(px, py)`` bites into this obstacle.
+
+        Args:
+            px: the point's x, in the mat's frame.
+            py: the point's y, in the mat's frame.
+            robot_radius_m: the radius of the disc.
+
+        Returns:
+            The overlap depth in metres. Zero means no overlap, and the
+            number is how far inside the footprint the disc reached.
+        """
+        return max(0.0, robot_radius_m - self.signed_distance(px, py))
 
     def contains_point(self, px: float, py: float) -> bool:
         """Whether a point is inside the footprint."""
@@ -220,12 +238,7 @@ class FieldModel:
             The collisions, in the order the samples appear. One entry per
             obstacle: the deepest overlap wins.
         """
-        if hasattr(robot_radius_m, "chassis_radius_m"):
-            eff_radius = float(robot_radius_m.chassis_radius_m())
-        elif hasattr(robot_radius_m, "track_width"):
-            eff_radius = float(robot_radius_m.track_width) / 2.0
-        else:
-            eff_radius = float(robot_radius_m or 0.0)
+        eff_radius = _effective_radius(robot_radius_m)
 
         found: Dict[str, Collision] = {}
         for index, sample in enumerate(samples):
@@ -257,6 +270,68 @@ class FieldModel:
                     t0 + (t1 - t0) * frac,
                     eff_radius)
         return sorted(found.values(), key=lambda item: item.index)
+
+    def sample_clearances(
+        self,
+        samples: List[Dict[str, Any]],
+        robot_radius_m: Any = 0.0,
+    ) -> List[float]:
+        """One clearance in metres per trajectory sample.
+
+        The clearance is the distance from the robot's disc - the sample's
+        position, less ``robot_radius_m`` - to the nearest obstacle or to the
+        nearest relevant field boundary. Negative means the disc penetrates
+        that obstacle or boundary by that much.
+
+        What is measured
+        ----------------
+        Obstacles use real geometry, not overlap-only tests: the signed
+        distance to the circle or to the (possibly rotated) rectangle, less
+        the robot's radius. The boundary is the **mat's own rectangle**
+        (south-west corner ``(0, 0)``, north edge up). The table is bigger
+        than the mat (2362 x 1143 against 2004 x 1143, the mat centred in
+        it), so the mat edge is the conservative available boundary: the
+        real wall is at least that far away. No wall or table coordinates are
+        invented; a field whose mat size is not declared contributes no
+        boundary at all.
+
+        This is nominal geometry. The footprints are read off FIRST's
+        wireframe and agree between readings only to about 100 mm (see the
+        module docstring), so a clearance of a few centimetres is not a
+        survey. The uncertainty is deliberately **not** subtracted here: the
+        caller decides what to do with it.
+
+        Unlike ``collisions``, only the samples themselves are measured; the
+        path between two samples is not walked. A sample without a usable
+        ``x``/``y`` is the one case ``collisions`` skips, and here it gets
+        ``nan`` so the result is always one value per sample - a ``nan``
+        clearance must never be read as clearance.
+
+        Args:
+            samples: the planned samples, each with ``x`` and ``y``.
+            robot_radius_m: the radius of the robot's body, or a RobotConfig.
+
+        Returns:
+            One clearance in metres per sample, in the order they appear.
+        """
+        eff_radius = _effective_radius(robot_radius_m)
+        clearances: List[float] = []
+        for sample in samples:
+            try:
+                x = float(sample["x"])
+                y = float(sample["y"])
+            except (KeyError, TypeError, ValueError):
+                clearances.append(float("nan"))
+                continue
+            best = math.inf
+            for obstacle in self.obstacles:
+                best = min(best, obstacle.signed_distance(x, y) - eff_radius)
+            if self.mat_width_m > 0.0 and self.mat_height_m > 0.0:
+                wall = min(x, y,
+                           self.mat_width_m - x, self.mat_height_m - y)
+                best = min(best, wall - eff_radius)
+            clearances.append(best)
+        return clearances
 
     def sensor_hits(
         self,
