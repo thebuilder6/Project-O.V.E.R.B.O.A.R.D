@@ -33,14 +33,15 @@ class TestPlannerCandidateSet(unittest.TestCase):
         with open("examples/fll_choreo.json", "r", encoding="utf-8") as handle:
             self.config = RobotConfig(json.load(handle))
 
-    def test_the_set_is_the_triad(self):
+    def test_the_set_is_the_triad_plus_the_q17_tail(self):
         planner = UnifiedPathEngine(self.config)
 
         specs = planner.candidate_specs()
 
         self.assertEqual([s["guess_style"] for s in specs],
                          ["frontier_sprint", "frontier_sweeper",
-                          "frontier_exploratory"])
+                          "frontier_exploratory", "frontier_sprint_mirror",
+                          "frontier_spline", "frontier_reverse"])
         for spec in specs:
             # The per-segment model is the general one (KI-022).
             self.assertTrue(spec["per_segment_dt"])
@@ -58,7 +59,7 @@ class TestPlannerCandidateSet(unittest.TestCase):
 
         specs = planner.candidate_specs(accuracy_weight=0.007)
 
-        self.assertEqual([s["accuracy_weight"] for s in specs], [0.007] * 3)
+        self.assertEqual([s["accuracy_weight"] for s in specs], [0.007] * 6)
 
 
 class TestReachabilityEngine(unittest.TestCase):

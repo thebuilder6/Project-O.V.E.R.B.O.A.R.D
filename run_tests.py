@@ -34,6 +34,12 @@ from tests.test_optimizer import (
 )
 from tests.test_frontier_seed import TestFrontierSeed
 from tests.test_unified_planner import TestUnifiedPlanner
+from tests.test_candidate_shapes import (
+    TestMirrorBow,
+    TestSplineGeometry,
+    TestReverseSeeding,
+    TestCandidateSpecs,
+)
 from tests.test_robot_model import (
     TestRobotConfig,
     TestDifferentialDriveModel,
@@ -351,6 +357,10 @@ def test_classes():
         TestPathFitnessScoring,
         TestFrontierSeed,
         TestUnifiedPlanner,
+        TestMirrorBow,
+        TestSplineGeometry,
+        TestReverseSeeding,
+        TestCandidateSpecs,
         TestStudioRoutes,
         TestStudioSolve,
         TestStudioHelpers,

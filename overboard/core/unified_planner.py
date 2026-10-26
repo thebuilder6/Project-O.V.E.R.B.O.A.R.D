@@ -288,11 +288,17 @@ class UnifiedPathEngine:
 
         This is the whole set. The CLI asks the planner for it and does not
         build candidates of its own, so there is one planner and one set.
+        The list is positional: the triad first, then the Q17 topology and
+        geometry tail (docs/RESEARCH_AGENDA.md §24), sliced by ``count``.
         """
         specs = [
             {"accuracy_weight": 0.001, "guess_style": "frontier_sprint"},
             {"accuracy_weight": 0.002, "guess_style": "frontier_sweeper"},
             {"accuracy_weight": 0.001, "guess_style": "frontier_exploratory"},
+            # Q17 tail: mirrored bow, bezier geometry, reverse seeding.
+            {"accuracy_weight": 0.001, "guess_style": "frontier_sprint_mirror"},
+            {"accuracy_weight": 0.001, "guess_style": "frontier_spline"},
+            {"accuracy_weight": 0.002, "guess_style": "frontier_reverse"},
         ]
         for spec in specs:
             spec.update({
