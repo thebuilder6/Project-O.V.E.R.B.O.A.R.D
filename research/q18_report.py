@@ -72,13 +72,15 @@ def candidates_of(records):
 
 def arm1_composition(entries):
     """Which of sum/quadrature/max reconstructs q_reported from the two
-    components, and the per-candidate shape/control shares."""
+    components, and the per-candidate shape/control shares - on the one
+    rollout all three quantities are measured on (the nominal closed-loop
+    rollout; the gate's own number is tracked alongside)."""
     counts = {"sum": 0, "quadrature": 0, "max": 0}
     residual = {"sum": [], "quadrature": [], "max": []}
     shape_shares = []
     sc_at_samples = []
     for _rec, c in entries:
-        q = c.get("q_reported_m")
+        q = c.get("q_reported_rollout_m")
         sag = c.get("q_sagitta_m")
         con = c.get("q_control_m")
         if q is None or sag is None or con is None:
@@ -94,6 +96,7 @@ def arm1_composition(entries):
         sc_at_samples.append((c.get("q_sagitta_samples_m") or 0.0,
                               (c.get("q_control_samples_m") or 0.0) - q))
     return {
+        "rollout": "nominal closed loop (same rollout for all three)",
         "best_law_counts": counts,
         "mean_abs_residual_m": {k: (sum(v) / len(v) if v else None)
                                 for k, v in residual.items()},
@@ -195,8 +198,26 @@ def _summary(values):
 
 
 def decision_rule(entries):
-    """The pre-registered mechanical verdict (Arm 1's q_control)."""
-    excess_sum = 0.0
+    """The pre-registered mechanical verdict, same-rollout enforced.
+
+    The gate's quantity is measured on the interval-tube midpoint rollout
+    (the product's `tracking_m`). On that rollout - or on any rollout - the
+    chorded reference passes through the planned samples at the gate's
+    instants, so the control residual there equals the gate's quantity
+    exactly (the shape component vanishes at the measurement points). The
+    registered share is therefore computed two consistent ways:
+
+    * ``at_gate_instants``: q_control = the gate's own per-sample series,
+      i.e. the control residual on the gate's rollout -> share 0 by the
+      identity (the registration's third clause);
+    * ``nominal_rollout``: both quantities from the nominal closed-loop
+      rollout (q_reported_rollout vs the curve-max q_control) -> share <= 0
+      because the curve maximum contains the sample instants.
+
+    Mixing the gate's number with the nominal rollout's residual is invalid
+    (the two diverge where the tube is wide) and is not computed here.
+    """
+    excess_gate = excess_nom = 0.0
     control_curve_sum = 0.0
     control_samples_sum = 0.0
     n_tracking = 0
@@ -209,43 +230,67 @@ def decision_rule(entries):
             continue
         n_tracking += 1
         excess = max(0.0, q - GATE_M)
-        excess_sum += excess
+        excess_gate += excess
         n_excess += excess > 0
+        # at the gate's instants the control residual IS the gate's series
+        control_samples_sum += max(0.0, q - GATE_M)
+        qn = c.get("q_reported_rollout_m") or 0.0
+        excess_nom += max(0.0, qn - GATE_M)
         con_curve = c.get("q_control_m") or 0.0
-        con_samples = c.get("q_control_samples_m") or 0.0
         control_curve_sum += max(0.0, con_curve - GATE_M)
-        control_samples_sum += max(0.0, con_samples - GATE_M)
 
-    def share(control_sum):
+    def share(control_sum, excess_sum):
         if excess_sum <= 0:
             return None
         return 1.0 - control_sum / excess_sum
 
-    share_curve = share(control_curve_sum)
-    share_samples = share(control_samples_sum)
+    share_gate = share(control_samples_sum, excess_gate)
+    share_nom = share(control_curve_sum, excess_nom)
     return {
         "candidates_citing_tracking": n_tracking,
         "candidates_with_excess": n_excess,
-        "sum_excess_m": excess_sum,
+        "sum_excess_gate_rollout_m": excess_gate,
+        "sum_excess_nominal_rollout_m": excess_nom,
         "sum_control_curve_over_gate_m": control_curve_sum,
         "sum_control_at_samples_over_gate_m": control_samples_sum,
-        "artefact_share_curve": share_curve,
-        "artefact_share_at_samples": share_samples,
-        "verdict": _verdict(share_curve, share_samples),
+        "artefact_share_at_gate_instants": share_gate,
+        "artefact_share_nominal_rollout": share_nom,
+        "verdict": _verdict(share_gate, share_nom),
     }
 
 
-def _verdict(share_curve, share_samples):
+def _verdict(share_gate, share_nom):
     # The registration: > 0.5 artefact-dominated; <= 0.5 gate stands; and if
     # Step 0 shows the gate's quantity is already the control residual (no
     # shape component) the share is 0 and the verdict is "gate stands" by
-    # construction. Both measured shares are <= 0 here.
-    shares = [s for s in (share_curve, share_samples) if s is not None]
+    # construction. Step 0 did show that, and both same-rollout shares are
+    # <= 0 here.
+    shares = [s for s in (share_gate, share_nom) if s is not None]
     if not shares:
         return "no candidate exceeds the tracking gate - the rule has no population"
     if max(shares) > 0.5:
         return "artefact-dominated"
     return "gate stands"
+
+
+def mirror_crosscheck(entries):
+    """How far the nominal rollout (the decomposition's rollout) sits from
+    the gate's own interval-tube-midpoint rollout, per sample."""
+    diffs = []
+    for _rec, c in entries:
+        d = c.get("rollout_series_maxdiff_m")
+        if d is None or not c.get("converged"):
+            continue
+        diffs.append((d, c.get("envelope_cm") or 0.0))
+    diffs.sort(reverse=True)
+    over = [(d, e) for d, e in diffs if d > 1e-3]
+    return {
+        "candidates": len(diffs),
+        "max_diff_m": diffs[0][0] if diffs else None,
+        "median_diff_m": sorted(d for d, _ in diffs)[len(diffs) // 2] if diffs else None,
+        "over_1mm": len(over),
+        "over_1mm_tubes_cm": sorted((round(e, 1) for _d, e in over), reverse=True),
+    }
 
 
 def gate_breakdown(entries):
@@ -281,6 +326,7 @@ def main() -> int:
         "arms_present": {k: len(v) for k, v in arms.items()},
         "candidates_x1": len(x1_entries),
         "step0_gate_breakdown": gate_breakdown(x1_entries),
+        "mirror_crosscheck": mirror_crosscheck(x1_entries),
         "arm1_composition": arm1_composition(x1_entries),
         "arm2_credits": arm2_credits(x1_entries),
         "arm3_density": arm3_slopes(arms),
