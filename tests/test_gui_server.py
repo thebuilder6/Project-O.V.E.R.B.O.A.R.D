@@ -446,6 +446,30 @@ class TestStudioPush(StudioTestCase):
         self.assertEqual(ctx.exception.code, 400)
         self.assertIn("not approved", ctx.exception.read().decode())
 
+    def test_an_accepted_plan_is_pushable(self):
+        """A failed plan accepted by its score may drive the hub (KI-055).
+
+        The verdict on the solve says ok = false; the file's approval is
+        the authority and says approved, so the push goes - the same
+        contract as the CLI's --accept-score.
+        """
+        solve_job, solved = self._solve()
+        self.assertEqual(solved["status"], "ok")
+        self._approve(solve_job, passed=False, accepted=True, hub_approved=True)
+        self.server.get_job(solve_job["id"]).log(
+            gui_server.VALIDATION_MARKER
+            + json.dumps({"selected": 1, "candidates": [{"ok": False}]}))
+        status, job = _request(f"{self.base}/api/push", method="POST", payload={
+            "job_id": solve_job["id"], "connection": "ble", "hub_name": "HUB"})
+        self.assertEqual(status, 202)
+        deadline = time.time() + 120
+        while time.time() < deadline:
+            status, body = _request(f"{self.base}/api/jobs/{job['id']}")
+            if body["status"] != "running":
+                break
+            time.sleep(0.3)
+        self.assertEqual(body["status"], "ok", body["log"][-5:])
+
     def test_pushing_an_unknown_job_is_refused(self):
         with self.assertRaises(urllib.error.HTTPError) as ctx:
             _request(f"{self.base}/api/push", method="POST",
@@ -1108,18 +1132,18 @@ class TestStudioHelpers(unittest.TestCase):
     def test_the_field_limit_is_passed_through_only_with_validation(self):
         base = (Path("."), Path("c.json"), Path("w.json"), Path("o.traj"))
         command = gui_server.build_command(
-            *base, {"validate": True, "envelope_from_field": "2026-27"})
-        self.assertIn("--envelope-from-field 2026-27",
+            *base, {"validate": True, "field_clearance": "2026-27"})
+        self.assertIn("--field-clearance 2026-27",
                       " ".join(str(part) for part in command))
 
-        # The field limit is the validator's gate; off it, it says nothing.
+        # The field gates are the validator's; off it, they say nothing.
         command = gui_server.build_command(
-            *base, {"envelope_from_field": "2026-27"})
-        self.assertNotIn("--envelope-from-field", command)
+            *base, {"field_clearance": "2026-27"})
+        self.assertNotIn("--field-clearance", command)
 
         command = gui_server.build_command(
-            *base, {"validate": True, "envelope_from_field": ""})
-        self.assertNotIn("--envelope-from-field", command)
+            *base, {"validate": True, "field_clearance": ""})
+        self.assertNotIn("--field-clearance", command)
 
     def test_the_candidate_comparison_is_always_requested(self):
         command = gui_server.build_command(

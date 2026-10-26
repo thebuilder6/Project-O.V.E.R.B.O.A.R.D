@@ -352,6 +352,21 @@ tr.ok td.verdict-cell { color: var(--ok); }
         if (result.tracking_cm !== null && result.tracking_cm !== undefined) {
             resultFacts.push(fact('Tracking error', num(result.tracking_cm, 2), 'cm'));
         }
+        /* The field-clearance channels of the physical side
+           (--field-clearance): the util is the tube over the unclamped
+           clearance (1.0 = touching), the penetration how far past it the
+           tube reaches. */
+        if (result.field_clearance_util !== null
+                && result.field_clearance_util !== undefined) {
+            resultFacts.push(fact('Field clearance util',
+                `${num(result.field_clearance_util, 2)}x`,
+                'of the field clearance (1.0 = touching)'));
+        }
+        if (result.penetration_m !== null && result.penetration_m !== undefined
+                && Number(result.penetration_m) > 0) {
+            resultFacts.push(fact('Field penetration',
+                num(result.penetration_m * 100, 2), 'cm past the clearance'));
+        }
         if (result.wall_s !== null && result.wall_s !== undefined) {
             resultFacts.push(fact('Solve (wall)', num(result.wall_s, 2), 's'));
         }

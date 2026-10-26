@@ -663,6 +663,51 @@ class TestValidationReport(unittest.TestCase):
                 }
         return _Envelope
 
+    @staticmethod
+    def _stub_field(clearance, season="stub-field"):
+        """A field that measures every sample at one clearance value.
+
+        NaN is "the field cannot measure this sample".
+        """
+        class _Stub:
+            placement_uncertainty_m = 0.1
+
+            def sample_clearances(self, samples, robot_radius_m):
+                return [float(clearance)] * len(samples)
+
+        _Stub.season = season
+        return _Stub()
+
+    @staticmethod
+    def _tube_validator(half):
+        """A tube of radius ``half`` metres, exact in binary floating point.
+
+        The box is a point in x and ``+/- half`` in y on the y = 0 samples,
+        so the radius is exactly ``half``: the boundary cases (util == 1,
+        err == limit) then compare exact floats, not rounded ones.
+        """
+        class _Tube:
+            def __init__(self, config, digital_twin=None, **kwargs):
+                pass
+
+            def validate_trajectory(self, samples, *ranges, **kwargs):
+                return {
+                    "passed": True,
+                    "max_motor_violation_N": 0.0,
+                    "max_traction_violation_N": 0.0,
+                    "max_slip_l_N": 0.0,
+                    "max_slip_r_N": 0.0,
+                    "max_tracking_error_m": 0.001,
+                    "reachability": {
+                        "max_error_m": half,
+                        "envelope": [{
+                            "x_min": s["x"], "x_max": s["x"],
+                            "y_min": -half, "y_max": half,
+                        } for s in samples],
+                        "diverged": False},
+                }
+        return _Tube
+
     def test_the_field_limit_clamps_per_sample(self):
         """The clearance is the limit, clamped to 0.5-5 cm (-KI-054)."""
         validator = self._envelope_validator(0.02)
@@ -674,7 +719,7 @@ class TestValidationReport(unittest.TestCase):
             "obstacles": []})
         with patch("overboard.viz.fields.load_field", return_value=tight):
             failed, data = self._invoke(
-                ["--envelope-from-field", "tight-field",
+                ["--field-clearance", "tight-field",
                  "--envelope-limit", "0.05"], validator=validator)
         self.assertNotEqual(failed.exit_code, 0, failed.output)
         self.assertIsNone(data)
@@ -691,18 +736,20 @@ class TestValidationReport(unittest.TestCase):
             "obstacles": []})
         with patch("overboard.viz.fields.load_field", return_value=loose):
             passed, data = self._invoke(
-                ["--envelope-from-field", "loose-field",
+                ["--field-clearance", "loose-field",
                  "--envelope-limit", "0.001"], validator=validator)
         self.assertEqual(passed.exit_code, 0, passed.output)
         self.assertTrue(data["validation"]["passed"])
 
     def test_a_waypoint_threshold_wins_over_the_field(self):
-        """error_threshold / precision_mode keep their local authority."""
-        validator = self._envelope_validator(0.02)
-        tight = self._field({
-            "season": "tight-field", "placement_uncertainty_m": 0.1,
-            "mat": {"width_m": 2.0, "height_m": 1.0},
-            "obstacles": []})
+        """error_threshold / precision_mode keep their local authority.
+
+        The field's clamp puts the accuracy limit at 5 cm while the tube is
+        7 cm and the clearance is 10 cm: the physical check passes (0.7x)
+        and only the accuracy limit binds - until the waypoint's own
+        threshold overrides it.
+        """
+        tube = self._tube_validator(0.07)
         with tempfile.TemporaryDirectory() as tmp:
             wp = os.path.join(tmp, "wp.json")
             out = os.path.join(tmp, "out.traj")
@@ -710,33 +757,29 @@ class TestValidationReport(unittest.TestCase):
                 json.dump(_mission(
                     [{"x": 0.0, "y": 0.0, "heading": 0.0},
                      {"x": 0.1, "y": 0.0, "heading": 0.0,
-                      "error_threshold": 0.05}]), handle)
+                      "error_threshold": 0.08}]), handle)
             with patch.object(self.main, "TrajectoryOptimizer", self._Optimizer), \
-                    patch.object(self.main, "ImmraxValidator", validator), \
-                    patch("overboard.viz.fields.load_field", return_value=tight):
+                    patch.object(self.main, "ImmraxValidator", tube), \
+                    patch("overboard.viz.fields.load_field",
+                          return_value=self._stub_field(0.1)):
                 result = self.runner.invoke(self.main.main, [
                     "-c", os.path.join(self.repo, "examples", "fll_choreo.json"),
                     "-w", wp, "-o", out, "--validate",
-                    "--envelope-from-field", "tight-field",
+                    "--field-clearance", "stub-field",
                     "--envelope-limit", "0.001"])
             with open(out, "r", encoding="utf-8") as handle:
                 data = json.load(handle)
         self.assertEqual(result.exit_code, 0, result.output)
         self.assertTrue(data["validation"]["passed"])
+        self.assertLessEqual(data["validation"]["field_clearance_util"], 1.0)
 
     def test_a_sample_the_field_cannot_measure_falls_back(self):
-        """NaN is no field limit - it is never clamped (KI-054)."""
-        class _Unmeasured:
-            season = "unmeasured"
-            placement_uncertainty_m = 0.1
-
-            def sample_clearances(self, samples, robot_radius_m):
-                return [float("nan")] * len(samples)
-
+        """NaN is no field limit and no clearance check (KI-054)."""
         validator = self._envelope_validator(0.02)
-        with patch("overboard.viz.fields.load_field", return_value=_Unmeasured()):
+        with patch("overboard.viz.fields.load_field",
+                   return_value=self._stub_field(float("nan"), "unmeasured")):
             passed, data = self._invoke(
-                ["--envelope-from-field", "unmeasured",
+                ["--field-clearance", "unmeasured",
                  "--envelope-limit", "0.05"], validator=validator)
         # Clamped, a NaN would become 0.005 and fail the 2.8 cm envelope.
         self.assertEqual(passed.exit_code, 0, passed.output)
@@ -745,6 +788,9 @@ class TestValidationReport(unittest.TestCase):
         summary = data["validation"]["envelope_limit_field_m"]
         self.assertIsNone(summary["min_m"])
         self.assertIsNone(summary["max_m"])
+        # The physical check is skipped, not failed and not clamped.
+        self.assertIsNone(data["validation"]["field_clearance_util"])
+        self.assertEqual(data["validation"]["field_clearance_skipped_samples"], 11)
 
     def test_the_field_limit_and_the_uncertainty_are_recorded(self):
         validator = self._envelope_validator(0.02)
@@ -753,7 +799,7 @@ class TestValidationReport(unittest.TestCase):
             "obstacles": []})
         with patch("overboard.viz.fields.load_field", return_value=loose):
             passed, data = self._invoke(
-                ["--envelope-from-field", "loose-field"], validator=validator)
+                ["--field-clearance", "loose-field"], validator=validator)
         self.assertEqual(passed.exit_code, 0, passed.output)
         summary = data["validation"]["envelope_limit_field_m"]
         self.assertEqual(summary["season"], "loose-field")
@@ -770,8 +816,107 @@ class TestValidationReport(unittest.TestCase):
         self.assertNotIn("NaN", marker[0])
         self.assertNotIn("Infinity", marker[0])
 
+    def test_the_clamp_cannot_mask_a_penetration(self):
+        """Raw 3 mm under a 5 mm tube: accuracy passes, physical fails.
+
+        The accuracy limit clamps the clearance up to 5 mm, so the tube is
+        inside the limit - but it reaches the obstacle the field measured,
+        which is a physical failure like force or slip (KI-054).
+        """
+        tube = self._tube_validator(0.005)
+        with patch("overboard.viz.fields.load_field",
+                   return_value=self._stub_field(0.003)):
+            failed, data = self._invoke(
+                ["--field-clearance", "stub-field"], validator=tube)
+        self.assertNotEqual(failed.exit_code, 0, failed.output)
+        self.assertIsNone(data)
+        marker = [line for line in failed.output.splitlines()
+                  if line.startswith(self.main.VALIDATION_MARKER)]
+        payload = json.loads(marker[0][len(self.main.VALIDATION_MARKER):])
+        candidate = payload["candidates"][0]
+        self.assertTrue(candidate["categories"]["accuracy"] >= 0)
+        self.assertFalse(candidate["ok"])
+        self.assertIn("field clearance",
+                      " ".join(candidate["reasons"]))
+        self.assertAlmostEqual(payload["penetration_m"], 0.002, places=6)
+        self.assertGreater(payload["field_clearance_util"], 1.0)
+
+        # --best-effort never exports a physical failure.
+        with patch("overboard.viz.fields.load_field",
+                   return_value=self._stub_field(0.003)):
+            refused, data = self._invoke(
+                ["--field-clearance", "stub-field", "--best-effort"], validator=tube)
+        self.assertNotEqual(refused.exit_code, 0, refused.output)
+        self.assertIsNone(data)
+        self.assertIn("No candidate failed on accuracy alone", refused.output)
+
+        # --accept-score exports it with the P cap and the hub approval.
+        with patch("overboard.viz.fields.load_field",
+                   return_value=self._stub_field(0.003)):
+            accepted, data = self._invoke(
+                ["--field-clearance", "stub-field", "--accept-score", "1"],
+                validator=tube)
+        self.assertEqual(accepted.exit_code, 0, accepted.output)
+        record = data["validation"]
+        self.assertFalse(record["passed"])
+        self.assertTrue(record["accepted"])
+        self.assertTrue(record["hub_approved"])
+        physical = record["categories"]["physical"]
+        self.assertLessEqual(record["score"], physical + 1e-9)
+
+    def test_touching_the_field_passes_and_penetrating_fails(self):
+        """util == 1 is touching; only util > 1 fails (KI-054)."""
+        tube = self._tube_validator(0.005)
+        with patch("overboard.viz.fields.load_field",
+                   return_value=self._stub_field(0.005)):
+            passed, data = self._invoke(
+                ["--field-clearance", "stub-field"], validator=tube)
+        self.assertEqual(passed.exit_code, 0, passed.output)
+        self.assertTrue(data["validation"]["passed"])
+        self.assertAlmostEqual(data["validation"]["field_clearance_util"], 1.0)
+        self.assertAlmostEqual(data["validation"]["penetration_m"], 0.0)
+
+        # 0.1 mm under: the accuracy limit still clamps to 5 mm and passes,
+        # and the physical gate catches the penetration it cannot hide.
+        with patch("overboard.viz.fields.load_field",
+                   return_value=self._stub_field(0.0049)):
+            failed, data = self._invoke(
+                ["--field-clearance", "stub-field"], validator=tube)
+        self.assertNotEqual(failed.exit_code, 0, failed.output)
+        marker = [line for line in failed.output.splitlines()
+                  if line.startswith(self.main.VALIDATION_MARKER)]
+        payload = json.loads(marker[0][len(self.main.VALIDATION_MARKER):])
+        self.assertGreater(payload["field_clearance_util"], 1.0)
+        self.assertAlmostEqual(payload["penetration_m"], 0.0001, places=6)
+        self.assertAlmostEqual(payload["field_clearance_min_m"], 0.0049, places=6)
+
+    def test_a_nominal_overlap_stays_finite(self):
+        """raw <= 0 is a large finite util - never Infinity in the JSON."""
+        tube = self._tube_validator(0.005)
+        with patch("overboard.viz.fields.load_field",
+                   return_value=self._stub_field(-0.01)):
+            failed, data = self._invoke(
+                ["--field-clearance", "stub-field"], validator=tube)
+        self.assertNotEqual(failed.exit_code, 0, failed.output)
+        marker = [line for line in failed.output.splitlines()
+                  if line.startswith(self.main.VALIDATION_MARKER)]
+        self.assertEqual(len(marker), 1)
+        self.assertNotIn("Infinity", marker[0])
+        self.assertNotIn("NaN", marker[0])
+        payload = json.loads(marker[0][len(self.main.VALIDATION_MARKER):])
+        self.assertGreater(payload["field_clearance_util"], 1e3)
+        self.assertAlmostEqual(payload["penetration_m"], 0.015, places=6)
+        self.assertAlmostEqual(payload["field_clearance_min_m"], -0.01, places=6)
+
+    def test_field_clearance_needs_validation(self):
+        result = self.runner.invoke(self.main.main, [
+            "-w", os.path.join(self.repo, "examples", "example_straight.json"),
+            "--field-clearance", "2026-27"])
+        self.assertNotEqual(result.exit_code, 0, result.output)
+        self.assertIn("--field-clearance needs --validate", result.output)
+
     def test_an_unknown_field_season_is_refused(self):
-        result, data = self._invoke(["--envelope-from-field", "no-such-season"])
+        result, data = self._invoke(["--field-clearance", "no-such-season"])
         self.assertNotEqual(result.exit_code, 0, result.output)
         self.assertIsNone(data)
         self.assertIn("There is no field for the season", result.output)
@@ -956,7 +1101,8 @@ class TestValidationReport(unittest.TestCase):
             self.assertEqual(candidate["score_version"], 1)
             self.assertEqual(sorted(candidate["categories"]),
                              ["accuracy", "duration", "physical", "quality"])
-            self.assertEqual(sorted(candidate["ratios"]), ["r_acc", "r_phys"])
+            self.assertEqual(sorted(candidate["ratios"]),
+                             ["field_clearance_util", "r_acc", "r_phys"])
             self.assertTrue(candidate["eligibility"])
             self.assertFalse(candidate["structural_failure"])
         # The artifact carries the same verdict, with its hash.
@@ -1592,7 +1738,8 @@ class TestDeprecatedCliFlags(unittest.TestCase):
                      "--h-adaptive", "--unified", "--no-unified",
                      "--self-consistent", "--no-self-consistent",
                      "--recombine-segments", "--memetic-evolution",
-                     "--generations", "--population-size"):
+                     "--generations", "--population-size",
+                     "--envelope-from-field"):
             result = self.runner.invoke(
                 self.main.main, ["-w", "examples/example_straight.json", flag])
             self.assertNotEqual(result.exit_code, 0, flag)

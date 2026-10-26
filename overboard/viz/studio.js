@@ -832,7 +832,7 @@ function bestEffortDetail(candidate) {
         + (reasons.length ? ` (${reasons.join('; ')})` : '') + '.';
 }
 
-/* The per-sample accuracy limit the field imposed (--envelope-from-field),
+/* The per-sample accuracy limit the field imposed (--field-clearance),
    shown next to the accuracy limit it replaces. The tooltip carries the
    field's placement uncertainty: a tight limit read off FIRST's wireframes
    is nominal geometry, never a survey. */
@@ -1078,6 +1078,11 @@ function collectReportData() {
             score: state.jobScore,
             score_version: state.jobScore === null ? null : 1,
             profile: el('opt-score-profile').value,
+            field_clearance_util: candidate ? candidate.field_clearance_util : null,
+            field_clearance_min_m: candidate ? candidate.field_clearance_min_m : null,
+            penetration_m: candidate ? candidate.penetration_m : null,
+            field_clearance_skipped_samples: candidate
+                ? candidate.field_clearance_skipped_samples : null,
             hub_approved: state.hubApproved,
             accepted: state.runOutcome === 'accepted',
             reason: state.jobFailedReason || '',
@@ -1461,7 +1466,12 @@ async function pushToHub() {
         toast('Solve a mission first: the push runs an approved trajectory.', true);
         return;
     }
-    if (!state.solveValidated) {
+    /* What the server allows is what the button allows: a validated pass,
+       or a failed plan accepted by its score and marked hub-ready. The
+       server re-checks the file's approval either way. */
+    const approved = state.solveValidated
+        || (state.runOutcome === 'accepted' && state.hubApproved === true);
+    if (!approved) {
         toast('This trajectory has not been validated. Validate it before pushing it '
             + 'to the robot.', true);
         return;
@@ -1549,7 +1559,7 @@ function updatePushButton() {
         status.textContent = 'Solve a mission first.';
     } else if (state.runOutcome === 'accepted' && state.hubApproved === true) {
         status.textContent = 'This accepted plan is marked hub-ready by the score. '
-            + 'Server-side accepted-push enforcement is not integrated yet.';
+            + 'It failed validation - push it only if that is the plan you mean to run.';
     } else if (!checked && state.validationReport) {
         status.textContent = 'This trajectory failed validation, so it is not '
             + 'approved for the robot. It is on the field for inspection only.';
@@ -2701,6 +2711,19 @@ function runVerdict(report, selected, jobFailed) {
         scoreVersion: entry.score_version || (report && report.score_version) || 1,
         profile: entry.profile || (report && report.profile) || 'balanced',
         categories: entry.categories || (report && report.categories) || null,
+        /* The field-clearance channels (--field-clearance), for the Physical
+           category: the worst util (1.0 = touching) and the worst
+           penetration, so a physical failure names its number. */
+        clearance: {
+            util: entry.field_clearance_util !== null
+                && entry.field_clearance_util !== undefined
+                ? entry.field_clearance_util
+                : (report ? report.field_clearance_util : null),
+            penetration_m: entry.penetration_m !== null
+                && entry.penetration_m !== undefined
+                ? entry.penetration_m
+                : (report ? report.penetration_m : null),
+        },
         hubApproved: Boolean(report && (report.hub_approved !== undefined
             ? report.hub_approved : (rawOk && !jobFailed))),
     };
@@ -2758,12 +2781,23 @@ function renderScoreBlock(verdict) {
     const names = [['physical', 'Physical'], ['accuracy', 'Accuracy'],
         ['quality', 'Motion Quality'], ['duration', 'Duration']];
     const parts = verdict.categories || {};
+    const clearance = verdict.clearance || {};
     names.forEach(([key, label]) => {
         const item = document.createElement('div');
         item.className = 'score-category';
         const number = parts[key];
-        item.textContent = `${label}: ${Number.isFinite(Number(number))
+        let text = `${label}: ${Number.isFinite(Number(number))
             ? Number(number).toFixed(1) : '-'}`;
+        if (key === 'physical' && Number.isFinite(Number(clearance.util))) {
+            /* The field-clearance channel under Physical: the util is the
+               tube over the unclamped clearance (1.0 = touching), and the
+               penetration is how far past it the tube reaches. */
+            const past = Number(clearance.penetration_m);
+            text += ` (field clearance ${Number(clearance.util).toFixed(2)}x`
+                + `${Number.isFinite(past) && past > 0
+                    ? `, ${(past * 100).toFixed(2)} cm past` : ''})`;
+        }
+        item.textContent = text;
         categories.appendChild(item);
     });
     note.textContent = verdict.kind === 'accepted'

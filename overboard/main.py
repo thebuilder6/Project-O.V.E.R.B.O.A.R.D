@@ -424,9 +424,18 @@ def _build_validation_record(*, passed, accepted, best_effort, attempt,
         "envelope_limit_m": float(envelope_limit),
         "envelope_limit_per_metre": float(envelope_limit_per_metre),
         # The field-derived per-sample limit and the field's placement
-        # uncertainty, alongside the run-wide limits (--envelope-from-field).
+        # uncertainty, alongside the run-wide limits (--field-clearance).
         "envelope_limit_field_m": (attempt or {}).get("envelope_limit_field_m"),
         "placement_uncertainty_m": (attempt or {}).get("placement_uncertainty_m"),
+        # The physical side of --field-clearance: the worst clearance
+        # utilisation (1.0 = touching), the nearest clearance the field
+        # measured, the worst penetration and the samples it could not
+        # measure (skipped, never clamped).
+        "field_clearance_util": (attempt or {}).get("field_clearance_util"),
+        "field_clearance_min_m": (attempt or {}).get("field_clearance_min_m"),
+        "penetration_m": (attempt or {}).get("penetration_m"),
+        "field_clearance_skipped_samples":
+            (attempt or {}).get("field_clearance_skipped_samples"),
         "reasons": list(attempt.get("reasons", [])) if attempt else [],
         "segments": list(attempt.get("segments", [])) if attempt else [],
     }
@@ -487,7 +496,7 @@ MAX_ENVELOPE_LIMIT_M = 0.05
 # widens with distance, so that is a duration budget in disguise); a positive
 # slope prices distance instead (KI-054).
 DEFAULT_ENVELOPE_LIMIT_PER_METRE = 0.0
-# The field's per-sample limit (--envelope-from-field) is the clearance
+# The field's per-sample accuracy limit (--field-clearance) is the clearance
 # clamped to this band: 5 mm matters, and 50 mm is where the propagation
 # cuts the tube off (MAX_ENVELOPE_LIMIT_M), so no looser limit can be
 # measured. A NaN clearance is "no field limit" and is never clamped.
@@ -541,7 +550,7 @@ def _local_limit(thresholds, index, travelled_at, default, per_metre,
 
     A waypoint's ``error_threshold`` / ``precision_mode`` wins locally (the
     rule of ``_segment_limit``). Otherwise the field's per-sample limit
-    applies where the field has one (``--envelope-from-field``); a sample
+    applies where the field has one (``--field-clearance``); a sample
     without one falls back to the run-wide limit and its per-metre allowance.
     """
     declared = _segment_limit(thresholds, index, default=None)
@@ -553,23 +562,35 @@ def _local_limit(thresholds, index, travelled_at, default, per_metre,
     return _envelope_limit_at(default, per_metre, travelled_at)
 
 
-def _field_envelope_limits(field, robot_cfg, samples_data):
-    """The field's per-sample envelope limits (``--envelope-from-field``).
+def _field_clearances(field, robot_cfg, samples_data):
+    """The field's raw per-sample clearances (``--field-clearance``).
 
-    One limit per sample: the field's clearance (the robot disc resolved as
-    ``chassis_radius_m`` -> track/2 -> numeric) clamped to 5-50 mm. A NaN
-    clearance - a sample without usable geometry - means "no field limit
-    here" and falls back to the flat run-wide limit; NaN is never clamped.
+    One value per sample: metres from the robot's disc (resolved
+    ``chassis_radius_m`` -> track/2 -> numeric) to the nearest mission model
+    or mat boundary, negative inside one. NaN is "the field cannot measure
+    this sample": it is never clamped, never checked, and never a clearance.
     """
     if field is None:
         return None
-    limits = []
+    values = []
     for clearance in field.sample_clearances(samples_data, robot_cfg):
         try:
-            value = float(clearance)
+            values.append(float(clearance))
         except (TypeError, ValueError):
-            limits.append(None)
-            continue
+            values.append(float("nan"))
+    return values
+
+
+def _field_limits(clearances):
+    """The accuracy limits from raw clearances: clamp to 5-50 mm, or None.
+
+    A NaN clearance is no field limit, so the sample falls back to the flat
+    run-wide limit; NaN is never clamped.
+    """
+    if clearances is None:
+        return None
+    limits = []
+    for value in clearances:
         if math.isnan(value):
             limits.append(None)
         else:
@@ -579,7 +600,7 @@ def _field_envelope_limits(field, robot_cfg, samples_data):
 
 
 def _field_limit_summary(field, field_limits):
-    """What the field's per-sample limits were over one candidate."""
+    """What the field's per-sample accuracy limits were over one candidate."""
     if field is None:
         return None
     finite = [value for value in (field_limits or []) if value is not None]
@@ -781,6 +802,13 @@ def _emit_validation_report(attempts, selected_index, propagation=None,
             "score_version": attempt.get("score_version"),
             "categories": attempt.get("categories"),
             "ratios": attempt.get("ratios"),
+            # The field-clearance channels (--field-clearance), per candidate,
+            # so the decision can be re-run offline.
+            "field_clearance_util": _finite(attempt.get("field_clearance_util")),
+            "field_clearance_min_m": _finite(attempt.get("field_clearance_min_m")),
+            "penetration_m": _finite(attempt.get("penetration_m")),
+            "field_clearance_skipped_samples":
+                attempt.get("field_clearance_skipped_samples"),
             "eligibility": bool(_attempt_eligible(attempt, accept_score)),
             "accepted": bool(_attempt_accepted(attempt, accept_score)),
             "structural_failure": bool(attempt.get("structural_failure")),
@@ -797,9 +825,25 @@ def _emit_validation_report(attempts, selected_index, propagation=None,
                "envelope_limit_m": _finite(envelope_limit),
                "envelope_limit_per_metre": _finite(envelope_limit_per_metre),
                # The field-derived per-sample limit of the selected candidate
-               # and the field's placement uncertainty (--envelope-from-field).
+               # and the field's placement uncertainty (--field-clearance).
                "envelope_limit_field_m": envelope_limit_field,
                "placement_uncertainty_m": _finite(placement_uncertainty_m),
+               # The physical side of --field-clearance: the worst clearance
+               # utilisation (1.0 = touching), the nearest clearance the
+               # field measured, the worst penetration and the count of
+               # samples the field could not measure.
+               "field_clearance_util": _finite(
+                   (attempts[selected_index - 1] if selected_index else {}
+                    ).get("field_clearance_util")),
+               "field_clearance_min_m": _finite(
+                   (attempts[selected_index - 1] if selected_index else {}
+                    ).get("field_clearance_min_m")),
+               "penetration_m": _finite(
+                   (attempts[selected_index - 1] if selected_index else {}
+                    ).get("penetration_m")),
+               "field_clearance_skipped_samples":
+                   (attempts[selected_index - 1] if selected_index else {}
+                    ).get("field_clearance_skipped_samples"),
                # True when a failed candidate was exported anyway, so the
                # studio can say "failed, shown" instead of "not checked".
                "best_effort": bool(best_effort),
@@ -1300,7 +1344,7 @@ class _ScoreContext:
     quiet: bool
     envelope_limit: float = DEFAULT_ENVELOPE_LIMIT_M
     envelope_limit_per_metre: float = DEFAULT_ENVELOPE_LIMIT_PER_METRE
-    # The field model behind --envelope-from-field, or None. Its per-sample
+    # The field model behind --field-clearance, or None. Its per-sample
     # clearances are the envelope limits where the field has one.
     field: Any = None
     # One validator per run: its compiled scan is reused by every candidate,
@@ -1409,9 +1453,12 @@ def _score_attempt(attempt_record, ctx):
         stats.get("segment_samples")
         or (samples if isinstance(samples, (list, tuple, np.ndarray)) else None))
     travelled = _travelled_m(samples_data)
-    # The field's per-sample limits, when the run asked for them. The gate
-    # and the segment report read the same table, so the two cannot disagree.
-    field_limits = _field_envelope_limits(ctx.field, ctx.robot_cfg, samples_data)
+    # The field's raw clearances, one call per candidate (--field-clearance).
+    # The accuracy limits are the clamped ones; the physical check uses the
+    # raw clearance, so the clamp can never mask a penetration. The gate and
+    # the segment report read the same tables, so they cannot disagree.
+    field_clearances = _field_clearances(ctx.field, ctx.robot_cfg, samples_data)
+    field_limits = _field_limits(field_clearances)
 
     try:
         immrax_val = _immrax_validator(ctx)
@@ -1453,6 +1500,16 @@ def _score_attempt(attempt_record, ctx):
     max_err_all = 0.0
     # The worst envelope-radius / local-limit ratio, for the accuracy score.
     max_env_ratio = 0.0
+    # The physical clearance channel (--field-clearance): the tube radius
+    # over the UNCLAMPED clearance, so the accuracy clamp can never mask a
+    # penetration. util > 1 is a physical failure like force or slip; a NaN
+    # clearance is not checked; max(raw, 1e-6) keeps a nominal overlap
+    # (raw <= 0) a large *finite* util - never Infinity in the report.
+    worst_clearance_util = 0.0
+    worst_penetration = 0.0
+    min_clearance = math.inf
+    clearance_checked = 0
+    clearance_skipped = 0
 
     for i in range(len(samples_data)):
         # The segment's limit is the one of the waypoint the segment arrives
@@ -1467,12 +1524,23 @@ def _score_attempt(attempt_record, ctx):
             ctx.waypoint_thresholds, wp_idx, travelled[i], ctx.envelope_limit,
             ctx.envelope_limit_per_metre, field_limits, i)
 
+        raw = field_clearances[i] if field_clearances is not None else None
+        if raw is not None and math.isnan(raw):
+            clearance_skipped += 1
         env = samples_data[i].get('reachability_envelope', {})
         if env:
             err_x = (env['x_max'] - env['x_min']) / 2.0
             err_y = (env['y_max'] - env['y_min']) / 2.0
             err = np.sqrt(err_x**2 + err_y**2)
             max_err_all = max(max_err_all, err)
+            if raw is not None and not math.isnan(raw):
+                clearance_checked += 1
+                worst_clearance_util = max(
+                    worst_clearance_util, float(err) / max(raw, 1e-6))
+                worst_penetration = max(
+                    worst_penetration, max(0.0, float(err) - raw))
+                if math.isfinite(raw):
+                    min_clearance = min(min_clearance, raw)
             if local_threshold > 0:
                 max_env_ratio = max(max_env_ratio, float(err) / local_threshold)
             if env.get('unknown'):
@@ -1484,6 +1552,8 @@ def _score_attempt(attempt_record, ctx):
             elif err > local_threshold:
                 failed_threshold = True
                 max_vio_val = max(max_vio_val, err)
+    # util == 1 is touching, not penetrating: only util > 1 fails.
+    clearance_failed = bool(clearance_checked and worst_clearance_util > 1.0)
 
     attempt_record["tube"] = float(max_err_all)
     attempt_record["envelope_limit_field_m"] = _field_limit_summary(
@@ -1491,6 +1561,19 @@ def _score_attempt(attempt_record, ctx):
     attempt_record["placement_uncertainty_m"] = (
         _finite(ctx.field.placement_uncertainty_m)
         if ctx.field is not None else None)
+    # The physical side of --field-clearance, quantified for a re-run of the
+    # decision: the worst util, the nearest clearance the field measured, the
+    # worst penetration and how many samples the field could not measure.
+    attempt_record["field_clearance_util"] = (
+        float(worst_clearance_util)
+        if ctx.field is not None and clearance_checked else None)
+    attempt_record["field_clearance_min_m"] = (
+        _finite(min_clearance) if ctx.field is not None else None)
+    attempt_record["penetration_m"] = (
+        float(worst_penetration)
+        if ctx.field is not None and clearance_checked else None)
+    attempt_record["field_clearance_skipped_samples"] = (
+        int(clearance_skipped) if ctx.field is not None else None)
     attempt_record["diverged"] = bool(immrax_report['reachability'].get('diverged', False))
     # A cut-off propagation reports the width the tube had when it crossed
     # the guard, not the width it would have reached, so the number is a
@@ -1507,6 +1590,7 @@ def _score_attempt(attempt_record, ctx):
     attempt_record["tracking_m"] = float(immrax_report.get("max_tracking_error_m", 0.0))
     attempt_record["heading_rad"] = float(immrax_report.get("max_heading_error_rad", 0.0))
     attempt_record["ok"] = (attempt_record["converged"] and not failed_threshold
+                            and not clearance_failed
                             and bool(immrax_report['passed']))
     # Which kind of failure this is, for --best-effort. An accuracy excess -
     # the envelope radius or the tracking error - is a number the operator
@@ -1528,6 +1612,7 @@ def _score_attempt(attempt_record, ctx):
     hard_failure = bool(
         attempt_record["diverged"]
         or unknown_envelope
+        or clearance_failed
         or motor_violation > 1e-3
         or traction_violation > 1e-3
         or slip_violation > 1e-3
@@ -1537,6 +1622,11 @@ def _score_attempt(attempt_record, ctx):
         and not hard_failure)
     attempt_record["reasons"] = _immrax_failure_reasons(
         immrax_report, failed_threshold, max_vio_val)
+    if clearance_failed:
+        # A physical failure, not an accuracy drop: the tube reaches the
+        # field, which --best-effort will not export.
+        attempt_record["reasons"] = list(attempt_record["reasons"]) + [
+            f"tube {worst_penetration * 100:.2f} cm past the field clearance"]
     if failed_threshold:
         attempt_record["violation"] = max_vio_val
     else:
@@ -1620,7 +1710,8 @@ def _score_attempt(attempt_record, ctx):
             return float(value or 0.0) / limit if limit > 0 else 0.0
 
         # r_phys: worst motor, traction/slip and wheel-speed utilisation,
-        # across the CPU audit and the Immrax interval check.
+        # across the CPU audit and the Immrax interval check, plus the
+        # field-clearance channel (the tube over the unclamped clearance).
         r_phys = max(
             float(cpu_metrics.get("max_force_utilization", 0.0) or 0.0),
             float(cpu_metrics.get("peak_traction_utilization", 0.0) or 0.0),
@@ -1628,6 +1719,7 @@ def _score_attempt(attempt_record, ctx):
                         cpu_audit.get("wheel_speed_limit_m_s", 0.0)),
             max((float(value) for value in immrax_util.values()
                  if value is not None), default=0.0),
+            float(attempt_record.get("field_clearance_util") or 0.0),
         )
         # r_acc: the envelope against its active local limit (waypoint
         # overrides and per-metre allowance included), the tracking gate and
@@ -1686,7 +1778,7 @@ def _score_attempt(attempt_record, ctx):
             motor_violation > 1e-3 or traction_violation > 1e-3
             or slip_violation > 1e-3 or speed_violation > 1e-6)
         phys_failed = bool(r_phys > 1.0 or cpu_physical_failed
-                           or immrax_physical_failed)
+                           or immrax_physical_failed or clearance_failed)
         acc_check_failed = bool(
             failed_threshold
             or float(attempt_record.get("tracking_m", 0.0) or 0.0) > TRACKING_GATE_M
@@ -1702,7 +1794,12 @@ def _score_attempt(attempt_record, ctx):
         attempt_record["score_version"] = SCORE_VERSION
         attempt_record["categories"] = {
             name: float(value) for name, value in categories.items()}
-        attempt_record["ratios"] = {"r_phys": float(r_phys), "r_acc": float(r_acc)}
+        attempt_record["ratios"] = {
+            "r_phys": float(r_phys), "r_acc": float(r_acc),
+            # The worst clearance utilisation, next to the other physical
+            # channels (the clamp can never mask a penetration).
+            "field_clearance_util": attempt_record.get("field_clearance_util"),
+        }
         attempt_record["phys_failed"] = phys_failed
         attempt_record["acc_failed"] = acc_failed
 
@@ -2134,15 +2231,19 @@ def _render(output, samples_data, wps, optimizer, all_attempts, selected_index, 
                    'The tube widens with distance, so this prices the drift '
                    'instead of the elapsed time (KI-054). Recorded with the '
                    'validation report.')
-@click.option('--envelope-from-field', default=None, type=str,
-              help='Per-sample envelope limits from a field season model: the '
-                   'robot disc clearance at each sample, clamped to 0.005-0.05 '
-                   'm, replaces the run-wide limit where the field has one. A '
+@click.option('--field-clearance', default=None, type=str,
+              help='Two field-aware gates from one clearance model (needs '
+                   '--validate). The accuracy limit becomes the robot disc '
+                   'clearance at each sample, clamped to 0.005-0.05 m (a '
                    'waypoint error_threshold still wins locally; a sample the '
-                   'field cannot measure falls back to --envelope-limit. The '
-                   'field footprints carry about 100 mm of placement '
-                   'uncertainty, so the limit is nominal geometry, not a '
-                   'survey. Recorded with the validation report.')
+                   'field cannot measure falls back to --envelope-limit). And '
+                   'the clearance is its own physical gate: the tube reaching '
+                   'an obstacle (tube radius over the unclamped clearance '
+                   'above 1) fails like force or slip, so --best-effort never '
+                   'exports it and only --accept-score can. The field '
+                   'footprints carry about 100 mm of placement uncertainty, '
+                   'so the limit is nominal geometry, not a survey. Recorded '
+                   'with the validation report.')
 @click.option('--target-time', default=None, type=click.FloatRange(min=0.0),
               help='Scoring budget: the duration worth 100 on the duration '
                    'score. Required with --validate when the mission does not '
@@ -2231,7 +2332,7 @@ def main(ctx, config, waypoints, output, gui, gui_port, doctor, preset,
          samples, accuracy_weight, force_weight, candidates, pick_candidate,
          stop_waypoints, events,
          no_parallel, workers, fast_polish, polish, validate, best_effort,
-         envelope_limit, envelope_limit_per_metre, envelope_from_field,
+         envelope_limit, envelope_limit_per_metre, field_clearance,
          target_time, max_time, jerk_target, jerk_max,
          scoring_profile, accept_score,
          sysid_fit, export_format, controller_dt, control_dt,
@@ -2508,15 +2609,20 @@ def main(ctx, config, waypoints, output, gui, gui_port, doctor, preset,
                 f"{scoring['target_time_s']} and max {scoring['max_time_s']}. "
                 "Set --target-time/--max-time or the mission scoring fields.")
 
-    # The field behind --envelope-from-field, loaded once and up front: a
-    # typo in the season must not surface after a solve.
+    # The field behind --field-clearance, loaded once and up front: a typo in
+    # the season must not surface after a solve. The two gates it feeds are
+    # validation gates, so the flag is refused without --validate.
     field = None
-    if envelope_from_field:
+    if field_clearance:
+        if not validate:
+            raise click.ClickException(
+                "--field-clearance needs --validate: it prices the "
+                "reachability tube against the field.")
         from overboard.viz.fields import load_field
-        field = load_field(envelope_from_field)
+        field = load_field(field_clearance)
         if field is None:
             raise click.ClickException(
-                f"There is no field for the season '{envelope_from_field}'.")
+                f"There is no field for the season '{field_clearance}'.")
 
     # sorted() so the constraint order (and therefore the IPOPT iterate) is
     # reproducible; set() iteration order changes the NLP ordering.
@@ -2668,6 +2774,10 @@ def main(ctx, config, waypoints, output, gui, gui_port, doctor, preset,
             "placement_uncertainty_m": (
                 _finite(field.placement_uncertainty_m)
                 if field is not None else None),
+            "field_clearance_util": None,
+            "field_clearance_min_m": None,
+            "penetration_m": None,
+            "field_clearance_skipped_samples": None,
             "reasons": [], "segments": [], "max_excess_m": 0.0,
         }
 

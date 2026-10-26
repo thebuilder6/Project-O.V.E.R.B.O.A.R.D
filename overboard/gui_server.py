@@ -600,11 +600,12 @@ def build_command(job_dir, config_path, waypoints_path, output_path, options):
         if options.get("envelope_limit_per_metre") is not None:
             command += ["--envelope-limit-per-metre",
                         f"{float(options['envelope_limit_per_metre']):g}"]
-        # The per-sample accuracy limit from a field season (--envelope-from-
-        # field). Only with --validate: without a gate there is no limit.
-        season = str(options.get("envelope_from_field") or "").strip()
+        # The per-sample accuracy limit and the physical clearance gate from
+        # a field season (--field-clearance). Only with --validate: without a
+        # gate there is no limit.
+        season = str(options.get("field_clearance") or "").strip()
         if season:
-            command += ["--envelope-from-field", season]
+            command += ["--field-clearance", season]
         # The studio draws the best path a failed validation produced, marked
         # as failed, instead of an empty field. Push and approval still read
         # the validator's verdict, so this only affects what is displayed.

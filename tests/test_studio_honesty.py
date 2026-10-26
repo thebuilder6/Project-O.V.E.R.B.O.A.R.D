@@ -90,6 +90,19 @@ class TestThePushNeedsAValidatedTrajectory(unittest.TestCase):
         body = self._function("pushToHub")
         self.assertIn("state.solveValidated", body)
 
+    def test_the_push_allows_a_plan_the_score_approved(self):
+        """What the server allows, the button allows: a failed plan
+        accepted by its score and marked hub-ready goes to the hub."""
+        body = self._function("pushToHub")
+        self.assertIn("state.runOutcome === 'accepted'", body)
+        self.assertIn("state.hubApproved === true", body)
+
+    def test_the_stale_integration_note_is_gone(self):
+        """The server-side gate is integrated; the note that denied it
+        must not stay on the screen."""
+        body = self._function("updatePushButton")
+        self.assertNotIn("not integrated yet", body)
+
     def test_the_verdict_comes_from_the_validator_not_the_switch(self):
         """A solve with a measured model is validated even when the box was
         not ticked, so the switch cannot be the answer."""
