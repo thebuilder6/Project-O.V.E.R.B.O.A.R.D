@@ -201,6 +201,18 @@ class TestRobotConfig(unittest.TestCase):
         self.assertEqual(config.uncertainties["wheel_radius_range"], (0.0275, 0.0285))
         self.assertEqual(config.uncertainties["inertia_kg_m2"], (0.0008, 0.0011))
 
+    def test_the_declared_acceleration_limit_comes_from_the_digital_twin(self):
+        """Q11 step 2: the optimizer's ramp bound reads the one accessor,
+        and a config without a declared limit keeps none."""
+        config = RobotConfig({"robot": {"mass": 0.8}, "digital_twin": {
+            "actuator": {"straight": {"accel_limit": 7.8}}}})
+        self.assertAlmostEqual(config.accel_limit_m_s2, 7.8)
+
+        self.assertIsNone(RobotConfig({"robot": {"mass": 0.8}}).accel_limit_m_s2)
+        self.assertIsNone(RobotConfig({"robot": {
+            "mass": 0.8}, "digital_twin": {"actuator": {"straight": {}}}
+        }).accel_limit_m_s2)
+
     def test_legacy_uncertainties_are_normalized(self):
         """KI-008/KI-009: legacy {val} ranges must work too."""
         config_dict = {

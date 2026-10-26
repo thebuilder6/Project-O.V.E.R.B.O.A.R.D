@@ -606,6 +606,15 @@ class TrajectoryOptimizer:
         opti.subject_to(vr >= -v_bound)
         opti.subject_to(vr <= v_bound)
 
+        # The DriveBase's wheel-acceleration ceiling, when the config declares
+        # one (Q11 step 2). A plan that commands more cannot execute as it
+        # passes the model. None means no declared limit, and no bound.
+        accel_limit = getattr(self.config, "accel_limit_m_s2", None)
+        if accel_limit is not None and float(accel_limit) > 0.0:
+            accel_limit = float(accel_limit)
+        else:
+            accel_limit = None
+
         def motor_limit(v_wheel):
             """Worst-case per-wheel force limit at a wheel speed."""
             if apply_headroom:
@@ -787,6 +796,26 @@ class TrajectoryOptimizer:
             g_f_half = np.abs(0.25 * self.config.mass * (g_al + g_ar))
             g_split = np.abs(epi_inertia * (g_ar - g_al) / (epi_tw ** 2))
             opti.set_initial(f_bound_vec, g_f_half + g_split + 1e-4)
+
+        if accel_limit is not None:
+            # Q11 step 2: the executor's ramp limit, per wheel per interval,
+            # held to each interval's own dt so it works under per-segment
+            # timing. The rows are gathered after the dynamics on purpose:
+            # interleaving them inside the interval loop poisoned IPOPT's
+            # iteration path on the 10-waypoint plain solve (112 -> 5000
+            # iterations), the same fragility KI-024's dense rows showed.
+            # Scaled like the merge rows, or the unscaled dv rows fight the
+            # gradient-based scaling and the solve crawls.
+            scale = 1.0 / max(accel_limit * 0.1, 1e-6)
+            for k in range(N - 1):
+                dt_k = interval_dt(k)
+                step = accel_limit * dt_k
+                dv_l = vl[k + 1] - vl[k]
+                dv_r = vr[k + 1] - vr[k]
+                opti.subject_to((dv_l - step) * scale <= 0)
+                opti.subject_to((-dv_l - step) * scale <= 0)
+                opti.subject_to((dv_r - step) * scale <= 0)
+                opti.subject_to((-dv_r - step) * scale <= 0)
 
         if merge_constraints:
             dt_ref = float(np.mean(guess_dt)) or 0.1

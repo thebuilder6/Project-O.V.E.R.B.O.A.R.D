@@ -243,6 +243,18 @@ class RobotConfig:
         # the config pinned the range on purpose.
         self.declared_t_max_range = "t_max_range" in uncertainty_cfg or "t_max_range" in robot_cfg
 
+        # The DriveBase's wheel-acceleration ceiling, when the config declares
+        # one in its digital twin. That section is the one schema for the
+        # limit, so the optimizer reads it here rather than inventing a second
+        # config path (Q11).
+        self.accel_limit_m_s2: Optional[float] = None
+        twin_payload = (config_dict.get("digital_twin")
+                        if isinstance(config_dict, dict) else None)
+        if isinstance(twin_payload, dict):
+            from overboard.sysid.digital_twin import DigitalTwinConfig
+            self.accel_limit_m_s2 = DigitalTwinConfig.from_dict(
+                twin_payload).actuator_accel_limit()
+
 
 
     def chassis_radius_m(self) -> float:
@@ -712,6 +724,13 @@ drivebase.use_gyro(True)
             gain_range = twin.actuator_gain_range()
             self.uncertainties["actuator_gain_range"] = gain_range
             changes["actuator_gain_range"] = list(gain_range)
+
+        # The acceleration ceiling follows the same rule as the motor: a
+        # fitted or documented limit is the one the optimizer plans against.
+        accel_limit = twin.actuator_accel_limit()
+        if accel_limit is not None:
+            self.accel_limit_m_s2 = float(accel_limit)
+            changes["accel_limit_m_s2"] = float(accel_limit)
 
         # 6. Drift confidence interval
         drift = getattr(twin, "drift", None)
