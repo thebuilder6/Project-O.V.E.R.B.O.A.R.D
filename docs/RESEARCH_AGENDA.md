@@ -36,8 +36,8 @@ nobody runs them again.
 
 ## 24. The open questions
 
-Eighteen questions are on the record: all eighteen were asked and measured
-(seventeen closed, Q9 open). Each open one has the
+Nineteen questions are on the record: Q1-Q18 were asked and measured (seventeen
+closed, Q9 open); Q19 is registered and unmeasured. Each open one has the
 current evidence, a hypothesis, and an experiment with a metric and a success criterion, ordered so
 that the cheap, decisive ones come first.
 
@@ -128,10 +128,20 @@ survive the wider suite, which is why the campaign exists.
 | **Reproduce** | `python research/suite.py --count 32 --seed 7 --out research/missions`, `python research/q18_decompose.py --arc-control`, then `python research/q18_decompose.py research/missions examples --out research/results/q18_decompose.jsonl --candidates 3 --propagation plant` and the same with `--samples-mult 2` / `--samples-mult 4` into `q18_density_x2.jsonl` / `q18_density_x4.jsonl`, then `python research/q18_report.py` |
 | **Do not re-run** | The share is an identity at the gate's measurement instants, not an estimate: any instrument that compares the rollout with a curve that passes through the planned samples at the sample times will read share 0. A re-price needs a gate that measures somewhere else (mid-interval, or against the smooth path under a different parameterisation) or a different plant - new evidence, not this experiment again. `python research/q18_decompose.py --arc-control` is the instrument's zero check and `tests/test_q18_decomposition.py` the registered fixture; keep both before changing the decomposition |
 
+### Q19 — One-knob robot sensitivity: which constant must the sysid measure hardest? **(registered 2026-10-26, unmeasured)**
+
+| | |
+|---|---|
+| **Question** | Which single robot constant, mis-measured within the range `research/robots.py` declares for it, moves the product's verdicts and its model residuals the most? The 2026-10-26 joint-jitter run (128 validations, 19.5 % pass) showed the pass rate is sensitive to robot parameters but cannot rank them: every robot jittered all eight constants at once, and the marginal bins are confounded (small n per bin, non-monotone hints). Q18 (2026-10-26) then showed the failures are the twin plant's closed-loop residual - so the ranking is a **calibration priority list** for the Q9 / KI-020 hardware window: which constant the system-identification procedure must measure tightest first. |
+| **Registration (binding)** | Written before any measurement; the arms, levels and metrics below are fixed and are not re-tuned after seeing numbers. This is **report-only**: there is no success criterion and no outcome branch - the ranked table is the deliverable and the priorities stay arguable after the numbers. **Knobs and levels (three per knob):** the eight constants of `research/robots.py` - `mass` (0.60-1.50), `inertia` (0.60-1.60), `track_width` (0.85-1.15), `wheel_radius` (0.85-1.15), `v_max_rad_s` (0.85-1.15), `t_max_nm` (0.70-1.30), `cof` (0.75-1.25), `gear_backlash_m` (0.50-2.00) - each at **low = the range's low multiplier, high = its high multiplier** (the same factor semantics as `_factor` at spread 1: `1.0 + (bound - 1.0)`, applied to the declared value), and **nominal = the declared robot**. Exactly **one** constant is moved per arm; every other constant and every declared uncertainty range stays as `examples/fll_choreo.json` declares it. No draws, no seeds: the levels are exact and the run is reproducible. The nominal arm is shared across knobs (17 arms: 8 x 2 + 1). **Protocol:** the 32-mission suite (`research/suite.py --count 32 --seed 7`, m000-m031, 8 per profile - regenerate into `research/missions`), **2 candidates** per (mission, robot) - the shipped default and the 2026-10-26 joint-jitter arithmetic (32 x 2 robots x 2 = 128) - `--propagation plant`, config `examples/fll_choreo.json`, default limits, **no `--field-clearance`**, one robot per arm per mission, workers 8. `overboard/` is **unchanged**; the driver is research-only (`research/q19_oneknob.py` orchestrating per-arm configs and `research/harness.py`'s scoring, the production gate chain) and `research/harness.py` itself is not modified. A registered fixture must assert that each generated arm config differs from the declared config in exactly one constant and at exactly the registered factor. **Metrics (both rankings, side by side):** (a) **pass rates** - per (mission, robot) pair ("any of its candidates passes") and per candidate - at each level against nominal; (b) **continuous residuals** - `max_tracking_error_m` (Q18's model-side quantity), tube radius and envelope excess over the local limit, and solver errors/crashes per arm. Report each knob's effect **per unit of mis-measurement** (delta per 0.1 of factor error), and close with a calibration-priority mapping onto `docs/CALIBRATION_PROCEDURE.md`: each knob named with its measurement step (stall torque / no-load speed already land in the robot config per KI-010; mass, inertia, track width, wheel radius, cof, gear backlash each have their own step) and the tolerance the measured sensitivity implies. The nominal arm is the baseline for every delta; the joint-jitter bins are cited only descriptively (they are confounded marginals), never as comparators. |
+| **Records** | planned: `research/results/q19_*.jsonl` + `q19_summary.json` (gitignored by design - Q15/Q17/Q18 precedent; copy out of a worktree before deleting it) |
+| **Reproduce** | `python research/suite.py --count 32 --seed 7 --out research/missions`, then `python research/q19_oneknob.py research/missions --config examples/fll_choreo.json --out-dir research/results --propagation plant --workers 8` (17 arms; the driver prints the exact per-arm harness invocations) |
+
 ### 24.1 Suggested order
 
 ```text
   CLOSED (§24.0, do not re-run): Q1 Q2 Q3 Q4 Q5 Q6 Q7 Q8 Q10 Q12 Q13 Q14 Q15 Q16 Q17 Q18
+  Q19 one-knob robot sensitivity (calibration priorities)        RUNNING (registered 2026-10-26)
   Q11 executor in the planner, step 1: the documented DriveBase
       acceleration limit into the default digital twin            DONE
   Q11 step 2: the optimizer's wheel-acceleration bound            DONE (2026-10-25)
