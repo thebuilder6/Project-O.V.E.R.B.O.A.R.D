@@ -23,6 +23,11 @@
 > The tick propagation the reachability section argues for is now a shipped option,
 > `--propagation tick`, and the default is still `--propagation plant` for the
 > reason given there.
+> **Q18 (2026-10-26)** closed the open *shape* item this note leaves below: on
+> today's tree the gate's quantity is the control residual at the sample instants
+> (chord-shape <= 7 um), the analytic chord bound credits 1 of 88 tracking
+> failures and the density slope is +0.14 against the predicted +2 - see
+> [`../RESEARCH_AGENDA.md`](../RESEARCH_AGENDA.md) Q18.
 
 **Status:** the cause is identified. The three things that stood between the plan and the robot are now closed in the tree — the plan's own collocation (KI-026), the reference's coupling (KI-027) and the model's parity with the controller that runs (KI-028) — and **every table below has been re-measured against that tree**. The velocity half of the reference fix (F8) is also in the tree, but **not in the sample-interval form measured below**: commit `47633e9` replaced that form with the speed at the tick midpoint (`t + 10 ms`), which is the exact average over the 20 ms the command is actually held. What is still open is the *shape* of the reference (the controller follows the chord between samples) and the hardware calibration of the plant (KI-020), not another averaging rule.
 **Date:** 2026-10-20. The first pass was measured in the morning against a pinned copy; the tables were re-measured in the afternoon against the working tree, after KI-027 and KI-028 landed. Where a number has moved, the old one is kept and marked, because it is the record of the bug.
