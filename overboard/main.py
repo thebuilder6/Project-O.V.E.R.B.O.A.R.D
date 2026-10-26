@@ -31,6 +31,18 @@ from overboard.verification.validator import (
     check_final_waypoint,
     compute_metrics,
     compute_path_fitness,
+    SCORE_VERSION,
+    SCORING_PROFILES,
+    DEFAULT_SCORING_PROFILE,
+    DEFAULT_JERK_TARGET_M_S3,
+    DEFAULT_JERK_MAX_M_S3,
+    TRACKING_GATE_M,
+    INTEGRATION_GATE_M,
+    ratio_score,
+    duration_score,
+    jerk_score,
+    spread_score,
+    weighted_score,
 )
 from overboard.deploy.export import write_controller_file, write_python_file
 
@@ -119,6 +131,57 @@ def _select_attempt(attempts):
             ),
         ), True
     return min(candidates, key=lambda a: (a["violation"], a["cost"])), False
+
+
+def _attempt_accepted(attempt, accept_score):
+    """True when a failed candidate is eligible under an explicit --accept-score.
+
+    A structural failure (non-convergence, a crashed or incomplete validator,
+    a diverged or unbounded tube, a missing final waypoint) is never accepted.
+    """
+    return bool(
+        accept_score is not None
+        and attempt.get("converged")
+        and not attempt.get("structural_failure")
+        and not attempt.get("ok")
+        and attempt.get("score") is not None
+        and float(attempt["score"]) >= float(accept_score)
+    )
+
+
+def _attempt_eligible(attempt, accept_score):
+    """Ordinary passes are eligible; a failed candidate only when accepted."""
+    if not attempt.get("converged") or attempt.get("structural_failure"):
+        return False
+    return bool(attempt.get("ok") or _attempt_accepted(attempt, accept_score))
+
+
+def _select_attempt_scored(attempts, accept_score=None):
+    """Choose the candidate the decision score picks.
+
+    Among the eligible candidates: the highest score, then an ordinary pass
+    before an accepted one, then the higher accuracy and physical scores, the
+    shorter duration, and finally the lower candidate index. When nothing is
+    eligible the least-bad converged candidate is returned with ``False``, so
+    the diagnostics survive and the export gate stays closed.
+    """
+    candidates = [a for a in attempts if a.get("converged", False)]
+    if not candidates:
+        return None, False
+    eligible = [a for a in candidates if _attempt_eligible(a, accept_score)]
+    if eligible:
+        best = min(eligible, key=lambda a: (
+            -float(a.get("score") or 0.0),
+            0 if a.get("ok") else 1,
+            -float((a.get("categories") or {}).get("accuracy") or 0.0),
+            -float((a.get("categories") or {}).get("physical") or 0.0),
+            a.get("duration", a.get("cost", float("inf"))),
+        ))
+        # ``True`` means the chosen candidate passed the ordinary validator;
+        # an accepted failure is exported with ``False`` and its own verdict.
+        return best, bool(best.get("ok"))
+    return min(candidates, key=lambda a: (a.get("violation", float("inf")),
+                                          a.get("cost", float("inf")))), False
 
 
 
@@ -311,44 +374,63 @@ def _dispatch_solve(specs, ctx):
                              local_optimizer=ctx.optimizer)
 
 
-def _export_block_reason(stats, validate, attempt_passed, best_effort=False):
+def _export_block_reason(stats, validate, attempt_passed, best_effort=False,
+                         accepted=False):
     """Return why the result must not be written, or None if it may be.
 
     ``best_effort`` is the operator's explicit acceptance of an accuracy
     excess: the path is written and marked, because a path that misses the
     envelope is still a plan to look at. It is not a pass - the file says
-    so, the summary says so, and the studio's push stays gated on the
-    verdict. It does not cover a plan that is physically infeasible: motor
-    force, wheel slip, a diverged tube and a non-converged solve are refused
-    before the gate (`_choose_attempt`).
+    so, the summary says so, and the hub push is refused. It does not cover a
+    plan that is physically infeasible: motor force, wheel slip, a diverged
+    tube and a non-converged solve are refused before the gate
+    (`_choose_attempt`).
+
+    ``accepted`` is the score contract's explicit acceptance (``--accept-score``):
+    the candidate failed the ordinary validator but scored at or above the
+    threshold and is structurally valid, so it may be exported and pushed.
     """
     if not stats.get("converged", False):
         return "solver did not converge"
-    if validate and not attempt_passed and not best_effort:
+    if validate and not attempt_passed and not best_effort and not accepted:
         return "validation failed"
     return None
 
 
-def _mark_best_effort(stats, attempts, selected_index):
-    """Mark an exported trajectory as a best-effort, unvalidated plan.
+def _build_validation_record(*, passed, accepted, best_effort, attempt,
+                             scoring, envelope_limit, envelope_limit_per_metre,
+                             trajectory_hash):
+    """The validation record every artifact carries (score contract).
 
-    The verdict travels with the trajectory: the `.traj` root and the
-    `_stats.json` both carry it, so a file read later cannot be mistaken for
-    an approved one. Returns the biggest excess over the local limit, in
-    metres, for the summary line.
+    One record is built for the `.traj` root and the `_stats.json`, so the
+    two cannot disagree. ``hub_approved`` is the only thing the hub push
+    reads: an ordinary pass or an explicitly accepted score, never a
+    best-effort or an unvalidated file.
     """
-    attempt = attempts[max(0, selected_index - 1)]
-    segments = attempt.get("segments", []) or []
-    excess = max((float(segment.get("excess_m", 0.0))
-                  for segment in segments), default=0.0)
-    stats["validation"] = {
-        "passed": False,
-        "best_effort": True,
-        "max_excess_m": excess,
-        "reasons": list(attempt.get("reasons", [])),
-        "segments": segments,
+    record = {
+        "passed": bool(passed),
+        "accepted": bool(accepted),
+        "best_effort": bool(best_effort),
+        "hub_approved": bool((passed or accepted) and not best_effort),
+        "score": _finite(attempt.get("score")) if attempt else None,
+        "score_version": SCORE_VERSION,
+        "profile": scoring.get("profile"),
+        "weights": scoring.get("weights"),
+        "categories": attempt.get("categories") if attempt else None,
+        "target_time_s": _finite(scoring.get("target_time_s")),
+        "max_time_s": _finite(scoring.get("max_time_s")),
+        "accept_score": scoring.get("accept_score"),
+        "trajectory_sha256": trajectory_hash,
+        "envelope_limit_m": float(envelope_limit),
+        "envelope_limit_per_metre": float(envelope_limit_per_metre),
+        "reasons": list(attempt.get("reasons", [])) if attempt else [],
+        "segments": list(attempt.get("segments", [])) if attempt else [],
     }
-    return excess
+    segments = record["segments"]
+    record["max_excess_m"] = max(
+        (float(segment.get("excess_m", 0.0)) for segment in segments),
+        default=0.0)
+    return record
 
 
 def _immrax_failure_reasons(report, failed_threshold=False, max_violation=0.0):
@@ -572,7 +654,8 @@ def _segment_report(samples_data, samples_per_segment, thresholds, immrax_report
 
 def _emit_validation_report(attempts, selected_index, propagation=None,
                             best_effort=False, envelope_limit=None,
-                            envelope_limit_per_metre=None):
+                            envelope_limit_per_metre=None, accept_score=None,
+                            profile=None, accepted=False, hub_approved=False):
     """Print the machine-readable validation summary.
 
     Every candidate carries its score vector: the duration, the reachability
@@ -623,6 +706,14 @@ def _emit_validation_report(attempts, selected_index, propagation=None,
             # numbers these are the margins the plan carries (Q14).
             "peak_force_util": _finite(attempt.get("peak_force_util", 0.0)),
             "peak_traction_util": _finite(attempt.get("peak_traction_util", 0.0)),
+            # The decision score and what it is made of (score contract).
+            "score": _finite(attempt.get("score")),
+            "score_version": attempt.get("score_version"),
+            "categories": attempt.get("categories"),
+            "ratios": attempt.get("ratios"),
+            "eligibility": bool(_attempt_eligible(attempt, accept_score)),
+            "accepted": bool(_attempt_accepted(attempt, accept_score)),
+            "structural_failure": bool(attempt.get("structural_failure")),
             "ok": bool(attempt.get("ok")),
             "converged": bool(attempt.get("converged")),
             "validation_skipped": bool(attempt.get("validation_skipped", False)),
@@ -637,7 +728,13 @@ def _emit_validation_report(attempts, selected_index, propagation=None,
                "envelope_limit_per_metre": _finite(envelope_limit_per_metre),
                # True when a failed candidate was exported anyway, so the
                # studio can say "failed, shown" instead of "not checked".
-               "best_effort": bool(best_effort)}
+               "best_effort": bool(best_effort),
+               # The run's decision-score contract (score_version 1).
+               "score_version": SCORE_VERSION,
+               "profile": profile,
+               "accept_score": accept_score,
+               "accepted": bool(accepted),
+               "hub_approved": bool(hub_approved)}
     click.echo(VALIDATION_MARKER + json.dumps(payload))
 
 
@@ -658,6 +755,10 @@ def _candidate_summary(attempts, selected_index):
             "converged": bool(attempt.get("converged")),
             "rescue": bool(attempt.get("rescue")),
             "validation_skipped": bool(attempt.get("validation_skipped", False)),
+            # The decision score and its parts, so the comparison can be
+            # re-run offline (score contract).
+            "score": _finite(attempt.get("score")),
+            "categories": attempt.get("categories"),
             "duration_s": _finite(attempt.get("duration")),
             "envelope_cm": _finite(attempt.get("tube", 0.0) * 100.0),
             "tracking_cm": _finite(attempt.get("tracking_m", 0.0) * 100.0),
@@ -820,8 +921,76 @@ def _number(value, label, index, path):
     return value
 
 
-def _load_waypoints(path):
-    """Load a waypoint file into (waypoints, events, thresholds, stop_indices)."""
+def _scoring_number(value, label, path):
+    """Read one finite mission scoring number, or explain what is wrong."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise click.ClickException(
+            f"Mission '{path}': scoring '{label}' must be a number, got {value!r}."
+        )
+    value = float(value)
+    if value != value or value in (float("inf"), float("-inf")):
+        raise click.ClickException(
+            f"Mission '{path}': scoring '{label}' must be a finite number."
+        )
+    return value
+
+
+def _parse_mission_scoring(raw, path):
+    """Validate the mission's optional scoring section.
+
+    ``target_time_s`` and ``max_time_s`` set the duration budget; when both
+    are declared they must satisfy 0 < target < max. The jerk pair defaults
+    to 10/20 m/s^3 and must satisfy target < max.
+    """
+    if raw is None:
+        return {}
+    if not isinstance(raw, dict):
+        raise click.ClickException(
+            f"Mission '{path}': 'scoring' must be an object, got {type(raw).__name__}."
+        )
+    allowed = {"target_time_s", "max_time_s", "jerk_target_m_s3", "jerk_max_m_s3"}
+    unknown = sorted(set(raw) - allowed)
+    if unknown:
+        raise click.ClickException(
+            f"Mission '{path}': unknown scoring field(s) {', '.join(unknown)}. "
+            f"Expected one of {', '.join(sorted(allowed))}."
+        )
+    scoring = {}
+    for name in ("target_time_s", "max_time_s"):
+        if name in raw and raw[name] is not None:
+            scoring[name] = _scoring_number(raw[name], name, path)
+    if (scoring.get("target_time_s") is not None
+            and scoring.get("max_time_s") is not None
+            and not 0.0 < scoring["target_time_s"] < scoring["max_time_s"]):
+        raise click.ClickException(
+            f"Mission '{path}': scoring needs 0 < target_time_s < max_time_s, "
+            f"got target {scoring['target_time_s']} and max {scoring['max_time_s']}."
+        )
+    jerk_target = DEFAULT_JERK_TARGET_M_S3
+    jerk_max = DEFAULT_JERK_MAX_M_S3
+    if "jerk_target_m_s3" in raw and raw["jerk_target_m_s3"] is not None:
+        jerk_target = _scoring_number(raw["jerk_target_m_s3"], "jerk_target_m_s3", path)
+    if "jerk_max_m_s3" in raw and raw["jerk_max_m_s3"] is not None:
+        jerk_max = _scoring_number(raw["jerk_max_m_s3"], "jerk_max_m_s3", path)
+    if not jerk_target < jerk_max:
+        raise click.ClickException(
+            f"Mission '{path}': scoring needs jerk_target_m_s3 < jerk_max_m_s3, "
+            f"got {jerk_target} and {jerk_max}."
+        )
+    scoring["jerk_target_m_s3"] = jerk_target
+    scoring["jerk_max_m_s3"] = jerk_max
+    return scoring
+
+
+def _load_waypoints(path, with_scoring=False):
+    """Load a waypoint file.
+
+    Returns (waypoints, events, thresholds, stop_indices). A plain JSON list
+    is still a valid mission; the object form
+    ``{"waypoints": [...], "scoring": {...}}`` also carries the timing budget
+    the decision score needs, and ``with_scoring=True`` returns it as a fifth
+    element (a dict, possibly empty).
+    """
     try:
         with open(path, "r", encoding="utf-8") as handle:
             data = json.load(handle)
@@ -832,6 +1001,16 @@ def _load_waypoints(path):
             f"Waypoint file '{path}' is not valid JSON "
             f"(line {exc.lineno}, column {exc.colno}): {exc.msg}."
         )
+
+    mission_scoring = {}
+    if isinstance(data, dict):
+        if "waypoints" not in data:
+            raise click.ClickException(
+                f"Waypoint file '{path}' must contain a list of waypoints, or an "
+                "object with a 'waypoints' list (and optional 'scoring')."
+            )
+        mission_scoring = _parse_mission_scoring(data.get("scoring"), path)
+        data = data["waypoints"]
 
     if not isinstance(data, list):
         raise click.ClickException(
@@ -892,6 +1071,8 @@ def _load_waypoints(path):
                 f"Waypoint {index} in '{path}': expected an object or a [x, y] list, "
                 f"got {type(item).__name__}."
             )
+    if with_scoring:
+        return wps, events, thresholds, stop_indices, mission_scoring
     return wps, events, thresholds, stop_indices
 
 
@@ -988,7 +1169,7 @@ def _push_to_hub(traj_file, connection, name, log_path, quiet):
 
 
 def _print_summary(output, samples_data, robot_cfg, validate, attempt_passed, tube, files,
-                   best_effort=False):
+                   best_effort=False, accepted=False, score=None):
     """Print what was produced, in the units the user cares about."""
     metrics = compute_metrics(samples_data, robot_cfg)
     click.echo("")
@@ -999,10 +1180,15 @@ def _print_summary(output, samples_data, robot_cfg, validate, attempt_passed, tu
         f"peak wheel speed {metrics['max_wheel_speed_m_s']:.2f} m/s | "
         f"{len(samples_data)} samples"
     )
+    score_text = f", score {score:.1f}" if score is not None else ""
     if validate:
         if attempt_passed:
             detail = f"envelope {tube * 100:.2f} cm" if tube == tube else "envelope n/a"
-            click.secho(f"  validation: passed ({detail})", fg="green")
+            click.secho(f"  validation: passed ({detail}{score_text})", fg="green")
+        elif accepted:
+            click.secho(
+                f"  validation: failed but accepted under --accept-score "
+                f"({score_text.lstrip(', ')}); approved for the hub", fg="yellow")
         elif best_effort:
             detail = f"envelope {tube * 100:.2f} cm" if tube == tube else "envelope n/a"
             click.secho(
@@ -1043,6 +1229,15 @@ class _ScoreContext:
     # One validator per run: its compiled scan is reused by every candidate,
     # and a fresh one per candidate pays the XLA compile again (KI-049).
     validator: Any = None
+    # The decision score's run-wide timing budget and profile. A validated
+    # run always has target and max; they are what the duration score and the
+    # quality score's jerk term are measured against.
+    target_time_s: Any = None
+    max_time_s: Any = None
+    jerk_target_m_s3: float = DEFAULT_JERK_TARGET_M_S3
+    jerk_max_m_s3: float = DEFAULT_JERK_MAX_M_S3
+    scoring_profile: str = DEFAULT_SCORING_PROFILE
+    accept_score: Any = None
 
 
 def _record_candidate(spec, solve_result, cand_idx, batch_len, histories, *,
@@ -1073,6 +1268,13 @@ def _record_candidate(spec, solve_result, cand_idx, batch_len, histories, *,
         "iteration_history": (histories[cand_idx]
                               if cand_idx < len(histories) else []),
         "reasons": [],
+        # The decision score (score contract): filled in by _score_attempt
+        # when the run scores candidates, None when it does not.
+        "score": None,
+        "score_version": None,
+        "categories": None,
+        "ratios": None,
+        "structural_failure": False,
         # True when a faster candidate already passed, so this plan was not
         # checked; the verdict is "not needed", never "failed".
         "validation_skipped": False,
@@ -1114,6 +1316,7 @@ def _score_attempt(attempt_record, ctx):
         # stopped at its budget is a minute spent on a number no reader can
         # use, and on a rescue that is five of them.
         attempt_record["reasons"] = ["solver did not converge"]
+        attempt_record["structural_failure"] = True
         return False
 
     samples_data = attempt_record["samples"]
@@ -1151,8 +1354,10 @@ def _score_attempt(attempt_record, ctx):
             click.echo(f"  ERROR: Immrax validation failed: {e}")
         import traceback
         traceback.print_exc()
-        # A validator crash is not a pass (KI-002).
+        # A validator crash is not a pass (KI-002), and it is a structural
+        # failure: there is no complete result to score or accept.
         attempt_record["reasons"] = [f"Immrax validation error: {e}"]
+        attempt_record["structural_failure"] = True
         return not ctx.validate
 
     # Attach the envelope to the samples for export/viz, even when it failed,
@@ -1166,6 +1371,8 @@ def _score_attempt(attempt_record, ctx):
     unknown_envelope = False
     max_vio_val = 0.0
     max_err_all = 0.0
+    # The worst envelope-radius / local-limit ratio, for the accuracy score.
+    max_env_ratio = 0.0
 
     for i in range(len(samples_data)):
         # The segment's limit is the one of the waypoint the segment arrives
@@ -1186,6 +1393,8 @@ def _score_attempt(attempt_record, ctx):
             err_y = (env['y_max'] - env['y_min']) / 2.0
             err = np.sqrt(err_x**2 + err_y**2)
             max_err_all = max(max_err_all, err)
+            if local_threshold > 0:
+                max_env_ratio = max(max_env_ratio, float(err) / local_threshold)
             if env.get('unknown'):
                 # The tube could not be bounded, so there is no accuracy
                 # number to accept; that is not an accuracy drop.
@@ -1224,6 +1433,13 @@ def _score_attempt(attempt_record, ctx):
     slip_violation = max(float(immrax_report.get("max_slip_l_N", 0.0)),
                          float(immrax_report.get("max_slip_r_N", 0.0)))
     speed_violation = float(immrax_report.get("speed_violation_m_s", 0.0))
+    # Structural failures (score contract): a diverged or unbounded tube and
+    # an incomplete validator result can never be scored, accepted, exported
+    # or pushed - only a *quantified* excess can.
+    attempt_record["structural_failure"] = bool(
+        attempt_record["diverged"]
+        or unknown_envelope
+        or immrax_report.get("error"))
     hard_failure = bool(
         attempt_record["diverged"]
         or unknown_envelope
@@ -1300,6 +1516,110 @@ def _score_attempt(attempt_record, ctx):
     attempt_record["rms_force_util"] = float(
         fitness_info["rms_force_utilization"])
     attempt_record["fitness_info"] = fitness_info
+
+    # --- Decision score (score_version 1) ---------------------------------
+    # One capped, deterministic 0-100 number. It selects candidates and can
+    # authorize export and a hub push. It is NOT a probability of hardware
+    # success: it prices the measured excesses against the documented limits
+    # and orders the candidates with the result.
+    if ctx.target_time_s is not None and ctx.max_time_s is not None:
+        weights = dict(SCORING_PROFILES.get(
+            ctx.scoring_profile, SCORING_PROFILES[DEFAULT_SCORING_PROFILE]))
+        cpu_metrics = (cpu_summary or {}).get("metrics") or {}
+        cpu_audit = (cpu_summary or {}).get("audit") or {}
+        cpu_errors = (cpu_summary or {}).get("errors") or {}
+        immrax_util = immrax_report.get("utilization") or {}
+
+        def _util_ratio(value, limit):
+            limit = float(limit or 0.0)
+            return float(value or 0.0) / limit if limit > 0 else 0.0
+
+        # r_phys: worst motor, traction/slip and wheel-speed utilisation,
+        # across the CPU audit and the Immrax interval check.
+        r_phys = max(
+            float(cpu_metrics.get("max_force_utilization", 0.0) or 0.0),
+            float(cpu_metrics.get("peak_traction_utilization", 0.0) or 0.0),
+            _util_ratio(cpu_audit.get("max_wheel_speed_m_s", 0.0),
+                        cpu_audit.get("wheel_speed_limit_m_s", 0.0)),
+            max((float(value) for value in immrax_util.values()
+                 if value is not None), default=0.0),
+        )
+        # r_acc: the envelope against its active local limit (waypoint
+        # overrides and per-metre allowance included), the tracking gate and
+        # the RK4 integration gate.
+        r_acc = max(
+            max_env_ratio,
+            _util_ratio(attempt_record.get("tracking_m", 0.0), TRACKING_GATE_M),
+            _util_ratio(cpu_errors.get("max_pos_error_m", 0.0), INTEGRATION_GATE_M),
+            _util_ratio(cpu_errors.get("final_pos_error_m", 0.0), INTEGRATION_GATE_M),
+        )
+
+        # Q: the worst stop/final spread against its own local limit, the RMS
+        # force utilisation, and the peak wheel jerk.
+        worst_spread_score = 100.0
+        for idx, spread in zip(fitness_info.get("checkpoint_indices", []),
+                               fitness_info.get("checkpoint_spreads_m", [])):
+            if waypoint_bounds:
+                wp_idx = _waypoint_of(waypoint_bounds, idx)
+            else:
+                s_val = (samples[0]
+                         if isinstance(samples, (list, tuple, np.ndarray))
+                         else samples)
+                wp_idx = int(idx) // max(1, int(s_val))
+            travelled_at = (travelled[idx] if idx < len(travelled)
+                            else travelled[-1] if travelled else 0.0)
+            limit = _envelope_limit_at(
+                _segment_limit(ctx.waypoint_thresholds, wp_idx, ctx.envelope_limit),
+                ctx.envelope_limit_per_metre, travelled_at)
+            worst_spread_score = min(
+                worst_spread_score, spread_score(float(spread), limit))
+        rms_score = 100.0 * max(0.0, min(
+            1.0, 1.0 - float(attempt_record.get("rms_force_util", 0.0) or 0.0)))
+        peak_jerk = float(attempt_record.get("peak_jerk_m_s3", 0.0) or 0.0)
+        quality = (worst_spread_score + rms_score
+                   + jerk_score(peak_jerk, ctx.jerk_target_m_s3,
+                                ctx.jerk_max_m_s3)) / 3.0
+
+        # D: the duration against the mission's measured budget.
+        duration_cat = duration_score(
+            float(attempt_record.get("duration", float("inf"))),
+            float(ctx.target_time_s), float(ctx.max_time_s))
+
+        categories = {
+            "physical": ratio_score(r_phys),
+            "accuracy": ratio_score(r_acc),
+            "quality": float(quality),
+            "duration": float(duration_cat),
+        }
+        base = weighted_score(categories, weights)
+
+        cpu_physical_failed = bool(
+            cpu_audit.get("num_violating_samples", 0)
+            or cpu_audit.get("num_slip_points", 0)
+            or float(cpu_audit.get("speed_violation_m_s", 0.0) or 0.0) > 1e-6)
+        immrax_physical_failed = bool(
+            motor_violation > 1e-3 or traction_violation > 1e-3
+            or slip_violation > 1e-3 or speed_violation > 1e-6)
+        phys_failed = bool(r_phys > 1.0 or cpu_physical_failed
+                           or immrax_physical_failed)
+        acc_check_failed = bool(
+            failed_threshold
+            or float(attempt_record.get("tracking_m", 0.0) or 0.0) > TRACKING_GATE_M
+            or float(cpu_errors.get("max_pos_error_m", 0.0) or 0.0) >= INTEGRATION_GATE_M
+            or float(cpu_errors.get("final_pos_error_m", 0.0) or 0.0) >= INTEGRATION_GATE_M)
+        acc_failed = bool(r_acc > 1.0 or acc_check_failed)
+
+        # The caps: a candidate never scores above a category it failed.
+        score = min(base,
+                    categories["physical"] if phys_failed else 100.0,
+                    categories["accuracy"] if acc_failed else 100.0)
+        attempt_record["score"] = float(score)
+        attempt_record["score_version"] = SCORE_VERSION
+        attempt_record["categories"] = {
+            name: float(value) for name, value in categories.items()}
+        attempt_record["ratios"] = {"r_phys": float(r_phys), "r_acc": float(r_acc)}
+        attempt_record["phys_failed"] = phys_failed
+        attempt_record["acc_failed"] = acc_failed
 
     # Per-segment detail, so a failure can be pinned to a part of the path.
     attempt_record["segments"] = _segment_report(
@@ -1407,12 +1727,13 @@ def _polish_candidates(solved, ctx):
 
 
 def _choose_attempt(all_attempts, *, validate, quiet, samples, pick=None,
-                    best_effort=False):
+                    best_effort=False, accept_score=None, final_waypoint=None):
     """Pick the attempt to export and print the candidate table.
 
     ``pick`` is the operator's choice from a comparison: it exports that
     candidate instead of the one the rule picks. Only a candidate that
-    passed every gate may be picked - the rule is not suspended, it is
+    passed every gate - or one explicitly accepted by an active
+    ``--accept-score`` - may be picked: the rule is not suspended, it is
     overridden by a human who has seen the same numbers.
 
     ``best_effort`` is the explicit "show me the path" request. When
@@ -1430,23 +1751,41 @@ def _choose_attempt(all_attempts, *, validate, quiet, samples, pick=None,
                     f"Candidate {pick} was not solved: this run has "
                     f"{len(all_attempts)} candidate(s).")
             chosen = all_attempts[pick - 1]
-            if not chosen.get("ok"):
+            if not _attempt_eligible(chosen, accept_score):
+                if chosen.get("structural_failure"):
+                    detail = ("it did not converge or the check was incomplete, "
+                              "so nothing about it can be accepted")
+                elif accept_score is not None and chosen.get("score") is not None:
+                    detail = (f"its score {chosen['score']:.1f} is below "
+                              f"--accept-score {accept_score}")
+                else:
+                    detail = ("it did not pass the validator and no "
+                              "--accept-score accepts it")
                 raise click.ClickException(
-                    f"Candidate {pick} did not pass the validator, so it cannot "
-                    "be exported. Pick a candidate that passed, or solve again.")
+                    f"Candidate {pick} cannot be exported: {detail}. "
+                    "Pick a candidate that passed, or solve again.")
+            if final_waypoint is not None:
+                check = check_final_waypoint(chosen["samples"], final_waypoint)
+                if not check["passed"]:
+                    raise click.ClickException(
+                        f"Candidate {pick} does not reach the final waypoint "
+                        f"(position error {check['pos_error_m']*100:.2f} cm). "
+                        "No trajectory written.")
             if not quiet:
-                click.echo(f"  Exporting candidate {pick} (the operator's pick).")
-            return (chosen["samples"], chosen["stats"], True, chosen["reasons"],
-                    chosen.get("tube", float("inf")), pick)
-        # Never silently export a failed candidate: prefer a passing one with
-        # the smallest envelope, otherwise the converged candidate closest to
-        # passing.
-        best, passed_any = _select_attempt(all_attempts)
+                label = ("the operator's pick" if chosen.get("ok")
+                         else "accepted by --accept-score")
+                click.echo(f"  Exporting candidate {pick} ({label}).")
+            return (chosen["samples"], chosen["stats"], bool(chosen.get("ok")),
+                    chosen["reasons"], chosen.get("tube", float("inf")), pick)
+        # Never silently export a failed candidate: the decision score picks
+        # among the eligible ones, and a failed candidate is only eligible
+        # under an explicit --accept-score.
+        best, passed_any = _select_attempt_scored(all_attempts, accept_score)
         if best is None:
             raise click.ClickException(
                 f"Solver did not converge on any of the {len(all_attempts)} "
                 f"attempts. No trajectory written.")
-        if not passed_any and best_effort:
+        if not passed_any and best_effort and not _attempt_accepted(best, accept_score):
             # The operator asked for the best path even with an accuracy
             # drop. Only an accuracy failure qualifies; the physically
             # unsound candidates stay out of the pool.
@@ -1470,6 +1809,10 @@ def _choose_attempt(all_attempts, *, validate, quiet, samples, pick=None,
                 else:
                     score = "no envelope"
                 state = "ok" if a["ok"] else "failed"
+                if a.get("score") is not None:
+                    state += f", score {a['score']:.1f}"
+                if _attempt_accepted(a, accept_score):
+                    state += ", accepted"
                 # Name the mode by what it constrains, and show how the time
                 # was split, so a uniform win is self-explanatory (KI-022).
                 timing = "per-seg" if a.get("per_segment_dt") else "equal-dur"
@@ -1515,19 +1858,25 @@ def _write_outputs(output, samples_data, stats, config_data, robot_cfg, *,
         raise click.ClickException(
             f"Output directory '{parent}' does not exist. Create it, or pass "
             f"-o with a path in an existing directory.")
+    traj_config = config_data.get("robot", config_data.get(
+        "config", config_data))
     result = {
         "name": os.path.basename(output).split('.')[0],
         "version": 3,
         "trajectory": {
-            "config": config_data.get("robot", config_data.get(
-                "config", config_data)),
+            "config": traj_config,
             "samples": samples_data
         }
     }
-    # A best-effort export carries its own verdict, so the file cannot be
-    # mistaken for an approved one when it is read later.
+    # The validation record travels with the trajectory: the `.traj` root and
+    # the `_stats.json` carry the same one, so a file read later cannot be
+    # mistaken for an approved one. The hash is the one the hub push checks.
     if stats.get("validation"):
-        result["validation"] = stats["validation"]
+        from overboard.deploy.hub_deploy import trajectory_sha256
+        record = dict(stats["validation"])
+        record["trajectory_sha256"] = trajectory_sha256(traj_config, samples_data)
+        stats["validation"] = record
+        result["validation"] = record
     # Write beside the target and swap it in, so a failed write (disk full,
     # serialization error) keeps the previous trajectory instead of
     # truncating it. Same pattern as _write_candidates.
@@ -1699,6 +2048,32 @@ def _render(output, samples_data, wps, optimizer, all_attempts, selected_index, 
                    'The tube widens with distance, so this prices the drift '
                    'instead of the elapsed time (KI-054). Recorded with the '
                    'validation report.')
+@click.option('--target-time', default=None, type=click.FloatRange(min=0.0),
+              help='Scoring budget: the duration worth 100 on the duration '
+                   'score. Required with --validate when the mission does not '
+                   'declare one. Overrides the mission scoring section.')
+@click.option('--max-time', default=None, type=click.FloatRange(min=0.0),
+              help='Scoring budget: the duration worth 0 on the duration score. '
+                   'Required with --validate when the mission does not declare '
+                   'one. Overrides the mission scoring section.')
+@click.option('--jerk-target', default=None, type=click.FloatRange(min=0.0),
+              help='Scoring: peak wheel jerk worth 100 on the motion-quality '
+                   'score, in m/s^3 (default 10).')
+@click.option('--jerk-max', default=None, type=click.FloatRange(min=0.0),
+              help='Scoring: peak wheel jerk worth 0 on the motion-quality '
+                   'score, in m/s^3 (default 20).')
+@click.option('--scoring-profile',
+              type=click.Choice(['precision', 'balanced', 'speed'],
+                                case_sensitive=False),
+              default=DEFAULT_SCORING_PROFILE,
+              help='Category weights of the decision score: precision '
+                   '20/35/35/10, balanced 25/25/25/25 (default), speed '
+                   '20/20/20/40, in physical/accuracy/quality/duration order.')
+@click.option('--accept-score', default=None, type=click.IntRange(min=1, max=100),
+              help='Accept a failed candidate whose decision score is at least '
+                   'this (1-100), so it can be exported and pushed. Without it '
+                   'only an ordinary validator pass is eligible. Needs '
+                   '--validate. A structural failure is never accepted.')
 @click.option('--sysid-fit', type=click.Path(exists=True, dir_okay=False), default=None,
               help='Optional sysid_fit.json digital-twin fit (requires --validate).')
 @click.option('--export-format', type=click.Choice(['none', 'controller', 'python', 'python-compact'], case_sensitive=False),
@@ -1762,6 +2137,8 @@ def main(ctx, config, waypoints, output, gui, gui_port, doctor, preset,
          stop_waypoints, events,
          no_parallel, workers, fast_polish, polish, validate, best_effort,
          envelope_limit, envelope_limit_per_metre,
+         target_time, max_time, jerk_target, jerk_max,
+         scoring_profile, accept_score,
          sysid_fit, export_format, controller_dt, control_dt,
          propagation, benchmark,
          push_hub, hub_conn, hub_name, hub_log,
@@ -1817,6 +2194,15 @@ def main(ctx, config, waypoints, output, gui, gui_port, doctor, preset,
         raise click.ClickException(
             "--best-effort needs --validate: it exports a failed verdict, so "
             "there has to be one.")
+    if accept_score is not None and not validate:
+        raise click.ClickException(
+            "--accept-score needs --validate: it accepts a validated verdict, "
+            "so there has to be one.")
+    if push_hub and not validate:
+        raise click.ClickException(
+            "--push-hub needs --validate: only a trajectory that passed the "
+            "validator - or one accepted by --accept-score - may drive the hub.")
+    scoring_profile = (scoring_profile or DEFAULT_SCORING_PROFILE).lower()
 
     # The timing model is the planner's: one interval per waypoint segment.
     # The flags that used to choose it were removed, so the label and the
@@ -1978,9 +2364,54 @@ def main(ctx, config, waypoints, output, gui, gui_port, doctor, preset,
                    "(CasADi/IPOPT backend)")
     optimizer = TrajectoryOptimizer(robot_cfg)
 
-    wps, waypoint_events, waypoint_thresholds, json_stop_indices = _load_waypoints(waypoints)
+    (wps, waypoint_events, waypoint_thresholds, json_stop_indices,
+     mission_scoring) = _load_waypoints(waypoints, with_scoring=True)
     stop_indices = _parse_stop_waypoints(stop_waypoints, len(wps))
     waypoint_events.update(_parse_events(events, len(wps)))
+
+    # The scoring timing budget: the mission's own, with the CLI flags on
+    # top. A validated run needs it - the decision score's duration term and
+    # its jerk term are measured against it.
+    scoring = {
+        "target_time_s": (float(target_time) if target_time is not None
+                          else mission_scoring.get("target_time_s")),
+        "max_time_s": (float(max_time) if max_time is not None
+                       else mission_scoring.get("max_time_s")),
+        "jerk_target_m_s3": (
+            float(jerk_target) if jerk_target is not None
+            else mission_scoring.get("jerk_target_m_s3",
+                                     DEFAULT_JERK_TARGET_M_S3)),
+        "jerk_max_m_s3": (
+            float(jerk_max) if jerk_max is not None
+            else mission_scoring.get("jerk_max_m_s3",
+                                     DEFAULT_JERK_MAX_M_S3)),
+        "profile": scoring_profile,
+        "weights": dict(SCORING_PROFILES.get(
+            scoring_profile, SCORING_PROFILES[DEFAULT_SCORING_PROFILE])),
+        "accept_score": accept_score,
+    }
+    if not scoring["jerk_target_m_s3"] < scoring["jerk_max_m_s3"]:
+        raise click.ClickException(
+            f"Scoring needs jerk_target_m_s3 < jerk_max_m_s3, got "
+            f"{scoring['jerk_target_m_s3']} and {scoring['jerk_max_m_s3']}. "
+            "Set --jerk-target/--jerk-max or the mission scoring fields.")
+    if validate:
+        missing = []
+        if scoring["target_time_s"] is None:
+            missing.append(
+                "target_time_s (mission 'scoring' section, or --target-time)")
+        if scoring["max_time_s"] is None:
+            missing.append(
+                "max_time_s (mission 'scoring' section, or --max-time)")
+        if missing:
+            raise click.ClickException(
+                "A validated run needs the scoring timing: "
+                + "; ".join(missing) + ".")
+        if not 0.0 < scoring["target_time_s"] < scoring["max_time_s"]:
+            raise click.ClickException(
+                f"Scoring needs 0 < target time < max time, got target "
+                f"{scoring['target_time_s']} and max {scoring['max_time_s']}. "
+                "Set --target-time/--max-time or the mission scoring fields.")
 
     # sorted() so the constraint order (and therefore the IPOPT iterate) is
     # reproducible; set() iteration order changes the NLP ordering.
@@ -2054,6 +2485,12 @@ def main(ctx, config, waypoints, output, gui, gui_port, doctor, preset,
         quiet=quiet,
         envelope_limit=float(envelope_limit),
         envelope_limit_per_metre=float(envelope_limit_per_metre),
+        target_time_s=scoring["target_time_s"],
+        max_time_s=scoring["max_time_s"],
+        jerk_target_m_s3=scoring["jerk_target_m_s3"],
+        jerk_max_m_s3=scoring["jerk_max_m_s3"],
+        scoring_profile=scoring_profile,
+        accept_score=accept_score,
     )
     all_attempts = _run_candidates(
         specs_to_solve, solve_ctx, score_ctx,
@@ -2061,13 +2498,17 @@ def main(ctx, config, waypoints, output, gui, gui_port, doctor, preset,
         use_validation=use_validation, quiet=quiet,
         progress=(lambda made: _write_candidates(candidates_out, made, None, True))
         if candidates_out else None,
-        early_stop=not (pick_candidate or candidates_out))
+        # The decision score picks the highest score, so every candidate is
+        # scored: a slower plan can outscore a faster one, and a skipped
+        # candidate has no score to win with.
+        early_stop=False)
 
     try:
         (samples_data, stats, attempt_passed, best_reasons, selected_tube,
          selected_index) = _choose_attempt(
             all_attempts, validate=validate, quiet=quiet, samples=samples,
-            pick=pick_candidate, best_effort=best_effort)
+            pick=pick_candidate, best_effort=best_effort,
+            accept_score=accept_score, final_waypoint=wps[-1])
     except click.ClickException:
         # A refusal is exactly when the numbers matter, and the message can
         # only name the categories. Leave the report and the comparison
@@ -2077,18 +2518,48 @@ def main(ctx, config, waypoints, output, gui, gui_port, doctor, preset,
                                     propagation=propagation,
                                     best_effort=False,
                                     envelope_limit=envelope_limit,
-                                    envelope_limit_per_metre=envelope_limit_per_metre)
+                                    envelope_limit_per_metre=envelope_limit_per_metre,
+                                    accept_score=accept_score,
+                                    profile=scoring["profile"])
         _write_candidates(candidates_out, all_attempts, None, quiet)
         raise
 
-    # The operator asked to see the path even though it missed the accuracy
-    # gates. The verdict is still a failure, and it travels with the file.
-    best_effort_export = bool(validate and best_effort and not attempt_passed)
+    selected_attempt = all_attempts[max(0, selected_index - 1)]
+    # Four verdicts, and the record says which one this is (score contract):
+    # an ordinary pass; a failed plan accepted by --accept-score; a best-effort
+    # inspection export; or an unvalidated run. Only the first two are
+    # approved for the hub.
+    best_effort_export = bool(validate and best_effort and not attempt_passed
+                              and not _attempt_accepted(selected_attempt,
+                                                        accept_score))
+    accepted_export = bool(
+        validate and not attempt_passed and not best_effort_export
+        and _attempt_accepted(selected_attempt, accept_score))
+    if validate:
+        stats["validation"] = _build_validation_record(
+            passed=attempt_passed, accepted=accepted_export,
+            best_effort=best_effort_export,
+            attempt=selected_attempt, scoring=scoring,
+            envelope_limit=envelope_limit,
+            envelope_limit_per_metre=envelope_limit_per_metre,
+            trajectory_hash=None)  # stamped by _write_outputs over the file
+    else:
+        # No reachability gate ran, so the file says so. A `.traj` without
+        # this could be read later as an approved plan.
+        stats["validation"] = {
+            "status": "unvalidated", "passed": False, "accepted": False,
+            "best_effort": False, "hub_approved": False,
+            "score": None, "score_version": SCORE_VERSION,
+            "profile": scoring["profile"], "weights": scoring["weights"],
+            "categories": None, "target_time_s": None, "max_time_s": None,
+            "accept_score": None,
+            "envelope_limit_m": float(envelope_limit),
+            "envelope_limit_per_metre": float(envelope_limit_per_metre),
+            "reasons": [], "segments": [], "max_excess_m": 0.0,
+        }
+
     if best_effort_export:
-        excess = _mark_best_effort(stats, all_attempts, selected_index)
-        stats["validation"]["envelope_limit_m"] = float(envelope_limit)
-        stats["validation"]["envelope_limit_per_metre"] = float(
-            envelope_limit_per_metre)
+        excess = stats["validation"]["max_excess_m"]
         click.secho(
             "  BEST EFFORT: validation failed ("
             + ("; ".join(best_reasons) or "see the candidate table")
@@ -2096,19 +2567,13 @@ def main(ctx, config, waypoints, output, gui, gui_port, doctor, preset,
                if excess > 0 else "")
             + "). The path is written for inspection and is not approved "
             "for the hub.", fg="red", bold=True)
-
-    if validate and attempt_passed:
-        # The pass depends on the limit, so the file records the limit it
-        # passed; a trajectory read later is not silent about its budget.
-        stats["validation"] = {
-            "passed": True,
-            "envelope_limit_m": float(envelope_limit),
-            "envelope_limit_per_metre": float(envelope_limit_per_metre),
-        }
-    elif not validate:
-        # No reachability gate ran, so the file says so. A `.traj` without
-        # this could be read later as an approved plan.
-        stats["validation"] = {"status": "unvalidated", "passed": False}
+    elif accepted_export:
+        click.secho(
+            f"  ACCEPTED: validation failed ("
+            + ("; ".join(best_reasons) or "see the candidate table")
+            + f"), but the score {selected_attempt.get('score', 0.0):.1f} "
+            f"meets --accept-score {accept_score}. Approved for the hub.",
+            fg="yellow", bold=True)
 
     if use_validation:
         # The studio reads this to show which part of the path failed.
@@ -2116,15 +2581,20 @@ def main(ctx, config, waypoints, output, gui, gui_port, doctor, preset,
                                 propagation=propagation,
                                 best_effort=best_effort_export,
                                 envelope_limit=envelope_limit,
-                                envelope_limit_per_metre=envelope_limit_per_metre)
+                                envelope_limit_per_metre=envelope_limit_per_metre,
+                                accept_score=accept_score,
+                                profile=scoring["profile"],
+                                accepted=accepted_export,
+                                hub_approved=stats["validation"]["hub_approved"])
     # Every candidate, paths included, for a tool that draws the comparison.
     # Diagnostics, so it is written before the export gate: a failed run is
     # exactly when the operator wants to see what the candidates did.
     _write_candidates(candidates_out, all_attempts, selected_index, quiet)
 
-    # --- EXPORT GATE (KI-001 / KI-002) ---
+    # --- EXPORT GATE (KI-001 / KI-002, score contract) ---
     block_reason = _export_block_reason(stats, validate, attempt_passed,
-                                        best_effort=best_effort_export)
+                                        best_effort=best_effort_export,
+                                        accepted=accepted_export)
     if block_reason:
         detail = "; ".join(best_reasons)
         message = f"{block_reason}: {detail}" if detail else block_reason
@@ -2142,7 +2612,7 @@ def main(ctx, config, waypoints, output, gui, gui_port, doctor, preset,
             f"No trajectory written to '{output}'."
         )
 
-    if validate:
+    if validate and attempt_passed:
         cpu_summary = validate_samples(samples_data, robot_cfg)
         if not cpu_summary["passed"]:
             reasons = _cpu_failure_reasons(cpu_summary, waypoint_check)
@@ -2157,9 +2627,18 @@ def main(ctx, config, waypoints, output, gui, gui_port, doctor, preset,
 
     if not quiet:
         _print_summary(output, samples_data, robot_cfg, validate, attempt_passed,
-                       selected_tube, written[1:], best_effort=best_effort_export)
+                       selected_tube, written[1:], best_effort=best_effort_export,
+                       accepted=accepted_export,
+                       score=_finite(selected_attempt.get("score")))
 
     if push_hub:
+        # The trajectory pushes enforce ordinary-pass-or-explicitly-accepted
+        # approval, and push_trajectory re-checks the file against its hash.
+        if not (stats.get("validation") or {}).get("hub_approved"):
+            raise click.ClickException(
+                "--push-hub refused: the trajectory is not approved for the "
+                "hub (it needs an ordinary validator pass, or a failed plan "
+                "accepted by --accept-score).")
         try:
             robot_cfg.sync_pybricks_robot_config()
         except Exception:

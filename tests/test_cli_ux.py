@@ -34,6 +34,12 @@ def _samples(n=11, dt=0.1, speed=0.1):
     } for i in range(n)]
 
 
+def _mission(points, target=1.0, max_time=2.0):
+    """A mission file body with the scoring timing a validated run needs."""
+    return {"waypoints": points,
+            "scoring": {"target_time_s": target, "max_time_s": max_time}}
+
+
 class _RecordingOptimizer:
     """Stands in for the solver and records how it was called."""
 
@@ -434,8 +440,9 @@ class TestValidationReport(unittest.TestCase):
             wp = os.path.join(tmp, "wp.json")
             out = os.path.join(tmp, "out.traj")
             with open(wp, "w", encoding="utf-8") as handle:
-                json.dump([{"x": 0.0, "y": 0.0, "heading": 0.0},
-                           {"x": 0.1, "y": 0.0, "heading": 0.0}], handle)
+                json.dump(_mission([{"x": 0.0, "y": 0.0, "heading": 0.0},
+                                    {"x": 0.1, "y": 0.0, "heading": 0.0}]),
+                          handle)
             with patch.object(self.main, "TrajectoryOptimizer", self._Optimizer), \
                     patch.object(self.main, "ImmraxValidator", self._WideImmrax):
                 result = self.runner.invoke(self.main.main, [
@@ -473,8 +480,9 @@ class TestValidationReport(unittest.TestCase):
             wp = os.path.join(tmp, "wp.json")
             out = os.path.join(tmp, "out.traj")
             with open(wp, "w", encoding="utf-8") as handle:
-                json.dump([{"x": 0.0, "y": 0.0, "heading": 0.0},
-                           {"x": 0.1, "y": 0.0, "heading": 0.0}], handle)
+                json.dump(_mission([{"x": 0.0, "y": 0.0, "heading": 0.0},
+                                    {"x": 0.1, "y": 0.0, "heading": 0.0}]),
+                          handle)
             with patch.object(self.main, "TrajectoryOptimizer", self._Optimizer), \
                     patch.object(self.main, "ImmraxValidator",
                                  validator or self._WideImmrax):
@@ -506,8 +514,9 @@ class TestValidationReport(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             wp = os.path.join(tmp, "wp.json")
             with open(wp, "w", encoding="utf-8") as handle:
-                json.dump([{"x": 0.0, "y": 0.0, "heading": 0.0},
-                           {"x": 0.1, "y": 0.0, "heading": 0.0}], handle)
+                json.dump(_mission([{"x": 0.0, "y": 0.0, "heading": 0.0},
+                                    {"x": 0.1, "y": 0.0, "heading": 0.0}]),
+                          handle)
             out = os.path.join(tmp, "missing", "out.traj")
             with patch.object(self.main, "TrajectoryOptimizer", self._Optimizer):
                 result = self.runner.invoke(self.main.main, [
@@ -523,8 +532,9 @@ class TestValidationReport(unittest.TestCase):
             wp = os.path.join(tmp, "wp.json")
             out = os.path.join(tmp, "out.traj")
             with open(wp, "w", encoding="utf-8") as handle:
-                json.dump([{"x": 0.0, "y": 0.0, "heading": 0.0},
-                           {"x": 0.1, "y": 0.0, "heading": 0.0}], handle)
+                json.dump(_mission([{"x": 0.0, "y": 0.0, "heading": 0.0},
+                                    {"x": 0.1, "y": 0.0, "heading": 0.0}]),
+                          handle)
             with open(out, "w", encoding="utf-8") as handle:
                 handle.write("previous plan")
             with patch.object(self.main, "TrajectoryOptimizer", self._Optimizer), \
@@ -686,8 +696,9 @@ class TestValidationReport(unittest.TestCase):
             wp = os.path.join(tmp, "wp.json")
             out = os.path.join(tmp, "out.traj")
             with open(wp, "w", encoding="utf-8") as handle:
-                json.dump([{"x": 0.0, "y": 0.0, "heading": 0.0},
-                           {"x": 0.1, "y": 0.0, "heading": 0.0}], handle)
+                json.dump(_mission([{"x": 0.0, "y": 0.0, "heading": 0.0},
+                                    {"x": 0.1, "y": 0.0, "heading": 0.0}]),
+                          handle)
             with patch.object(self.main, "TrajectoryOptimizer", self._Optimizer), \
                     patch.object(self.main, "ImmraxValidator",
                                  self._RecordingImmrax):
@@ -709,6 +720,212 @@ class TestValidationReport(unittest.TestCase):
                     "--propagation", "plant", "--no-parallel"])
             self.assertEqual(result.exit_code, 0, result.output)
             self.assertEqual(set(self._RecordingImmrax.seen), {"plant"})
+
+    # --- The decision score contract --------------------------------------
+
+    def test_a_validated_run_needs_the_scoring_timing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            wp = os.path.join(tmp, "wp.json")
+            out = os.path.join(tmp, "out.traj")
+            # A plain list is still a valid mission - but a validated run
+            # then needs the timing on the command line.
+            with open(wp, "w", encoding="utf-8") as handle:
+                json.dump([{"x": 0.0, "y": 0.0, "heading": 0.0},
+                           {"x": 0.1, "y": 0.0, "heading": 0.0}], handle)
+            with patch.object(self.main, "TrajectoryOptimizer", self._Optimizer), \
+                    patch.object(self.main, "ImmraxValidator", self._WideImmrax):
+                missing = self.runner.invoke(self.main.main, [
+                    "-c", os.path.join(self.repo, "examples", "fll_choreo.json"),
+                    "-w", wp, "-o", out, "--validate"])
+            self.assertNotEqual(missing.exit_code, 0, missing.output)
+            self.assertIn("target_time_s", missing.output)
+            self.assertIn("--target-time", missing.output)
+            self.assertIn("max_time_s", missing.output)
+            self.assertIn("--max-time", missing.output)
+            self.assertFalse(os.path.exists(out))
+            # The flags supply it, and the run goes through.
+            with patch.object(self.main, "TrajectoryOptimizer", self._Optimizer), \
+                    patch.object(self.main, "ImmraxValidator", self._RecordingImmrax):
+                flagged = self.runner.invoke(self.main.main, [
+                    "-c", os.path.join(self.repo, "examples", "fll_choreo.json"),
+                    "-w", wp, "-o", out, "--validate",
+                    "--target-time", "1", "--max-time", "2"])
+            self.assertEqual(flagged.exit_code, 0, flagged.output)
+
+    def test_the_mission_scoring_budget_is_read_and_overridden(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            wp = os.path.join(tmp, "wp.json")
+            out = os.path.join(tmp, "out.traj")
+            with open(wp, "w", encoding="utf-8") as handle:
+                json.dump(_mission([{"x": 0.0, "y": 0.0, "heading": 0.0},
+                                    {"x": 0.1, "y": 0.0, "heading": 0.0}],
+                                   target=1.0, max_time=2.0), handle)
+            args = ["-c", os.path.join(self.repo, "examples", "fll_choreo.json"),
+                    "-w", wp, "-o", out, "--validate", "-q"]
+            with patch.object(self.main, "TrajectoryOptimizer", self._Optimizer), \
+                    patch.object(self.main, "ImmraxValidator", self._RecordingImmrax):
+                result = self.runner.invoke(self.main.main, args)
+            self.assertEqual(result.exit_code, 0, result.output)
+            with open(out, "r", encoding="utf-8") as handle:
+                record = json.load(handle)["validation"]
+            self.assertEqual(record["target_time_s"], 1.0)
+            self.assertEqual(record["max_time_s"], 2.0)
+            # The flags win over the mission metadata.
+            with patch.object(self.main, "TrajectoryOptimizer", self._Optimizer), \
+                    patch.object(self.main, "ImmraxValidator", self._RecordingImmrax):
+                result = self.runner.invoke(self.main.main, args + [
+                    "--target-time", "0.5", "--max-time", "6"])
+            self.assertEqual(result.exit_code, 0, result.output)
+            with open(out, "r", encoding="utf-8") as handle:
+                record = json.load(handle)["validation"]
+            self.assertEqual(record["target_time_s"], 0.5)
+            self.assertEqual(record["max_time_s"], 6.0)
+
+    def test_a_bad_scoring_budget_is_rejected(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            wp = os.path.join(tmp, "wp.json")
+            out = os.path.join(tmp, "out.traj")
+            with open(wp, "w", encoding="utf-8") as handle:
+                json.dump(_mission([{"x": 0.0, "y": 0.0},
+                                    {"x": 0.1, "y": 0.0}],
+                                   target=2.0, max_time=1.0), handle)
+            result = self.runner.invoke(self.main.main, [
+                "-c", os.path.join(self.repo, "examples", "fll_choreo.json"),
+                "-w", wp, "-o", out, "--validate"])
+            self.assertNotEqual(result.exit_code, 0, result.output)
+            self.assertIn("target_time_s", result.output)
+            self.assertFalse(os.path.exists(out))
+
+    def test_the_report_carries_the_score_contract_fields(self):
+        result, data = self._invoke([], validator=self._RecordingImmrax)
+        self.assertEqual(result.exit_code, 0, result.output)
+        marker = [line for line in result.output.splitlines()
+                  if line.startswith(self.main.VALIDATION_MARKER)]
+        payload = json.loads(marker[0][len(self.main.VALIDATION_MARKER):])
+        self.assertEqual(payload["score_version"], 1)
+        self.assertEqual(payload["profile"], "balanced")
+        self.assertIsNone(payload["accept_score"])
+        self.assertFalse(payload["accepted"])
+        self.assertFalse(payload["best_effort"])
+        self.assertTrue(payload["hub_approved"])
+        for candidate in payload["candidates"]:
+            self.assertIn("score", candidate)
+            self.assertEqual(candidate["score_version"], 1)
+            self.assertEqual(sorted(candidate["categories"]),
+                             ["accuracy", "duration", "physical", "quality"])
+            self.assertEqual(sorted(candidate["ratios"]), ["r_acc", "r_phys"])
+            self.assertTrue(candidate["eligibility"])
+            self.assertFalse(candidate["structural_failure"])
+        # The artifact carries the same verdict, with its hash.
+        self.assertTrue(data["validation"]["passed"])
+        self.assertFalse(data["validation"]["accepted"])
+        self.assertTrue(data["validation"]["hub_approved"])
+        self.assertEqual(data["validation"]["score_version"], 1)
+        self.assertEqual(sorted(data["validation"]["categories"]),
+                         ["accuracy", "duration", "physical", "quality"])
+        self.assertEqual(data["validation"]["profile"], "balanced")
+        self.assertEqual(data["validation"]["target_time_s"], 1.0)
+        self.assertEqual(data["validation"]["max_time_s"], 2.0)
+        self.assertRegex(data["validation"]["trajectory_sha256"],
+                         r"^[0-9a-f]{64}$")
+
+    def test_the_named_profiles_change_the_weights(self):
+        for profile in ("precision", "balanced", "speed"):
+            result, data = self._invoke(["--scoring-profile", profile],
+                                        validator=self._RecordingImmrax)
+            self.assertEqual(result.exit_code, 0, result.output)
+            self.assertEqual(data["validation"]["profile"], profile)
+            self.assertEqual(sum(data["validation"]["weights"].values()), 100.0)
+
+    def test_an_accepted_score_exports_and_approves_a_failed_plan(self):
+        """A quantified accuracy excess can be accepted and pushed."""
+
+        class _SlightlyWideImmrax(self._WideImmrax):
+            def validate_trajectory(self, samples, *ranges, **kwargs):
+                report = super().validate_trajectory(samples, *ranges, **kwargs)
+                # 2.5 cm of envelope against a 2 cm limit: ratio 1.25.
+                report["reachability"]["envelope"] = [{
+                    "x_min": s["x"] - 0.025, "x_max": s["x"] + 0.025,
+                    "y_min": s["y"], "y_max": s["y"],
+                } for s in samples]
+                return report
+
+        refused, data = self._invoke([], validator=_SlightlyWideImmrax)
+        self.assertNotEqual(refused.exit_code, 0, refused.output)
+        self.assertIsNone(data)
+
+        accepted, data = self._invoke(
+            ["--accept-score", "50"], validator=_SlightlyWideImmrax)
+        self.assertEqual(accepted.exit_code, 0, accepted.output)
+        self.assertIsNotNone(data)
+        record = data["validation"]
+        self.assertFalse(record["passed"])
+        self.assertTrue(record["accepted"])
+        self.assertTrue(record["hub_approved"])
+        self.assertFalse(record["best_effort"])
+        self.assertIsNotNone(record["score"])
+        self.assertGreaterEqual(record["score"], 50.0)
+        self.assertEqual(record["accept_score"], 50)
+        self.assertIn("ACCEPTED", accepted.output)
+
+        # Below the score nothing is written.
+        high, data = self._invoke(["--accept-score", "100"],
+                                  validator=_SlightlyWideImmrax)
+        self.assertNotEqual(high.exit_code, 0, high.output)
+        self.assertIsNone(data)
+
+    def test_a_structural_failure_is_never_accepted(self):
+        """A diverged tube cannot be bought with any --accept-score."""
+
+        class _DivergedImmrax(self._WideImmrax):
+            def validate_trajectory(self, samples, *ranges, **kwargs):
+                report = super().validate_trajectory(samples, *ranges, **kwargs)
+                report["reachability"]["diverged"] = True
+                return report
+
+        result, data = self._invoke(["--accept-score", "1"],
+                                    validator=_DivergedImmrax)
+        self.assertNotEqual(result.exit_code, 0, result.output)
+        self.assertIsNone(data)
+
+    def test_accept_score_needs_validation(self):
+        result = self.runner.invoke(self.main.main, [
+            "-w", os.path.join(self.repo, "examples", "example_straight.json"),
+            "--accept-score", "50"])
+        self.assertNotEqual(result.exit_code, 0)
+        self.assertIn("--accept-score needs --validate", result.output)
+
+    def test_the_unvalidated_file_is_never_approved(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            wp = os.path.join(tmp, "wp.json")
+            out = os.path.join(tmp, "out.traj")
+            with open(wp, "w", encoding="utf-8") as handle:
+                json.dump(_mission([{"x": 0.0, "y": 0.0, "heading": 0.0},
+                                    {"x": 0.1, "y": 0.0, "heading": 0.0}]),
+                          handle)
+            with patch.object(self.main, "TrajectoryOptimizer", self._Optimizer):
+                result = self.runner.invoke(self.main.main, [
+                    "-c", os.path.join(self.repo, "examples", "fll_choreo.json"),
+                    "-w", wp, "-o", out, "-q", "-n", "5", "--candidates", "1"])
+            self.assertEqual(result.exit_code, 0, result.output)
+            with open(out, "r", encoding="utf-8") as handle:
+                record = json.load(handle)["validation"]
+        self.assertFalse(record["hub_approved"])
+        self.assertFalse(record["passed"])
+        self.assertFalse(record["best_effort"])
+        self.assertRegex(record["trajectory_sha256"], r"^[0-9a-f]{64}$")
+
+    def test_best_effort_is_written_unapproved_with_its_score(self):
+        result, data = self._invoke(["--best-effort"])
+        self.assertEqual(result.exit_code, 0, result.output)
+        record = data["validation"]
+        self.assertTrue(record["best_effort"])
+        self.assertFalse(record["passed"])
+        self.assertFalse(record["accepted"])
+        self.assertFalse(record["hub_approved"])
+        self.assertEqual(record["score_version"], 1)
+        self.assertIsNotNone(record["score"])
+        self.assertRegex(record["trajectory_sha256"], r"^[0-9a-f]{64}$")
 
 
 class TestVariableSampleLayout(unittest.TestCase):
@@ -776,10 +993,11 @@ class TestVariableSampleLayout(unittest.TestCase):
             wp = os.path.join(tmp, "wp.json")
             out = os.path.join(tmp, "out.traj")
             with open(wp, "w", encoding="utf-8") as handle:
-                json.dump([{"x": 0.0, "y": 0.0, "heading": 0.0},
-                           {"x": 0.1, "y": 0.0, "heading": 0.0},
-                           {"x": 0.2, "y": 0.0, "heading": 0.0},
-                           {"x": 0.3, "y": 0.0, "heading": 0.0}], handle)
+                json.dump(_mission([
+                    {"x": 0.0, "y": 0.0, "heading": 0.0},
+                    {"x": 0.1, "y": 0.0, "heading": 0.0},
+                    {"x": 0.2, "y": 0.0, "heading": 0.0},
+                    {"x": 0.3, "y": 0.0, "heading": 0.0}]), handle)
             with patch.object(self.main, "TrajectoryOptimizer", self._Optimizer), \
                     patch.object(self.main, "ImmraxValidator", self._Immrax):
                 result = self.runner.invoke(self.main.main, [
@@ -907,7 +1125,11 @@ class TestCandidateComparison(unittest.TestCase):
             with open(comparison, "r", encoding="utf-8") as handle:
                 payload = json.load(handle)
         self.assertEqual(len(payload["candidates"]), 2)
-        self.assertEqual(payload["selected"], 1)
+        # The decision score selects: the highest-scoring candidate, the
+        # lower index breaking a tie.
+        scores = {c["index"]: (c["score"] or 0.0) for c in payload["candidates"]}
+        self.assertEqual(payload["selected"],
+                         max(scores, key=lambda i: (scores[i], -i)))
         for candidate in payload["candidates"]:
             self.assertTrue(candidate["samples"], candidate["style"])
             self.assertIn(candidate["style"], ("frontier_sprint", "frontier_sweeper",
@@ -965,6 +1187,101 @@ class TestCandidateComparison(unittest.TestCase):
                                       samples=10, pick=1)
         self.assertEqual(chosen[5], 1)
         self.assertIs(chosen[0], attempt["samples"])
+
+    # --- The decision score selects (score contract) ----------------------
+
+    @staticmethod
+    def scored(name, score, ok=False, categories=None, duration=1.0,
+               structural=False):
+        return {"samples": name, "stats": {}, "converged": True, "ok": ok,
+                "structural_failure": structural, "score": score,
+                "categories": categories or {"accuracy": 50.0, "physical": 50.0},
+                "duration": duration, "cost": 1.0, "violation": 0.0,
+                "reasons": [], "tube": 0.01}
+
+    def test_the_highest_score_selects(self):
+        import overboard.main as main
+        low = self.scored("low", 60.0, ok=True, duration=1.0)
+        high = self.scored("high", 90.0, ok=True, duration=5.0)
+        best, passed_any = main._select_attempt_scored([low, high])
+        self.assertTrue(passed_any)
+        self.assertEqual(best["samples"], "high")
+
+    def test_a_score_tie_is_broken_by_the_documented_chain(self):
+        import overboard.main as main
+        # Same score: the ordinary pass wins before an accepted one.
+        accepted = self.scored("accepted", 80.0, ok=False, duration=1.0)
+        passed = self.scored("passed", 80.0, ok=True, duration=2.0)
+        best, _ = main._select_attempt_scored([accepted, passed],
+                                              accept_score=50)
+        self.assertEqual(best["samples"], "passed")
+        # Same score and verdict: the higher accuracy score wins.
+        low_a = self.scored("low_a", 80.0, ok=True,
+                            categories={"accuracy": 40.0, "physical": 90.0})
+        high_a = self.scored("high_a", 80.0, ok=True,
+                             categories={"accuracy": 90.0, "physical": 40.0})
+        best, _ = main._select_attempt_scored([low_a, high_a])
+        self.assertEqual(best["samples"], "high_a")
+        # Same accuracy: the higher physical score wins.
+        low_p = self.scored("low_p", 80.0, ok=True,
+                            categories={"accuracy": 50.0, "physical": 30.0})
+        high_p = self.scored("high_p", 80.0, ok=True,
+                             categories={"accuracy": 50.0, "physical": 60.0})
+        best, _ = main._select_attempt_scored([low_p, high_p])
+        self.assertEqual(best["samples"], "high_p")
+        # Then the shorter duration, then the lower index.
+        slower = self.scored("slower", 80.0, ok=True, duration=4.0)
+        quicker = self.scored("quicker", 80.0, ok=True, duration=2.0)
+        best, _ = main._select_attempt_scored([slower, quicker])
+        self.assertEqual(best["samples"], "quicker")
+        first = self.scored("first", 80.0, ok=True, duration=2.0)
+        second = self.scored("second", 80.0, ok=True, duration=2.0)
+        best, _ = main._select_attempt_scored([first, second])
+        self.assertEqual(best["samples"], "first")
+
+    def test_an_accepted_candidate_only_counts_over_its_score(self):
+        import click
+        import overboard.main as main
+        attempt = {"samples": [{"t": 0.0}], "stats": {}, "converged": True,
+                   "ok": False, "reasons": ["envelope"], "tube": 0.04,
+                   "score": 70.0, "categories": {"accuracy": 70.0,
+                                                 "physical": 100.0},
+                   "duration": 1.0, "structural_failure": False}
+        # Under the score it may be picked, and it exports as accepted.
+        chosen = main._choose_attempt([attempt], validate=True, quiet=True,
+                                      samples=10, pick=1, accept_score=50)
+        self.assertEqual(chosen[5], 1)
+        self.assertFalse(chosen[2])
+        # Over the score the pick is refused, and without --accept-score too.
+        with self.assertRaises(click.ClickException):
+            main._choose_attempt([attempt], validate=True, quiet=True,
+                                 samples=10, pick=1, accept_score=80)
+        with self.assertRaises(click.ClickException):
+            main._choose_attempt([attempt], validate=True, quiet=True,
+                                 samples=10, pick=1)
+
+    def test_a_structural_failure_is_never_eligible(self):
+        import overboard.main as main
+        structural = self.scored("structural", 99.0, ok=True, structural=True)
+        self.assertFalse(main._attempt_eligible(structural, 1))
+        self.assertFalse(main._attempt_accepted(structural, 1))
+        best, passed_any = main._select_attempt_scored([structural], 1)
+        self.assertFalse(passed_any)
+
+    def test_a_failed_score_beats_a_passing_one_only_on_the_score(self):
+        """A failed plan accepted by its score can outscore a pass."""
+        import overboard.main as main
+        passing = self.scored("passing", 55.0, ok=True, duration=1.0)
+        accepted = self.scored("accepted", 75.0, ok=False, duration=3.0)
+        best, passed_any = main._select_attempt_scored([passing, accepted],
+                                                       accept_score=50)
+        self.assertEqual(best["samples"], "accepted")
+        # The verdict of the chosen candidate travels back: it failed, and
+        # only the accept-score makes it exportable.
+        self.assertFalse(passed_any)
+        # Without the accept-score the failed one is not eligible at all.
+        best, _ = main._select_attempt_scored([passing, accepted])
+        self.assertEqual(best["samples"], "passing")
 
     def test_best_effort_opens_the_gate_only_for_a_converged_plan(self):
         import overboard.main as main

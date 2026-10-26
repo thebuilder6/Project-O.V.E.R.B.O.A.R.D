@@ -22,12 +22,18 @@ without hand-editing.
 
 import argparse
 import asyncio
+import hashlib
+import json
 import os
 import sys
 
 HUB_HINT = "Install the hub tooling with: pip install pybricksdev"
 
 from overboard.paths import HUB_MISSION_MODULE, HUB_RUNNER
+
+# The decision-score contract: a trajectory may only drive the hub when its
+# validation record approves it (score_version 1).
+SCORE_VERSION = 1
 
 # The hub needs a moment to push its last console lines out before the
 # connection goes away.
@@ -156,6 +162,48 @@ def deploy(script_path, connection="ble", name=None, wait=True, print_output=Tru
         raise RuntimeError(HUB_HINT) from exc
 
 
+def trajectory_sha256(config, samples):
+    """SHA-256 of the canonical JSON for {"config": ..., "samples": ...}.
+
+    Both the writer and the pusher call this helper, so the hash recorded at
+    export and the hash checked at push cannot drift apart.
+    """
+    payload = {"config": config, "samples": samples}
+    blob = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(blob.encode("utf-8")).hexdigest()
+
+
+def check_trajectory_approval(doc):
+    """Return the trajectory's validation record, or raise ValueError.
+
+    A hub run needs an ordinary validator pass or an explicitly accepted
+    score (score_version 1), and the recorded hash must still match the
+    trajectory in the file. An unvalidated, best-effort, stale or edited
+    file is refused here - before anything is written to disk or connected.
+    """
+    validation = doc.get("validation") if isinstance(doc, dict) else None
+    if not isinstance(validation, dict):
+        raise ValueError(
+            "the trajectory carries no validation record, so it is not "
+            "approved for the hub")
+    if not validation.get("hub_approved"):
+        raise ValueError(
+            "the trajectory is not approved for the hub: it needs an ordinary "
+            "validator pass or an explicitly accepted score (--accept-score)")
+    if validation.get("score_version") != SCORE_VERSION:
+        raise ValueError(
+            "the trajectory's approval uses unsupported score_version "
+            f"{validation.get('score_version')!r}, expected {SCORE_VERSION}")
+    traj = doc.get("trajectory") or {}
+    expected = validation.get("trajectory_sha256")
+    actual = trajectory_sha256(traj.get("config"), traj.get("samples"))
+    if not expected or expected != actual:
+        raise ValueError(
+            "the trajectory does not match the hash its approval was issued "
+            "for: the file was edited after it was approved")
+    return validation
+
+
 def push_trajectory(traj_file, connection="ble", name=None, log_path=None,
                     mission_module=None, runner=None):
     """Write the packed mission and push it to the hub.
@@ -164,17 +212,25 @@ def push_trajectory(traj_file, connection="ble", name=None, log_path=None,
     trajectory from pybricks_code/hub_mission.py, so both files travel with
     the push. Returns the console lines the hub printed.
 
+    The trajectory must carry an approval its own hash still matches
+    (`check_trajectory_approval`), and that is checked before the mission is
+    written, the robot config is synced, or a connection is opened.
+
     log_path, if given, receives the output as it arrives, so a dropped link
     costs the last test instead of the whole session.
     """
     from overboard.deploy.export import write_compact_python_file
 
+    with open(traj_file, "r", encoding="utf-8") as handle:
+        doc = json.load(handle)
+    check_trajectory_approval(doc)
+
     try:
-        import json
         from overboard.models.robot_model import RobotConfig
-        with open(traj_file, "r", encoding="utf-8") as handle:
-            doc = json.load(handle)
         cfg_dict = doc.get("config") or doc.get("robot")
+        if not cfg_dict:
+            traj = doc.get("trajectory") or {}
+            cfg_dict = traj.get("config")
         if cfg_dict:
             RobotConfig(cfg_dict).sync_pybricks_robot_config()
     except Exception:
@@ -290,7 +346,7 @@ def main(argv=None):
         else:
             lines = deploy(args.script, connection=args.conn, name=args.name,
                            wait=not args.no_wait, stream_path=args.out)
-    except RuntimeError as exc:
+    except (RuntimeError, ValueError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
 

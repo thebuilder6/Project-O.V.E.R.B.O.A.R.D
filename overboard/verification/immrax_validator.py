@@ -989,6 +989,12 @@ class ImmraxValidator:
             "max_wheel_speed_m_s": 0.0,
             "wheel_speed_limit_m_s": 0.0,
             "speed_violation_m_s": 0.0,
+            "utilization": {
+                "motor": float("inf"),
+                "traction": float("inf"),
+                "slip": float("inf"),
+                "wheel_speed": float("inf"),
+            },
             "reachability": {
                 "max_error_m": float("inf"),
                 "max_tracking_error_m": float("inf"),
@@ -1076,6 +1082,12 @@ class ImmraxValidator:
             motor_violation_l = jnp.maximum(0.0, iv_abs_max(fl) - force_limit_l.lower)
             motor_violation_r = jnp.maximum(0.0, iv_abs_max(fr) - force_limit_r.lower)
 
+            # Normalized utilisation (1.0 = exactly at the limit), for the
+            # decision score. A violation only says how far past the limit the
+            # plan is; the ratio also says how much margin a passing plan has.
+            motor_util_l = iv_abs_max(fl) / jnp.maximum(force_limit_l.lower, 1e-6)
+            motor_util_r = iv_abs_max(fr) / jnp.maximum(force_limit_r.lower, 1e-6)
+
             # 3. Dynamic Normal Force Transfers. Only lateral (turning)
             # transfer applies; a two-wheel robot has no front/rear split
             # (KI-010). Same formula as the optimizer and the CPU audit.
@@ -1092,10 +1104,17 @@ class ImmraxValidator:
 
             slip_l = jnp.maximum(0.0, iv_abs_max(fl) - tr_l.lower)
             slip_r = jnp.maximum(0.0, iv_abs_max(fr) - tr_r.lower)
+            traction_util = (iv_abs_max(fl) + iv_abs_max(fr)) / jnp.maximum(traction_max, 1e-6)
+            slip_util_l = iv_abs_max(fl) / jnp.maximum(tr_l.lower, 1e-6)
+            slip_util_r = iv_abs_max(fr) / jnp.maximum(tr_r.lower, 1e-6)
 
-            return motor_violation_l, motor_violation_r, traction_violation, slip_l, slip_r
+            return (motor_violation_l, motor_violation_r, traction_violation,
+                    slip_l, slip_r, motor_util_l, motor_util_r,
+                    traction_util, slip_util_l, slip_util_r)
 
-        motor_vios_l, motor_vios_r, traction_vios, slip_ls, slip_rs = vmap(check_sample_interval)(vl, vr, al, ar)
+        (motor_vios_l, motor_vios_r, traction_vios, slip_ls, slip_rs,
+         motor_utils_l, motor_utils_r, traction_utils,
+         slip_utils_l, slip_utils_r) = vmap(check_sample_interval)(vl, vr, al, ar)
 
         unrolled_samples = unroll_trajectory_headings(samples)
         reach_report = self.compute_reachability(
@@ -1111,6 +1130,15 @@ class ImmraxValidator:
                               float(jnp.max(jnp.abs(vr))))
         wheel_speed_limit = self.cfg.no_load_wheel_speed_worst_case()
         speed_violation = max(0.0, max_wheel_speed - wheel_speed_limit)
+
+        # Normalized utilisation of every physical limit, worst case over the
+        # samples: 1.0 is exactly at the limit. The decision score reads these
+        # numbers instead of parsing the reason strings.
+        motor_util = max(float(jnp.max(motor_utils_l)), float(jnp.max(motor_utils_r)))
+        slip_util = max(float(jnp.max(slip_utils_l)), float(jnp.max(slip_utils_r)))
+        traction_util = float(jnp.max(traction_utils))
+        wheel_speed_util = (
+            max_wheel_speed / wheel_speed_limit if wheel_speed_limit > 1e-9 else 0.0)
 
         # Tracking and envelope size are checked separately. The caller applies
         # its context-aware threshold to the envelope; the validator only
@@ -1137,6 +1165,12 @@ class ImmraxValidator:
             "max_wheel_speed_m_s": max_wheel_speed,
             "wheel_speed_limit_m_s": wheel_speed_limit,
             "speed_violation_m_s": speed_violation,
+            "utilization": {
+                "motor": float(motor_util),
+                "traction": float(traction_util),
+                "slip": float(slip_util),
+                "wheel_speed": float(wheel_speed_util),
+            },
             "reachability": reach_report,
             "inclusion": {
                 "plant": self.plant_inclusion,
