@@ -168,6 +168,135 @@ class TestFieldCollisions(unittest.TestCase):
         samples = [{"x": 0.8, "y": 0.0, "t": 0.0}, {"x": 1.2, "y": 0.0, "t": 1.0}]
         self.assertEqual(field.collisions(samples, 0.05), [])
 
+    # -- One clearance per sample ------------------------------------------
+
+    def _clearance_field(self, obstacles, mat=(2.0, 1.14)):
+        return FieldModel(
+            season="test", label="Test",
+            mat_width_m=mat[0], mat_height_m=mat[1],
+            placement_uncertainty_m=0.05, obstacles=obstacles)
+
+    def test_the_clearance_is_the_distance_to_the_nearest_thing(self):
+        """Real geometry, not an overlap test: the number is the gap."""
+        field = self._clearance_field((_circle(x=1.0, y=1.0, r=0.05),),
+                                      mat=(0.0, 0.0))
+        samples = [{"x": 1.2, "y": 1.0}, {"x": 1.5, "y": 1.0}]
+        clearances = field.sample_clearances(samples, 0.02)
+        self.assertEqual(len(clearances), 2)
+        # 200 mm from the centre, minus the 50 mm circle, minus the robot.
+        self.assertAlmostEqual(clearances[0], 0.13, places=9)
+        self.assertAlmostEqual(clearances[1], 0.43, places=9)
+
+    def test_the_robot_radius_is_taken_off_the_clearance(self):
+        field = self._clearance_field((_circle(x=1.0, y=1.0, r=0.05),),
+                                      mat=(0.0, 0.0))
+        samples = [{"x": 1.2, "y": 1.0}]
+        self.assertAlmostEqual(
+            field.sample_clearances(samples, 0.0)[0], 0.15, places=9)
+        self.assertAlmostEqual(
+            field.sample_clearances(samples, 0.05)[0], 0.10, places=9)
+
+    def test_the_clearance_penetrates_by_the_robot_radius(self):
+        """Negative means penetration - and it is the same depth the
+        collision report calls a hit."""
+        field = self._clearance_field((_rect(w=0.2, h=0.2),),
+                                      mat=(0.0, 0.0))
+        samples = [{"x": 1.01, "y": 1.0, "t": 0.5}]
+        depth = field.collisions(samples, 0.02)[0].depth_m
+        self.assertAlmostEqual(
+            field.sample_clearances(samples, 0.02)[0], -depth, places=9)
+
+    def test_the_rotated_rectangle_clearance_is_rotated(self):
+        square = self._clearance_field((_rect(w=0.2, h=0.2, rot=0.0),),
+                                       mat=(0.0, 0.0))
+        turned = self._clearance_field((_rect(w=0.2, h=0.2, rot=45.0),),
+                                       mat=(0.0, 0.0))
+        corner = 0.1 * (2 ** 0.5)
+        samples = [{"x": 1.0 + corner, "y": 1.0}]
+        # On the square's corner: clear of the unrotated one, dead on the
+        # turned one's edge.
+        self.assertAlmostEqual(
+            square.sample_clearances(samples, 0.0)[0], 0.041421, places=5)
+        self.assertAlmostEqual(
+            turned.sample_clearances(samples, 0.0)[0], 0.0, places=9)
+
+    def test_the_mat_edge_is_the_nearest_boundary(self):
+        """The boundary is the mat's rectangle - the conservative one."""
+        field = self._clearance_field((), mat=(2.0, 1.14))
+        samples = [{"x": 0.5, "y": 0.5}, {"x": 0.02, "y": 0.5}]
+        clearances = field.sample_clearances(samples, 0.05)
+        self.assertAlmostEqual(clearances[0], 0.45, places=9)
+        # 20 mm from the west edge with a 50 mm body: 30 mm into the wall.
+        self.assertAlmostEqual(clearances[1], -0.03, places=9)
+
+    def test_a_sample_off_the_mat_is_penetration(self):
+        field = self._clearance_field((), mat=(2.0, 1.14))
+        self.assertAlmostEqual(
+            field.sample_clearances([{"x": -0.1, "y": 0.5}], 0.0)[0],
+            -0.1, places=9)
+
+    def test_an_empty_field_without_a_mat_says_nothing_is_known(self):
+        field = self._clearance_field((), mat=(0.0, 0.0))
+        self.assertTrue(
+            math.isinf(field.sample_clearances([{"x": 0.5, "y": 0.5}], 0.0)[0]))
+
+    def test_the_nearest_obstacle_wins(self):
+        field = self._clearance_field(
+            (_circle(x=1.0, y=1.0, r=0.05), _circle(x=1.6, y=1.0, r=0.05)),
+            mat=(0.0, 0.0))
+        clearances = field.sample_clearances([{"x": 1.3, "y": 1.0}], 0.0)
+        self.assertAlmostEqual(clearances[0], 0.25, places=9)
+
+    def test_a_robot_config_resolves_the_radius_like_collisions_does(self):
+        from overboard.models.robot_model import RobotConfig
+        field = self._clearance_field((_circle(x=1.0, y=1.0, r=0.05),),
+                                      mat=(0.0, 0.0))
+        samples = [{"x": 1.2, "y": 1.0}]
+        cfg = RobotConfig({"robot": {"track_width": 0.10}})
+        # A full RobotConfig resolves through chassis_radius_m(), the same
+        # body collisions() uses, so the two cannot disagree.
+        self.assertAlmostEqual(
+            field.sample_clearances(samples, cfg)[0],
+            field.sample_clearances(samples, cfg.chassis_radius_m())[0],
+            places=12)
+
+        class _Track:
+            track_width = 0.10
+
+        # A track-width-only object is the axle track halved.
+        self.assertAlmostEqual(
+            field.sample_clearances(samples, _Track())[0], 0.10, places=9)
+
+        class _Chassis:
+            def chassis_radius_m(self):
+                return 0.06
+
+        self.assertAlmostEqual(
+            field.sample_clearances(samples, _Chassis())[0], 0.09, places=9)
+
+    def test_a_malformed_sample_is_nan_and_never_a_clearance(self):
+        """The one case collisions() skips must not read as clearance."""
+        field = self._clearance_field((_circle(x=1.0, y=1.0, r=0.05),),
+                                      mat=(2.0, 1.14))
+        samples = [{"t": 0.0}, {"x": "a", "y": 1.0}, {"x": 1.2, "y": 1.0}]
+        clearances = field.sample_clearances(samples, 0.02)
+        self.assertEqual(len(clearances), 3)
+        self.assertTrue(math.isnan(clearances[0]))
+        self.assertTrue(math.isnan(clearances[1]))
+        # The obstacle is 130 mm away, but the mat's north edge is nearer:
+        # 140 mm to the wall, less the body.
+        self.assertAlmostEqual(clearances[2], 0.12, places=9)
+
+    def test_the_clearance_is_per_sample_and_not_between_them(self):
+        """Unlike collisions(), only the samples themselves are measured."""
+        field = self._clearance_field((_rect(x=1.0, y=1.0, w=0.036, h=0.036),),
+                                      mat=(0.0, 0.0))
+        samples = [{"x": 0.8, "y": 1.0}, {"x": 1.2, "y": 1.0}]
+        clearances = field.sample_clearances(samples, 0.0)
+        self.assertAlmostEqual(clearances[0], 0.182, places=9)
+        self.assertAlmostEqual(clearances[1], 0.182, places=9)
+        self.assertEqual(len(field.collisions(samples, 0.04825)), 1)
+
 
 class TestFieldFiles(unittest.TestCase):
     def test_the_shipped_field_loads(self):

@@ -131,6 +131,67 @@ def _point_poses(samples, w, plant, cfg, with_belief=False):
     return out
 
 
+def _s_curve(v=0.4, n=30):
+    """A constant-curvature arc that turns left, then right (S-shaped)."""
+    out = []
+    dt = 0.04
+    x = y = 0.0
+    h = 0.0
+    for k in range(n + 1):
+        radius = 0.35 if k < n // 2 else -0.35
+        omega = v / radius
+        out.append({
+            "t": k * dt, "x": x, "y": y, "heading": h,
+            "vl": v - omega * 0.0965 / 2.0, "vr": v + omega * 0.0965 / 2.0,
+            "omega": omega, "al": 0.0, "ar": 0.0, "fl": 0.0, "fr": 0.0,
+        })
+        x += v * math.cos(h) * dt
+        y += v * math.sin(h) * dt
+        h += omega * dt
+    return out
+
+
+def _stops_like(v=0.4, n=30):
+    """A straight that comes to a full stop in the middle (stops-like)."""
+    out = []
+    dt = 0.04
+    x = 0.0
+    for k in range(n + 1):
+        moving = k < n // 3 or k > 2 * n // 3
+        speed = v if moving else 0.0
+        out.append({
+            "t": k * dt, "x": x, "y": 0.0, "heading": 0.0,
+            "vl": speed, "vr": speed, "omega": 0.0,
+            "al": 0.0, "ar": 0.0, "fl": 0.0, "fr": 0.0,
+        })
+        x += speed * dt
+    return out
+
+
+def _irregular(dt=0.025, n=4, v=0.3):
+    """A constant-speed straight whose sample interval is not 20 ms."""
+    return [{
+        "t": k * dt, "x": v * k * dt, "y": 0.0, "heading": 0.0,
+        "vl": v, "vr": v, "omega": 0.0,
+        "al": 0.0, "ar": 0.0, "fl": 0.0, "fr": 0.0,
+    } for k in range(n + 1)]
+
+
+def _tick_pair(val, samples):
+    """The compiled rollout and its Python reference, on the same inputs."""
+    from overboard.verification.reachability_engine import (
+        unroll_trajectory_headings)
+
+    w_iv = Interval(
+        jnp.array([1.24, 0.75, BACKLASH[0], TRACK[0], 0.0275, 0.0008,
+                    GAIN[0]]),
+        jnp.array([1.51, 0.9, BACKLASH[1], TRACK[1], 0.0285, 0.0011,
+                    GAIN[1]]))
+    unrolled = unroll_trajectory_headings(samples)
+    return (val._reachability_tick(unrolled, w_iv, 0.5 * BACKLASH[1]),
+            val._reachability_tick_reference(unrolled, w_iv, 0.5 * BACKLASH[1]))
+
+
 @unittest.skipUnless(HAS_IMMRAX, "immrax not installed")
 class TestNoPhantomTurnRate(unittest.TestCase):
     """A straight path has no turn rate, whatever the gain band does."""
@@ -582,6 +643,139 @@ class TestTheTickPropagation(unittest.TestCase):
         report = _validate(val, _straight(length=0.5))
         self.assertFalse(report["reachability"]["diverged"])
         self.assertTrue(np.isfinite(report["max_envelope_radius_m"]))
+
+    # -- The compiled rollout (M2) against the Python reference -----------
+
+    def _close(self, reference, compiled, key):
+        a, b = reference[key], compiled[key]
+        if math.isinf(a) or math.isinf(b):
+            self.assertEqual(a, b, key)
+        else:
+            self.assertAlmostEqual(a, b, delta=1e-6, msg=key)
+
+    def _assert_tick_parity(self, reference, compiled):
+        """The two rollouts agree on every number the gate reads."""
+        self.assertEqual(len(reference["envelope"]), len(compiled["envelope"]))
+        for i, (a, b) in enumerate(zip(reference["envelope"],
+                                       compiled["envelope"])):
+            self.assertEqual(bool(a.get("unknown")), bool(b.get("unknown")),
+                             f"unknown flag at sample {i}")
+            for key in ("x_min", "x_max", "y_min", "y_max",
+                        "theta_min", "theta_max",
+                        "tracking_error_m", "heading_error_rad"):
+                self.assertAlmostEqual(a[key], b[key], delta=1e-6,
+                                       msg=f"{key} at sample {i}")
+        for key in ("max_error_m", "max_tracking_error_m",
+                    "max_heading_error_rad", "max_envelope_radius_m",
+                    "rms_tracking_error_m", "rms_heading_error_rad"):
+            self._close(reference, compiled, key)
+        self.assertEqual(reference["diverged"], compiled["diverged"])
+        self.assertEqual(reference["envelope_truncated"],
+                         compiled["envelope_truncated"])
+        self.assertEqual(reference["propagation"], compiled["propagation"])
+
+    def _parity(self, samples):
+        cfg = JAXRobotConfig(_TEST_ROBOT)
+        val = ImmraxValidator(cfg, propagation="tick", tick_inclusion="jac")
+        val.digital_twin_gain_range = GAIN
+        compiled, reference = _tick_pair(val, samples)
+        self._assert_tick_parity(reference, compiled)
+        return reference, compiled
+
+    def test_the_compiled_rollout_matches_the_reference_on_a_straight(self):
+        self._parity(_straight())
+
+    def test_the_compiled_rollout_matches_the_reference_on_an_s_curve(self):
+        self._parity(_s_curve())
+
+    def test_the_compiled_rollout_matches_the_reference_on_stops(self):
+        self._parity(_stops_like())
+
+    def test_the_compiled_rollout_matches_on_a_shortened_final_tick(self):
+        """A 25 ms interval is a 20 ms tick plus a 5 ms one, in both."""
+        reference, compiled = self._parity(_irregular())
+        self.assertFalse(reference["diverged"])
+
+    def test_the_tick_schedule_shortens_the_final_tick(self):
+        """The tick grid is the reference loop's own stepping rule."""
+        cfg = JAXRobotConfig(_TEST_ROBOT)
+        val = ImmraxValidator(cfg, propagation="tick", tick_inclusion="jac")
+        refs, active, valid, spreads, targets, n_ticks = val._tick_schedule(
+            _irregular(), 0.00025)
+        self.assertTrue(all(valid))
+        self.assertEqual(n_ticks, 2)
+        # 25 ms: one full 20 ms tick, then a 5 ms one.
+        self.assertAlmostEqual(float(refs[0, 0, 6]), 0.02, places=12)
+        self.assertAlmostEqual(float(refs[0, 1, 6]), 0.005, places=12)
+        self.assertTrue(bool(active[0, 0]) and bool(active[0, 1]))
+
+    def test_a_non_monotone_time_vector_is_unknown_in_both_rollouts(self):
+        """A failed solve can produce a non-monotone time vector.
+
+        The tube is then reported as unknown - never as a width - and the
+        two rollouts must agree on that, sample for sample.
+        """
+        samples = _straight()
+        samples[3] = dict(samples[3], t=samples[2]["t"] - 0.01)
+        reference, compiled = self._parity(samples)
+        self.assertTrue(reference["diverged"])
+        self.assertTrue(reference["envelope_truncated"])
+        self.assertEqual(reference["max_tracking_error_m"], float("inf"))
+        self.assertEqual(reference["max_envelope_radius_m"], float("inf"))
+        for entry in reference["envelope"][:3]:
+            self.assertFalse(entry.get("unknown"),
+                             "the interval before the bad one is still known")
+        for i in range(3, len(reference["envelope"])):
+            self.assertTrue(reference["envelope"][i].get("unknown"),
+                            f"sample {i} is not marked unknown")
+
+    def test_the_50_mm_guard_cuts_the_tube_off_in_both_rollouts(self):
+        """The cut-off is reported as a lower bound, not as a width.
+
+        A huge backlash band makes the tube cross the guard early on, which
+        is the same branch a genuinely diverging tube takes.
+        """
+        cfg = JAXRobotConfig(_TEST_ROBOT)
+        val = ImmraxValidator(cfg, propagation="tick", tick_inclusion="jac")
+        from overboard.verification.reachability_engine import (
+            unroll_trajectory_headings)
+        w_iv = Interval(
+            jnp.array([1.24, 0.75, 0.2, TRACK[0], 0.0275, 0.0008, GAIN[0]]),
+            jnp.array([1.51, 0.9, 0.2, TRACK[1], 0.0285, 0.0011, GAIN[1]]))
+        unrolled = unroll_trajectory_headings(_straight())
+        compiled = val._reachability_tick(unrolled, w_iv, 0.1)
+        reference = val._reachability_tick_reference(unrolled, w_iv, 0.1)
+        self._assert_tick_parity(reference, compiled)
+        self.assertTrue(reference["diverged"])
+        self.assertTrue(reference["envelope_truncated"])
+        self.assertTrue(any(entry.get("unknown")
+                            for entry in reference["envelope"]))
+
+    def test_the_compiled_rollout_carries_the_belief_and_the_delay(self):
+        """The twin's belief state and its command delay, in both rollouts."""
+        cfg = JAXRobotConfig(_TEST_ROBOT)
+        twin = DigitalTwinConfig.from_dict({"actuator": {"straight": {
+            "calibrated": True, "gain": 1.0,
+            "gain_min": GAIN[0], "gain_max": GAIN[1],
+            "tau_s": 0.02, "delay_s": 0.02,
+        }}})
+        val = ImmraxValidator(cfg, digital_twin=twin, propagation="tick",
+                              tick_inclusion="jac")
+        val.digital_twin_gain_range = GAIN
+        self.assertEqual(val._tick_delay_ticks, 1)
+        self.assertTrue(val._carry_belief)
+        compiled, reference = _tick_pair(val, _straight(length=0.3))
+        self._assert_tick_parity(reference, compiled)
+
+    def test_the_compiled_rollout_carries_the_error_belief_mode(self):
+        """The measured alternative of the belief mode, in both rollouts."""
+        cfg = JAXRobotConfig(_TEST_ROBOT)
+        val = ImmraxValidator(cfg, digital_twin=_twin(), propagation="tick",
+                              tick_inclusion="jac", belief_mode="error")
+        val.digital_twin_gain_range = GAIN
+        self.assertTrue(val._carry_belief)
+        compiled, reference = _tick_pair(val, _straight(length=0.3))
+        self._assert_tick_parity(reference, compiled)
 
 
 if __name__ == "__main__":
