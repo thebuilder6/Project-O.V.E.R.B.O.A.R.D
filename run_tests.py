@@ -61,6 +61,11 @@ from tests.test_sysid_fit import (
     TestFitWithoutPoses,
     TestIntervalLowerBound,
 )
+from tests.test_sysid_profile import (
+    TestProfileWizard,
+    TestExampleProfile,
+    TestProfileReadErrors,
+)
 from tests.test_digital_twin import (
     TestDigitalTwinConfig,
     TestDigitalTwinValidator,
@@ -285,6 +290,9 @@ def test_classes():
         TestDocNumbers,
         TestNoLoadSpeed,
         TestDrivebaseProfile,
+        TestProfileWizard,
+        TestExampleProfile,
+        TestProfileReadErrors,
         TestHubSessionPoses,
         TestDigitalTwinConfig,
         TestDigitalTwinValidator,

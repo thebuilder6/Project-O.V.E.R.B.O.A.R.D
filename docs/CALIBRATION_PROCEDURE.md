@@ -16,6 +16,9 @@ the rest is your setup between tests and the tape work.
 ## The whole thing, in two commands and one form
 
 ```bash
+# 0. make the drivebase profile (once per robot; asks a few questions)
+python -m overboard.sysid.profile --out my_drivebase.json
+
 # 1. collect: the robot runs the tests, you press the hub button between them
 python -m overboard.sysid.collect --conn ble --profile my_drivebase.json \
   --session session.csv --sheet calibration_sheet.csv
@@ -41,14 +44,28 @@ The steps below are the same three things, in detail.
 - Masking tape, to mark the start pose and the stop marks.
 - A laptop with Bluetooth (or a USB cable to the hub).
 
-Prepare the drivebase profile first, because the fit needs the wheel radius:
+Prepare the drivebase profile first, because the fit needs the wheel radius.
+The wizard asks a few questions, with a tip on how to measure each number,
+and checks the answers are plausible before it writes the file:
+
+```bash
+python -m overboard.sysid.profile --out my_drivebase.json
+```
+
+It asks for the robot's name, the wheel radius in millimetres (roll the
+robot one wheel turn and divide the distance by 6.28), the track width in
+millimetres (centre-to-centre of the wheel contact patches; the fit refines
+it from the turn tests), the gearing — how many times the motor turns for
+one turn of the wheel, 1 for direct drive — and optionally the wall distance
+below. To write the file by hand instead, copy the example and set the same
+fields:
 
 ```bash
 cp examples/drivebase_profile.example.json my_drivebase.json
 ```
 
-Then open `my_drivebase.json` and set `wheel_radius_m` and `track_width_m` for
-your robot. The rest of this document assumes that file exists.
+Then open `my_drivebase.json` and set `wheel_radius_m`, `track_width_m` and
+`gearing` for your robot. The rest of this document assumes that file exists.
 
 ### The wall, if you have one
 
