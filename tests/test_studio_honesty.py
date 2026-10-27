@@ -686,5 +686,85 @@ class TestTheEnvelopeNamesItsModel(unittest.TestCase):
         self.assertIn("nominal geometry", body)
 
 
+class TestTheFirstTimeStripIsDismissible(unittest.TestCase):
+    """The one onboarding hint is shown once and remembered as dismissed.
+
+    It carries the journey in three steps and the link to the guide, and it
+    must not nag: the dismissal lives in localStorage, so it comes back only
+    for a new visitor to the browser.
+    """
+
+    def setUp(self):
+        self.html = _read(VIZ / "studio.html")
+        self.source = _read(VIZ / "studio.js")
+
+    def _function(self, name):
+        start = self.source.index(f"function {name}(")
+        end = self.source.find("\nfunction ", start + 1)
+        return self.source[start:end if end > 0 else len(self.source)]
+
+    def test_the_strip_is_on_the_page_with_the_journey(self):
+        self.assertIn('id="first-time-strip"', self.html)
+        self.assertIn('id="btn-dismiss-first-time"', self.html)
+        self.assertIn('href="/help.html"', self.html)
+        self.assertIn("Draw a path", self.html)
+        self.assertIn("Solve", self.html)
+
+    def test_the_dismissal_is_remembered(self):
+        body = self._function("setupFirstTimeStrip")
+        self.assertIn("localStorage.getItem", body)
+        self.assertIn("localStorage.setItem", body)
+        self.assertIn("strip.hidden = true", body)
+
+
+class TestAdvancedRevealsDoNotLeak(unittest.TestCase):
+    """An Advanced reveal shows its controls only once it is opened.
+
+    Every reveal is a `<details>`, so the browser hides the content the same
+    way the `hidden` attribute hides an element - there is no second
+    mechanism to get wrong. A reveal that starts open, or a panel that lost
+    its `hidden`, would put expert controls back on the first-timer's screen.
+    """
+
+    def setUp(self):
+        self.html = _read(VIZ / "studio.html")
+
+    def test_every_advanced_reveal_is_a_details(self):
+        found = set(re.findall(
+            r'<details[^>]*id="([a-z0-9-]*advanced[a-z0-9-]*)"', self.html))
+        self.assertEqual(found, {"mission-advanced", "robot-advanced",
+                                 "solve-advanced", "wp-advanced",
+                                 "result-advanced", "run-advanced"})
+
+    def test_no_advanced_reveal_starts_open(self):
+        for match in re.finditer(
+                r'<details[^>]*id="[a-z0-9-]*advanced[a-z0-9-]*"[^>]*>',
+                self.html):
+            self.assertNotIn("open", match.group(0),
+                             "An Advanced reveal starts open: its controls "
+                             "leak onto the screen before it is opened.")
+
+    def test_the_panels_a_run_fills_still_start_hidden(self):
+        """`.hidden` is the only way these go from off to on, so the
+        attribute has to be in the markup and the CSS rule has to win."""
+        for element_id in ("validation-report", "lever-history", "score-block",
+                           "push-result", "compare-block", "score-next"):
+            match = re.search(rf'<[a-z]+[^>]*id="{element_id}"[^>]*>', self.html)
+            self.assertIsNotNone(match, f"{element_id} is gone from the page")
+            if element_id != "score-next":
+                self.assertIn("hidden", match.group(0),
+                              f"{element_id} must start hidden, not be "
+                              "toggled by a class")
+
+    def test_the_plain_next_step_line_goes_with_the_verdict(self):
+        """A cleared verdict clears the plain advice with it, or the next
+        solve is read through the last one's next step."""
+        source = _read(VIZ / "studio.js")
+        start = source.index("function renderScoreBlock(")
+        end = source.find("\nfunction ", start + 1)
+        body = source[start:end if end > 0 else len(source)]
+        self.assertIn("renderScoreNext(null)", body)
+
+
 if __name__ == "__main__":
     unittest.main()
