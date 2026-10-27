@@ -48,6 +48,25 @@ class HubLinkError(RuntimeError):
     """
 
 
+class _LineFeed:
+    """Turn the hub's output chunks into complete lines for ``on_line``."""
+
+    def __init__(self, on_line):
+        self._on_line = on_line
+        self._pending = b""
+
+    def __call__(self, chunk):
+        self._pending += chunk
+        while b"\n" in self._pending:
+            line, self._pending = self._pending.split(b"\n", 1)
+            self._on_line(line.decode("utf-8", "replace").rstrip("\r"))
+
+    def flush(self):
+        if self._pending:
+            self._on_line(self._pending.decode("utf-8", "replace").rstrip("\r"))
+            self._pending = b""
+
+
 def _usb_hub():
     """Find a Pybricks hub on USB."""
     from usb.core import find as find_usb
@@ -96,7 +115,7 @@ async def _connect(connection, name):
 
 
 async def _deploy_async(script_path, connection, name, wait, print_output,
-                        stream_path):
+                        stream_path, on_line):
     from pybricksdev.connections.pybricks import HubDisconnectError
 
     hub = await _connect(connection, name)
@@ -112,6 +131,8 @@ async def _deploy_async(script_path, connection, name, wait, print_output,
 
     stream = None
     subscription = None
+    feed = _LineFeed(on_line) if on_line is not None else None
+    line_subscription = None
     if stream_path:
         stream = open(stream_path, "wb")
     try:
@@ -119,6 +140,8 @@ async def _deploy_async(script_path, connection, name, wait, print_output,
             # Write the console output as it arrives, so a dropped link
             # costs the last test instead of the whole session.
             subscription = hub.stdout_observable.subscribe(stream.write)
+        if feed is not None:
+            line_subscription = hub.stdout_observable.subscribe(feed)
 
         # A running program blocks the download, so stop it first.
         try:
@@ -133,6 +156,10 @@ async def _deploy_async(script_path, connection, name, wait, print_output,
         await asyncio.sleep(_DRAIN_SECONDS)
         return [line.decode("utf-8", "replace") for line in hub.output]
     finally:
+        if feed is not None:
+            feed.flush()
+        if line_subscription is not None:
+            line_subscription.dispose()
         if subscription is not None:
             subscription.dispose()
         if stream is not None:
@@ -144,7 +171,7 @@ async def _deploy_async(script_path, connection, name, wait, print_output,
 
 
 def deploy(script_path, connection="ble", name=None, wait=True, print_output=True,
-           stream_path=None):
+           stream_path=None, on_line=None):
     """Push a script to the hub, run it, and return the lines it printed.
 
     connection: "ble" or "usb".
@@ -152,11 +179,13 @@ def deploy(script_path, connection="ble", name=None, wait=True, print_output=Tru
     wait: keep the connection until the program stops.
     stream_path: write the console output there as it arrives, so a dropped
     link does not lose the session.
+    on_line: called with each console line as it arrives, so a caller can
+    follow the run live (the session wire format is untouched).
     """
     try:
         return asyncio.run(
             _deploy_async(script_path, connection, name, wait, print_output,
-                          stream_path)
+                          stream_path, on_line)
         )
     except ImportError as exc:
         raise RuntimeError(HUB_HINT) from exc

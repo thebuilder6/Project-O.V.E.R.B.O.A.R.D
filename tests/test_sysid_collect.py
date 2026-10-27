@@ -19,7 +19,7 @@ import sys
 import tempfile
 import types
 import unittest
-from contextlib import redirect_stdout
+from contextlib import redirect_stderr, redirect_stdout
 from unittest.mock import patch
 
 from tests.firmware_stubs import install_firmware_stubs, GcStub
@@ -1092,6 +1092,107 @@ class TestGuidedSheetForm(unittest.TestCase):
         self.assertIn(".card-count", text)
 
 
+class TestCollectGuidance(unittest.TestCase):
+    """The console guidance: step banners and the closing summary.
+
+    The operator is holding the tape while the suite runs, so the terminal
+    has to say which test is next, what the robot will do and - for the
+    measured tests - which columns to write the numbers in, in the exact
+    words of the measurement convention.
+    """
+
+    def _run(self, tmp, deploy=None):
+        import overboard.sysid.collect as sysid_collect
+
+        session = os.path.join(tmp, "session.csv")
+        sheet = os.path.join(tmp, "calibration_sheet.csv")
+
+        if deploy is None:
+            def deploy(script, connection="ble", name=None, wait=True,
+                       print_output=True, stream_path=None, on_line=None):
+                text = _measurement_session(repeats=1)
+                with open(stream_path, "w", encoding="utf-8") as handle:
+                    handle.write(text)
+                lines = text.splitlines()
+                if on_line is not None:
+                    for line in lines:
+                        on_line(line)
+                return lines
+
+        args = ["--session", session, "--sheet", sheet]
+        out, err = io.StringIO(), io.StringIO()
+        with patch.object(sysid_collect, "deploy", deploy):
+            with redirect_stdout(out), redirect_stderr(err):
+                status = sysid_collect.main(args)
+        return status, out.getvalue(), err.getvalue(), session, sheet
+
+    def test_each_measured_test_gets_a_banner_with_the_convention(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            status, out, err, _session, _sheet = self._run(tmp)
+        self.assertEqual(status, 0, err)
+        self.assertIn("odometry_straight - run 1 - MEASURE THIS ONE", out)
+        self.assertIn("multi_stop - run 1 - MEASURE THIS ONE", out)
+        self.assertIn("What the robot does:", out)
+        self.assertIn("What to measure:", out)
+        self.assertIn("The numbers wanted:", out)
+        # The exact convention words, in the sheet's columns.
+        self.assertIn("x_mm            forward from the start pose", out)
+        self.assertIn("y_mm            to the left of the runway", out)
+        self.assertIn("turn_right_deg  to the right", out)
+        self.assertIn("Measure from the robot's centre, not its bumper", out)
+
+    def test_a_watch_only_test_says_there_is_nothing_to_measure(self):
+        import overboard.sysid.collect as sysid_collect
+
+        printed = []
+        guide = sysid_collect.TestGuide(print_fn=printed.append)
+        guide("TEST_START top_speed")
+        text = "\n".join(printed)
+        self.assertIn("top_speed - run 1", text)
+        self.assertNotIn("MEASURE THIS ONE", text)
+        self.assertIn("LIFT the robot", text)
+        self.assertIn("Nothing to measure", text)
+
+    def test_the_closing_summary_says_what_was_captured_and_what_to_do(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            status, out, err, session, sheet = self._run(tmp)
+        self.assertEqual(status, 0, err)
+        self.assertIn("What the session captured:", out)
+        self.assertIn("What was NOT captured, and why:", out)
+        self.assertIn("weigh-in", out)
+        self.assertIn("tape measurements", out)
+        # The exact next commands, with the actual filenames used.
+        form = os.path.splitext(sheet)[0] + ".html"
+        self.assertIn(form, out)
+        self.assertIn(
+            f"python -m overboard.sysid.fit {session} --sheet {sheet} "
+            "--profile my_drivebase.json --out sysid_fit.json", out)
+
+    def test_a_missing_hub_points_at_the_device_list(self):
+        def failing_deploy(script, connection="ble", name=None, wait=True,
+                           print_output=True, stream_path=None, on_line=None):
+            raise RuntimeError("No Pybricks hub found on USB.")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            status, _out, err, _session, _sheet = self._run(
+                tmp, deploy=failing_deploy)
+        self.assertEqual(status, 1)
+        self.assertIn("--list-hubs", err)
+        self.assertIn("Pybricks firmware", err)
+
+    def test_a_session_that_cannot_be_written_says_so(self):
+        def failing_deploy(script, connection="ble", name=None, wait=True,
+                           print_output=True, stream_path=None, on_line=None):
+            raise OSError("disk full")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            status, _out, err, session, _sheet = self._run(
+                tmp, deploy=failing_deploy)
+        self.assertEqual(status, 1)
+        self.assertIn("cannot write the session", err)
+        self.assertIn(session, err)
+
+
 class TestCollectCommand(unittest.TestCase):
 
     def _run(self, tmp, extra=None):
@@ -1106,7 +1207,7 @@ class TestCollectCommand(unittest.TestCase):
                        "track_width_m": 0.0965}, handle)
 
         def fake_deploy(script, connection="ble", name=None, wait=True,
-                       print_output=True, stream_path=None):
+                       print_output=True, stream_path=None, on_line=None):
             with open(stream_path, "w", encoding="utf-8") as handle:
                 handle.write(_session())
             return _session().splitlines()
@@ -1151,7 +1252,7 @@ class TestCollectCommand(unittest.TestCase):
                 json.dump({"wheel_radius_m": 0.028}, handle)
 
             def fake_deploy(script, connection="ble", name=None, wait=True,
-                           print_output=True, stream_path=None):
+                           print_output=True, stream_path=None, on_line=None):
                 with open(stream_path, "w", encoding="utf-8") as handle:
                     handle.write(_session())
                 return _session().splitlines()
@@ -1185,7 +1286,7 @@ class TestCollectCommand(unittest.TestCase):
             fit = os.path.join(tmp, "sysid_fit.json")
 
             def fake_deploy(script, connection="ble", name=None, wait=True,
-                            print_output=True, stream_path=None):
+                            print_output=True, stream_path=None, on_line=None):
                 with open(stream_path, "w", encoding="utf-8") as handle:
                     handle.write(_session())
                 return _session().splitlines()
@@ -1212,7 +1313,7 @@ class TestCollectCommand(unittest.TestCase):
                 json.dump({"wheel_radius_m": 0.028}, handle)
 
             def fake_deploy(script, connection="ble", name=None, wait=True,
-                            print_output=True, stream_path=None):
+                            print_output=True, stream_path=None, on_line=None):
                 with open(stream_path, "w", encoding="utf-8") as handle:
                     handle.write(_measurement_session())
                 return _measurement_session().splitlines()
@@ -1243,7 +1344,7 @@ class TestCollectCommand(unittest.TestCase):
         from overboard.deploy.hub_deploy import HubLinkError
 
         def dropping_deploy(script, connection="ble", name=None, wait=True,
-                            print_output=True, stream_path=None):
+                            print_output=True, stream_path=None, on_line=None):
             with open(stream_path, "w", encoding="utf-8") as handle:
                 handle.write(_session())
             raise HubLinkError("hub disconnected")

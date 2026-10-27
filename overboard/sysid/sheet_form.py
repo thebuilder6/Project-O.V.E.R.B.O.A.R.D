@@ -54,6 +54,16 @@ CONVENTION = (
     "robot's centre, not its bumper."
 )
 
+# The same convention as short column lines, the way the collect banners
+# print it while the operator is holding the tape measure.
+CONVENTION_COLUMNS = (
+    "x_mm            forward from the start pose (998 means 998 mm forward)",
+    "y_mm            to the left of the runway (20 means it drifted 20 mm "
+    "left)",
+    "turn_right_deg  to the right (90 means 90 degrees right of the runway)",
+    "Measure from the robot's centre, not its bumper.",
+)
+
 # What each measured test is, in plain words: what the robot does, what to
 # measure, and the exact numbers wanted. Shared with the collect banners.
 TEST_GUIDE = {
@@ -121,6 +131,89 @@ GUIDE_FALLBACK = {
     "numbers": "x_mm: how far forward. y_mm: how far left. "
                "turn_right_deg: how far it turned right.",
 }
+
+# The tests whose end pose is measured with the tape. The collect banners
+# mark these as "measure this one"; every other suite test is watch-only.
+MEASURED_HINTS = frozenset({
+    "odometry_straight", "odometry_turn_cw", "multi_stop",
+    "brake_from_300", "brake_from_600",
+})
+
+_WATCH = "Nothing to measure for this one - watch it."
+
+# The watch-only tests of the collector's suite, so the collect banner can
+# still say what the robot will do before each one runs. They never appear
+# on a sheet: they have no pose to measure.
+TEST_GUIDE.update({
+    "static": {
+        "does": "The robot sits still and level on the floor while the gyro "
+                "is read. Do not touch it.",
+        "measure": _WATCH, "numbers": "",
+    },
+    "straight_steps_fwd": {
+        "does": "The robot drives straight at five speeds, in steps. Give it "
+                "2+ m of clear runway, facing along it.",
+        "measure": _WATCH, "numbers": "",
+    },
+    "straight_steps_rev": {
+        "does": "The same five speed steps, driving backwards.",
+        "measure": _WATCH, "numbers": "",
+    },
+    "turn_steps_cw": {
+        "does": "The robot spins in place clockwise at five speeds, in "
+                "steps. Keep the hub clear of the ground.",
+        "measure": _WATCH, "numbers": "",
+    },
+    "turn_steps_ccw": {
+        "does": "The same five turn steps, counter-clockwise.",
+        "measure": _WATCH, "numbers": "",
+    },
+    "curvature_cw": {
+        "does": "The robot drives constant-curvature arcs to the right in a "
+                "large open area.",
+        "measure": _WATCH, "numbers": "",
+    },
+    "curvature_ccw": {
+        "does": "The same arcs to the left.",
+        "measure": _WATCH, "numbers": "",
+    },
+    "reversal_backlash": {
+        "does": "The robot drives forward and back, over and over, on 2 m of "
+                "clear runway (the gear backlash test).",
+        "measure": _WATCH, "numbers": "",
+    },
+    "chirp_straight": {
+        "does": "The robot sweeps forward and back around the start mark at "
+                "changing speeds, on 2 m of clear runway.",
+        "measure": _WATCH, "numbers": "",
+    },
+    "chirp_turn": {
+        "does": "The robot spins in place at changing speeds (open space).",
+        "measure": _WATCH, "numbers": "",
+    },
+    "wall_homing": {
+        "does": "The robot drives slowly forward into the wall and stops "
+                "when blocked: the wall checks the distance scale. It needs "
+                "the wall distance in the drivebase profile.",
+        "measure": _WATCH, "numbers": "",
+    },
+    "wall_stall": {
+        "does": "The robot pushes into the wall at increasing power: the "
+                "stall-torque test. The robot is already against the wall "
+                "from the homing run.",
+        "measure": _WATCH, "numbers": "",
+    },
+    "top_speed": {
+        "does": "The robot's wheels spin up to full speed. LIFT the robot so "
+                "both wheels spin free - they must not touch the mat.",
+        "measure": _WATCH, "numbers": "",
+    },
+    "replay_complex_mission": {
+        "does": "The robot replays a full mission path. Place it at the "
+                "trajectory's start pose and clear the path.",
+        "measure": _WATCH, "numbers": "",
+    },
+})
 
 
 def guide_for(test):

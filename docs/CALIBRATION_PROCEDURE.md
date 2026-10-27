@@ -150,8 +150,10 @@ the measurement sheet for the session: the CSV the fitter reads
 (`calibration_sheet.html`) that you fill in instead of editing a spreadsheet.
 
 **What happens on the hub:** the display lights yellow and the hub waits for
-the centre button. The terminal prints the name of the test and its setup
-line. Do the setup, press the **centre button**, and the test runs. The
+the centre button. The terminal prints a step banner for each test: the
+name, what the robot will do, and — for the tests you measure — what to
+write down and in which columns, in the words of the measurement convention
+above. Do the setup, press the **centre button**, and the test runs. The
 **Bluetooth button is the emergency stop** — press it if the robot does
 something unexpected.
 
@@ -229,8 +231,10 @@ Write the numbers on a sheet of paper as you go, one line per measurement,
 with the repeat number on the line. A phone photo of the sheet is a fine
 backup.
 
-When the hub is finished it turns green and the command prints the list of
-measurements it still needs.
+When the hub is finished it turns green and the command prints what the
+session captured, what it did not capture and why (the weigh-in is a bench
+measurement, the poses are the robot's own odometry), and the exact
+commands to run next with your filenames.
 
 ---
 
