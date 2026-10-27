@@ -39,7 +39,7 @@ nobody runs them again.
 Nineteen questions were on the record when this list last closed: Q1-Q19 were
 asked and measured (eighteen closed, Q9 open); Q19 closed report-only on
 2026-10-26 - no success criterion, the ranked calibration-priority table is the
-deliverable. Q20 closed 2026-10-27. **Q21 is pre-registered (2026-10-27) and
+deliverable. Q20 closed 2026-10-27. **Q25 is pre-registered (2026-10-27) and
 unmeasured** - the digital-twin component order behind KI-020 and Q9's software
 phase, registered before any component code. Each open one has the
 current evidence, a hypothesis, and an experiment with a metric and a success criterion, ordered so
@@ -67,7 +67,7 @@ that the cheap, decisive ones come first.
 | Q11 | (step 2, 2026-10-25) does the wheel-acceleration bound change the plans? | **The bound lands and binds where it must, and the shipping suite never trips it.** With `digital_twin.actuator.straight.accel_limit` the optimizer now holds `-a*dt <= dv <= a` per wheel per interval (see Q11 below). The synthetic 0 -> 0.6 m/s in 20 ms request (30 m/s^2) is refused: the returned plan peaks at <= 7.8 m/s^2. On the 32-mission suite and the 8 examples **no candidate was over the ramp limit before or after** (0/96 and 0/24; worst observed 4.94 m/s^2), so gate pass rate is unchanged (6/32, 3/8) and the duration cost is 0.2 % (mean selected 2.3271 s -> 2.3231 s). The F10 population of over-limit plans does not occur on the shipping candidate set; the bound is the guarantee that it cannot, not a change to today's plans | `research/results/m3_suite_priced_accel.jsonl`, `m3_suite_priced_noaccel.jsonl`, `tests/test_optimizer.py` (the accel-bound tests) |
 | Q18 | is the 5 mm tracking gate a plan-discretisation artefact? | **No - gate stands; today's failures are control/model, not shape (2026-10-26).** The gate's tracking quantity is the max over sample instants of \|tube-midpoint rollout − planned sample\|, and at those instants the KI-027 chorded reference and the KI-026 smooth path both equal the planned sample, so the shape component is **<= 7.1 um** over all 120 candidates and the control residual equals the gate's number to 0.13 um: `artefact_share = 0` by construction (the registration's third clause). Descriptively: the composition law is `max` (120/120), the mid-interval shape share is 25 % mean but never reaches the gate's instants, the analytic chord bound credits **1 of 88** tracking failures (linear and quadrature), and `q_reported` is density-insensitive (log-log slope **+0.14** vs h against the predicted **+2**; failures 88 -> 99 -> 90 of 120 at x1/x2/x4). The excess is the twin plant's closed-loop residual against the reference it chases | `research/results/q18_decompose.jsonl`, `q18_density_x2.jsonl`, `q18_density_x4.jsonl`, `q18_summary.json`, Q18 below |
 | Q20 | why do the tightened-limit arms die at the solver budget, and what is the product's honest failure language? | **All 29 deaths are iteration-budget exhaustion on missions the nominal arm solves; nothing crashes, nothing is numeric (2026-10-27).** Every death is `max_iter` (`return_status is 'Maximum_Iterations_Exceeded'`, exactly 5000 iterations, 80-177 s each) on a mission the nominal arm converges (32/32): the mechanism is `limit_tightening_budget_death` - the tightened robot makes IPOPT grind, not declare infeasibility. The failed iterates are mechanically plausible (force over bound <= 0.184 N, speed over limit <= 0.005 m/s, ramp 1.7-3.7 m/s2 vs the declared 7.8) and the validator rejects them on envelope/tracking anyway. The product now carries `stats["error_kind"]` (`max_iter`/`infeasible`/`numeric`/`unknown`, `classify_solver_error`, propagated through the stitched split path); eligibility is byte-identical | `research/results/q20_probe.jsonl`, `q20_summary.json`, Q20 below |
-| Q21 | do the missing digital-twin components improve twin-vs-oracle agreement at a stated cost? | **Pre-registered 2026-10-27, unmeasured** - the umbrella question behind KI-020 and Q9's software phase. Ranked order (RQ-C, binding): 1. UMBmark per-side radii + effective wheelbase, 2. rolling resistance, 3. belief feedback through the robot's own estimate, 4. slip dynamics (contingent); DriveBase PID and motor torque transient are dropped as subsumed. Each component lands only if it beats the oracle's repeatability floor on mean `e_pos` at a stated cost; a null retires it (Q15/Q17 discipline) | Q21 below, [RQ-C](research/RQ-C_digital_twin_model.md) |
+| Q25 | do the missing digital-twin components improve twin-vs-oracle agreement at a stated cost? | **Pre-registered 2026-10-27, unmeasured** - the umbrella question behind KI-020 and Q9's software phase. Ranked order (RQ-C, binding): 1. UMBmark per-side radii + effective wheelbase, 2. rolling resistance, 3. belief feedback through the robot's own estimate, 4. slip dynamics (contingent); DriveBase PID and motor torque transient are dropped as subsumed. Each component lands only if it beats the oracle's repeatability floor on mean `e_pos` at a stated cost; a null retires it (Q15/Q17 discipline) | Q25 below, [RQ-C](research/RQ-C_digital_twin_model.md) |
 
 In the last column, `F<n>` and `§<n>` are sections of [FINDINGS](research/pq_b/FINDINGS.md),
 `archive tag` means the raw records in `archive/research-2026-10`. The answers, question by question,
@@ -158,7 +158,7 @@ survive the wider suite, which is why the campaign exists.
 | **Reproduce** | `python research/q20_probe.py --out-dir research/results` (reads the registered corpus: `research/results/q19_wheel_radius_high.jsonl`, `q19_t_max_nm_low.jsonl`, `q19_nominal.jsonl`, `docs/measurements/2026-10-26-benchmarks/bench_2026-10-26_harness_robots.jsonl`) |
 | **Cost** | Low — the probe is extraction-only; the product change is one classification branch, merge propagation and wording |
 
-### Q21 — Do the missing digital-twin components improve twin-vs-oracle agreement at a stated cost? **(pre-registered 2026-10-27, unmeasured: Stage B runs it)**
+### Q25 — Do the missing digital-twin components improve twin-vs-oracle agreement at a stated cost? **(pre-registered 2026-10-27, unmeasured: Stage B runs it)**
 
 | | |
 |---|---|
@@ -189,9 +189,9 @@ survive the wider suite, which is why the campaign exists.
       acceleration limit into the default digital twin            DONE
   Q11 step 2: the optimizer's wheel-acceleration bound            DONE (2026-10-25)
   Q11 step 3: quantisation (a smooth penalty for the step)        (large)
-  Q21 digital-twin components vs the sim trajectory oracle         REGISTERED (2026-10-27: UMBmark pair,
+  Q25 digital-twin components vs the sim trajectory oracle         REGISTERED (2026-10-27: UMBmark pair,
       rolling resistance, belief feedback, slip (contingent); oracle sanity gates + Q9 rehearsal)
-  Q9  hardware-calibrated twin                                    (needs hardware; Q21 rehearses it)
+  Q9  hardware-calibrated twin                                    (needs hardware; Q25 rehearses it)
 ```
 
 The RQ-A items came first because they were the *cause* of the gate failures that everything else is
