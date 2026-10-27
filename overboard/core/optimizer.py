@@ -39,6 +39,23 @@ def _waypoint_heading(waypoint):
     return waypoint[2] if len(waypoint) > 2 else None
 
 
+def classify_solver_error(message: str) -> str:
+    """The failure class of a solver error string: max_iter, infeasible, numeric or unknown.
+
+    IPOPT's return status rides in the message (``return_status is '...'``), so
+    this is substring classification, not proof; ``unknown`` stays honest. Labels
+    never change eligibility - a failed solve is a failed solve (Q20).
+    """
+    text = str(message)
+    if "Maximum_Iterations_Exceeded" in text:
+        return "max_iter"
+    if "Infeasible_Problem_Detected" in text or "Restoration_Failed" in text:
+        return "infeasible"
+    if "Invalid_Number_Detected" in text or "Invalid_Number" in text:
+        return "numeric"
+    return "unknown"
+
+
 class TrajectoryOptimizer:
     def __init__(self, config: RobotConfig) -> None:
         self.config = config
@@ -269,6 +286,14 @@ class TrajectoryOptimizer:
                 "converged": all(s.get("converged", False) for _, s, _ in sub_results),
                 "sub_mission_count": len(splits) - 1,
             }
+            for _, s, _ in sub_results:
+                if not s.get("converged", False) and s.get("error"):
+                    # The first failed piece names the failure; labels never
+                    # change eligibility (Q20).
+                    stats["error"] = s["error"]
+                    stats["error_kind"] = s.get(
+                        "error_kind", classify_solver_error(s["error"]))
+                    break
             if any(s.get("fast_polish", False) for _, s, _ in sub_results):
                 stats["fast_polish"] = True
                 stats["stage_count"] = sum(s.get("stage_count", 1) for _, s, _ in sub_results)
@@ -959,7 +984,8 @@ class TrajectoryOptimizer:
                 "segment_dt": dt_val.tolist(),
                 "segment_samples": [int(s) for s in segment_samples],
                 "converged": False,
-                "error": str(e)
+                "error": str(e),
+                "error_kind": classify_solver_error(str(e)),
             }
             if "Maximum_Iterations_Exceeded" in str(e):
                 stats["iter_count"] = int(s_opts.get("max_iter", 0) or 0)

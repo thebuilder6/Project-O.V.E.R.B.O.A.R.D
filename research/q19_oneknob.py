@@ -63,6 +63,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from research import robots as robot_lib  # noqa: E402  (needs ROOT on sys.path)
+from overboard.core.optimizer import classify_solver_error  # noqa: E402
 
 # The registered knobs and levels: the range's (low, high) multipliers, in the
 # registration's order. The values are research/robots.py's own; the registered
@@ -239,8 +240,14 @@ def run_arm(arm: str, knob: Optional[str], factor: float,
         handle.write(json.dumps(meta) + "\n")
         for record in records:
             handle.write(json.dumps(record) + "\n")
+    kinds = {}
+    for record in records:
+        if record.get("error"):
+            kind = classify_solver_error(record["error"])
+            kinds[kind] = kinds.get(kind, 0) + 1
+    kinds_text = ", ".join(f"{k}={v}" for k, v in sorted(kinds.items())) or "none"
     print(f"[{arm}] {sum(1 for r in records if r.get('ok'))}/{len(records)} pass, "
-          f"{sum(1 for r in records if r.get('error'))} solver error(s), "
+          f"solver failures by kind: {kinds_text}, "
           f"{wall:.1f}s -> {out_file}", flush=True)
     return out_file
 
@@ -279,6 +286,12 @@ def summarize_arm(records: List[Dict[str, Any]], meta: Dict[str, Any],
         "candidate_pass": sum(1 for r in records if r.get("ok")),
         "pair_pass": pair_pass,
         "solver_errors": sum(1 for r in records if r.get("error")),
+        "solver_errors_by_kind": {
+            kind: sum(1 for r in records
+                      if r.get("error") and classify_solver_error(r["error"]) == kind)
+            for kind in sorted({classify_solver_error(r["error"])
+                                for r in records if r.get("error")})
+        },
         "not_converged": sum(1 for r in records if not r.get("converged")),
         "validator_crashes": sum(1 for r in records
                                  if any("Immrax error" in str(x)

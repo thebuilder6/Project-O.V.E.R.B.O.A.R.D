@@ -99,7 +99,8 @@ measured per-mission ones the tool derives from the baseline slice (Q17 rule).
 workers; `research/analyze.py errors|robots` read-backs)
 
 128 validations (32 missions × 2 candidates × 2 jittered robots): **25 pass
-(19.5 %)**, 7 hard solver errors (all on m002, a CasADi `Opti::solve` failure),
+(19.5 %)**, 7 hard solver errors (all iteration-budget deaths: m002 x2, m004,
+m006, m013, m026, m029 - corrected 2026-10-27 against the bundled JSONL; Q20),
 0 candidates empty. 727 s wall.
 
 Pass rate by robot constant (selected rows; bins are small — see the record for

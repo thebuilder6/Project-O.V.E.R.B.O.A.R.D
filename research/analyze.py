@@ -19,9 +19,14 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import sys
 from collections import defaultdict
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from overboard.core.optimizer import classify_solver_error  # noqa: E402
 
 Row = Dict[str, Any]
 
@@ -803,10 +808,16 @@ def report_errors(rows: Sequence[Row]) -> None:
     if not counter:
         print(f"no solver error in {len(rows)} candidates")
     else:
-        print("| count | mission | message |")
-        print("|---:|---|---|")
+        by_kind: Dict[str, int] = defaultdict(int)
+        for key, count in counter.items():
+            by_kind[classify_solver_error(first_seen[key].get("error"))] += count
+        print("by kind: " + ", ".join(
+            f"{k}={v}" for k, v in sorted(by_kind.items())))
+        print("| count | kind | mission | message |")
+        print("|---:|---|---|---|")
         for key, count in sorted(counter.items(), key=lambda kv: -kv[1]):
-            print(f"| {count} | {first_seen[key].get('mission')} | {key} |")
+            kind = classify_solver_error(first_seen[key].get("error"))
+            print(f"| {count} | {kind} | {first_seen[key].get('mission')} | {key} |")
     empty = sum(1 for row in rows if "no samples" in (row.get("reasons") or []))
     print(f"\ncandidates that produced no samples at all: {empty}/{len(rows)}")
 
