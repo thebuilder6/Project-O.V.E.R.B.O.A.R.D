@@ -1541,6 +1541,39 @@ function pollPush() {
     }, 400);
 }
 
+/* The Run tab's plain answer to "can I run this?": the checklist the
+   journey ends on. The push below it is optional; this line is not. */
+function renderReadiness() {
+    const box = el('run-readiness');
+    const outcome = state.runOutcome;
+    const score = Number.isFinite(Number(state.jobScore))
+        ? `Score ${Number(state.jobScore).toFixed(1)} / 100 - decision units, `
+            + 'not a probability of hardware success.'
+        : '';
+    if (!outcome) {
+        box.textContent = 'No plan yet: draw a path, then press Solve.';
+        return;
+    }
+    if (state.dirty) {
+        box.textContent = 'The mission changed since this solve - solve again '
+            + 'to get a plan that matches it.';
+        return;
+    }
+    if (outcome === 'passed') {
+        box.textContent = `Plan validated. ${score} Ready to run: download it `
+            + 'below, or push it to the hub.';
+    } else if (outcome === 'accepted') {
+        box.textContent = `Accepted despite a known problem - not a passed plan, `
+            + `but you chose to run it. ${score}`;
+    } else if (outcome === 'unvalidated') {
+        box.textContent = 'Not validated: turn validation on in the Solve tab '
+            + 'and solve again before running it.';
+    } else {
+        box.textContent = 'Not ready to run: the plan failed validation and is '
+            + 'not approved for the hub. The files below are for inspection.';
+    }
+}
+
 function updatePushButton() {
     /* Only a checked trajectory goes to the robot. A solve that was never
        validated has no verdict, so it is not an approved one, and the
@@ -1573,6 +1606,7 @@ function updatePushButton() {
             || status.textContent.startsWith('This accepted plan')) {
         status.textContent = 'The validated trajectory is ready to run on the robot.';
     }
+    renderReadiness();
 }
 
 /* --------------------------------------------- the robot's own files */
@@ -3219,11 +3253,18 @@ function renderRobotFacts() {
     const facts = el('robot-facts');
     facts.innerHTML = '';
     const robot = (state.config && (state.config.robot || state.config)) || {};
+    /* Plain facts first: what the robot is, in the words a first-timer
+       thinks in. The numbers behind them stay in the Advanced editor. */
+    const speed = (Number(robot.v_max_rad_s) || 0) * (Number(robot.wheel_radius) || 0);
     const rows = [
-        ['Mass', robot.mass !== undefined ? `${robot.mass} kg` : '-'],
-        ['Wheel radius', robot.wheel_radius !== undefined ? `${(robot.wheel_radius * 1000).toFixed(1)} mm` : '-'],
-        ['Track width', robot.track_width !== undefined ? `${(robot.track_width * 1000).toFixed(1)} mm` : '-'],
-        ['Friction', robot.cof !== undefined ? String(robot.cof) : '-'],
+        ['How heavy', robot.mass !== undefined ? `${robot.mass} kg` : '-'],
+        ['How big', robot.wheel_radius !== undefined && robot.track_width !== undefined
+            ? `wheels ${(robot.wheel_radius * 2000).toFixed(1)} mm across, `
+                + `tracks ${(robot.track_width * 1000).toFixed(1)} mm apart` : '-'],
+        ['How fast (unloaded)', speed > 0 ? `${speed.toFixed(2)} m/s` : '-'],
+        ['Motor strength', robot.t_max_nm !== undefined
+            ? `${robot.t_max_nm} N m` : '-'],
+        ['Grip (friction)', robot.cof !== undefined ? String(robot.cof) : '-'],
     ];
     rows.forEach(([key, value]) => {
         const dt = document.createElement('dt');
@@ -5388,9 +5429,25 @@ async function loadExamples() {
     });
 }
 
+/* The one onboarding hint: three steps and a link, dismissed once and
+   remembered in localStorage so it never nags again. */
+function setupFirstTimeStrip() {
+    const FIRST_TIME_KEY = 'overboard.studio.firstTime.v1';
+    const strip = el('first-time-strip');
+    if (localStorage.getItem(FIRST_TIME_KEY)) {
+        strip.hidden = true;
+        return;
+    }
+    el('btn-dismiss-first-time').addEventListener('click', () => {
+        localStorage.setItem(FIRST_TIME_KEY, '1');
+        strip.hidden = true;
+    });
+}
+
 async function init() {
     try {
         setupTabs();
+        setupFirstTimeStrip();
         const health = await api('/api/health');
         state.health = health;
         state.presets = health.presets || {};

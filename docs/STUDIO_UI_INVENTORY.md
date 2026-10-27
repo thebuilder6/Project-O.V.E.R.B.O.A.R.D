@@ -24,7 +24,7 @@ removed).
 
 **Three columns, two of them tabbed.** The left column is what you set, the canvas is the work, the right column is what you read. Each side column is a strip of tabs over one panel, so a column holds one topic at a time.
 
-The page carries **171 element ids**: **83 controls with an id** (38 buttons, 37 inputs, 8 selects), of which 8 are the tab buttons themselves. Fifteen regions are filled in at run time:
+The page carries **179 element ids**: **84 controls with an id** (39 buttons, 37 inputs, 8 selects), of which 8 are the tab buttons themselves. Fifteen regions are filled in at run time:
 
 | Generated region | Element id | Where |
 |---|---|---|
@@ -87,7 +87,8 @@ Accepted is never called passed: an accepted plan is **"accepted despite a known
 - One topic per tab. A tab is a *subject*, not a *section*.
 - The result is never hidden: the header carries the numbers, and a solve or a failure brings the Result tab forward by itself.
 - The action lives with its subject. The file actions are in the Mission tab, the hub actions in the Run tab, and Solve alone in the header.
-- Rare things are one click away, not on the page: the nine `<details>` elements (the mission's files, the history, the measured model, the calibration wizard, the robot editor, the uncertainty ranges, the solve options, the solver log) hold what is used once in a while.
+- Plain first, expert second: every tab shows the everyday controls, and one **Advanced** `<details>` per block holds the rest (the mission's files and history, the measured model and calibration and robot editor, the solver knobs and the gate's internals, the waypoint's precision and events, the validation detail and solver log, what came back from the robot). A reveal is a `<details>` or a `hidden` element - never visible until it is opened.
+- Rare things are one click away, not on the page.
 - Every tab is wired by the same controller, so a new tab is a button and a panel and nothing else.
 
 ### The tabs and their panels
@@ -117,37 +118,45 @@ Accepted is never called passed: an accepted plan is **"accepted despite a known
 
 ### Mission tab
 
+Plain: the name, the gallery, the mission actions and the readouts - and the one onboarding strip. Files and history are behind **Advanced** (`mission-advanced`).
+
 | Control | What it does |
 |---|---|
+| **First time here?** (`first-time-strip`) | The onboarding strip: the journey in three steps (draw a path - press Solve - run the plan) and a link to `/help.html`. **Got it** dismisses it and the dismissal is remembered in the browser's localStorage, so the strip is for a new visitor only. |
 | **Name** (text) | The mission's name; the file is `missions/<slug>.json`. |
-| **Load** (select) | The saved and example missions. Picking one replaces the mission. |
+| **Load a mission** (select) | The saved and example missions. Picking one replaces the mission. |
 | **New** | Empties the mission to one waypoint at the origin. |
 | **Undo** / **Redo** | 100 steps. Covers the mission *and* the robot config. |
 | **Save** | Writes `missions/<name>.json` and commits it to the missions' git repository. |
-| **Files** (details) | The file actions, which are used once in a while. |
+| *waypoint count* | Readout: "10 waypoints". |
+| *path summary* | Readout: "Path 1.36 m \| at least 2.85 s at 0.48 m/s top speed". |
+| *mission state* | Readout: "Not saved to missions/ yet" / "Saved as missions/x.json" / "Changed since ...". |
+| **Advanced - files and history** (details, `mission-advanced`) | The two rare jobs below. |
+| **Files** (details, `mission-files`) | The file actions, which are used once in a while. |
 | **Download the mission** | Saves the mission JSON to the machine. |
 | **Open a mission file...** | Loads a mission JSON from disk. |
 | **Download the project** | Saves one file with the mission, the robot, the options, the model and the field. |
 | **Open a project file...** | Loads such a project and brings all of it back. |
-| *waypoint count* | Readout: "10 waypoints". |
-| *path summary* | Readout: "Path 1.36 m \| at least 2.85 s at 0.48 m/s top speed". |
-| *mission state* | Readout: "Not saved to missions/ yet" / "Saved as missions/x.json" / "Changed since ...". |
-| **History** (details) | The git commits for this mission, each with a **Restore** button. |
+| **History** (details, `history-block`) | The git commits for this mission, each with a **Restore** button. |
 | *hint* | "Ctrl+Z undo · Ctrl+S save · Space play · the arrow keys move the selected waypoint". |
 
 ### Robot tab
+
+Plain: the config, and what the robot is in the words a first-timer thinks in - how heavy, how big, how fast, motor strength, grip - with the warnings. One sentence points at `docs/CALIBRATION_PROCEDURE.md`. Everything measured or numeric is behind **Advanced** (`robot-advanced`).
 
 | Control | What it does |
 |---|---|
 | **Configuration** (select) | The example and saved robot configs. |
 | **Open config...** | Loads a robot config from disk. |
-| *facts* | Readout: mass, wheel radius, track width, friction. |
+| *facts* | Readout, plain words: how heavy (mass), how big (wheel diameter and track), how fast unloaded (motor speed x wheel radius), motor strength (stall torque), grip (friction). |
 | *warning* | "This is the example robot config. Its uncertainty ranges are test values...". |
 | *geometry warning* | "the plan assumes a 50.0 mm wheel, the robot has 56.0 mm". |
 | **Use the robot's geometry** | Copies the robot's wheel and track into the plan. |
 | *event warning* | "The robot has no action for lower_arm. The hub will report the event and carry on." |
+| *calibration pointer* | One sentence: calibrating your own robot makes every plan match it, and the step-by-step is in `docs/CALIBRATION_PROCEDURE.md`. |
+| **Advanced - measured model, calibration and the numbers** (details, `robot-advanced`) | The three blocks below. |
 
-#### Measured model (details)
+#### Measured model (details, `model-block`)
 
 | Control | What it does |
 |---|---|
@@ -159,7 +168,7 @@ Accepted is never called passed: an accepted plan is **"accepted despite a known
 | *hint* | "The gain band is 1.0% ... the reachable set widens with it and the envelope limit is 20 mm." |
 | **Plan against the measured model** (check) | Adds `--sysid-fit` to every solve, and turns validation on. |
 
-#### Calibrate this robot (details)
+#### Calibrate this robot (details, `calibration-block`)
 
 | Control | What it does |
 |---|---|
@@ -168,7 +177,7 @@ Accepted is never called passed: an accepted plan is **"accepted despite a known
 | **2. Measure** + table + **Save the sheet** | The measurements the session needs, as a form (test, repeat, stop, x, y, turn). |
 | **3. Fit** + status | The session and the sheet become the measured model. The status carries the fitter's warnings. The button is **Fit the model**. |
 
-#### Edit robot (details)
+#### Edit robot (details, `robot-editor`)
 
 | Control | What it does |
 |---|---|
@@ -190,7 +199,7 @@ The overlays on the canvas - mat, earlier runs, actuator saturation, late-apex c
 
 ### Solve tab
 
-The panel reads in the order a command is built: the **preset**, then three groups. **Solved** is what the solver is given, **Checked** is the gate and everything only it uses, **Written** is the export. A flat list of the flags put the gate below the export settings it gates, and left four controls that looked live with validation off. The line at the top of the tab repeats the header's status - "Solving...", the elapsed time and candidate of a running job, the finished run's duration and envelope, or the failure - so the panel the operator just filled in is never silent about how the run it started went.
+Plain first: the **preset**, then the gate and what it scores (validate, scoring profile, target and maximum run time), then **Written** (the export). The solver knobs and the gate's internals - the groups the old "Solved" and "Checked" blocks held - are one **Advanced** reveal (`solve-advanced`), because they are the numbers an expert tunes and a first-timer should never need. The line at the top of the tab repeats the header's status - "Solving...", the elapsed time and candidate of a running job, the finished run's duration and envelope, or the failure - so the panel the operator just filled in is never silent about how the run it started went.
 
 **Preset**
 
@@ -198,32 +207,14 @@ The panel reads in the order a command is built: the **preset**, then three grou
 |---|---|
 | **fast / safe** (radio cards) | A preset fills in the options the user did not set. fast: one candidate with the default settings, no validation, plant propagation - seconds. safe: the comparison - three candidates, validation, the closed-loop tick map; the three frontier paths are drawn together and the operator may export the one they pick. safe costs minutes: the reachability check, not the solve, is the time. |
 
-**Solved**
+**Check the plan before it is used**
 
 | Control | What it does |
 |---|---|
-| **Samples per segment** | 2 to 200. Disabled while the automatic mesh is on, because the number is then not used. |
-| **Auto invariant mesh (50 ms)** | Ticked by default: `-n` is left off the command, so the 3-Pillar engine sizes the invariant 50 ms mesh from the path. Unticking it sends the number in **Samples per segment**. |
-| **Accuracy weight** | The smoothness weight (`--accuracy-weight`). |
-| **Soft force weight** | A weight above zero prices wheel-force utilisation (`--force-weight`); zero is the default and sends nothing. |
-| **Fast polish** | The budgeted solve. |
-
-**Checked**
-
-Every field below the switch is the gate's: the server passes none of them without `--validate`, so all of them are disabled while it is off, and each says in its tooltip what it does when it is on.
-
-| Control | What it does |
-|---|---|
-| **Validate before export** | The gate; needs JAX. |
-| **Scoring profile** | The decision score's weights: precision, balanced (default), or speed. |
-| **Target time** / **Maximum time** | The duration the score prices and the duration it will not exceed. A validated run needs both. |
-| **Jerk target** / **Jerk maximum** | The wheel-jerk pair the score prices (defaults 10/20 m/s^3). |
-| **Accept failed plan at score** | 1-100. A failed plan is accepted at or above this score and can then be hub approved; it is never called passed. |
-| **Candidates (1-3)** | How many of the planner's three frontier candidates are solved (sprint, sweeper, exploratory); clamped to 1-3 by the server. The number is kept while the gate is off, so turning validation back on keeps the count. |
-| **Reachability propagation** | The model the envelope gate uses (`--propagation`): the open-loop plant (fast) or the closed-loop tick map (feedback-contracted, 2-10x slower). |
-| **Accuracy limit (cm)** | How far the reachable set may spread around the plan at any sample (`--envelope-limit`, default 2 cm, 0.1-5 cm). A waypoint's error threshold still wins. The limit is absolute, so a long path can fail for being long (KI-054); the next field is how to price that distance. A run with `--field-clearance` replaces this with the field's per-sample clearance (clamped 0.5-5 cm) and adds a physical clearance gate, and the note beside the field (`field-limit-note`) shows that limit with its ~100 mm placement uncertainty; the clearance util / penetration appear under the Physical score category. |
-| **Allowance per metre (cm/m)** | How much further the reachable set may spread for every metre travelled, on top of the accuracy limit (`--envelope-limit-per-metre`, default 0, 0-5 cm/m). Zero keeps the gate absolute; a slope stops a long mission failing for being long. A waypoint's error threshold still wins. |
-| **Keep the best path when validation fails** | Ticked by default: adds `--best-effort` next to `--validate`, so a run whose only failure is an accuracy excess (envelope or tracking) exports the best candidate and draws it on the field, marked failed. A force, slip, integration or convergence failure still blocks, and the push stays gated on the verdict. |
+| **Validate before export** | The gate; needs JAX. With it on, nothing is written unless the plan passes the checks against your robot; with it off, the plan is untested. |
+| **What the score values** | The decision score's weights: **Precision** (accuracy first), **Balanced** (even, default) or **Speed** (time first). |
+| **Target run time (s)** | The run time the score values. A validated run needs it and the next field. |
+| **Longest run time (s)** | The run time the plan will not exceed. |
 
 **Written**
 
@@ -231,6 +222,31 @@ Every field below the switch is the gate's: the server passes none of them witho
 |---|---|
 | **Export format** | None / controller JSON / Python / Python compact. |
 | **Controller timestep** | The export's sample interval. |
+
+**Advanced - solver knobs and the gate's internals** (details, `solve-advanced`)
+
+What the solver is given:
+
+| Control | What it does |
+|---|---|
+| **Points per piece of path** | 2 to 200. Disabled while the automatic mesh is on, because the number is then not used. |
+| **Auto invariant mesh (50 ms)** | Ticked by default: `-n` is left off the command, so the 3-Pillar engine sizes the invariant 50 ms mesh from the path. Unticking it sends the number in **Points per piece of path**. |
+| **Smoothness weight** | The smoothness weight (`--accuracy-weight`). |
+| **Soft force weight** | A weight above zero prices wheel-force utilisation (`--force-weight`); zero is the default and sends nothing. |
+| **Fast polish** | The budgeted solve. |
+
+What the gate checks. Every field below is the gate's: the server passes none of them without `--validate`, so all of them are disabled while it is off, and each says in its tooltip what it does when it is on.
+
+| Control | What it does |
+|---|---|
+| **How the drift budget is measured** | The model the envelope gate uses (`--propagation`): the open-loop **plant** (fast) or the closed-loop **tick** map (with the robot's own corrections - slower, and closer to the truth). |
+| **Candidates (1-3)** | How many of the planner's three frontier candidates are solved (sprint, sweeper, exploratory); clamped to 1-3 by the server. The number is kept while the gate is off, so turning validation back on keeps the count. |
+| **Drift budget (cm)** | How far the robot may stray from the planned path at any sample (`--envelope-limit`, default 2 cm, 0.1-5 cm) - the envelope, in plain words. A waypoint's own budget still wins. The limit is absolute, so a long path can fail for being long (KI-054); the next field is how to price that distance. A run with `--field-clearance` replaces this with the field's per-sample clearance (clamped 0.5-5 cm) and adds a physical clearance gate, and the note beside the field (`field-limit-note`) shows that limit with its ~100 mm placement uncertainty; the clearance util / penetration appear under the Physical score category. |
+| **Extra drift budget per metre (cm/m)** | How much further the robot may stray for every metre travelled, on top of the drift budget (`--envelope-limit-per-metre`, default 0, 0-5 cm/m). Zero keeps the gate absolute; a slope stops a long mission failing for being long. A waypoint's own budget still wins. |
+| **Jerk target (m/s^3)** | The smoothness the score prices (default 10). Jerk is how abruptly the wheels change force. |
+| **Jerk maximum (m/s^3)** | The roughness it will not exceed (default 20). |
+| **Deliberately accept a risky plan at score (1-100)** | A failed plan at or above this score is kept - accepted despite a known problem - and can then be hub approved. It is never called passed. |
+| **Keep the best path when the check fails** | Ticked by default: adds `--best-effort` next to `--validate`, so a run whose only failure is an accuracy excess (envelope or tracking) exports the best candidate and draws it on the field, marked failed - for inspection only, never approved for the robot. A force, slip, integration or convergence failure still blocks, and the push stays gated on the verdict. |
 
 ## Field canvas
 
@@ -269,14 +285,17 @@ The files to download live in the **Run** tab, where the journey ends: getting t
 
 ### Waypoint tab
 
+Plain: where the waypoint is and whether the robot stops there - x, y, heading, stop - plus the order and the list. The precision and event controls are behind **Advanced** (`wp-advanced`).
+
 | Control | What it does |
 |---|---|
 | **X** / **Y** (m) | The position. |
 | **Heading** (deg) + **Heading free** | The heading, or unconstrained. |
 | **Stop here** (check) | The robot rests here. |
-| **Event name** (text) | The event the robot fires here. |
-| **Precision** (check) | A 0.5 cm envelope limit. |
-| **Envelope limit** (cm) | A custom limit. |
+| **Advanced - precision and events** (details, `wp-advanced`) | The three below. |
+| **Event name** (text) | The event the robot fires here - what the robot does at this waypoint. |
+| **Precision** (check) | A 0.5 cm drift budget at this waypoint. |
+| **Drift budget here** (cm) | A custom drift budget (error threshold) at this waypoint. |
 | **Move up** / **Move down** / **Delete** | The order and the removal. |
 | *waypoint list* | The ordered waypoints, each clickable, tagged with its stop and event. |
 
@@ -288,16 +307,20 @@ The plot tabs - Speed, Force, Acceleration, Turn rate, Heading, Envelope, Conver
 
 ### Run tab
 
+The journey ends here: the readiness checklist and the files, then the hub push as an **optional** step. A hub is never required - the files can run another way - and a hub that is off or held by Pybricks Code gets guidance, not an error. What came back from the robot is behind **Advanced** (`run-advanced`).
+
 | Control | What it does |
 |---|---|
+| *readiness* (`run-readiness`) | The plain checklist the journey ends on: "Plan validated. Score X ... Ready to run", "Accepted despite a known problem - not a passed plan", "Not validated ...", or "Not ready to run ...", with the score's caption (decision units, not a probability of hardware success). |
 | *downloads* | Under **Ready to run**: the trajectory, the controller, the Python module, the stats, the session, and the report - the files of the finished solve, so the plan can leave the studio. |
 | **Connection** (select) | Bluetooth or USB. |
 | **Hub name** (text) | The hub's name or address (BLE only). The field carries the choices a scan found (`#hub-choices`), so picking one fills it in. |
 | **Scan for hubs** | Scans Bluetooth the way the IDE's device picker does - every visible device is asked whether it speaks the Pybricks protocol, which takes about a minute - and fills the Hub name field. A single hub is filled in and said out loud; several are offered as choices; none gets the guidance for a hub that is off or held by Pybricks Code. Refused while a job runs, because a push holds the hub's connection. |
 | **Push to hub** | Pushes the approved trajectory and runs it. Enabled only after a solve that **passed the validator**: a trajectory that was never checked is not an approved one, and the status says so. |
 | *status* | "Pushing. The robot is driving." / "This trajectory has not been validated against your robot. Turn validation on in the Solve tab and solve again before pushing it." / the hub's error. |
-| *facts* | Where the robot ended, the error, the heading error, inside the envelope, the events, the session. |
-| **Plan against the robot** (details) | The comparison table: the measured and planned pose per stop, the error, the heading error, inside the envelope. |
+| **Advanced - what came back from the robot** (details, `run-advanced`) | The two below. |
+| *facts* (`push-result`) | Where the robot ended, the error, the heading error, inside the envelope, the events, the session - the raw push facts. |
+| **Plan against the robot** (details-block, `compare-block`) | The comparison table: the measured and planned pose per stop, the error, the heading error, inside the envelope. |
 
 ---
 
