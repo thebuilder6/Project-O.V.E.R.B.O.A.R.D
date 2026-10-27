@@ -87,18 +87,19 @@ parameters with a different estimator and can cross-check the closed-form
 
 ### 2. LEGO SPIKE motor modelling and the DriveBase closed loop
 
-The official spec sheet for the LEGO Technic **Large Angular Motor** (MPN
-45602; values reproduced by LEGO Education resellers, e.g.
-<https://cdsoft.com.au/products/lego-technic-large-angular-motor>, all at
-7.2 V): **no-load 175 RPM ±15 %** (0 Ncm, 135 mA ±15 %), **max efficiency
-8 Ncm at 135 RPM ±15 %** (430 mA ±15 %), **stall 25 Ncm** (0 RPM, 1400 mA
-±15 %). Rotation sensor: 360 counts/rev, ≤ ±3° accuracy including gearbox
-slack, 100 Hz update. These are citable checks for our measured motor pair
-(stall torque from the wall test, no-load speed from `top_speed`, RQ-B).
+The official spec sheet for the LEGO Technic **Medium Angular Motor** (MPN
+45603 — the motor this robot uses; <https://le-www-live-s.legocdn.com/sc/media/files/support/spike-prime/techspecs_technicmediumangularmotor_19684ffc443792280359ef217512a1d1.pdf>,
+all at 7.2 V): **no-load 185 RPM ±15 %** (0 Ncm, 110 mA ±15 %), **max
+efficiency 3.5 Ncm at 135 RPM ±15 %** (280 mA ±15 %), **stall 18 Ncm**
+(0 RPM, 800 mA ±15 %). Rotation sensor: 360 counts/rev, ≤ ±3° accuracy
+including gearbox slack, 100 Hz update. These are citable checks for our
+measured motor pair (stall torque from the wall test, no-load speed from
+`top_speed`, RQ-B); the measured wall/top-speed tests remain authoritative
+for the actual robot.
 
 One arithmetic observation on the published numbers: the straight torque-speed
-line through (175 RPM, 0 Ncm) and (0 RPM, 25 Ncm) predicts 5.7 Ncm at
-135 RPM, but the spec's max-efficiency point is 8 Ncm there. The three
+line through (185 RPM, 0 Ncm) and (0 RPM, 18 Ncm) predicts 4.9 Ncm at
+135 RPM, but the spec's max-efficiency point is 3.5 Ncm there. The three
 official points are **not collinear**, so the two-end line RQ-B uses is an
 approximation and the efficiency point is a third, independent check a
 measured torque-speed pair can be held against (speed tolerance is ±15 % and
@@ -230,7 +231,7 @@ twin-vs-oracle comparison that a first-order actuator cannot explain.
 | Seegmiller & Kelly 2013, IPEM <https://journals.sagepub.com/doi/10.1177/0278364913488635> | integrated prediction-error identification over whole trajectories | abstract only (PDF not fetchable) |
 | Censi & Marchionni 2007, *Simultaneous maximum-likelihood calibration of odometry and sensor parameters* | closed-form joint calibration; identifiability of the parameter set | abstract only |
 | Sousa & Petry 2020, *Evolution of Odometry Calibration Methods for Ground Mobile Robots* | modern re-evaluation of the calibration methods | metadata only (PDF fetch failed) |
-| LEGO Technic Large Angular Motor spec sheet (MPN 45602) <https://cdsoft.com.au/products/lego-technic-large-angular-motor> | no-load 175 RPM ±15 %, max efficiency 8 Ncm @ 135 RPM ±15 %, stall 25 Ncm, 100 Hz sensor | read in full (reseller page reproducing LEGO's sheet) |
+| LEGO Technic Medium Angular Motor spec sheet (MPN 45603) <https://le-www-live-s.legocdn.com/sc/media/files/support/spike-prime/techspecs_technicmediumangularmotor_19684ffc443792280359ef217512a1d1.pdf> | no-load 185 RPM ±15 % (110 mA), max efficiency 3.5 Ncm @ 135 RPM ±15 % (280 mA), stall 18 Ncm (800 mA), 100 Hz sensor | official sheet; PDF not fetchable by the fetcher, text cross-checked across independent reproductions of the same sheet |
 | Pybricks docs <https://pybricks.com/ev3-micropython/robotics.html>, <https://pybricks.com/ev3-micropython/motors.html> | DriveBase = distance + heading PID, Control pid/feed-forward/limits, state() contents, stop() coasts | read in full |
 | Naveed 2023, arXiv:2306.14074 <https://arxiv.org/abs/2306.14074> | slip/skid modelling and slip-avoidance overview | abstract only |
 | De Giorgi et al. 2023, MDPI Robotics 13(1):7; *Study of wheel slip and traction forces in differential drive robots…* | slip–odometry interaction under low traction | metadata only |
