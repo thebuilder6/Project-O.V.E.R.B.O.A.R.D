@@ -12,6 +12,19 @@ something that was not written by the same person.
 2. `compare_step.py` reads that trace and asks OVERBOARD's own model the
    same question: how fast does the robot run, and how far does it travel
    after the command is dropped?
+3. `sim_traj.ts` drives a **closed-loop trajectory** (Q25's trajectory
+   oracle): the deployed chain from `pybricks_code/ramsete.py` — reference
+   interpolation with the tick-midpoint lead, Ramsete on the robot's own
+   encoder odometry, the KinematicLimiter — per-wheel speed commands held
+   over the 20 ms heartbeat. `--straight-turn` is the built-in sanity
+   profile; a spec JSON (`wheelDiameterMm`, `trackWidthMm`, `robot`, and
+   `samples: [{t,x,y,heading,vl,vr,omega}]` in the planner frame) drives a
+   mission's profile. `run_traj.sh` runs it the way `run_sim.sh` runs the
+   step harness. Mode `openloop` commands the reference (vl, vr) directly.
+4. `compare_traj.py` matches a twin prediction (`t,x,y,heading[,
+   tube_radius_m]` at plan sample instants) against a trajectory trace at
+   the sample instants and reports `e_pos`, `e_head` and tube containment,
+   per trajectory and aggregated over a set.
 
 The two models are not the same model. The reference simulator is a rigid
 body with a motor model, a tyre model, a caster and contact friction; ours
@@ -70,3 +83,10 @@ The short version:
   is an upper bound,
 - the reference simulator's **brake mode reverses the wheels** instead of
   braking them, so its braking distance is not a usable reference.
+
+The trajectory oracle's feasibility spike, sanity gates and repeatability
+floor (Q25, B1) are recorded in
+[`../results/q25_b1_oracle.md`](../results/q25_b1_oracle.md) (gitignored
+results directory): closed-loop trajectories work, the step regression
+reproduces RQ-B's numbers bit-identically, and the oracle's run-to-run
+noise floor is exactly zero (deterministic fixed-step physics).
