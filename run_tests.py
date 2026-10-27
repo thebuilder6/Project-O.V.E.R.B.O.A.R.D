@@ -138,6 +138,11 @@ from tests.test_sysid_collect import (
     TestWallHoming,
     TestCollectCommand,
 )
+from tests.test_sysid_mass_inertia import (
+    TestMassInertiaFormulas,
+    TestMassInertiaRoundtrip,
+    TestWeighInSheet,
+)
 from tests.test_firmware_events import (
     TestFinalWaypointEvent,
     TestFinalWaypointEventCompact,
@@ -323,6 +328,9 @@ def test_classes():
         TestDriftAndStallTorque,
         TestWallHoming,
         TestCollectCommand,
+        TestMassInertiaFormulas,
+        TestMassInertiaRoundtrip,
+        TestWeighInSheet,
         TestCliBasics,
         TestUnifiedDefaults,
         TestFirstRun,

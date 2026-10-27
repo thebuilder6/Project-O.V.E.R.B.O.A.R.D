@@ -1513,18 +1513,25 @@ def _fit_no_load_speed(runs, wheel_radius_m):
 #   force at the steady tail and K_v the back-EMF slope of the measured
 #   torque-speed line (t_max_nm x no-load speed). B = G_ss / y_ss is the
 #   drag the logged torque fights; K_v is what the back-EMF already ate
-#   before the torque was logged.
+#   before the torque was logged. Both come from the step's measured
+#   steady tail, not from the first-order fit's amplitude: the drivebase's
+#   speed loop overshoots slightly, and the fit's asymptote carries that
+#   as a 2-3% bias on every step.
 # * tau_mech is the MECHANICAL time constant, from the step's transient
-#   against the logged drive. J is identified by least squares on the
-#   integrated form J dq = (G - B q) dt (so the measured speed is never
-#   differentiated), then tau_mech = J / (B + K_v).
+#   against the logged drive: J is identified from the exact discrete step
+#   response of J dq = (G - B q) dt (so the measured speed is never
+#   differentiated and no quadrature error creeps in), then
+#   tau_mech = J / (B + K_v).
 #
 # Conventions, verified against the code that consumes the result:
 # * The logged torque is motor-shaft torque in mNm (the convention of
-#   _fit_stall_torque), so the generalized force carries the same gearing
-#   factor as motor_force_at_velocity: G = (Tl + Tr) * gearing / r_wheel
-#   straight, G = (Tr - Tl) * gearing * track_width / (2 * r_wheel) for a
-#   turn. gearing is motor revs per wheel rev (RobotConfig.gearing).
+#   _fit_stall_torque), positive along the wheel's forward direction. The
+#   generalized force carries the same gearing factor as
+#   motor_force_at_velocity: G = (Tl + Tr) * gearing / r_wheel straight;
+#   for a turn q is clockwise-positive (the drivebase's turn command and
+#   _turn_measured's convention), so G = (Tl - Tr) * gearing * track_width
+#   / (2 * r_wheel). gearing is motor revs per wheel rev
+#   (RobotConfig.gearing).
 # * The identified J is the effective body-side parameter
 #   diff_drive_wheel_forces consumes, and it ALREADY includes the reflected
 #   motor/gear rotor inertia (the shaft torque that is logged spins the
@@ -1555,14 +1562,25 @@ def _back_emf_slope(axis, t_stall_nm, no_load_wheel_rad_s,
             / (2.0 * wheel_radius_m * wheel_radius_m * no_load_wheel_rad_s))
 
 
-def _step_j_estimate(t, q, drive, y_ss, back_emf_slope):
+def _step_j_estimate(t, q, drive, back_emf_slope):
     """One inertia estimate from one step: (J, B, tau_mech) or None.
 
     t is seconds, q the measured axis speed and drive the logged
-    generalized force over the step. The model is J dq = (G - B q) dt with
-    B = G_ss / y_ss from the steady tail; J comes from a least-squares fit
-    of the integrated form, so no derivative of the measured speed is taken
-    and the intercept absorbs the error of the first sample.
+    generalized force over the step. The model is J dq = (G - B q) dt.
+
+    B comes from the step's steady tail (B = G_ss / y_ss, the pinned
+    "B + K_v = K0 / y_ss" without the back-EMF), where y_ss is the
+    measured steady tail and NOT the first-order fit's asymptote: the
+    drivebase's speed loop overshoots slightly, which the fit's amplitude
+    carries as a 2-3% high bias on every step.
+
+    J comes from the exact discrete step response of the plant against the
+    zero-speed drive (G0 held at its sample): q[i+1] = a q[i] +
+    (1 - a) G0[i] / (B + K_v) with a = exp(-(B + K_v) dt / J). Regressing
+    the settled offset out of both sides gives a with no quadrature error
+    -- integrating the residual numerically biases J at the 10 ms sampling
+    of a hub log -- and no derivative of the measured speed is taken
+    anywhere.
     """
     t = np.asarray(t, dtype=float)
     q = np.asarray(q, dtype=float)
@@ -1570,28 +1588,36 @@ def _step_j_estimate(t, q, drive, y_ss, back_emf_slope):
     if len(q) < 10 or not (np.all(np.isfinite(t)) and np.all(np.isfinite(q))
                            and np.all(np.isfinite(drive))):
         return None
-    if not np.isfinite(y_ss) or abs(y_ss) < 1e-6:
-        return None
     tail = max(3, int(0.3 * len(q)))
+    y_ss = float(np.median(q[-tail:]))
     g_ss = float(np.median(drive[-tail:]))
+    if abs(y_ss) < 1e-6:
+        return None
     damping = g_ss / y_ss
     if not np.isfinite(damping) or damping <= 0.0:
         return None
-    residual = drive - damping * q
     steps = np.diff(t)
-    work = np.concatenate((
-        [0.0],
-        np.cumsum(0.5 * (residual[1:] + residual[:-1]) * steps),
-    ))
-    if float(np.ptp(work)) < 1e-12:
+    if float(np.ptp(steps)) > 1e-6:
+        # The exact recursion needs a uniform step; a hub log is one.
         return None
-    u = q - float(np.median(q[:3]))
-    slope, _offset = np.polyfit(work, u, 1)
-    if not np.isfinite(slope) or slope <= 0.0:
-        return None
-    j = 1.0 / slope
+    # Fold the back-EMF into the damping: against the zero-speed drive
+    # G0 = G + K_v q the plant is J dq = (G0 - (B + K_v) q) dt, and G0 is
+    # what the closed loop held -- piecewise constant between the drive
+    # base's control ticks -- so the recursion below is exact on hub data.
+    # (B + K_v) = K0 / y_ss is the pinned steady state, and
+    # tau_mech = J / (B + K_v) the time constant of the open-loop step.
     total_damping = damping + back_emf_slope
-    if not np.isfinite(j) or j <= 0.0 or total_damping <= 0.0:
+    g0_over_b = (drive + back_emf_slope * q) / total_damping
+    x = q[:-1] - g0_over_b[:-1]
+    y = q[1:] - g0_over_b[:-1]
+    denom = float(np.dot(x, x))
+    if denom <= 0.0:
+        return None
+    a = float(np.dot(x, y) / denom)
+    if not 0.0 < a < 1.0:
+        return None
+    j = -total_damping * float(steps[0]) / float(np.log(a))
+    if not np.isfinite(j) or j <= 0.0:
         return None
     return float(j), float(damping), float(j / total_damping)
 
@@ -1625,13 +1651,14 @@ def _axis_j_estimates(fits, axis, measured_key, wheel_radius_m,
         if axis == "straight":
             drive = gearing * (left + right) / wheel_radius_m
         else:
-            drive = (gearing * track_width_m * (right - left)
+            # q is clockwise-positive; a clockwise spin drives the left
+            # wheel forward and the right wheel backward.
+            drive = (gearing * track_width_m * (left - right)
                      / (2.0 * wheel_radius_m))
         estimate = _step_j_estimate(
             np.asarray(times[start:end], dtype=float) / 1000.0,
             np.asarray(measured[start:end], dtype=float),
             drive,
-            fit["gain"] * fit["command"],
             back_emf,
         )
         if estimate is None:
