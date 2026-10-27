@@ -61,6 +61,11 @@ from tests.test_sysid_fit import (
     TestFitWithoutPoses,
     TestIntervalLowerBound,
 )
+from tests.test_sysid_profile import (
+    TestProfileWizard,
+    TestExampleProfile,
+    TestProfileReadErrors,
+)
 from tests.test_digital_twin import (
     TestDigitalTwinConfig,
     TestDigitalTwinValidator,
@@ -137,6 +142,8 @@ from tests.test_sysid_collect import (
     TestDriftAndStallTorque,
     TestWallHoming,
     TestCollectCommand,
+    TestGuidedSheetForm,
+    TestCollectGuidance,
 )
 from tests.test_sysid_mass_inertia import (
     TestMassInertiaFormulas,
@@ -293,6 +300,9 @@ def test_classes():
         TestDocNumbers,
         TestNoLoadSpeed,
         TestDrivebaseProfile,
+        TestProfileWizard,
+        TestExampleProfile,
+        TestProfileReadErrors,
         TestHubSessionPoses,
         TestDigitalTwinConfig,
         TestDigitalTwinValidator,
@@ -342,6 +352,8 @@ def test_classes():
         TestDriftAndStallTorque,
         TestWallHoming,
         TestCollectCommand,
+        TestGuidedSheetForm,
+        TestCollectGuidance,
         TestMassInertiaFormulas,
         TestMassInertiaRoundtrip,
         TestWeighInSheet,

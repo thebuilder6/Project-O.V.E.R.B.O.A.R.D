@@ -1924,8 +1924,12 @@ def read_drivebase_profile(path):
     that is the Pybricks/LEGO convention. Parameters are optional so a profile
     can supply only wheel radius when track width is not known yet.
     """
-    with open(path, "r", encoding="utf-8") as handle:
-        data = json.load(handle)
+    try:
+        with open(path, "r", encoding="utf-8") as handle:
+            data = json.load(handle)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"{path} is not valid JSON: {exc.msg} "
+                         f"(line {exc.lineno})") from exc
     if not isinstance(data, dict):
         raise ValueError(f"{path} must contain a JSON object")
 
@@ -1968,7 +1972,8 @@ def read_drivebase_profile(path):
     if wheel_radius is None and track_width is None:
         raise ValueError(
             f"{path} has no drivebase geometry; expected wheel_radius_m or "
-            "track_width_m")
+            "track_width_m. Make a profile with: "
+            "python -m overboard.sysid.profile")
 
     # The wall the homing run drives into. It is a setup number, not a robot
     # number: how far the start mark is from the wall, measured to where the

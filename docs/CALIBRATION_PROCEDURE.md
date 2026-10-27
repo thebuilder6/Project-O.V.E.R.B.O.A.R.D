@@ -16,6 +16,9 @@ the rest is your setup between tests and the tape work.
 ## The whole thing, in two commands and one form
 
 ```bash
+# 0. make the drivebase profile (once per robot; asks a few questions)
+python -m overboard.sysid.profile --out my_drivebase.json
+
 # 1. collect: the robot runs the tests, you press the hub button between them
 python -m overboard.sysid.collect --conn ble --profile my_drivebase.json \
   --session session.csv --sheet calibration_sheet.csv
@@ -41,14 +44,28 @@ The steps below are the same three things, in detail.
 - Masking tape, to mark the start pose and the stop marks.
 - A laptop with Bluetooth (or a USB cable to the hub).
 
-Prepare the drivebase profile first, because the fit needs the wheel radius:
+Prepare the drivebase profile first, because the fit needs the wheel radius.
+The wizard asks a few questions, with a tip on how to measure each number,
+and checks the answers are plausible before it writes the file:
+
+```bash
+python -m overboard.sysid.profile --out my_drivebase.json
+```
+
+It asks for the robot's name, the wheel radius in millimetres (roll the
+robot one wheel turn and divide the distance by 6.28), the track width in
+millimetres (centre-to-centre of the wheel contact patches; the fit refines
+it from the turn tests), the gearing — how many times the motor turns for
+one turn of the wheel, 1 for direct drive — and optionally the wall distance
+below. To write the file by hand instead, copy the example and set the same
+fields:
 
 ```bash
 cp examples/drivebase_profile.example.json my_drivebase.json
 ```
 
-Then open `my_drivebase.json` and set `wheel_radius_m` and `track_width_m` for
-your robot. The rest of this document assumes that file exists.
+Then open `my_drivebase.json` and set `wheel_radius_m`, `track_width_m` and
+`gearing` for your robot. The rest of this document assumes that file exists.
 
 ### The wall, if you have one
 
@@ -133,8 +150,10 @@ the measurement sheet for the session: the CSV the fitter reads
 (`calibration_sheet.html`) that you fill in instead of editing a spreadsheet.
 
 **What happens on the hub:** the display lights yellow and the hub waits for
-the centre button. The terminal prints the name of the test and its setup
-line. Do the setup, press the **centre button**, and the test runs. The
+the centre button. The terminal prints a step banner for each test: the
+name, what the robot will do, and — for the tests you measure — what to
+write down and in which columns, in the words of the measurement convention
+above. Do the setup, press the **centre button**, and the test runs. The
 **Bluetooth button is the emergency stop** — press it if the robot does
 something unexpected.
 
@@ -212,8 +231,10 @@ Write the numbers on a sheet of paper as you go, one line per measurement,
 with the repeat number on the line. A phone photo of the sheet is a fine
 backup.
 
-When the hub is finished it turns green and the command prints the list of
-measurements it still needs.
+When the hub is finished it turns green and the command prints what the
+session captured, what it did not capture and why (the weigh-in is a bench
+measurement, the poses are the robot's own odometry), and the exact
+commands to run next with your filenames.
 
 ---
 
@@ -271,12 +292,16 @@ form next to the sheet:
 python -m overboard.sysid.fit session.csv --write-form calibration_sheet.html
 ```
 
-Open `calibration_sheet.html` in a browser. It has one row per measurement,
-with the convention written at the top, and it counts what is still missing.
-Type the numbers, click **Download CSV**, and save the file in the folder you
-run the commands from. It is the same CSV as the sheet, so it drops straight
-into the next step. The form also takes a sheet you saved earlier, so a
-session you measured in two goes is not measured twice.
+Open `calibration_sheet.html` in a browser. It is a guided form: one card
+per test saying what the robot does, what to measure and the exact three
+numbers wanted, the measurement-frame diagram at the top, unit labels on
+every input, and a count of what is still missing. It warns (never blocks)
+about a number that cannot be the robot's — a turn outside 0-360, a mass
+that is not a robot's mass. Type the numbers, click **Download CSV**, and
+save the file in the folder you run the commands from. It is the same CSV as
+the sheet, so it drops straight into the next step. The form also takes a
+sheet you saved earlier, so a session you measured in two goes is not
+measured twice.
 
 ---
 

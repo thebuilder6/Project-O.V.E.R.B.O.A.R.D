@@ -1813,11 +1813,42 @@ function calibrationName() {
     return (el('cal-name').value || 'robot').trim() || 'robot';
 }
 
+function renderWeigh(rows) {
+    const table = el('weigh-table');
+    table.innerHTML = '';
+    const header = document.createElement('tr');
+    ['Repeat', 'Mass (kg)'].forEach((label) => {
+        const th = document.createElement('th');
+        th.textContent = label;
+        header.appendChild(th);
+    });
+    table.appendChild(header);
+    rows.forEach((row) => {
+        const tr = document.createElement('tr');
+        const repeat = document.createElement('td');
+        repeat.textContent = row.repeat;
+        tr.appendChild(repeat);
+        const td = document.createElement('td');
+        const input = document.createElement('input');
+        input.type = 'number';
+        input.step = 'any';
+        input.value = row.mass_kg === undefined || row.mass_kg === null ? '' : row.mass_kg;
+        input.dataset.repeat = row.repeat;
+        input.addEventListener('input', () => { row.mass_kg = input.value; });
+        td.appendChild(input);
+        tr.appendChild(td);
+        table.appendChild(tr);
+    });
+    return rows.filter((row) => row.mass_kg !== '' && row.mass_kg !== null
+        && row.mass_kg !== undefined).length;
+}
+
 function renderSheet(payload) {
     const table = el('sheet-table');
     table.innerHTML = '';
     const rows = payload.rows || [];
-    if (!rows.length) {
+    const weigh = payload.weigh_in || [];
+    if (!rows.length && !weigh.length) {
         el('sheet-status').textContent = 'No measurements yet. Collect a session first.';
         return;
     }
@@ -1857,6 +1888,8 @@ function renderSheet(payload) {
         table.appendChild(tr);
     });
 
+    const weighed = renderWeigh(weigh);
+
     const missing = payload.missing || 0;
     // A measurement is only usable when all three numbers are in: the fitter
     // drops a row that is not complete, and a test that does not turn has a
@@ -1878,6 +1911,9 @@ function renderSheet(payload) {
     if (partial) {
         status += ` ${partial} row(s) need all three numbers: `
             + `a test that does not turn has a turn of 0.`;
+    }
+    if (weigh.length) {
+        status += ` Weigh-in: ${weighed} of ${weigh.length} entered.`;
     }
     el('sheet-status').textContent = status;
 }
@@ -1907,10 +1943,16 @@ async function saveSheet() {
             turn_right_deg: inputs[2].value,
         };
     });
+    const weigh = Array.from(el('weigh-table').querySelectorAll('input')).map((input) => ({
+        test: 'weigh_in',
+        repeat: input.dataset.repeat,
+        stop: 0,
+        mass_kg: input.value,
+    }));
     try {
         const payload = await api('/api/calibration/sheet', {
             method: 'POST',
-            body: JSON.stringify({ name: calibrationName(), rows }),
+            body: JSON.stringify({ name: calibrationName(), rows, weigh_in: weigh }),
         });
         renderSheet(payload);
         toast('Saved the measurement sheet.');
@@ -1920,15 +1962,32 @@ async function saveSheet() {
 }
 
 async function fitModel() {
+    const payload = { name: calibrationName() };
+    // The gearing can come from the robot config, so the field is optional.
+    const gearingText = el('cal-gearing').value.trim();
+    const gearing = gearingText === '' ? Number(robotFields().gearing)
+        : Number(gearingText);
+    if (isFinite(gearing) && gearing > 0) payload.gearing = gearing;
+    const wallText = el('cal-wall').value.trim();
+    const wall = Number(wallText);
+    if (wallText !== '' && isFinite(wall) && wall > 0) payload.wall_distance_m = wall;
     try {
         const summary = await api('/api/calibration/fit', {
             method: 'POST',
-            body: JSON.stringify({ name: calibrationName() }),
+            body: JSON.stringify(payload),
         });
         const problems = summary.problems || [];
+        const landed = [];
+        if (summary.mass && summary.mass.calibrated) {
+            landed.push(`mass ${summary.mass.mass_kg.toFixed(4)} kg`);
+        }
+        if (summary.inertia && summary.inertia.calibrated) {
+            landed.push(`inertia ${summary.inertia.inertia_kg_m2.toFixed(6)} kg m2`);
+        }
+        const landedText = landed.length ? ` Landed: ${landed.join(', ')}.` : '';
         el('fit-status').textContent = problems.length
-            ? `Fitted with warnings: ${problems.join('; ')}`
-            : `Fitted. The model is saved as ${summary.path}.`;
+            ? `Fitted with warnings: ${problems.join('; ')}` + landedText
+            : `Fitted. The model is saved as ${summary.path}.` + landedText;
         useModel(summary);
         await loadModels();
         toast('The measured model is ready.');

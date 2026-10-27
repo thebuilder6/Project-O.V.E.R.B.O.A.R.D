@@ -1022,6 +1022,105 @@ TEST_END,3
         self.assertAlmostEqual(summary["wheel_radius_m"], 0.028)
         self.assertTrue(paths["fit"].is_file())
 
+    def test_the_weigh_in_rows_roundtrip_through_the_sheet(self):
+        self._write_session()
+        status, payload = _request(
+            f"{self.base}/api/calibration/sheet?name=my%20robot")
+        self.assertEqual(status, 200)
+        weigh = payload["weigh_in"]
+        self.assertEqual(len(weigh), 3)
+
+        weigh[0]["mass_kg"] = "0.851"
+        weigh[2]["mass_kg"] = "0.849"
+        status, payload = _request(f"{self.base}/api/calibration/sheet",
+                                   method="POST",
+                                   payload={"name": "my robot", "rows": [],
+                                            "weigh_in": weigh})
+        self.assertEqual(status, 200)
+        saved = {row["repeat"]: row["mass_kg"] for row in payload["weigh_in"]}
+        self.assertEqual(saved[0], "0.851")
+        self.assertEqual(saved[2], "0.849")
+
+    def test_the_fit_forwards_the_weigh_in_the_gearing_and_the_wall(self):
+        """The studio fit passes everything the fitter takes.
+
+        The gap this pins closed: a studio fit used to land nothing but the
+        actuator, because the weigh-in (the mass), the gearing and the wall
+        distance never reached fit_session.
+        """
+        self._write_session()
+        paths = gui_server.calibration_paths("my robot")
+        gui_server.save_sheet(paths["sheet"], [
+            {"test": "odometry_straight", "repeat": "0", "stop": "0",
+             "x_mm": "998", "y_mm": "0", "turn_right_deg": "0"},
+        ], )
+        _request(f"{self.base}/api/calibration/sheet", method="POST",
+                 payload={"name": "my robot", "rows": [], "weigh_in": [
+                     {"test": "weigh_in", "repeat": 0, "stop": 0,
+                      "mass_kg": "0.851"},
+                     {"test": "weigh_in", "repeat": 1, "stop": 0,
+                      "mass_kg": "0.849"},
+                     {"test": "weigh_in", "repeat": 2, "stop": 0,
+                      "mass_kg": "0.850"},
+                 ]})
+
+        recorded = {}
+
+        def fake_fit_session(runs, **kwargs):
+            recorded.update(kwargs)
+            return {}
+
+        with patch("overboard.sysid.fit.fit_session", fake_fit_session):
+            status, summary = _request(
+                f"{self.base}/api/calibration/fit", method="POST",
+                payload={"name": "my robot", "gearing": 1.67,
+                         "wall_distance_m": 1.05})
+        self.assertEqual(status, 200)
+        self.assertAlmostEqual(recorded["wheel_radius_m"], 0.028)
+        self.assertAlmostEqual(recorded["track_width_m"], 0.0965)
+        self.assertAlmostEqual(recorded["gearing"], 1.67)
+        self.assertAlmostEqual(recorded["wall_distance_m"], 1.05)
+        self.assertEqual([(repeat, round(kg, 3))
+                          for repeat, kg in recorded["weigh_in"]],
+                         [(0, 0.851), (1, 0.849), (2, 0.85)])
+
+    def test_a_studio_fit_lands_the_mass(self):
+        """The weigh-in reaches the fit, so the mass comes out calibrated."""
+        self._write_session()
+        paths = gui_server.calibration_paths("my robot")
+        gui_server.save_sheet(paths["sheet"], [
+            {"test": "odometry_straight", "repeat": "0", "stop": "0",
+             "x_mm": "998", "y_mm": "0", "turn_right_deg": ""},
+        ])
+        _request(f"{self.base}/api/calibration/sheet", method="POST",
+                 payload={"name": "my robot", "rows": [], "weigh_in": [
+                     {"test": "weigh_in", "repeat": 0, "stop": 0,
+                      "mass_kg": "0.851"},
+                     {"test": "weigh_in", "repeat": 1, "stop": 0,
+                      "mass_kg": "0.849"},
+                     {"test": "weigh_in", "repeat": 2, "stop": 0,
+                      "mass_kg": "0.850"},
+                 ]})
+        status, summary = _request(f"{self.base}/api/calibration/fit",
+                                   method="POST",
+                                   payload={"name": "my robot",
+                                            "gearing": 1.67})
+        self.assertEqual(status, 200)
+        self.assertTrue(summary["mass"]["calibrated"])
+        self.assertAlmostEqual(summary["mass"]["mass_kg"], 0.85, places=6)
+        with open(paths["fit"], "r", encoding="utf-8") as handle:
+            fit = json.load(handle)
+        self.assertAlmostEqual(fit["drivebase"]["gearing"], 1.67)
+        self.assertAlmostEqual(fit["drivebase"]["track_width_m"], 0.0965)
+
+    def test_a_gearing_that_is_not_a_number_is_refused(self):
+        self._write_session()
+        with self.assertRaises(urllib.error.HTTPError) as ctx:
+            _request(f"{self.base}/api/calibration/fit", method="POST",
+                     payload={"name": "my robot", "gearing": "fast"})
+        self.assertEqual(ctx.exception.code, 400)
+        self.assertNotIn("\\", ctx.exception.read().decode("utf-8"))
+
 
 class TestStudioHelpers(unittest.TestCase):
     def test_the_child_command_runs_the_module_in_a_checkout(self):

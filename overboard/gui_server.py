@@ -797,6 +797,8 @@ def summarize_fit(fit):
     sensors = fit.get("sensors", {}) or {}
     odometry = fit.get("odometry", {}) or {}
     slip = fit.get("slip", {}) or {}
+    mass = fit.get("mass", {}) or {}
+    inertia = fit.get("inertia", {}) or {}
 
     def value(source, key):
         item = source.get(key)
@@ -834,6 +836,16 @@ def summarize_fit(fit):
             "brake_ratio_median": value(slip, "brake_ratio_median"),
             "brake_ratio_min": value(slip, "brake_ratio_min"),
             "brake_ratio_max": value(slip, "brake_ratio_max"),
+        },
+        "mass": {
+            "calibrated": bool(mass.get("calibrated")),
+            "mass_kg": value(mass, "mass_kg"),
+            "mass_kg_ci95": _interval(mass, "mass_kg"),
+        },
+        "inertia": {
+            "calibrated": bool(inertia.get("calibrated")),
+            "inertia_kg_m2": value(inertia, "inertia_kg_m2"),
+            "inertia_kg_m2_ci95": _interval(inertia, "inertia_kg_m2"),
         },
     }
 
@@ -1112,6 +1124,37 @@ def read_sheet_rows(sheet_path, rows):
     return out
 
 
+def read_weigh_in_rows(sheet_path):
+    """The weigh-in rows of the sheet, with whatever is filled in.
+
+    The mass is the bench measurement the fitter needs to land the mass and
+    the inertia, so the studio shows the three rows next to the pose rows.
+    """
+    from overboard.sysid.sheet_form import WEIGH_IN_TEST, weigh_in_rows
+    filled = {}
+    if sheet_path and sheet_path.is_file():
+        try:
+            with open(sheet_path, "r", encoding="utf-8", newline="") as handle:
+                for raw in csv.DictReader(handle):
+                    if (raw.get("test") or "").strip() != WEIGH_IN_TEST:
+                        continue
+                    key = ((raw.get("repeat") or "0").strip(),
+                           (raw.get("stop") or "0").strip())
+                    filled[key] = (raw.get("mass_kg") or "").strip()
+        except OSError:
+            filled = {}
+    out = []
+    for row in weigh_in_rows():
+        key = (str(row["repeat"]), str(row["stop"]))
+        out.append({
+            "test": row["test"],
+            "repeat": row["repeat"],
+            "stop": row["stop"],
+            "mass_kg": filled.get(key, ""),
+        })
+    return out
+
+
 def _sheet_key(row):
     """The identity of one measurement row: the test, the repeat, the stop."""
     return (str(row.get("test", "") or "").strip(),
@@ -1153,7 +1196,9 @@ def save_sheet(sheet_path, rows):
         values = {field: str(row.get(field, "") or "").strip()
                   for field in SHEET_FIELDS}
         # Only the measurement cells count: the row's name is never blank.
-        measured = any(values.get(field, "") for field in MEASUREMENT_FIELDS)
+        # A weigh-in row is measured by its mass, a pose row by its numbers.
+        measured = any(values.get(field, "")
+                       for field in MEASUREMENT_FIELDS + ("mass_kg",))
         if not measured and key in merged:
             # The browser knows nothing about this row: keep what is on disk.
             continue
@@ -1191,9 +1236,33 @@ def count_missing(rows):
     return missing
 
 
-def fit_from_sheet(name):
-    """Fit the model from the collected session and the filled sheet."""
-    from overboard.sysid.fit import fit_session, sheet_to_poses, write_poses_csv
+def _positive_or_none(value, label):
+    """An optional positive number from the browser, or None when blank.
+
+    Raises ValueError with plain words - no internal paths - so the studio
+    can show the message to the operator as it is.
+    """
+    if value is None or str(value).strip() == "":
+        return None
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        raise ValueError(f"{label} must be a number.")
+    if not (number > 0.0) or number == float("inf"):
+        raise ValueError(f"{label} must be a positive number.")
+    return number
+
+
+def fit_from_sheet(name, gearing=None, wall_distance_m=None):
+    """Fit the model from the collected session and the filled sheet.
+
+    Forwards everything the fitter takes: the wheel radius and the track
+    width from the session's own metadata, the weigh-in rows from the
+    sheet (the mass), the gearing and the wall distance the operator gave.
+    A studio fit lands mass and inertia the way the command line's does.
+    """
+    from overboard.sysid.fit import (fit_session, read_weigh_in,
+                                     sheet_to_poses, write_poses_csv)
 
     paths = calibration_paths(name)
     if not paths["session"].is_file():
@@ -1209,14 +1278,20 @@ def fit_from_sheet(name):
     rows = read_sheet(str(paths["sheet"]))
     pose_rows, problems = sheet_to_poses(rows, runs)
 
-    # The robot's own wheel diameter, measured by the robot: the hub prints it
-    # in the session's metadata, so no drivebase profile file is needed.
+    # The robot's own wheel diameter and track width, measured by the robot:
+    # the hub prints them in the session's metadata, so no drivebase profile
+    # file is needed. The fit refines the track width from the turn steps.
     wheel_radius = None
+    track_width = None
     for run in runs:
         diameter = run["meta"].get("wheel_diameter_mm")
-        if diameter:
+        if diameter and wheel_radius is None:
             wheel_radius = float(diameter) / 2000.0
-            break
+        axle = run["meta"].get("axle_track_mm")
+        if axle and track_width is None:
+            track_width = float(axle) / 1000.0
+
+    weigh_in = read_weigh_in(str(paths["sheet"]))
 
     poses = {}
     for row in pose_rows:
@@ -1236,10 +1311,16 @@ def fit_from_sheet(name):
         raise ValueError("The session does not say the wheel diameter, so the "
                          "fit has no wheel radius to work with.")
 
-    result = fit_session(runs, poses=poses, wheel_radius_m=wheel_radius)
+    gearing_value = float(gearing) if gearing else 1.0
+    result = fit_session(runs, poses=poses, wheel_radius_m=wheel_radius,
+                         track_width_m=track_width, gearing=gearing_value,
+                         wall_distance_m=wall_distance_m, weigh_in=weigh_in)
     result["drivebase"] = {
         "name": name,
         "wheel_radius_m": wheel_radius,
+        "track_width_m": track_width,
+        "gearing": gearing_value,
+        "wall_distance_m": wall_distance_m,
         "source": str(paths["session"]),
     }
     write_poses_csv(pose_rows, str(paths["poses"]))
@@ -2130,14 +2211,19 @@ class StudioHandler(BaseHTTPRequestHandler):
         missing = count_missing(filled)
         return self._json(200, {"rows": filled, "missing": missing,
                                 "total": len(filled), "name": name,
-                                "session": True})
+                                "session": True,
+                                "weigh_in": read_weigh_in_rows(paths["sheet"])})
 
     def _fit(self):
         """Fit the model from the session and the filled sheet."""
         payload = self._read_body()
         name = payload.get("name") or "robot"
         try:
-            summary = fit_from_sheet(name)
+            gearing = _positive_or_none(payload.get("gearing"), "gearing")
+            wall = _positive_or_none(payload.get("wall_distance_m"),
+                                     "the wall distance")
+            summary = fit_from_sheet(name, gearing=gearing,
+                                     wall_distance_m=wall)
         except ValueError as exc:
             return self._error(400, str(exc))
         return self._json(200, summary)
@@ -2147,11 +2233,14 @@ class StudioHandler(BaseHTTPRequestHandler):
         payload = self._read_body()
         name = payload.get("name") or "robot"
         rows = payload.get("rows")
+        weigh = payload.get("weigh_in")
         if not isinstance(rows, list):
             return self._error(400, "The sheet has no rows.")
+        if weigh is not None and not isinstance(weigh, list):
+            return self._error(400, "The weigh-in rows are not a list.")
         paths = calibration_paths(name)
         try:
-            save_sheet(paths["sheet"], rows)
+            save_sheet(paths["sheet"], rows + (weigh or []))
         except OSError as exc:
             return self._error(500, f"Could not save the sheet: {exc}")
         # The same rows the GET returns: every measurement the session
@@ -2164,7 +2253,8 @@ class StudioHandler(BaseHTTPRequestHandler):
             shown = read_sheet_rows(paths["sheet"], rows)
         missing = count_missing(shown)
         return self._json(200, {"rows": shown, "missing": missing,
-                                "total": len(shown), "name": name})
+                                "total": len(shown), "name": name,
+                                "weigh_in": read_weigh_in_rows(paths["sheet"])})
 
     def _cancel_job(self, job_id):
         job = self.server.get_job(job_id)
