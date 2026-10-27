@@ -48,7 +48,11 @@ from overboard.models.robot_model import CG_HEIGHT_M, body_frame_error, angle_di
 JAX_COMPILE_LOCK = threading.RLock()
 
 MAX_TICKS_PER_INTERVAL = 30
-GRAD_TICKS_PER_INTERVAL = 1
+# The gradient rollout must resolve the closed loop like the gate does: at 1
+# tick x 1 substep the propagation diverges (phantom tracking errors of
+# 133-351 mm where the gate reports 0.3-3.0 mm), and 5 x 5 is the smallest
+# configuration that matches the gate exactly (research/rollout_gradient.py).
+GRAD_TICKS_PER_INTERVAL = 5
 # The reference Python loop in immrax_validator.py uses 4 substeps. The
 # plant is kinematic and the command is held for the whole tick, so any
 # subdivision integrates the same tick: on example_straight the compiled
@@ -393,7 +397,7 @@ class CompiledReachabilityEngine:
             if num_ticks == MAX_TICKS_PER_INTERVAL and num_substeps == PLANT_SUBSTEPS:
                 self._compiled_scan_fn = jitted_fn
                 self._uncompiled_scan_fn = _rollout_scan
-            elif num_ticks == GRAD_TICKS_PER_INTERVAL and num_substeps == 1:
+            elif num_ticks == GRAD_TICKS_PER_INTERVAL and num_substeps == PLANT_SUBSTEPS:
                 self._uncompiled_grad_scan_fn = _rollout_scan
             return jitted_fn
 
@@ -406,7 +410,7 @@ class CompiledReachabilityEngine:
         if key in self._compiled_grad_cache:
             return self._compiled_grad_cache[key]
 
-        self._get_scan_fn(GRAD_TICKS_PER_INTERVAL, 1)
+        self._get_scan_fn(GRAD_TICKS_PER_INTERVAL, PLANT_SUBSTEPS)
         raw_grad_scan_fn = self._uncompiled_grad_scan_fn
         with JAX_COMPILE_LOCK:
             if key in self._compiled_grad_cache:

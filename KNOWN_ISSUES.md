@@ -4,7 +4,7 @@ Last reviewed: 2026-10-24
 
 Scope: whole repository, reviewed as a single-user, offline desktop tool for one FLL robot. This is not a multi-user or server-scale review.
 
-Status: KI-001 through KI-003, KI-005 through KI-019, KI-021 through KI-031, KI-033 through KI-044, KI-045, KI-046, KI-047 through KI-053, KI-055, KI-056, KI-057 are **fixed**. KI-032 is **mitigated** (test cache). KI-054 is **mitigated** (the absolute duration gate is priced by `--field-clearance` when field geometry is used; runs without it keep the absolute default limit). KI-004 is **deleted** (the Multi-Verse pipeline was removed; archived in git tag `archive/legacy-2026-10`). Open: KI-020 (hardware calibration & digital twin validation).
+Status: KI-001 through KI-003, KI-005 through KI-019, KI-021 through KI-031, KI-033 through KI-044, KI-045, KI-046, KI-047 through KI-053, KI-055, KI-056, KI-057, KI-058 are **fixed**. KI-032 is **mitigated** (test cache). KI-054 is **mitigated** (the absolute duration gate is priced by `--field-clearance` when field geometry is used; runs without it keep the absolute default limit). KI-004 is **deleted** (the Multi-Verse pipeline was removed; archived in git tag `archive/legacy-2026-10`). Open: KI-020 (hardware calibration & digital twin validation).
 
 How to use this list: refer to an item by its ID, for example "fix KI-003". The **Quick triage** table is the index - read that, then open the entry you are working on. The entries are now short records: what was wrong, what changed, and which files carry the fix. The long narrative each entry used to carry is in the git history - this file before the 2026-10-21 pruning - so `git log -p KNOWN_ISSUES.md` reads any entry in full.
 
@@ -73,6 +73,7 @@ How to use this list: refer to an item by its ID, for example "fix KI-003". The 
 | KI-055 | P1 | Validation / export | ~~A failing check writes nothing: the verdict is a boolean against thresholds the operator did not choose, so a mission they mean to run cannot be exported at all. It should be a score with named levers~~ (fixed; the verdict is a decision score, `--accept-score` accepts a failed plan explicitly, and the hub push needs the approval) |
 | KI-056 | P1 | Validation | ~~An empty trajectory crashed the gate and read as an Immrax error~~ (fixed; a failed solve is reported as a failed candidate) |
 | KI-057 | P1 | Runtime | ~~A busy machine made MUMPS abort the process and lose the run~~ (fixed; one thread per pool, and MUMPS is told its memory limit) |
+| KI-058 | P2 | Solver / validation | ~~The gradient polish differentiated a diverged rollout and acted on phantom tracking errors~~ (fixed; the gradient rollout now runs at the gate's resolution) |
 
 ## Open
 
@@ -671,6 +672,16 @@ If none of those is available, the run does not know that the plan is accurate e
 **Evidence:** the same message also reached the CPU audit, where it surfaced as "tracking error inf cm > 0.50 cm" and "forward-integration error inf cm" - a gate reporting on a trajectory that does not exist.
 
 **Files:** `overboard/verification/immrax_validator.py` (`validate_trajectory`, `_empty_report`), `overboard/main.py` (`_immrax_failure_reasons`), `tests/test_envelope_soundness.py` (`TestAnEmptyTrajectory`)
+
+### KI-058 - The gradient polish differentiated a diverged rollout
+
+**Fixed.** The gradient rollout now runs at the gate's resolution: `GRAD_TICKS_PER_INTERVAL = 5` with `PLANT_SUBSTEPS` in `overboard/verification/reachability_engine.py`, the smallest tick/substep configuration that matches the gate's numbers exactly.
+
+**Was:** `--polish` and the unified planner's near-gate self-heal took the reachability gradient through a 1-tick x 1-substep rollout that **diverges**: it claimed 133-351 mm of tracking error where the gate reports 0.3-3.0 mm, fired the gate-violation hinge on comfortable plans (25-54 active intervals with the true error below 1 mm), and produced gradients 100-1000x larger than the faithful ones. The per-sample weights the polish acted on were noise from a phantom error map. The accept rule (gate-resolution rollout, never slower, never worse) kept the harm to a mechanism that silently never did anything - Q16's "byte-identical, zero verdict flips" was measured through this lens and is pending re-measurement on the fixed gradient.
+
+**Evidence:** the resolution sweep locates the fidelity cliff between 2x2 and 5x5 (5x5 matches the gate exactly, 0-6.44 % loss disagreement on the probe plans); differentiated faithfully, the gradient descends the gate's loss on every active plan at a right-sized step (`research/rollout_gradient.py`, `research/results/rollout_gradient.json`).
+
+**Files:** `overboard/verification/reachability_engine.py`, `research/rollout_gradient.py`
 
 ### KI-057 - A busy machine made MUMPS abort the process and lose the run
 

@@ -1,6 +1,6 @@
 # The failed strategy ledger
 
-**Status:** 2026-10-19, as measured on that tree. Part III of the heuristics document.
+**Status:** 2026-10-27, as measured on that tree. Part III of the heuristics document.
 **Scope:** every planning strategy that was tried and did not work - what it was, what it cost, the
 measurement that decided it, and what would revive it.
 **Audience:** anyone about to try something that is in here.
@@ -25,6 +25,7 @@ measurement that decided it, and what would revive it.
   - [18.2 Per-segment timing at `accuracy_weight = 0`](#182-per-segment-timing-at-accuracy_weight--0)
   - [18.3 Tying the time base across a waypoint the robot drives through](#183-tying-the-time-base-across-a-waypoint-the-robot-drives-through)
   - [18.4 The removed accuracy-weight ladder](#184-the-removed-accuracy-weight-ladder)
+  - [18.5 Global re-timing (the time floor) as a speed lever](#185-global-re-timing-the-time-floor-as-a-speed-lever)
 - [19. Ledger: candidate set strategies](#19-ledger-candidate-set-strategies)
   - [19.1 The sweep grid](#191-the-sweep-grid)
   - [19.2 Multi-start as a quality claim](#192-multi-start-as-a-quality-claim)
@@ -50,6 +51,9 @@ measurement that decided it, and what would revive it.
   - [22.4 A failed solve was exported as a success (KI-001) and `--validate` could not block output (KI-002)](#224-a-failed-solve-was-exported-as-a-success-ki-001-and---validate-could-not-block-output-ki-002)
   - [22.5 The weight-transfer math was wrong and the tools disagreed (KI-010)](#225-the-weight-transfer-math-was-wrong-and-the-tools-disagreed-ki-010)
 - [23. Cross-cutting lessons](#23-cross-cutting-lessons)
+- [24. Ledger: objective terms and residual pricing (F2)](#24-ledger-objective-terms-and-residual-pricing-f2)
+  - [24.1 The static plan-feature surrogate for the tracking residual](#241-the-static-plan-feature-surrogate-for-the-tracking-residual)
+  - [24.2 The gradient polish's guidance gradient (Q16's lens)](#242-the-gradient-polishs-guidance-gradient-q16s-lens)
 
 ## 16. How to read the ledger
 
@@ -148,6 +152,18 @@ Each entry has the same fields:
 | **Outcome** | **Removed.** The old ladder "silently traded speed for a bound that could get worse (longer trajectories accumulate more uncertainty)". On the complex mission the slow 17.1 s candidate **diverged**, while the 6.07 s one stayed bounded |
 | **Status** | dead; no shipped code path uses it |
 | **What would revive it** | Only with a *reason* to expect the retry to help. If the failure mode were "the path is too jerky for the controller", a weight ladder would be the right tool. It is not that failure mode today |
+
+### 18.5 Global re-timing (the time floor) as a speed lever
+
+| Field | Value |
+|---|---|
+| **Strategy** | Re-time each plan's fixed geometry with a global forward-backward (TOPP-style) pass and treat the gap to that time floor as the speed the timing layer leaves on the table |
+| **Mechanism** | `research/retime_gap.py`: E = v^2 forward-backward pass under the NLP's own robust-arm bounds (wheel-speed box, motor torque-speed line, traction with lateral transfer, accel ramp), runs split at stops and direction flips |
+| **Why it was tried** | The objective prices time + jerk + discretisation, not global time optimality, so a local NLP solve might sit visibly above the floor of its own path |
+| **Outcome** | **Retired as a speed lever.** Gap median **2.33 %** of the floor (p25 1.50, p75 3.64; 96/103 within 5 %), and the gap buys a ~4x smoother profile (peak jerk 40 vs 676 m/s^3). The floor is not gate-feasible: the re-timed plans fail the motor gate on **103/103** (median 1.10 N over a 0.001 N threshold) where the NLP plans pass 103/103 at 0.000 N |
+| **Evidence** | `research/results/retime_gap.jsonl`, Q21 in [RESEARCH_AGENDA](RESEARCH_AGENDA.md) |
+| **Status** | dead as a speed lever; dormant as a convex timing layer for Q20 robustness (no iteration cliff) |
+| **What would revive it** | Q20 grinding becoming a shipping problem (solver deaths on the nominal arm), or jerk entering as a hard bound so a convex layer can enforce it - the re-time would then need the same force margin the NLP pricing buys |
 
 ## 19. Ledger: candidate set strategies
 
@@ -374,3 +390,33 @@ Four lessons from the ledger, and they are the reason the research agenda ([`RES
 **5. The measurement base is too narrow to support strong claims.** Everything in [Section 9](HEURISTICS_AND_VERIFICATION.md#9-measured-heuristic-comparison) rests on six example missions. The random benchmark that was supposed to provide a mission suite is fixed (KI-015) and the harness under [`research/`](../research/) answers Q8 on 32 missions; what is still missing is a **re-run of that suite on the current tree**, because the numbers in `docs/research/pq_b/` predate KI-025 to KI-028. "The baseline wins the complex mission" might be a fact about the planner, or it might be a fact about that one path. **(2026-10-22: the suite has now been re-run on the current tree, but on the shipping planner - Q13, `--candidates 3 --validate`: 5 of 32 missions pass under `plant` and 6 under `tick`, with exactly one passing candidate per mission. The stock sets that produced the 10-of-32 figure remain a different candidate family, so the older numbers are still a record of a planner that no longer ships, not a baseline to compare against.)**
 
 ---
+
+## 24. Ledger: objective terms and residual pricing (F2)
+
+The gate measures the closed-loop tracking residual (Q18), the goal order prices
+spread first (PROJECT_GOAL), and the objective prices time + jerk +
+discretisation. These are the strategies that tried to close that gap.
+
+### 24.1 The static plan-feature surrogate for the tracking residual
+
+| Field | Value |
+|---|---|
+| **Strategy** | Price the closed-loop tracking residual in the objective through a static map of recorded plan features |
+| **Mechanism** | Within-mission (fixed-effects) regression of the residual on duration, jerk, turn-rate, accel, wheel-speed, path-length and force-util features (`research/residual_features.py`); the fitted map would have been the objective term |
+| **Why it was tried** | The gate measures the residual, the residual is separable from the clock and has 2.8-4.6 mm of headroom where plans vary (Q22), and a static term is the cheapest way to put it in the loop |
+| **Outcome** | **Retired.** Best honest FE R^2 is **0.738** (5 features x 63 rows, density) and **0.654** (weights) against the pre-registered 0.75 bar, and the sign of the best feature (mean turn-rate) flips across missions (0.50 on weights). A term fitted on this map would be mis-signed on about half the missions |
+| **Evidence** | `research/results/residual_features.json`, Q23 in [RESEARCH_AGENDA](RESEARCH_AGENDA.md); the high R^2 on the q13/q14 corpora (0.67-0.99) fits 0.07-0.38 mm of within-mission noise (Q22's scale check), not signal |
+| **Status** | dead |
+| **What would revive it** | A per-mission fitted map could price a trade the operator already has through `accuracy_weight` (Q6); a mission-general static term cannot |
+
+### 24.2 The gradient polish's guidance gradient (Q16's lens)
+
+| Field | Value |
+|---|---|
+| **Strategy** | Let the differentiated reachability rollout say which samples to fix, then re-solve with those samples weighted (`--polish`; the unified planner's near-gate self-heal) |
+| **Mechanism** | `reachability_engine._get_grad_fn` differentiated a 1-tick x 1-substep rollout into per-sample weights (`unified_planner._sensitivity_weights`), and the re-solve re-priced the smoothness/discretisation costs with them |
+| **Why it was tried** | The rollout is differentiable, so its gradient should locate the samples that move the reachable set |
+| **Outcome** | **Broken lens, fixed (2026-10-27), verdict re-measured and confirmed.** At 1x1 the propagation diverges: it reports 133-351 mm tracking error where the gate reports 0.3-3.0 mm, fires the gate-violation hinge on comfortable plans, and produces gradients 100-1000x too large. The fidelity cliff sits between 2x2 and 5x5; `GRAD_TICKS_PER_INTERVAL` is now 5 with `PLANT_SUBSTEPS` and the gradient matches the gate's loss to 0-6.4 %. Q16 re-run on the fixed lens: 33/33 candidate polishes across the six examples and the five near-miss plans changed nothing (byte-identical on/off). Differentiated faithfully, the gradient descends the gate's loss on every active plan at a right-sized step (one probe plan clears its hinge entirely), but a fixed step overshoots on others - and the polish cannot land the trade regardless: the re-solve raises `accuracy_weight` x3 (smoothness bought with time, the Q6 trade) while the accept rule admits no time increase and demands strict (tracking, envelope) improvement |
+| **Evidence** | `research/results/rollout_gradient.json`, `research/rollout_gradient.py`, `research/results/q16_*_v2.jsonl`, Q24 and the Q16 record in [RESEARCH_AGENDA](RESEARCH_AGENDA.md) |
+| **Status** | dead as a polish (2026-10-27): guidance repaired, but the accept rule forbids the trade the re-solve makes; the gradient machinery is retained as the M1 vehicle |
+| **What would revive it** | Nothing in polish form - the accepted set (not slower, strictly better tube) is empty under the Q6 trade, and a polish that is allowed to cost time is just another candidate the decision score already prices. The machinery revives only as the M1 in-loop linear/proximal term, where time is spent to reach feasibility rather than to polish; gated on KI-020 (the residual it prices is the twin's) |
