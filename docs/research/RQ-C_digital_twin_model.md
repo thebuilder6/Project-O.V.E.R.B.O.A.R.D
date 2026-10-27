@@ -1,8 +1,8 @@
 # RQ-C — What would a full digital twin need, and in which order?
 
-**Status:** literature pass complete; the ranked component order below is pre-registered as Q21 in [`../RESEARCH_AGENDA.md`](../RESEARCH_AGENDA.md) and is **unmeasured**. No component code exists yet (Stage A of the twin plan).
+**Status:** literature pass complete; the ranked component order below is pre-registered as Q25 in [`../RESEARCH_AGENDA.md`](../RESEARCH_AGENDA.md) and is **unmeasured**. No component code exists yet (Stage A of the twin plan).
 **Date:** 2026-10-27
-**Companion:** [`RQ-B_drivetrain_model.md`](RQ-B_drivetrain_model.md) (the motor model), [`../RESEARCH_AGENDA.md`](../RESEARCH_AGENDA.md) (Q9, Q18, Q19, Q21), [`../CALIBRATION_PROCEDURE.md`](../CALIBRATION_PROCEDURE.md), and KI-020 in [`../../KNOWN_ISSUES.md`](../../KNOWN_ISSUES.md).
+**Companion:** [`RQ-B_drivetrain_model.md`](RQ-B_drivetrain_model.md) (the motor model), [`../RESEARCH_AGENDA.md`](../RESEARCH_AGENDA.md) (Q9, Q18, Q19, Q25), [`../CALIBRATION_PROCEDURE.md`](../CALIBRATION_PROCEDURE.md), and KI-020 in [`../../KNOWN_ISSUES.md`](../../KNOWN_ISSUES.md).
 
 ---
 
@@ -195,7 +195,7 @@ the cheapest honest fix and it un-blurs the braking-shortfall fit, which
 currently absorbs part of the drag.
 
 **Finding 4 — sim-only claims are bounded by doctrine.** Twin-vs-oracle
-agreement is verification, not validation; the Q21 registration words every
+agreement is verification, not validation; the Q25 registration words every
 claim accordingly, and KI-020 stays open until a hardware session exists.
 
 ---
@@ -252,7 +252,7 @@ twin-vs-oracle comparison that a first-order actuator cannot explain.
 | wheel-slip dynamics | slip-ratio states only near the friction limit | **contingent, last** — traction cap keeps the plan below the limit; braking slip already fitted (`SlipFit`) |
 | (cross-cutting) validation claims | sim-to-sim comparison is verification; validation needs hardware data | oracle claims will be worded as "agrees with fll-sim"; KI-020 stays open until a hardware session |
 
-## THE RANKED COMPONENT ORDER (pre-registered as Q21)
+## THE RANKED COMPONENT ORDER (pre-registered as Q25)
 
 | # | component (model term) | rationale — literature + Q9 + Q19 |
 |---|---|---|
