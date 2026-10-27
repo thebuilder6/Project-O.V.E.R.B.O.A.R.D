@@ -778,6 +778,70 @@ def _segment_report(samples_data, samples_per_segment, thresholds, immrax_report
     return segments
 
 
+def _plain_reason(reason):
+    """A failure reason in the words the plain vocabulary table uses."""
+    text = str(reason or "").strip()
+    low = text.lower()
+    if "envelope" in low or "drift" in low:
+        return f"the robot drifts outside its budget ({text})"
+    if "tracking" in low:
+        return f"the robot strays from the path ({text})"
+    if "slip" in low:
+        return f"the wheels slip ({text})"
+    if "force" in low or "traction" in low:
+        return f"the wheels run past their force limit ({text})"
+    if "converg" in low or "iter" in low or "numeric" in low:
+        return f"the solver did not finish ({text})"
+    return text or "see the candidate table"
+
+
+def _emit_plain_verdict(candidates, selected_index, best_effort, accept_score,
+                        profile, accepted):
+    """The short plain-language verdict for the human at the terminal.
+
+    Printed above the machine line, never inside it: tools parse the marker
+    line, humans read these. The score is decision units, never a
+    probability of hardware success, and an accepted plan is never called
+    passed (the score contract).
+    """
+    chosen = candidates[selected_index - 1] if selected_index else None
+    scored = [entry["score"] for entry in candidates
+              if entry.get("score") is not None]
+    if chosen is not None and chosen.get("score") is not None:
+        score_text = f"Score {chosen['score']:.1f} / 100"
+    elif scored:
+        score_text = f"Score {max(scored):.1f} / 100"
+    else:
+        score_text = "Score: none recorded"
+    if profile:
+        score_text += f" (profile: {profile})"
+    reasons = next((entry["reasons"] for entry in candidates
+                    if entry.get("reasons")), [])
+    why = _plain_reason(reasons[0]) if reasons else "see the candidate table"
+    if chosen is not None and chosen.get("ok"):
+        verdict = "Ready to run: the plan passed every check."
+        next_step = ("Next: push it to the hub from the Run tab (optional), "
+                     "or use the exported files.")
+    elif accepted:
+        verdict = (f"Accepted despite a known problem: {why}. "
+                   "Not a passed plan.")
+        next_step = ("Next: run it only if that is the plan you mean to run "
+                     "- it failed the checks.")
+    elif chosen is not None:
+        suffix = (" The best path was written for inspection only - not "
+                  "approved for the hub." if best_effort else "")
+        verdict = f"Not ready to run as-is: {why}." + suffix
+        next_step = "Next: fix what the reason names, then solve again."
+    else:
+        verdict = (f"Not ready to run as-is: {why}. Nothing was written.")
+        next_step = "Next: fix what the reason names, then solve again."
+    for line in (f"In short: {score_text} - decision units, not a probability "
+                 "of hardware success.",
+                 f"In short: {verdict}",
+                 f"In short: {next_step}"):
+        click.echo(line)
+
+
 def _emit_validation_report(attempts, selected_index, propagation=None,
                             best_effort=False, envelope_limit=None,
                             envelope_limit_per_metre=None, accept_score=None,
@@ -890,6 +954,10 @@ def _emit_validation_report(attempts, selected_index, propagation=None,
                "accept_score": accept_score,
                "accepted": bool(accepted),
                "hub_approved": bool(hub_approved)}
+    # The human's verdict first, the machine's line after: tools split on the
+    # marker and read the JSON alone, so nothing may follow it.
+    _emit_plain_verdict(candidates, selected_index, best_effort, accept_score,
+                        profile, accepted)
     click.echo(VALIDATION_MARKER + json.dumps(payload))
 
 
