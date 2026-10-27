@@ -35,6 +35,7 @@ The steps below are the same three things, in detail.
 
 - The robot, charged, hub running the Pybricks firmware.
 - A tape measure, at least 1 m long.
+- A kitchen scale, for the weigh-in (the robot's mass, with the battery).
 - A clear floor with 2 m of runway in both directions, and room to spin.
 - A rigid wall the front bumper can press against.
 - Masking tape, to mark the start pose and the stop marks.
@@ -110,7 +111,7 @@ reversed on every other repeat, so a drift over the run cannot land on the
 step index.
 
 The cost is that you measure more. Seven poses per repeat, three repeats,
-**21 measurements**.
+**21 measurements**, and the robot's mass three times on the scale.
 
 ---
 
@@ -225,23 +226,28 @@ some other way, write it here:
 python -m overboard.sysid.fit session.csv --write-sheet calibration_sheet.csv
 ```
 
-The sheet has one row per measurement the session needs, and nothing else:
+The sheet has one row per measurement the session needs, and three weigh-in
+rows at the end:
 
 ```csv
-test,repeat,stop,x_mm,y_mm,turn_right_deg
-odometry_straight,0,0,,,
-odometry_turn_cw,0,0,,,
-multi_stop,0,0,,,
-multi_stop,0,1,,,
-multi_stop,0,2,,,
-brake_from_300,0,0,,,
-brake_from_600,0,0,,,
-odometry_straight,1,0,,,
+test,repeat,stop,x_mm,y_mm,turn_right_deg,mass_kg
+odometry_straight,0,0,,,,
+odometry_turn_cw,0,0,,,,
+multi_stop,0,0,,,,
+multi_stop,0,1,,,,
+multi_stop,0,2,,,,
+brake_from_300,0,0,,,,
+brake_from_600,0,0,,,,
+odometry_straight,1,0,,,,
 ...
+weigh_in,0,0,,,,
+weigh_in,1,0,,,,
+weigh_in,2,0,,,,
 ```
 
 The `test`, `repeat` and `stop` columns are already filled in; they say which
-measurement goes where. Fill in the three number columns from your paper.
+measurement goes where. Fill in the three number columns from your paper, and
+the `mass_kg` column on the weigh-in rows.
 
 - `test` is the test name the hub printed.
 - `repeat` is 0, 1 or 2, counting the runs of that test.
@@ -249,6 +255,11 @@ measurement goes where. Fill in the three number columns from your paper.
   `multi_stop`.
 - `x_mm`, `y_mm` and `turn_right_deg` are in millimetres and degrees, as
   described above.
+- `mass_kg` is the robot's mass **with the battery in**, in kilograms, on a
+  kitchen scale. Weigh it three times -- the same three-repeat discipline as
+  the hub tests, so the fit can report a 95% t-interval over the weigh-ins
+  instead of an assumed range. Pick the robot up, put it down, read the
+  scale; a repeat that re-weighs the same static reading is not a repeat.
 
 Leave a row empty if you did not measure it. The tool tells you which
 measurements are missing instead of guessing.
@@ -312,6 +323,11 @@ Stall torque: 0.1314 Nm
 No-load speed: 21.318 rad/s at the wheel (the speed at which the motor makes
   no torque)
   no_load_speed_rad_s: 95% interval [21.105, 21.531] over 3 repeats (std 0.206).
+Mass: 0.8504 kg (weighed 3x, with battery, source weigh_in)
+  mass_kg: 95% interval [0.8492, 0.8509] over 3 repeats (std 0.0006).
+  the straight steps say 0.8574 kg (cross-check)
+Inertia: 0.003119 kg m^2 (from the turn steps, tau_mech=0.081s)
+  inertia_kg_m2: 95% interval [0.0031, 0.0031] over 3 repeats (std 0.0000).
 The intervals cover the run-to-run variation of the robot. They do not cover
 the error of the tape measure, which is the same every time and never averages
 out.
@@ -351,6 +367,33 @@ out.
   stall torque it is the whole torque-speed line the planner uses, so both
   numbers are now measured instead of declared. The planner, the validator
   and the exported controller all use the measured pair.
+- **Mass** — the robot's mass with the battery, from the sheet's weigh-in
+  rows. It lands in the robot config, with the 95% t-interval over the three
+  weigh-ins as its range. The straight steps also give a derived mass from
+  the response (below); it is reported as a cross-check only, and the
+  weigh-in is what lands.
+- **Inertia** — the yaw inertia, derived from the turn steps plus the
+  measured torque-speed line. No new hardware test: the turn steps are
+  already in the session, and the line is the stall torque and no-load speed
+  you measured above.
+
+  The step tests drive `drivebase.drive()`, which is a closed-loop speed
+  command: its step response hides the robot's mechanics behind the speed
+  controller, so the fitted tau alone cannot give the inertia. What the
+  session does carry is what the closed loop actually applied -- every
+  rate-test row logs the motor torque. From that actuation the fit reads
+  both factors of the line `J = tau_mech * (B + K_v)`: the steady tail of
+  the step gives `(B + K_v) = K0 / y_ss`, and the transient gives the
+  mechanical time constant `tau_mech`, and with the wheel radius, the track
+  width and the gearing from your profile, the yaw inertia falls out. The
+  same machinery on the straight steps gives the derived mass cross-check.
+
+  Two conventions matter when reading the numbers. The value is the
+  **effective body-side inertia** the force model consumes: it already
+  includes the reflected motor/gear rotor inertia, so the config stores it
+  as `inertia` and never adds `reflected_inertia_kg_m2` on top. And the
+  range is measured, like the others: the assumed +/-10% default in the
+  config's uncertainties is replaced by the interval over the repeats.
 
 ### What the interval covers, and what it does not
 
@@ -457,4 +500,8 @@ thresholds do not change.
   collect more repeats, not a cleverer analysis.
 - Braking slip is fitted and applied by the digital-twin plant, which slows the robot's
   ground truth while it brakes. Slip during acceleration is still unmodelled (KI-020).
+- The mass and inertia derivation is validated against the **digital twin
+  only** (the roundtrip recovers both within 2% of a known robot). Its
+  real-hardware accuracy is unvalidated until the hardware window, so treat
+  the numbers as measured-but-unproven until then (KI-020 stays open).
 - Do not tune `b`, `zeta`, or the validation thresholds to a single path.
