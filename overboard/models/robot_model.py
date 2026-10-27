@@ -649,9 +649,10 @@ drivebase.use_gyro(True)
 
         Updates effective wheel_radius, track_width, gear_backlash_m,
         motor curve (t_max_nm, v_max_rad_s, t_max_range), rolling resistance,
-        and 95% confidence intervals simultaneously so that the optimizer,
-        CPU validator, and Immrax validator plan and validate against the same
-        calibrated model.
+        body parameters (mass from the weigh-in, inertia from the turn
+        steps), and 95% confidence intervals simultaneously so that the
+        optimizer, CPU validator, and Immrax validator plan and validate
+        against the same calibrated model.
         """
         if isinstance(twin, dict):
             from overboard.sysid.digital_twin import DigitalTwinConfig
@@ -737,6 +738,31 @@ drivebase.use_gyro(True)
         if drift is not None and getattr(drift, "calibrated", False):
             self.uncertainties["drift_deg_per_m"] = tuple(drift.drift_range)
             changes["drift_deg_per_m"] = list(drift.drift_range)
+
+        # 7. Body parameters: the weigh-in mass and the turn-step inertia.
+        # The inertia is the effective body-side value the force model
+        # consumes -- it already includes the reflected rotor inertia, so it
+        # is written to "inertia" alone and never plus reflected_inertia.
+        mass_value = twin.measured_mass_kg()
+        if mass_value is not None:
+            changes["mass"] = {
+                "declared": float(self.mass),
+                "measured": mass_value,
+            }
+            self.mass = mass_value
+            mass_range = twin.measured_mass_range_kg()
+            if mass_range is not None:
+                self.uncertainties["mass_kg"] = tuple(mass_range)
+        inertia_value = twin.measured_inertia_kg_m2()
+        if inertia_value is not None:
+            changes["inertia"] = {
+                "declared": float(self.inertia),
+                "measured": inertia_value,
+            }
+            self.inertia = inertia_value
+            inertia_range = twin.measured_inertia_range_kg_m2()
+            if inertia_range is not None:
+                self.uncertainties["inertia_kg_m2"] = tuple(inertia_range)
 
         return changes
 

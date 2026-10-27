@@ -4,7 +4,9 @@ console logs.
 
 This is host-side code. It reads the CSV blocks emitted by the robot logger,
 fits straight/turn actuator response, odometry scale, and a bounded braking
-slip estimate, then writes a JSON file consumed by ``main.py --sysid-fit``.
+slip estimate, lands the operator's weigh-in mass and the inertia derived
+from the turn steps, then writes a JSON file consumed by ``main.py
+--sysid-fit``.
 
 Usage:
     python sysid_fit.py path/to/session.csv --poses path/to/poses.csv \
@@ -289,13 +291,19 @@ def poses_from_hub_session(lines, run_id="hub"):
 # the name of the test and the repeat of it, so it does not depend on the
 # order the tests ran in:
 #
-#   test,repeat,stop,x_mm,y_mm,turn_right_deg
-#   odometry_straight,0,0,998,2,0
+#   test,repeat,stop,x_mm,y_mm,turn_right_deg,mass_kg
+#   odometry_straight,0,0,998,2,0,
+#   weigh_in,0,0,,,,0.851
 #
 # x is forward from the start pose, y is to the left, and the turn is how far
 # the robot turned to the right. The heading the fitter wants is
-# counter-clockwise positive, so the turn is negated on the way in.
-SHEET_FIELDS = ["test", "repeat", "stop", "x_mm", "y_mm", "turn_right_deg"]
+# counter-clockwise positive, so the turn is negated on the way in. The
+# mass_kg column carries the weigh-in rows (test name weigh_in, three repeats
+# per the KI-010 discipline): the robot's mass with the battery, weighed on a
+# bench scale. They are bench measurements, not hub tests, so their rows are
+# appended to every sheet and skipped by read_sheet.
+SHEET_FIELDS = ["test", "repeat", "stop", "x_mm", "y_mm", "turn_right_deg",
+                "mass_kg"]
 
 
 def session_tests(runs):
@@ -329,8 +337,12 @@ def sheet_rows(runs):
 
 
 def write_sheet(runs, path):
-    """Write a blank measurement sheet for the tests that need one."""
-    rows = sheet_rows(runs)
+    """Write a blank measurement sheet for the tests that need one.
+
+    The weigh-in rows are always part of the sheet: the mass is a bench
+    measurement every calibration needs, hub tests or not.
+    """
+    rows = sheet_rows(runs) + sheet_form.weigh_in_rows()
     with open(path, "w", encoding="utf-8", newline="") as handle:
         writer = csv.DictWriter(handle, fieldnames=SHEET_FIELDS)
         writer.writeheader()
@@ -343,13 +355,14 @@ def read_sheet(path):
     """Read the operator's measurement sheet.
 
     Rows the operator left empty are skipped, so a sheet can be filled in
-    part by part.
+    part by part. The weigh-in rows are not poses and are skipped here; read
+    them with read_weigh_in.
     """
     rows = []
     with open(path, "r", encoding="utf-8", newline="") as handle:
         for raw in csv.DictReader(handle):
             name = (raw.get("test") or "").strip()
-            if not name:
+            if not name or name == sheet_form.WEIGH_IN_TEST:
                 continue
             try:
                 repeat = int((raw.get("repeat") or "0").strip())
@@ -368,6 +381,27 @@ def read_sheet(path):
                 "turn_right_deg": turn_deg,
             })
     return rows
+
+
+def read_weigh_in(path):
+    """The operator's weigh-in rows as (repeat, mass_kg) pairs.
+
+    A row the operator left blank, or filled with a non-positive number, is
+    not a measurement and is skipped.
+    """
+    pairs = []
+    with open(path, "r", encoding="utf-8", newline="") as handle:
+        for raw in csv.DictReader(handle):
+            if (raw.get("test") or "").strip() != sheet_form.WEIGH_IN_TEST:
+                continue
+            try:
+                repeat = int((raw.get("repeat") or "0").strip())
+                mass = float((raw.get("mass_kg") or "").strip())
+            except (TypeError, ValueError):
+                continue
+            if mass > 0.0:
+                pairs.append((repeat, mass))
+    return pairs
 
 
 def sheet_to_poses(rows, runs):
@@ -465,7 +499,8 @@ def _write_sheet(args, parser):
     wanted = sum(1 for _run_id, count in tests.values() if count > 0)
     print(f"Wrote a measurement sheet for {wanted} test run(s) to "
           f"{args.write_sheet}.")
-    print("Fill in x_mm, y_mm and turn_right_deg, then run:")
+    print("Fill in x_mm, y_mm, turn_right_deg and the weigh-in mass_kg "
+          "rows, then run:")
     print(f"  python sysid_fit.py {' '.join(args.logs)} --from-sheet "
           f"{args.write_sheet} --out-poses poses.csv")
     print("Or fit it in one step, with no intermediate file:")
@@ -903,6 +938,12 @@ def _step_fits_measured(runs, prefixes, command_column, measured_key,
             # The repeat the run belongs to, so the fit can tell the
             # between-run spread from the within-run one.
             fit["repeat"] = _run_repeat(run)
+            # Where the step lives in the run's data, for the body-parameter
+            # derivation that reuses the same windows. The fit dicts are
+            # never serialized -- only _summary products are -- so these
+            # private keys stay in memory.
+            fit["_run"] = run
+            fit["_span"] = (start, end)
             fits.append(fit)
     return fits
 
@@ -1450,7 +1491,231 @@ def _fit_no_load_speed(runs, wheel_radius_m):
     return result
 
 
-def fit_session(runs, poses=None, wheel_radius_m=0.028, wall_distance_m=None):
+# ---------------------------------------------------------------------------
+# Body parameters: the weighed mass and the derived inertia
+# ---------------------------------------------------------------------------
+#
+# Mass and yaw inertia are what the CPU force/slip audit plans against
+# (diff_drive_wheel_forces), and no procedure step used to land them. The
+# command semantics decide the derivation. The step tests drive
+# ``drivebase.drive(v, w)``, a closed-loop speed command: the fitted tau of
+# the command-to-speed response is the CLOSED-LOOP time constant, and the
+# session carries no duty fraction, so the pinned open-loop line
+# "param = tau * (T_stall * c) / y_ss" cannot use the command column. What
+# the session does carry is the actuation: every rate-test row logs the
+# motor torque (l_load_mNm / r_load_mNm). Both factors of the pinned line
+# are therefore measured from the step's actual actuation:
+#
+#   J = tau_mech * (B + K_v)
+#
+# * (B + K_v) = K0 / y_ss is the steady state: K0 is the step's zero-speed
+#   drive level, G_ss + K_v * y_ss, where G_ss is the logged generalized
+#   force at the steady tail and K_v the back-EMF slope of the measured
+#   torque-speed line (t_max_nm x no-load speed). B = G_ss / y_ss is the
+#   drag the logged torque fights; K_v is what the back-EMF already ate
+#   before the torque was logged.
+# * tau_mech is the MECHANICAL time constant, from the step's transient
+#   against the logged drive. J is identified by least squares on the
+#   integrated form J dq = (G - B q) dt (so the measured speed is never
+#   differentiated), then tau_mech = J / (B + K_v).
+#
+# Conventions, verified against the code that consumes the result:
+# * The logged torque is motor-shaft torque in mNm (the convention of
+#   _fit_stall_torque), so the generalized force carries the same gearing
+#   factor as motor_force_at_velocity: G = (Tl + Tr) * gearing / r_wheel
+#   straight, G = (Tr - Tl) * gearing * track_width / (2 * r_wheel) for a
+#   turn. gearing is motor revs per wheel rev (RobotConfig.gearing).
+# * The identified J is the effective body-side parameter
+#   diff_drive_wheel_forces consumes, and it ALREADY includes the reflected
+#   motor/gear rotor inertia (the shaft torque that is logged spins the
+#   rotors through the gearing). reflected_inertia_kg_m2 is never added to
+#   inertia in the force path, so the value is written to "inertia" alone --
+#   adding the two would double-count.
+# * The turn step exists (turn_steps_cw/ccw), so the yaw inertia has a real
+#   measurement; no new hardware test is invented.
+#
+# The mass that lands in the config is the operator's weigh-in (the sheet),
+# 3x per the KI-010 discipline. The straight steps give an independent
+# derived mass on the same machinery, reported as a cross-check only.
+
+def _back_emf_slope(axis, t_stall_nm, no_load_wheel_rad_s,
+                    wheel_radius_m, track_width_m, gearing):
+    """K_v, the back-EMF damping of the measured torque-speed line.
+
+    The motor law is ``T = T_stall * (c - n / n_nl)`` at motor speed n
+    (drivetrain.motor_torque), so the damping the command sees is that
+    slope mapped onto the axis (v in m/s straight, omega in rad/s for a
+    turn). The gearing cancels out of the speed term and appears once in
+    the force term.
+    """
+    if axis == "straight":
+        return (2.0 * t_stall_nm * gearing
+                / (wheel_radius_m * wheel_radius_m * no_load_wheel_rad_s))
+    return (t_stall_nm * gearing * track_width_m * track_width_m
+            / (2.0 * wheel_radius_m * wheel_radius_m * no_load_wheel_rad_s))
+
+
+def _step_j_estimate(t, q, drive, y_ss, back_emf_slope):
+    """One inertia estimate from one step: (J, B, tau_mech) or None.
+
+    t is seconds, q the measured axis speed and drive the logged
+    generalized force over the step. The model is J dq = (G - B q) dt with
+    B = G_ss / y_ss from the steady tail; J comes from a least-squares fit
+    of the integrated form, so no derivative of the measured speed is taken
+    and the intercept absorbs the error of the first sample.
+    """
+    t = np.asarray(t, dtype=float)
+    q = np.asarray(q, dtype=float)
+    drive = np.asarray(drive, dtype=float)
+    if len(q) < 10 or not (np.all(np.isfinite(t)) and np.all(np.isfinite(q))
+                           and np.all(np.isfinite(drive))):
+        return None
+    if not np.isfinite(y_ss) or abs(y_ss) < 1e-6:
+        return None
+    tail = max(3, int(0.3 * len(q)))
+    g_ss = float(np.median(drive[-tail:]))
+    damping = g_ss / y_ss
+    if not np.isfinite(damping) or damping <= 0.0:
+        return None
+    residual = drive - damping * q
+    steps = np.diff(t)
+    work = np.concatenate((
+        [0.0],
+        np.cumsum(0.5 * (residual[1:] + residual[:-1]) * steps),
+    ))
+    if float(np.ptp(work)) < 1e-12:
+        return None
+    u = q - float(np.median(q[:3]))
+    slope, _offset = np.polyfit(work, u, 1)
+    if not np.isfinite(slope) or slope <= 0.0:
+        return None
+    j = 1.0 / slope
+    total_damping = damping + back_emf_slope
+    if not np.isfinite(j) or j <= 0.0 or total_damping <= 0.0:
+        return None
+    return float(j), float(damping), float(j / total_damping)
+
+
+def _axis_j_estimates(fits, axis, measured_key, wheel_radius_m,
+                      track_width_m, gearing, t_stall_nm,
+                      no_load_wheel_rad_s):
+    """One inertia estimate per fitted step, from the logged motor torque.
+
+    Steps without the torque columns are skipped: without the actuation the
+    closed-loop step cannot identify anything.
+    """
+    estimates = []
+    back_emf = _back_emf_slope(axis, t_stall_nm, no_load_wheel_rad_s,
+                               wheel_radius_m, track_width_m, gearing)
+    for fit in fits:
+        run = fit.get("_run")
+        span = fit.get("_span")
+        if run is None or span is None:
+            continue
+        start, end = span
+        left = _column(run, "l_load_mNm")
+        right = _column(run, "r_load_mNm")
+        measured = _measured_column(run, measured_key)
+        times = _column(run, "t_ms")
+        if (left is None or right is None or measured is None
+                or times is None):
+            continue
+        left = np.asarray(left[start:end], dtype=float) / 1000.0
+        right = np.asarray(right[start:end], dtype=float) / 1000.0
+        if axis == "straight":
+            drive = gearing * (left + right) / wheel_radius_m
+        else:
+            drive = (gearing * track_width_m * (right - left)
+                     / (2.0 * wheel_radius_m))
+        estimate = _step_j_estimate(
+            np.asarray(times[start:end], dtype=float) / 1000.0,
+            np.asarray(measured[start:end], dtype=float),
+            drive,
+            fit["gain"] * fit["command"],
+            back_emf,
+        )
+        if estimate is None:
+            continue
+        j, damping, tau_mech = estimate
+        estimates.append({
+            "repeat": fit.get("repeat", 0),
+            "j": j,
+            "damping": damping,
+            "tau_mech_s": tau_mech,
+        })
+    return estimates
+
+
+def _fit_body_parameters(straight_fits, turn_fits, stall, drivetrain,
+                         wheel_radius_m, track_width_m, gearing, weigh_in):
+    """The weigh-in mass and the inertia derived from the turn steps.
+
+    Returns the (mass, inertia) result sections. Without the torque-speed
+    line (stall torque and no-load speed) the derivation has no K_v, so
+    nothing is derived; without the weigh-in rows the mass stays
+    uncalibrated -- an old sheet still fits.
+    """
+    t_stall = stall.get("t_max_nm") if stall.get("calibrated") else None
+    n_nl = (drivetrain.get("no_load_speed_rad_s")
+            if drivetrain.get("calibrated") else None)
+
+    derived = []
+    turn_estimates = []
+    if t_stall is not None and n_nl is not None:
+        derived = _axis_j_estimates(
+            straight_fits, "straight", "v_meas_m_s", wheel_radius_m,
+            track_width_m, gearing, float(t_stall), float(n_nl))
+        if track_width_m is not None:
+            turn_estimates = _axis_j_estimates(
+                turn_fits, "turn", "w_meas_rad_s", wheel_radius_m,
+                track_width_m, gearing, float(t_stall), float(n_nl))
+
+    # _between_runs reports mean/std/ci95 over the repeats (KI-010).
+    mass = {"calibrated": False, "n_sources": 0}
+    if weigh_in:
+        stats = _between_runs(list(weigh_in))
+        mass = {
+            "calibrated": True,
+            "n_sources": int(stats.get("n", 0) or 0),
+            "mass_kg": stats["mean"],
+            "mass_kg_between_runs": stats,
+            "source": "weigh_in",
+        }
+        if stats.get("ci95"):
+            low, high = float(stats["ci95"][0]), float(stats["ci95"][1])
+            # The floor keeps the interval positive; the raw one is kept
+            # alongside it so the clamp can never hide the spread.
+            mass["mass_kg_ci95"] = [max(low, 1e-9), high]
+            mass["mass_kg_ci95_raw"] = [low, high]
+    if derived:
+        stats = _between_runs([(e["repeat"], e["j"]) for e in derived])
+        mass["derived_mass_kg"] = stats["mean"]
+        mass["derived_mass_kg_between_runs"] = stats
+        mass["derived_source"] = "straight_steps"
+        if mass.get("mass_kg") is not None:
+            mass["derived_vs_weighed"] = abs(stats["mean"] - mass["mass_kg"])
+
+    inertia = {"calibrated": False, "n_sources": 0}
+    if turn_estimates:
+        stats = _between_runs([(e["repeat"], e["j"]) for e in turn_estimates])
+        inertia = {
+            "calibrated": True,
+            "n_sources": len(turn_estimates),
+            "inertia_kg_m2": stats["mean"],
+            "inertia_kg_m2_between_runs": stats,
+            "tau_mech_s": float(np.median(
+                [e["tau_mech_s"] for e in turn_estimates])),
+            "source": "turn_steps",
+        }
+        if stats.get("ci95"):
+            low, high = float(stats["ci95"][0]), float(stats["ci95"][1])
+            inertia["inertia_kg_m2_ci95"] = [max(low, 1e-9), high]
+            inertia["inertia_kg_m2_ci95_raw"] = [low, high]
+    return mass, inertia
+
+
+def fit_session(runs, poses=None, wheel_radius_m=0.028, wall_distance_m=None,
+                track_width_m=None, gearing=1.0, weigh_in=None):
     poses = poses or {}
     _add_measured_outputs(runs, wheel_radius_m)
 
@@ -1524,6 +1789,12 @@ def fit_session(runs, poses=None, wheel_radius_m=0.028, wall_distance_m=None):
     drift = _fit_drift(runs, poses, sensors.get("gyro_z_bias_deg_s"))
     stall = _fit_stall_torque(runs)
     drivetrain = _fit_no_load_speed(runs, wheel_radius_m)
+    mass, inertia = _fit_body_parameters(
+        straight_fits, turn_fits, stall, drivetrain,
+        wheel_radius_m, track_width_m,
+        float(gearing) if gearing else 1.0,
+        weigh_in or [],
+    )
 
     bad_rows = sum(int(run.get("bad_rows", 0) or 0) for run in runs)
     missing_rows = sum(int(run.get("missing_rows", 0) or 0) for run in runs)
@@ -1554,6 +1825,8 @@ def fit_session(runs, poses=None, wheel_radius_m=0.028, wall_distance_m=None):
         "drift": drift,
         "stall_torque": stall,
         "drivetrain": drivetrain,
+        "mass": mass,
+        "inertia": inertia,
         "validation": {
             "chirp_straight_nrmse": chirp_straight,
             "chirp_turn_nrmse": chirp_turn,
@@ -1617,6 +1890,8 @@ def read_drivebase_profile(path):
     * track width: ``track_width_m``, ``track_width``,
       ``differentialTrackWidth``, ``axle_track_mm``, ``axle_track_m``,
       ``axle_track``
+    * gearing: ``gearing`` (motor revolutions per wheel revolution; the
+      default of 1 is direct drive)
 
     ``wheel_diameter`` and ``axle_track`` are treated as millimetres because
     that is the Pybricks/LEGO convention. Parameters are optional so a profile
@@ -1656,6 +1931,12 @@ def read_drivebase_profile(path):
     if track_width is not None:
         track_width = _positive_profile_value(track_width, "track width")
 
+    gearing = _profile_value(sections, "gearing")
+    if gearing is not None:
+        gearing = _positive_profile_value(gearing, "gearing")
+    else:
+        gearing = 1.0
+
     name = _profile_value(sections, "name", "drivebase_name")
     if wheel_radius is None and track_width is None:
         raise ValueError(
@@ -1675,6 +1956,7 @@ def read_drivebase_profile(path):
         "wheel_radius_m": wheel_radius,
         "track_width_m": track_width,
         "wall_distance_m": wall_distance,
+        "gearing": gearing,
         "source": path,
     }
 
@@ -1788,6 +2070,7 @@ def main(argv=None):
     if not np.isfinite(wheel_radius) or wheel_radius <= 0.0:
         parser.error("wheel radius must be a positive finite number")
     track_width = profile.get("track_width_m") if profile else None
+    gearing = profile.get("gearing") if profile else 1.0
 
     files, runs = load_runs(args.logs)
     if not runs:
@@ -1795,22 +2078,29 @@ def main(argv=None):
         return 1
 
     poses = load_poses(args.poses) if args.poses else {}
+    weigh_in = []
     if args.sheet:
         try:
             measured = read_sheet(args.sheet)
+            weigh_in = read_weigh_in(args.sheet)
         except OSError as exc:
             print(f"error: cannot read {args.sheet}: {exc}")
             return 1
         poses, problems = poses_from_sheet_rows(measured, runs)
         for problem in problems:
             print(f"warning: {problem}.")
-        if not poses:
+        if not poses and not weigh_in:
             print(f"No measurements in {args.sheet}.")
             return 1
-        print(f"Read {len(poses)} measured run(s) from {args.sheet}.")
+        if weigh_in:
+            print(f"Read {len(weigh_in)} weigh-in row(s) from {args.sheet}.")
+        if poses:
+            print(f"Read {len(poses)} measured run(s) from {args.sheet}.")
     wall_distance = profile.get("wall_distance_m") if profile else None
     result = fit_session(runs, poses=poses, wheel_radius_m=wheel_radius,
-                         wall_distance_m=wall_distance)
+                         wall_distance_m=wall_distance,
+                         track_width_m=track_width, gearing=gearing,
+                         weigh_in=weigh_in)
     result["source"] = files
     result["drivebase"] = {
         "name": profile.get("name") if profile else None,
@@ -1939,6 +2229,26 @@ def main(argv=None):
         _print_interval(drivetrain, "no_load_speed_rad_s")
     for reason in drivetrain.get("rejected", []) or []:
         print(f"No-load speed: not used, {reason}.")
+    mass = result.get("mass", {})
+    if mass.get("calibrated"):
+        print("Mass: {mass_kg:.4f} kg (weighed {n_sources}x, with battery, "
+              "source {source})".format(**mass))
+        _print_interval(mass, "mass_kg")
+        if "derived_mass_kg" in mass:
+            print("  the straight steps say {derived_mass_kg:.4f} kg "
+                  "(cross-check)".format(**mass))
+    elif "derived_mass_kg" in mass:
+        print("Mass: not weighed; the straight steps say "
+              "{derived_mass_kg:.4f} kg (cross-check only, nothing landed)"
+              .format(**mass))
+    inertia = result.get("inertia", {})
+    if inertia.get("calibrated"):
+        print("Inertia: {inertia_kg_m2:.6f} kg m^2 (from the turn steps, "
+              "tau_mech={tau_mech_s:.3f}s)".format(**inertia))
+        _print_interval(inertia, "inertia_kg_m2")
+    else:
+        print("Inertia: not derived (needs the turn steps and the "
+              "torque-speed line).")
     print("The intervals cover the run-to-run variation of the robot. They do "
           "not cover the error of the tape measure, which is the same every "
           "time and never averages out.")

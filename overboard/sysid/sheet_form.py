@@ -19,9 +19,23 @@ server to hold the rows.
 import html
 
 # The columns the fitter reads. The form writes exactly these, in this order.
-SHEET_FIELDS = ["test", "repeat", "stop", "x_mm", "y_mm", "turn_right_deg"]
+SHEET_FIELDS = ["test", "repeat", "stop", "x_mm", "y_mm", "turn_right_deg",
+                "mass_kg"]
 CSV_HEADER = ",".join(SHEET_FIELDS)
 DEFAULT_CSV_NAME = "calibration_sheet.csv"
+
+# The weigh-in rows: the robot's mass with the battery, on a bench scale,
+# three times per the KI-010 discipline. They are bench measurements, not
+# hub tests, so they are always the same three rows and are appended to
+# every sheet and form.
+WEIGH_IN_TEST = "weigh_in"
+WEIGH_REPEATS = 3
+
+
+def weigh_in_rows():
+    """The blank weigh-in rows every sheet carries."""
+    return [{"test": WEIGH_IN_TEST, "repeat": repeat, "stop": 0}
+            for repeat in range(WEIGH_REPEATS)]
 
 _TEMPLATE = r"""<!doctype html>
 <html lang="en">
@@ -61,7 +75,9 @@ Every measurement is in the frame the robot sat in at the start of the test.
 the <em>left</em> of the runway (20 means it drifted 20 mm left).
 <strong>turn_right_deg</strong> is how far it turned to the <em>right</em>
 (90 means it ended pointing 90 degrees right of the runway). Measure from the
-robot's centre, not its bumper.
+robot's centre, not its bumper. The <strong>mass_kg</strong> rows are the
+weigh-in: the robot's mass with the battery in, on a bench scale, three
+times.
 </p>
 <div class="bar">
   <button type="button" id="download">Download CSV</button>
@@ -72,7 +88,7 @@ robot's centre, not its bumper.
 </div>
 <table>
 <thead><tr><th>test</th><th>repeat</th><th>stop</th><th>x_mm</th><th>y_mm</th>
-<th>turn_right_deg</th></tr></thead>
+<th>turn_right_deg</th><th>mass_kg</th></tr></thead>
 <tbody id="rows">
 {{ROWS}}
 </tbody>
@@ -97,13 +113,15 @@ model:
   }
   function values() {
     return rows().map(function (tr) {
+      var m = tr.querySelector(".m");
       return [
         tr.getAttribute("data-test"),
         tr.getAttribute("data-repeat"),
         tr.getAttribute("data-stop"),
-        tr.querySelector(".x").value.trim(),
-        tr.querySelector(".y").value.trim(),
-        tr.querySelector(".t").value.trim()
+        m ? "" : tr.querySelector(".x").value.trim(),
+        m ? "" : tr.querySelector(".y").value.trim(),
+        m ? "" : tr.querySelector(".t").value.trim(),
+        m ? m.value.trim() : ""
       ];
     });
   }
@@ -117,7 +135,9 @@ model:
   function update() {
     var all = values();
     var missing = all.filter(function (row) {
-      return row[3] === "" || row[4] === "" || row[5] === "";
+      // A row with no mass needs its three measurements, and vice versa.
+      return row[6] === "" &&
+        (row[3] === "" || row[4] === "" || row[5] === "");
     }).length;
     var el = q("#count");
     if (missing === 0) {
@@ -157,6 +177,7 @@ model:
       var ix = head.indexOf("x_mm");
       var iy = head.indexOf("y_mm");
       var it = head.indexOf("turn_right_deg");
+      var im = head.indexOf("mass_kg");
       if (ix < 0 || iy < 0 || it < 0) {
         q("#count").textContent =
           "that file has no x_mm, y_mm and turn_right_deg columns";
@@ -174,6 +195,11 @@ model:
           (parts[2] || "").trim();
         var tr = index[key];
         if (!tr) { return; }
+        var m = tr.querySelector(".m");
+        if (m) {
+          if (im >= 0) { m.value = (parts[im] || "").trim(); }
+          return;
+        }
         tr.querySelector(".x").value = (parts[ix] || "").trim();
         tr.querySelector(".y").value = (parts[iy] || "").trim();
         tr.querySelector(".t").value = (parts[it] || "").trim();
@@ -182,8 +208,9 @@ model:
     });
   });
   rows().forEach(function (tr) {
-    ["x", "y", "t"].forEach(function (name) {
-      tr.querySelector("." + name).addEventListener("input", update);
+    ["x", "y", "t", "m"].forEach(function (name) {
+      var el = tr.querySelector("." + name);
+      if (el) { el.addEventListener("input", update); }
     });
   });
   update();
@@ -201,13 +228,25 @@ _ROW = (
     '<td><input type="number" step="any" inputmode="decimal" class="x"></td>'
     '<td><input type="number" step="any" inputmode="decimal" class="y"></td>'
     '<td><input type="number" step="any" inputmode="decimal" class="t"></td>'
+    "<td></td>"
+    "</tr>"
+)
+
+_MASS_ROW = (
+    '<tr data-test="{test}" data-repeat="{repeat}" data-stop="{stop}">'
+    '<td class="key">{test}</td>'
+    '<td class="key">{repeat}</td>'
+    '<td class="key">{stop}</td>'
+    "<td></td><td></td><td></td>"
+    '<td><input type="number" step="any" inputmode="decimal" class="m"></td>'
     "</tr>"
 )
 
 
 def row_html(row):
-    """One table row for one measurement."""
-    return _ROW.format(
+    """One table row for one measurement (or one weigh-in)."""
+    template = _MASS_ROW if row["test"] == WEIGH_IN_TEST else _ROW
+    return template.format(
         test=html.escape(str(row["test"])),
         repeat=html.escape(str(row["repeat"])),
         stop=html.escape(str(row["stop"])),
@@ -219,12 +258,13 @@ def write_form(rows, path, csv_name=DEFAULT_CSV_NAME, title="Measurement sheet",
     """Write the measurement sheet as a self-contained HTML form.
 
     ``rows`` are the rows of the sheet: a test name, a repeat and a stop for
-    each measurement. The form writes a CSV with the same columns the fitter
-    reads, so the file it downloads drops straight into ``--sheet``.
+    each measurement. The weigh-in rows are appended to them, so every form
+    can land the mass too. The form writes a CSV with the same columns the
+    fitter reads, so the file it downloads drops straight into ``--sheet``.
 
     Returns the path written.
     """
-    body = "\n".join(row_html(row) for row in rows)
+    body = "\n".join(row_html(row) for row in list(rows) + weigh_in_rows())
     text = (_TEMPLATE
             .replace("{{TITLE}}", html.escape(title))
             .replace("{{ROWS}}", body)
