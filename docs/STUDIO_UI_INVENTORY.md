@@ -24,7 +24,7 @@ removed).
 
 **Three columns, two of them tabbed.** The left column is what you set, the canvas is the work, the right column is what you read. Each side column is a strip of tabs over one panel, so a column holds one topic at a time.
 
-The page carries **169 element ids**: **83 controls with an id** (38 buttons, 37 inputs, 8 selects), of which 8 are the tab buttons themselves. Fifteen regions are filled in at run time:
+The page carries **171 element ids**: **83 controls with an id** (38 buttons, 37 inputs, 8 selects), of which 8 are the tab buttons themselves. Fifteen regions are filled in at run time:
 
 | Generated region | Element id | Where |
 |---|---|---|
@@ -37,7 +37,7 @@ The page carries **169 element ids**: **83 controls with an id** (38 buttons, 37
 | The per-segment table | `validation-table` | Result tab, the validation detail |
 | The pick button | `pick-row` | Result tab, the validation detail |
 | The fix buttons | `fix-row` | Result tab, the validation detail |
-| The download buttons | `downloads` | Result tab |
+| The download buttons | `downloads` | Run tab, Ready to run |
 | The score categories | `score-categories` | Result tab, score block |
 | The lever table | `lever-table` | Result tab, tried levers |
 | The history rows | `history-list` | Mission tab, the History list |
@@ -247,21 +247,25 @@ Canvas contents: the mat, the grid, the mission models - each with the field's p
 
 ### Result tab
 
+The score comes first and explains itself: the number, the profile, the standing caption (*decision units, not a probability of hardware success*), one plain sentence per category with the measured numbers of the run, then a "what this means / what to do next" line. The full validation detail is one **Advanced** reveal below, so a first-timer reads the verdict and an expert opens the numbers.
+
 | Element | What it does |
 |---|---|
 | *status* | "Validated - the trajectory passed the validator" / "Not validated - this trajectory has not been checked against your robot" / "Failed validation - the best path is shown for inspection ... it is not approved for the hub" (a best-effort export) / the failure. |
 | **Check it, then solve again** | The lever the status names: turns validation on, brings the Solve tab forward and solves again. Shown only after a solve that was not validated. |
+| *score* | The decision score headline (0-100) with the active profile and the standing caption "decision units, not a probability of hardware success". The four categories - Physical, Accuracy, Motion Quality, Duration - each get their score and one plain sentence with the measured numbers (drift vs. the drift budget, wheel force vs. the force and slip limits, jerk vs. its target, run time vs. the target time). |
+| *what to do next* | The verdict in plain words ("accepted despite a known problem", never "passed"), and one next step that reuses the levers the numbers point at. Lever results shown here are measured deltas from finished runs - never predicted numbers. |
 | *facts* | Duration, path, peak wheel speed, samples, max envelope, solve (wall), the time against the top-speed ideal, the field. |
-| *score* | The decision score (v1, profile), the four category scores (Physical, Accuracy, Motion Quality, Duration), and the note that it is not a probability. |
 | *solve diff* | "vs. the previous solve: 0.27 s slower, the path 48 mm longer." |
-| *tried levers* | The measured score delta, duration delta and measured points/second of the levers tried this mission session, ranked by measured improvement. No predicted estimates. |
 | *collisions* | Where the plan met a mission model. |
-| **Validation detail** (details) | The explainer, the candidate chips, the pick button, the per-segment table, the note, and the **Try** buttons. A chip names its seed by its physical role - Sprint, Sweeper, Exploratory - and a rescue seed is a dashed amber chip (🛟 Rescue). Every solved candidate's path is on the field (`--candidates-out`), the clicked chip's path drawn stronger, so the comparison is visible and not only tabulated. A path appears the moment its solve finishes, before its check and before the rescue round, so a validated run is not a blank field for its minutes; the chips and the table arrive with the report, when the run ends. The pick button (`Solve again and export: ...`) appears when the clicked candidate passed but is not the exported one: it re-solves with that candidate pinned (`--pick-candidate`), and the CLI refuses it if it no longer passes. The table carries, per segment, the envelope, the limit, the drift, and the three discretization mechanisms in mm (sagitta, heading mismatch, 20 ms hold lag). The **Try** buttons are the levers the numbers point at: the closed-loop tick map for an envelope failure, the gradient polish for a tracking error just over the gate, a soft force weight of 0.005 for a force or slip failure, and a weight of 0.001 for a rough profile. Each pulls its lever and solves again. |
-| **Mission report** | The report of the last solve, as a file. |
-| *downloads* | The trajectory, the controller, the Python module, the stats, the session, and the report. |
+| **Advanced - validation detail and solver output** (details, `result-advanced`) | Everything below, behind one reveal: the validation detail, the tried levers, the mission report and the solver log. |
+| **Validation detail** (`validation-report`) | The explainer, the candidate chips, the pick button, the per-segment table, the note, and the **Try** buttons. A chip names its seed by its physical role - Sprint, Sweeper, Exploratory - and a rescue seed is a dashed amber chip (🛟 Rescue). Every solved candidate's path is on the field (`--candidates-out`), the clicked chip's path drawn stronger, so the comparison is visible and not only tabulated. A path appears the moment its solve finishes, before its check and before the rescue round, so a validated run is not a blank field for its minutes; the chips and the table arrive with the report, when the run ends. The pick button (`Solve again and export: ...`) appears when the clicked candidate passed but is not the exported one: it re-solves with that candidate pinned (`--pick-candidate`), and the CLI refuses it if it no longer passes. The table carries, per segment, the envelope, the limit, the drift, and the three discretization mechanisms in mm (sagitta, heading mismatch, 20 ms hold lag). The **Try** buttons are the levers the numbers point at: the closed-loop tick map for an envelope failure, the gradient polish for a tracking error just over the gate, a soft force weight of 0.005 for a force or slip failure, and a weight of 0.001 for a rough profile. Each pulls its lever and solves again. |
+| *tried levers* (`lever-history`) | The measured score delta, duration delta and measured points/second of the levers tried this mission session, ranked by measured improvement. No predicted estimates. |
 | **Mission report** | Writes the one-page report next to the trajectory and opens it: the mission, the robot and the result on one printable page. |
-| **Solver log** (details) | The command line's output. |
+| **Solver log** (details, `log-details`) | The command line's output. |
 | **Copy log** | Puts the whole log on the clipboard, not the selection. Where the browser refuses the clipboard (a plain http page), it selects the text instead so Ctrl+C finishes it. |
+
+The files to download live in the **Run** tab, where the journey ends: getting the plan onto a machine or a robot.
 
 ### Waypoint tab
 
@@ -286,6 +290,7 @@ The plot tabs - Speed, Force, Acceleration, Turn rate, Heading, Envelope, Conver
 
 | Control | What it does |
 |---|---|
+| *downloads* | Under **Ready to run**: the trajectory, the controller, the Python module, the stats, the session, and the report - the files of the finished solve, so the plan can leave the studio. |
 | **Connection** (select) | Bluetooth or USB. |
 | **Hub name** (text) | The hub's name or address (BLE only). The field carries the choices a scan found (`#hub-choices`), so picking one fills it in. |
 | **Scan for hubs** | Scans Bluetooth the way the IDE's device picker does - every visible device is asked whether it speaks the Pybricks protocol, which takes about a minute - and fills the Hub name field. A single hub is filled in and said out loud; several are offered as choices; none gets the guidance for a hub that is off or held by Pybricks Code. Refused while a job runs, because a push holds the hub's connection. |

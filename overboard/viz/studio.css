@@ -145,6 +145,11 @@ details summary {
   margin-bottom: 10px;
 }
 
+/* ----------------------------------------------------------------- score */
+.score-value { font-size: 22px; margin: 4px 0; }
+.score-category { margin: 8px 0; }
+.score-category > div:first-child { font-weight: 600; }
+
 /* ---------------------------------------------------------------- fields */
 .field { display: block; margin-bottom: 10px; }
 .field > span {

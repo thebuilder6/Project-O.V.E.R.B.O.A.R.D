@@ -372,7 +372,6 @@
           <button type="button" id="btn-validate" class="btn small">Check it, then solve again</button>
           <span class="hint">Checks the path against your robot before it is used.</span>
         </div>
-        <dl class="facts" id="result-facts"></dl>
         <div id="score-block" hidden>
           <h3 class="sub">Score</h3>
           <p class="score-value mono" id="score-value"></p>
@@ -380,36 +379,39 @@
           <div class="score-categories" id="score-categories"></div>
           <p class="hint" id="score-note"></p>
         </div>
+        <p class="hint explainer" id="score-next"></p>
+        <dl class="facts" id="result-facts"></dl>
         <p class="hint explainer" id="solve-diff"></p>
-        <div id="lever-history" hidden>
-          <h3 class="sub">Tried levers</h3>
-          <table class="report" id="lever-table"></table>
-          <p class="hint" id="lever-note"></p>
-        </div>
         <div id="collisions"></div>
 
-        <div id="validation-report" hidden>
-          <h3 class="sub">Validation detail</h3>
-          <p class="hint explainer" id="validation-explainer"></p>
-          <div class="chips" id="validation-candidates"></div>
-          <div class="row" id="pick-row" hidden></div>
-          <table class="report scroll" id="validation-table"></table>
-          <p class="hint" id="validation-note"></p>
-          <div class="row" id="fix-row" hidden></div>
-        </div>
-
-        <div class="row">
-          <button type="button" id="btn-report" class="btn small">Mission report</button>
-          <span class="hint">One page: the mission, the robot and the result.</span>
-        </div>
-        <div class="row downloads" id="downloads"></div>
-        <details id="log-details">
-          <summary>Solver log</summary>
-          <div class="row">
-            <button type="button" id="btn-copy-log" class="btn small">Copy log</button>
-            <span class="hint">The whole log, not the selection.</span>
+        <details id="result-advanced">
+          <summary>Advanced - validation detail and solver output</summary>
+          <div id="validation-report" hidden>
+            <h3 class="sub">Validation detail</h3>
+            <p class="hint explainer" id="validation-explainer"></p>
+            <div class="chips" id="validation-candidates"></div>
+            <div class="row" id="pick-row" hidden></div>
+            <table class="report scroll" id="validation-table"></table>
+            <p class="hint" id="validation-note"></p>
+            <div class="row" id="fix-row" hidden></div>
           </div>
-          <pre class="log" id="log"></pre>
+          <div id="lever-history" hidden>
+            <h3 class="sub">Tried levers</h3>
+            <table class="report" id="lever-table"></table>
+            <p class="hint" id="lever-note"></p>
+          </div>
+          <div class="row">
+            <button type="button" id="btn-report" class="btn small">Mission report</button>
+            <span class="hint">One page: the mission, the robot and the result.</span>
+          </div>
+          <details id="log-details">
+            <summary>Solver log</summary>
+            <div class="row">
+              <button type="button" id="btn-copy-log" class="btn small">Copy log</button>
+              <span class="hint">The whole log, not the selection.</span>
+            </div>
+            <pre class="log" id="log"></pre>
+          </details>
         </details>
       </section>
     </section>
@@ -478,6 +480,8 @@
     <!-- -------------------------------------------------------------- run -->
     <section class="tabpanel" id="panel-run" role="tabpanel" aria-labelledby="tab-run" hidden>
       <section class="block" id="run-block">
+        <h3 class="sub">Ready to run</h3>
+        <div class="row downloads" id="downloads"></div>
         <label class="field">
           <span>Connection</span>
           <select id="hub-conn">

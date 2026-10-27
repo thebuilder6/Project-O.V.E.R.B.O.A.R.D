@@ -883,6 +883,8 @@ function renderValidationReport(report) {
         state.reportCandidate = null;
         state.failingSegments = new Set();
         state.worstSegment = -1;
+        /* The score is the same verdict, so it goes with it. */
+        renderScoreBlock(null);
         /* The red segments on the field are the same verdict, so they go
            with it, and the key drops the model it named. */
         updateLegendLabels();
@@ -2759,6 +2761,110 @@ function recordLever(previous, entry, wallS) {
     state.pendingLever = null;
 }
 
+/* One plain sentence per score category, with the measured numbers of the
+   run that just finished - never an estimate of a run to come. */
+function categorySentence(key, entry, report) {
+    const finite = (x) => x !== null && x !== undefined && Number.isFinite(Number(x));
+    if (key === 'accuracy') {
+        const drift = finite(entry.envelope_cm) ? Number(entry.envelope_cm) : null;
+        const limit = report && finite(report.envelope_limit_m)
+            ? Number(report.envelope_limit_m) * 100 : null;
+        return 'How close the robot stays to the planned path - it drifts '
+            + (drift !== null && limit !== null
+                ? `${drift.toFixed(1)} cm where the drift budget is ${limit.toFixed(1)} cm`
+                : 'within the drift budget')
+            + '.';
+    }
+    if (key === 'quality') {
+        const jerk = finite(entry.peak_jerk_m_s3) ? Number(entry.peak_jerk_m_s3) : null;
+        const target = Number(el('opt-jerk-target').value);
+        return 'How smooth the drive is - the wheels change force at '
+            + (jerk !== null ? `${jerk.toFixed(1)} m/s^3` : 'their measured rate')
+            + (Number.isFinite(target) && target > 0
+                ? ` where the target is ${target.toFixed(1)}.` : '.');
+    }
+    if (key === 'duration') {
+        const duration = finite(entry.duration_s) ? Number(entry.duration_s) : null;
+        const target = Number(el('opt-target-time').value);
+        return 'How fast it is - it runs in '
+            + (duration !== null ? `${duration.toFixed(2)} s` : 'its measured time')
+            + (Number.isFinite(target) && target > 0
+                ? ` against a target of ${target.toFixed(2)} s.` : '.');
+    }
+    /* physical: how hard the wheels work against the force and slip limits */
+    const force = Math.max(
+        finite(entry.peak_force_util) ? Number(entry.peak_force_util) : 0,
+        finite(entry.peak_traction_util) ? Number(entry.peak_traction_util) : 0);
+    return 'How hard the wheels work against the force and slip limits - the plan runs at '
+        + (force > 0 ? `${(force * 100).toFixed(0)}% of them` : 'its measured share of them')
+        + '.';
+}
+
+/* "What this means / what to do next": the verdict in plain words and one
+   next step, reusing the levers the numbers point at. Lever results are
+   measured deltas from finished runs only. */
+function renderScoreNext(verdict) {
+    const line = el('score-next');
+    if (!verdict) {
+        line.textContent = '';
+        return;
+    }
+    const report = state.validationReport;
+    const entry = report && report.candidates
+        ? (report.candidates[(report.selected || 1) - 1] || {}) : {};
+    const reasons = (entry.reasons || []).join('; ');
+    let meaning;
+    if (verdict.kind === 'passed') {
+        meaning = 'What this means: the plan passed every check and is ready to run.';
+    } else if (verdict.kind === 'accepted') {
+        meaning = 'What this means: this plan was accepted despite a known problem'
+            + (reasons ? ` (${reasons})` : '') + '. It is not a passed plan.';
+    } else if (verdict.kind === 'best_effort') {
+        meaning = 'What this means: the plan failed validation and is on the field '
+            + 'for inspection only - it is not approved for the hub'
+            + (reasons ? ` (${reasons})` : '') + '.';
+    } else if (verdict.kind === 'structural') {
+        meaning = 'What this means: the plan itself is broken - nothing was written.';
+    } else if (verdict.kind === 'unvalidated') {
+        meaning = 'What this means: this plan has not been checked against your robot.';
+    } else {
+        meaning = 'What this means: the plan failed validation'
+            + (reasons ? ` (${reasons})` : '') + '.';
+    }
+    line.textContent = `${meaning} ${scoreNextStep(verdict)}`;
+}
+
+function scoreNextStep(verdict) {
+    /* The measured half first: what the last lever actually did. */
+    const tried = state.leverHistory[state.leverHistory.length - 1];
+    const measured = tried && (Number.isFinite(tried.deltaScore)
+        || Number.isFinite(tried.deltaDuration))
+        ? ` Measured from "${tried.label}": `
+            + (Number.isFinite(tried.deltaScore)
+                ? `${tried.deltaScore >= 0 ? '+' : ''}${tried.deltaScore.toFixed(2)} score points`
+                : 'no score change')
+            + (Number.isFinite(tried.deltaDuration)
+                ? `, ${tried.deltaDuration >= 0 ? '+' : ''}${tried.deltaDuration.toFixed(2)} s`
+                : '') + '.'
+        : '';
+    if (verdict.kind === 'passed') {
+        return 'Next: open the Run tab to download the files or push the plan to the hub (optional).';
+    }
+    if (verdict.kind === 'unvalidated') {
+        return 'Next: turn validation on in the Solve tab and solve again before driving it.';
+    }
+    const fixes = suggestFixes(state.validationReport);
+    if (fixes.length) {
+        return `Next: try ${fixes.map((fix) => fix.label.charAt(0).toLowerCase()
+            + fix.label.slice(1)).join(' or ')} `
+            + '- the buttons are in Advanced under the validation detail.' + measured;
+    }
+    return 'Next: open Advanced for the per-segment numbers, or change the mission '
+        + 'and solve again.' + measured;
+}
+
+/* The score, first and explained: the number, the profile, the standing
+   caption, then one plain sentence per category beside its score. */
 function renderScoreBlock(verdict) {
     const box = el('score-block');
     const value = el('score-value');
@@ -2771,12 +2877,16 @@ function renderScoreBlock(verdict) {
         meta.textContent = '';
         categories.innerHTML = '';
         note.textContent = '';
+        renderScoreNext(null);
         return;
     }
     box.hidden = false;
     value.textContent = `${Number(verdict.score).toFixed(1)} / 100`;
     meta.textContent = `Decision score v${verdict.scoreVersion}, profile ${verdict.profile}. `
-        + 'This is a decision score, not a probability of hardware success.';
+        + 'Decision units, not a probability of hardware success.';
+    const report = state.validationReport;
+    const entry = report && report.candidates
+        ? (report.candidates[(report.selected || 1) - 1] || {}) : {};
     categories.innerHTML = '';
     const names = [['physical', 'Physical'], ['accuracy', 'Accuracy'],
         ['quality', 'Motion Quality'], ['duration', 'Duration']];
@@ -2786,18 +2896,23 @@ function renderScoreBlock(verdict) {
         const item = document.createElement('div');
         item.className = 'score-category';
         const number = parts[key];
-        let text = `${label}: ${Number.isFinite(Number(number))
+        const head = document.createElement('div');
+        head.textContent = `${label}: ${Number.isFinite(Number(number))
             ? Number(number).toFixed(1) : '-'}`;
         if (key === 'physical' && Number.isFinite(Number(clearance.util))) {
             /* The field-clearance channel under Physical: the util is the
                tube over the unclamped clearance (1.0 = touching), and the
                penetration is how far past it the tube reaches. */
             const past = Number(clearance.penetration_m);
-            text += ` (field clearance ${Number(clearance.util).toFixed(2)}x`
+            head.textContent += ` (field clearance ${Number(clearance.util).toFixed(2)}x`
                 + `${Number.isFinite(past) && past > 0
                     ? `, ${(past * 100).toFixed(2)} cm past` : ''})`;
         }
-        item.textContent = text;
+        item.appendChild(head);
+        const plain = document.createElement('div');
+        plain.className = 'hint';
+        plain.textContent = categorySentence(key, entry, report);
+        item.appendChild(plain);
         categories.appendChild(item);
     });
     note.textContent = verdict.kind === 'accepted'
@@ -2805,6 +2920,7 @@ function renderScoreBlock(verdict) {
         : verdict.kind === 'passed'
             ? 'The validator passed this plan.'
             : 'The plan is on the field for inspection.';
+    renderScoreNext(verdict);
 }
 
 function renderLeverHistory() {
