@@ -142,6 +142,7 @@ from tests.test_sysid_collect import (
     TestDriftAndStallTorque,
     TestWallHoming,
     TestCollectCommand,
+    TestGuidedSheetForm,
 )
 from tests.test_sysid_mass_inertia import (
     TestMassInertiaFormulas,
@@ -342,6 +343,7 @@ def test_classes():
         TestDriftAndStallTorque,
         TestWallHoming,
         TestCollectCommand,
+        TestGuidedSheetForm,
         TestMassInertiaFormulas,
         TestMassInertiaRoundtrip,
         TestWeighInSheet,

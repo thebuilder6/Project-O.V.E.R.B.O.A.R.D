@@ -288,12 +288,16 @@ form next to the sheet:
 python -m overboard.sysid.fit session.csv --write-form calibration_sheet.html
 ```
 
-Open `calibration_sheet.html` in a browser. It has one row per measurement,
-with the convention written at the top, and it counts what is still missing.
-Type the numbers, click **Download CSV**, and save the file in the folder you
-run the commands from. It is the same CSV as the sheet, so it drops straight
-into the next step. The form also takes a sheet you saved earlier, so a
-session you measured in two goes is not measured twice.
+Open `calibration_sheet.html` in a browser. It is a guided form: one card
+per test saying what the robot does, what to measure and the exact three
+numbers wanted, the measurement-frame diagram at the top, unit labels on
+every input, and a count of what is still missing. It warns (never blocks)
+about a number that cannot be the robot's — a turn outside 0-360, a mass
+that is not a robot's mass. Type the numbers, click **Download CSV**, and
+save the file in the folder you run the commands from. It is the same CSV as
+the sheet, so it drops straight into the next step. The form also takes a
+sheet you saved earlier, so a session you measured in two goes is not
+measured twice.
 
 ---
 
