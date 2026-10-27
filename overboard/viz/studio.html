@@ -40,13 +40,22 @@
 
     <!-- ---------------------------------------------------------- mission -->
     <section class="tabpanel" id="panel-mission" role="tabpanel" aria-labelledby="tab-mission">
+      <div class="first-time" id="first-time-strip">
+        <p><strong>First time here?</strong> 1. Draw a path: double-click the field
+          to add waypoints. 2. Press <strong>Solve</strong>. 3. Read the verdict,
+          then run the plan.
+          <a href="/help.html" target="_blank" rel="noopener">Open the guide</a>.</p>
+        <div class="row">
+          <button type="button" id="btn-dismiss-first-time" class="btn small">Got it</button>
+        </div>
+      </div>
       <section class="block">
         <label class="field">
           <span>Name</span>
           <input type="text" id="mission-name" value="mission" autocomplete="off">
         </label>
         <label class="field">
-          <span>Load</span>
+          <span>Load a mission</span>
           <select id="mission-list"></select>
         </label>
         <div class="row">
@@ -57,25 +66,28 @@
         <div class="row">
           <button type="button" id="btn-save" class="btn small" title="Save to missions/ (Ctrl+S)">Save</button>
         </div>
-        <details id="mission-files">
-          <summary>Files</summary>
-          <div class="row">
-            <button type="button" id="btn-download" class="btn small">Download the mission</button>
-            <button type="button" id="btn-upload-mission" class="btn small">Open a mission file...</button>
-            <input type="file" id="file-mission" accept=".json,application/json" hidden>
-          </div>
-          <div class="row">
-            <button type="button" id="btn-download-project" class="btn small" title="The mission, the robot and the options in one file">Download the project</button>
-            <button type="button" id="btn-upload-project" class="btn small">Open a project file...</button>
-            <input type="file" id="file-project" accept=".json,application/json" hidden>
-          </div>
-        </details>
         <p class="hint" id="waypoint-count">0 waypoints</p>
         <p class="hint" id="path-summary">Add waypoints to see the path length.</p>
         <p class="hint" id="mission-state">Not saved to missions/ yet</p>
-        <details id="history-block">
-          <summary>History</summary>
-          <div id="history-list"></div>
+        <details id="mission-advanced">
+          <summary>Advanced - files and history</summary>
+          <details id="mission-files">
+            <summary>Files</summary>
+            <div class="row">
+              <button type="button" id="btn-download" class="btn small">Download the mission</button>
+              <button type="button" id="btn-upload-mission" class="btn small">Open a mission file...</button>
+              <input type="file" id="file-mission" accept=".json,application/json" hidden>
+            </div>
+            <div class="row">
+              <button type="button" id="btn-download-project" class="btn small" title="The mission, the robot and the options in one file">Download the project</button>
+              <button type="button" id="btn-upload-project" class="btn small">Open a project file...</button>
+              <input type="file" id="file-project" accept=".json,application/json" hidden>
+            </div>
+          </details>
+          <details id="history-block">
+            <summary>History</summary>
+            <div id="history-list"></div>
+          </details>
         </details>
         <p class="hint">Ctrl+Z undo &middot; Ctrl+S save &middot; Space play &middot; the arrow keys move the selected waypoint</p>
       </section>
@@ -99,7 +111,11 @@
           <button type="button" id="btn-use-robot-geometry" class="btn small">Use the robot's geometry</button>
         </div>
         <p class="hint" id="robot-event-warning" hidden></p>
+        <p class="hint">Calibrating your own robot makes every plan match it.
+          The step-by-step is in <span class="mono">docs/CALIBRATION_PROCEDURE.md</span>.</p>
 
+        <details id="robot-advanced">
+          <summary>Advanced - measured model, calibration and the numbers</summary>
         <details id="model-block">
           <summary>Measured model</summary>
           <p class="hint" id="model-status">No measured model: the plan uses the nominal one.</p>
@@ -169,6 +185,7 @@
           </div>
           <p class="hint" id="robot-editor-note"></p>
         </details>
+        </details>
       </section>
     </section>
 
@@ -216,94 +233,32 @@
         <div class="presets" id="presets" role="radiogroup" aria-label="Preset"></div>
       </section>
 
-      <!-- Three blocks in the order a command is built: what the solver is
-           given, what the gate checks (it owns every field there), and what
-           is written. A flat list of the flags was a ladder with the gate
-           buried under the export settings it gates. -->
+      <!-- Plain first: the gate, what it scores and what is written. The
+           solver knobs and the gate's internals are one Advanced reveal. -->
       <section class="block">
-        <h2>Solved</h2>
-        <label class="field">
-          <span>Samples per segment</span>
-          <input type="number" id="opt-samples" min="2" max="200" step="1" value="10">
-        </label>
-        <label class="check">
-          <input type="checkbox" id="opt-auto-mesh" checked>
-          <span>Auto invariant mesh (50 ms)</span>
-        </label>
-        <label class="field">
-          <span>Accuracy weight</span>
-          <input type="number" id="opt-accuracy" min="0" step="0.005" value="0">
-        </label>
-        <label class="field">
-          <span>Soft force weight</span>
-          <input type="number" id="opt-force-weight" min="0" max="0.1" step="0.001" value="0">
-        </label>
-        <label class="check">
-          <input type="checkbox" id="opt-fast-polish">
-          <span>Fast polish (fewer IPOPT iterations on big missions)</span>
-        </label>
-      </section>
-
-      <section class="block">
-        <h2>Checked</h2>
+        <h2>Check the plan before it is used</h2>
         <label class="check">
           <input type="checkbox" id="opt-validate">
           <span>Validate before export (needs JAX)</span>
         </label>
+        <p class="hint">The gate. With it on, nothing is written unless the plan
+          passes the checks against your robot. With it off, the plan is untested.</p>
         <label class="field">
-          <span>Scoring profile</span>
+          <span>What the score values</span>
           <select id="opt-score-profile">
-            <option value="precision">Precision</option>
-            <option value="balanced" selected>Balanced</option>
-            <option value="speed">Speed</option>
+            <option value="precision">Precision - accuracy first</option>
+            <option value="balanced" selected>Balanced - even</option>
+            <option value="speed">Speed - time first</option>
           </select>
         </label>
         <label class="field">
-          <span>Target time (s)</span>
+          <span>Target run time (s) - what the score values</span>
           <input type="number" id="opt-target-time" min="0" step="0.1">
         </label>
         <label class="field">
-          <span>Maximum time (s)</span>
+          <span>Longest run time (s) - it will not exceed this</span>
           <input type="number" id="opt-max-time" min="0" step="0.1">
         </label>
-        <label class="field">
-          <span>Jerk target (m/s^3)</span>
-          <input type="number" id="opt-jerk-target" min="0" step="0.5" value="10">
-        </label>
-        <label class="field">
-          <span>Jerk maximum (m/s^3)</span>
-          <input type="number" id="opt-jerk-max" min="0" step="0.5" value="20">
-        </label>
-        <label class="field">
-          <span>Accept failed plan at score (1-100)</span>
-          <input type="number" id="opt-accept-score" min="1" max="100" step="1">
-        </label>
-        <label class="field">
-          <span>Candidates (1-3)</span>
-          <input type="number" id="opt-candidates" min="1" max="3" step="1" value="2">
-        </label>
-        <label class="field">
-          <span>Reachability propagation</span>
-          <select id="opt-propagation">
-            <option value="plant" selected>Plant, open loop (fast)</option>
-            <option value="tick">Closed-loop tick map (contracted, slower)</option>
-          </select>
-        </label>
-        <label class="field">
-          <span>Accuracy limit (cm)</span>
-          <input type="number" id="opt-envelope-limit" min="0.1" max="5" step="0.1" value="2">
-          <span class="hint" id="field-limit-note" hidden></span>
-        </label>
-        <label class="field">
-          <span>Allowance per metre (cm/m)</span>
-          <input type="number" id="opt-envelope-limit-per-metre" min="0" max="5" step="0.1" value="0">
-        </label>
-        <label class="check">
-          <input type="checkbox" id="opt-best-effort" checked>
-          <span>Keep the best path when validation fails (marked failed)</span>
-        </label>
-        <p class="hint">Every field here is the gate's: it is only sent with
-          validation on, and off it says nothing.</p>
       </section>
 
       <section class="block">
@@ -321,6 +276,75 @@
           <span>Controller timestep (s)</span>
           <input type="number" id="opt-controller-dt" min="0.001" max="1" step="0.005" value="0.02">
         </label>
+      </section>
+
+      <section class="block">
+        <details id="solve-advanced">
+          <summary>Advanced - solver knobs and the gate's internals</summary>
+          <h3 class="sub">What the solver is given</h3>
+          <label class="field">
+            <span>Points per piece of path</span>
+            <input type="number" id="opt-samples" min="2" max="200" step="1" value="10">
+          </label>
+          <label class="check">
+            <input type="checkbox" id="opt-auto-mesh" checked>
+            <span>Auto invariant mesh (50 ms)</span>
+          </label>
+          <label class="field">
+            <span>Smoothness weight</span>
+            <input type="number" id="opt-accuracy" min="0" step="0.005" value="0">
+          </label>
+          <label class="field">
+            <span>Soft force weight</span>
+            <input type="number" id="opt-force-weight" min="0" max="0.1" step="0.001" value="0">
+          </label>
+          <label class="check">
+            <input type="checkbox" id="opt-fast-polish">
+            <span>Fast polish (fewer IPOPT iterations on big missions)</span>
+          </label>
+          <h3 class="sub">What the gate checks</h3>
+          <label class="field">
+            <span>How the drift budget is measured</span>
+            <select id="opt-propagation">
+              <option value="plant" selected>Open-loop plant (fast)</option>
+              <option value="tick">Closed-loop tick map (slower, truer)</option>
+            </select>
+          </label>
+          <label class="field">
+            <span>Candidates (1-3)</span>
+            <input type="number" id="opt-candidates" min="1" max="3" step="1" value="2">
+          </label>
+          <label class="field">
+            <span>Drift budget (cm)</span>
+            <input type="number" id="opt-envelope-limit" min="0.1" max="5" step="0.1" value="2">
+            <span class="hint" id="field-limit-note" hidden></span>
+          </label>
+          <label class="field">
+            <span>Extra drift budget per metre (cm/m)</span>
+            <input type="number" id="opt-envelope-limit-per-metre" min="0" max="5" step="0.1" value="0">
+          </label>
+          <label class="field">
+            <span>Jerk target (m/s^3) - the smoothness the score values</span>
+            <input type="number" id="opt-jerk-target" min="0" step="0.5" value="10">
+          </label>
+          <label class="field">
+            <span>Jerk maximum (m/s^3) - the roughness it will not exceed</span>
+            <input type="number" id="opt-jerk-max" min="0" step="0.5" value="20">
+          </label>
+          <label class="field">
+            <span>Deliberately accept a risky plan at score (1-100)</span>
+            <input type="number" id="opt-accept-score" min="1" max="100" step="1">
+          </label>
+          <p class="hint">A failed plan at or above this score is kept - accepted
+            despite a known problem. It is never called passed.</p>
+          <label class="check">
+            <input type="checkbox" id="opt-best-effort" checked>
+            <span>Keep the best path when the check fails (for inspection only)</span>
+          </label>
+          <p class="hint">A kept failure is never approved for the robot.</p>
+          <p class="hint">Every field here is the gate's: it is only sent with
+            validation on, and off it says nothing.</p>
+        </details>
       </section>
     </section>
 
@@ -372,7 +396,6 @@
           <button type="button" id="btn-validate" class="btn small">Check it, then solve again</button>
           <span class="hint">Checks the path against your robot before it is used.</span>
         </div>
-        <dl class="facts" id="result-facts"></dl>
         <div id="score-block" hidden>
           <h3 class="sub">Score</h3>
           <p class="score-value mono" id="score-value"></p>
@@ -380,36 +403,39 @@
           <div class="score-categories" id="score-categories"></div>
           <p class="hint" id="score-note"></p>
         </div>
+        <p class="hint explainer" id="score-next"></p>
+        <dl class="facts" id="result-facts"></dl>
         <p class="hint explainer" id="solve-diff"></p>
-        <div id="lever-history" hidden>
-          <h3 class="sub">Tried levers</h3>
-          <table class="report" id="lever-table"></table>
-          <p class="hint" id="lever-note"></p>
-        </div>
         <div id="collisions"></div>
 
-        <div id="validation-report" hidden>
-          <h3 class="sub">Validation detail</h3>
-          <p class="hint explainer" id="validation-explainer"></p>
-          <div class="chips" id="validation-candidates"></div>
-          <div class="row" id="pick-row" hidden></div>
-          <table class="report scroll" id="validation-table"></table>
-          <p class="hint" id="validation-note"></p>
-          <div class="row" id="fix-row" hidden></div>
-        </div>
-
-        <div class="row">
-          <button type="button" id="btn-report" class="btn small">Mission report</button>
-          <span class="hint">One page: the mission, the robot and the result.</span>
-        </div>
-        <div class="row downloads" id="downloads"></div>
-        <details id="log-details">
-          <summary>Solver log</summary>
-          <div class="row">
-            <button type="button" id="btn-copy-log" class="btn small">Copy log</button>
-            <span class="hint">The whole log, not the selection.</span>
+        <details id="result-advanced">
+          <summary>Advanced - validation detail and solver output</summary>
+          <div id="validation-report" hidden>
+            <h3 class="sub">Validation detail</h3>
+            <p class="hint explainer" id="validation-explainer"></p>
+            <div class="chips" id="validation-candidates"></div>
+            <div class="row" id="pick-row" hidden></div>
+            <table class="report scroll" id="validation-table"></table>
+            <p class="hint" id="validation-note"></p>
+            <div class="row" id="fix-row" hidden></div>
           </div>
-          <pre class="log" id="log"></pre>
+          <div id="lever-history" hidden>
+            <h3 class="sub">Tried levers</h3>
+            <table class="report" id="lever-table"></table>
+            <p class="hint" id="lever-note"></p>
+          </div>
+          <div class="row">
+            <button type="button" id="btn-report" class="btn small">Mission report</button>
+            <span class="hint">One page: the mission, the robot and the result.</span>
+          </div>
+          <details id="log-details">
+            <summary>Solver log</summary>
+            <div class="row">
+              <button type="button" id="btn-copy-log" class="btn small">Copy log</button>
+              <span class="hint">The whole log, not the selection.</span>
+            </div>
+            <pre class="log" id="log"></pre>
+          </details>
         </details>
       </section>
     </section>
@@ -440,18 +466,21 @@
             <input type="checkbox" id="wp-stop">
             <span>Stop here</span>
           </label>
-          <label class="field">
-            <span>Event name</span>
-            <input type="text" id="wp-event" placeholder="e.g. lower_arm" autocomplete="off">
-          </label>
-          <label class="check">
-            <input type="checkbox" id="wp-precision">
-            <span>Precision (0.5 cm envelope)</span>
-          </label>
-          <label class="field">
-            <span>Envelope limit (cm)</span>
-            <input type="number" id="wp-threshold" min="0" step="0.1" placeholder="default 2">
-          </label>
+          <details id="wp-advanced">
+            <summary>Advanced - precision and events</summary>
+            <label class="field">
+              <span>Event name - what the robot does here</span>
+              <input type="text" id="wp-event" placeholder="e.g. lower_arm" autocomplete="off">
+            </label>
+            <label class="check">
+              <input type="checkbox" id="wp-precision">
+              <span>Precision (0.5 cm drift budget)</span>
+            </label>
+            <label class="field">
+              <span>Drift budget here (cm)</span>
+              <input type="number" id="wp-threshold" min="0" step="0.1" placeholder="default 2">
+            </label>
+          </details>
           <div class="row">
             <button type="button" id="btn-move-up" class="btn small">Move up</button>
             <button type="button" id="btn-move-down" class="btn small">Move down</button>
@@ -478,6 +507,12 @@
     <!-- -------------------------------------------------------------- run -->
     <section class="tabpanel" id="panel-run" role="tabpanel" aria-labelledby="tab-run" hidden>
       <section class="block" id="run-block">
+        <h3 class="sub">Ready to run</h3>
+        <p class="hint" id="run-readiness">No plan yet: draw a path, then press Solve.</p>
+        <div class="row downloads" id="downloads"></div>
+        <h3 class="sub">Put it on the robot (optional)</h3>
+        <p class="hint">A hub is optional: the files above can run another way.
+          To drive it from here, turn the hub on, close Pybricks Code, and scan.</p>
         <label class="field">
           <span>Connection</span>
           <select id="hub-conn">
@@ -495,16 +530,19 @@
           <button type="button" id="btn-push" class="btn small primary" disabled>Push to hub</button>
         </div>
         <p class="hint" id="push-status">Solve a mission first.</p>
-        <div id="push-result" hidden>
-          <dl class="facts" id="push-facts"></dl>
-          <p class="hint" id="push-events"></p>
-        </div>
+        <details id="run-advanced">
+          <summary>Advanced - what came back from the robot</summary>
+          <div id="push-result" hidden>
+            <dl class="facts" id="push-facts"></dl>
+            <p class="hint" id="push-events"></p>
+          </div>
 
-        <div id="compare-block" hidden>
-          <h3 class="sub">Plan against the robot</h3>
-          <table class="report" id="compare-table"></table>
-          <p class="hint" id="compare-note"></p>
-        </div>
+          <div id="compare-block" hidden>
+            <h3 class="sub">Plan against the robot</h3>
+            <table class="report" id="compare-table"></table>
+            <p class="hint" id="compare-note"></p>
+          </div>
+        </details>
       </section>
     </section>
 

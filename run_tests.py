@@ -160,6 +160,7 @@ from tests.test_cli_ux import (
     TestVariableSampleLayout,
     TestIterationHistory,
     TestCandidateComparison,
+    TestThePlainVerdictBlock,
 )
 from tests.test_gui_server import (
     TestStudioRoutes,
@@ -197,6 +198,8 @@ from tests.test_studio_honesty import (
     TestTheSheetWithoutASession,
     TestTheEnvelopeNamesItsModel,
     TestTheCandidateLabelsComeFromTheReport,
+    TestTheFirstTimeStripIsDismissible,
+    TestAdvancedRevealsDoNotLeak,
 )
 from tests.test_testcache import (
     TestCacheSkipsUnchangedCode,
@@ -363,6 +366,7 @@ def test_classes():
         TestVariableSampleLayout,
         TestIterationHistory,
         TestCandidateComparison,
+        TestThePlainVerdictBlock,
         TestFastPolish,
         TestSolverIterationBudget,
         TestMergeConditions,
@@ -400,6 +404,8 @@ def test_classes():
         TestTheSheetWithoutASession,
         TestTheEnvelopeNamesItsModel,
         TestTheCandidateLabelsComeFromTheReport,
+        TestTheFirstTimeStripIsDismissible,
+        TestAdvancedRevealsDoNotLeak,
         TestCacheSkipsUnchangedCode,
         TestCacheFingerprints,
         TestCacheRecords,

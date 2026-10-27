@@ -337,7 +337,8 @@ tr.ok td.verdict-cell { color: var(--ok); }
 
         const resultFacts = [];
         if (result.score !== null && result.score !== undefined) {
-            resultFacts.push(fact('Score', `${num(result.score, 1)}`, '/ 100 decision score'));
+            resultFacts.push(fact('Score', `${num(result.score, 1)}`,
+                '/ 100 decision score - decision units, not a probability of hardware success'));
             resultFacts.push(fact('Score version', String(result.score_version || 1), ''));
             resultFacts.push(fact('Profile', esc(result.profile || 'balanced'), ''));
         }

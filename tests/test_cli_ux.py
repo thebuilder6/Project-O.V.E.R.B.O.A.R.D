@@ -1805,5 +1805,88 @@ class TestDeprecatedCliFlags(unittest.TestCase):
         self.assertIn("--polish", result.output)
         self.assertIn("--gui", result.output)
 
+
+class TestThePlainVerdictBlock(unittest.TestCase):
+    """The human gets a plain verdict; the machine line stays for tools.
+
+    The block prints with --validate and only then: the score as decision
+    units - not a probability of hardware success - the verdict in plain
+    words and one next step. It never calls a plan safe to run, the phrase
+    a refused file used to carry.
+    """
+
+    def setUp(self):
+        import overboard.main as main
+        self.main = main
+        self.runner = CliRunner()
+        self.repo = REPO_ROOT
+
+    class _Optimizer:
+        def __init__(self, config):
+            pass
+
+        def solve(self, *args, **kwargs):
+            return _samples(), {"converged": True, "final_cost": 1.0}
+
+    class _PassingValidator:
+        """Everything inside its gates: the block must say ready to run."""
+
+        def __init__(self, config, digital_twin=None, **kwargs):
+            pass
+
+        def validate_trajectory(self, samples, *ranges, **kwargs):
+            return {
+                "passed": True,
+                "max_motor_violation_N": 0.0,
+                "max_traction_violation_N": 0.0,
+                "max_slip_l_N": 0.0,
+                "max_slip_r_N": 0.0,
+                "max_tracking_error_m": 0.001,
+                "reachability": {"max_error_m": 0.001,
+                                 "envelope": [{
+                                     "x_min": s["x"] - 0.001, "x_max": s["x"] + 0.001,
+                                     "y_min": s["y"] - 0.001, "y_max": s["y"] + 0.001,
+                                 } for s in samples],
+                                 "diverged": False},
+            }
+
+    def _invoke(self, args):
+        with tempfile.TemporaryDirectory() as tmp:
+            wp = os.path.join(tmp, "wp.json")
+            out = os.path.join(tmp, "out.traj")
+            with open(wp, "w", encoding="utf-8") as handle:
+                json.dump(_mission([{"x": 0.0, "y": 0.0, "heading": 0.0},
+                                    {"x": 0.1, "y": 0.0, "heading": 0.0}]),
+                          handle)
+            with patch.object(self.main, "TrajectoryOptimizer", self._Optimizer), \
+                    patch.object(self.main, "ImmraxValidator",
+                                 self._PassingValidator):
+                return self.runner.invoke(self.main.main, [
+                    "-c", os.path.join(self.repo, "examples", "fll_choreo.json"),
+                    "-w", wp, "-o", out] + list(args))
+
+    def test_the_block_prints_with_validate(self):
+        result = self._invoke(["--validate"])
+        self.assertEqual(result.exit_code, 0, result.output)
+        self.assertIn("In short:", result.output)
+        self.assertIn("not a probability of hardware success", result.output)
+        self.assertIn("Ready to run", result.output)
+        self.assertNotIn("safe to run", result.output)
+        # The machine line stays exactly one line of valid JSON, and the
+        # plain block is above it, never after it.
+        marker = [line for line in result.output.splitlines()
+                  if line.startswith(self.main.VALIDATION_MARKER)]
+        self.assertEqual(len(marker), 1, result.output)
+        json.loads(marker[0][len(self.main.VALIDATION_MARKER):])
+        self.assertLess(result.output.index("In short:"),
+                        result.output.index(self.main.VALIDATION_MARKER))
+
+    def test_the_block_is_absent_without_validate(self):
+        result = self._invoke([])
+        self.assertEqual(result.exit_code, 0, result.output)
+        self.assertNotIn("In short:", result.output)
+        self.assertNotIn("not a probability of hardware success", result.output)
+
+
 if __name__ == "__main__":
     unittest.main()
