@@ -1,6 +1,6 @@
 # Studio UI Inventory
 
-**Status:** 2026-10-21, after the 3-Pillar alignment of the Solve and Result tabs. A complete list of every control, readout and generated element in the browser studio, so the next change starts from a list rather than from the page.
+**Status:** 2026-10-27, after the plain-language / progressive-disclosure pass. A complete list of every control, readout and generated element in the browser studio, so the next change starts from a list rather than from the page.
 **Scope:** `overboard/viz/studio.html`, `overboard/viz/studio.js`, `overboard/viz/studio.css`
 (served by `overboard/gui_server.py`). The studio is the only browser UI (the WebSocket live view was
 removed).
@@ -43,6 +43,32 @@ The page carries **169 element ids**: **83 controls with an id** (38 buttons, 37
 | The history rows | `history-list` | Mission tab, the History list |
 | The waypoint list | `wp-list` | Waypoint tab |
 | The field limit note | `field-limit-note` | Solve tab, next to the accuracy limit |
+
+---
+
+## Plain vocabulary
+
+One source of truth for the words every surface uses. The studio, `help.html`, the mission report and the CLI's plain verdict block word a concept the same way; when a surface cannot use the plain words it adds the technical term beside them, never instead of them. **The score caption is mandatory wherever the score is prominent**: *decision units, not a probability of hardware success*.
+
+| Term | Plain words | Where it appears |
+|---|---|---|
+| Envelope | **the drift budget** - how far the robot may stray from the planned path | Solve tab (accuracy limit), Result tab (score sentence, validation detail), help.html, CLI verdict block |
+| Tube / reachable set | the drift budget drawn on the field - everywhere the robot could reasonably be | Result validation detail, canvas legend, help.html |
+| Propagation model (`plant` / `tick`) | how the drift budget is measured: **plant** = "the plan with no corrections - fast", **tick** = "with the robot's own corrections - slower, and closer to the truth" | Solve Advanced, Result validation detail, help.html |
+| Inclusion (`jac` / `mjac`) | the maths that keeps the budget an over-approximation per step (expert detail) | Result validation detail, the machine JSON - no studio control |
+| Tracking error | how far the robot strayed from the path while driving it | Result validation detail, help.html |
+| Score | **the decision score** - a 0-100 judgement of the plan, in decision units, **not a probability of hardware success** | Result tab headline, mission report, CLI verdict block |
+| Scoring profile | what the score values: **precision** (accuracy first), **balanced** (even), **speed** (time first) | Solve tab, Result headline |
+| Accept-score | **deliberately accepting a risky plan** - a failed plan at or above this score is kept, and may drive the robot | Solve Advanced, Result verdict |
+| Hub approval | the plan is allowed on the robot: a passed plan, or one deliberately accepted | Run tab, Result verdict, CLI verdict block |
+| Best-effort | keep the best path when the check fails so it can be looked at - **never** approved for the robot | Solve Advanced, Result verdict |
+| Structural failure | the plan itself is broken - the solver did not finish, the check crashed, or the path is incomplete. Nothing is written | Result verdict, help.html, CLI verdict block |
+| Slip limit | how hard the wheels may be pushed sideways before they slide | Result (Physical category), help.html |
+| Force limit | how hard the wheels may be pushed at all - motor strength times grip | Result (Physical category), help.html |
+| Duration target / maximum | the run time the score values / the run time it will not exceed | Solve tab, Result (Duration category) |
+| Jerk | how abruptly the wheels change force - a rough, jolting plan | Solve Advanced, Result (Quality category) |
+
+Accepted is never called passed: an accepted plan is **"accepted despite a known problem"**, and a best-effort export is never approved.
 
 ---
 
