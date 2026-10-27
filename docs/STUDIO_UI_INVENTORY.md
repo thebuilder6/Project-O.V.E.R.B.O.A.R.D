@@ -24,13 +24,14 @@ removed).
 
 **Three columns, two of them tabbed.** The left column is what you set, the canvas is the work, the right column is what you read. Each side column is a strip of tabs over one panel, so a column holds one topic at a time.
 
-The page carries **179 element ids**: **84 controls with an id** (39 buttons, 37 inputs, 8 selects), of which 8 are the tab buttons themselves. Fifteen regions are filled in at run time:
+The page carries **182 element ids**: **86 controls with an id** (39 buttons, 39 inputs, 8 selects), of which 8 are the tab buttons themselves. Sixteen regions are filled in at run time:
 
 | Generated region | Element id | Where |
 |---|---|---|
 | The robot fields (10) | `robot-fields` | Robot tab, Edit robot |
 | The uncertainty ranges (6) | `robot-range-fields` | Robot tab, Edit robot, the nested ranges |
 | The measurement sheet rows | `sheet-table` | Robot tab, Calibrate, step 2 |
+| The weigh-in rows | `weigh-table` | Robot tab, Calibrate, step 2 |
 | The plot tabs | `plot-tabs` | Plots tab |
 | The field's legend | `legend-items` | The canvas, top left |
 | The candidate chips | `validation-candidates` | Result tab, the validation detail |
@@ -174,8 +175,8 @@ Plain: the config, and what the robot is in the words a first-timer thinks in - 
 |---|---|
 | **Robot name** (text) | The calibration's name; the files are `calibration/<name>.*`. |
 | **1. Collect** + status | Pushes the collector to the hub and captures the session. The status names the running test, the repeat and how many measurements are needed. The button is **Collect on the hub**. |
-| **2. Measure** + table + **Save the sheet** | The measurements the session needs, as a form (test, repeat, stop, x, y, turn). |
-| **3. Fit** + status | The session and the sheet become the measured model. The status carries the fitter's warnings. The button is **Fit the model**. |
+| **2. Measure** + table + **Save the sheet** | The measurements the session needs, as a form (test, repeat, stop, x, y, turn), with unit labels in every input and a count of what is still missing. Below it, the **weigh-in** (`weigh-table`): the robot's mass with the battery in, on a kitchen scale, three times (mass_kg). |
+| **3. Fit** + status + gearing + wall distance | The session and the sheet become the measured model - the fit forwards the weigh-in mass, the gearing and the wall distance, so a studio fit lands mass and inertia like the CLI's. **Gearing** (motor turns per wheel turn; blank uses the robot config) and **Wall distance** (m, where the robot's centre rests against the wall; blank skips the wall-homing check) are optional. The status carries what landed and the fitter's warnings. The button is **Fit the model**. |
 
 #### Edit robot (details, `robot-editor`)
 

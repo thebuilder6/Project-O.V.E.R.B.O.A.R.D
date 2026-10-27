@@ -62,8 +62,9 @@ class TestStudioInventory(unittest.TestCase):
     def test_the_document_lists_every_generated_region(self):
         """The regions the script fills in must be named in the document."""
         for element_id in ["robot-fields", "robot-range-fields", "sheet-table",
-                           "plot-tabs", "legend-items", "validation-candidates",
-                           "validation-table", "fix-row", "downloads", "history-list",
+                           "weigh-table", "plot-tabs", "legend-items",
+                           "validation-candidates", "validation-table",
+                           "fix-row", "downloads", "history-list",
                            "wp-list", "score-categories", "lever-table"]:
             self.assertIn(element_id, self.html, f"{element_id} is gone from the page")
             self.assertIn(element_id, self.doc,

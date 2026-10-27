@@ -158,6 +158,8 @@
               <strong>2. Measure</strong>
               <p class="hint" id="sheet-status">The measurements the session needs, as a form.</p>
               <table class="report sheet" id="sheet-table"></table>
+              <p class="hint">The weigh-in: the robot's mass with the battery in, on a kitchen scale, three times.</p>
+              <table class="report sheet" id="weigh-table"></table>
               <div class="row">
                 <button type="button" id="btn-save-sheet" class="btn small">Save the sheet</button>
               </div>
@@ -165,6 +167,18 @@
             <li>
               <strong>3. Fit</strong>
               <p class="hint" id="fit-status">The sheet and the session become the measured model.</p>
+              <div class="row">
+                <label class="field">
+                  <span>Gearing (motor turns per wheel turn; blank uses the robot config)</span>
+                  <input type="number" id="cal-gearing" step="0.01" min="0.01" placeholder="1">
+                </label>
+              </div>
+              <div class="row">
+                <label class="field">
+                  <span>Wall distance (m, where the robot's centre rests against the wall; blank skips it)</span>
+                  <input type="number" id="cal-wall" step="0.01" min="0" placeholder="none">
+                </label>
+              </div>
               <div class="row">
                 <button type="button" id="btn-fit" class="btn small">Fit the model</button>
               </div>
