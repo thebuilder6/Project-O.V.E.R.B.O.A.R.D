@@ -1,0 +1,97 @@
+# The desktop build: one folder per OS, plus a Windows installer.
+#
+# It is not part of the test workflow: three 750 MB PyInstaller builds on every
+# push is a lot of runner time for a packaging change. Run it by hand, or push
+# a tag (v*) and the assets land on the release.
+name: desktop
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: ${{ matrix.artifact }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            artifact: OVERBOARD-windows-x64
+            exe: dist/OVERBOARD/OVERBOARD.exe
+          - os: macos-latest
+            artifact: OVERBOARD-macos-arm64
+            exe: dist/OVERBOARD/OVERBOARD
+          - os: ubuntu-latest
+            artifact: OVERBOARD-linux-x64
+            exe: dist/OVERBOARD/OVERBOARD
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install
+        run: python -m pip install -r requirements.txt -r requirements-optional.txt pyinstaller
+
+      - name: Build
+        run: pyinstaller --noconfirm overboard.spec
+
+      # The app has to see every package it ships.
+      - name: Doctor
+        run: ${{ matrix.exe }} --doctor
+
+      # And the solver has to run inside the frozen tree.
+      - name: Solve
+        run: >-
+          ${{ matrix.exe }} --run-cli
+          -w "${{ github.workspace }}/examples/example_straight.json"
+          -o "${{ runner.temp }}/out.traj"
+
+      # JAX is the fragile import and validation is the slow part, so one OS.
+      - name: Validate
+        if: runner.os == 'Linux'
+        run: >-
+          ${{ matrix.exe }} --run-cli
+          -w "${{ github.workspace }}/examples/example_straight.json"
+          -o "${{ runner.temp }}/validated.traj"
+          --validate
+
+      - name: Installer
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $version = "${{ github.ref_name }}".TrimStart("v")
+          if (-not $version -or $version -eq "main") { $version = "dev" }
+          iscc /DVersion=$version installer.iss
+
+      - name: Package
+        if: runner.os == 'macOS'
+        run: ditto -c -k --keepParent dist/OVERBOARD.app dist/OVERBOARD-macos-arm64.zip
+
+      - name: Package
+        if: runner.os == 'Linux'
+        run: tar -czf dist/OVERBOARD-linux-x64.tar.gz -C dist OVERBOARD
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          if-no-files-found: error
+          path: |
+            dist/*.exe
+            dist/*.zip
+            dist/*.tar.gz
+
+      - uses: softprops/action-gh-release@v2
+        if: startsWith(github.ref, 'refs/tags/')
+        with:
+          files: |
+            dist/*.exe
+            dist/*.zip
+            dist/*.tar.gz

@@ -44,6 +44,8 @@ This paper documents the engineering framework behind **Project O.V.E.R.B.O.A.R.
 
 Candidates are checked by interval reachability. The default is an **open-loop plant propagation** with the controller evaluated outside the tube; the opt-in `tick` propagation embeds one closed-loop tick and needs the mixed-Jacobian inclusion. An optional reverse-mode adjoint polish re-weights the samples nearest the gate in a 20 ms Zero-Order Hold (ZOH) Ramsete rollout. Whether a plan passes is decided per mission by the gates, never by the architecture.
 
+That ordering is deliberate. The objective is not speed but **spread**, with speed taken inside a spread budget; "time-optimal" here means *the fastest plan whose predicted spread at the required poses stays inside the budget*. The reachability tube is that spread, and the gates are where it is allowed to stop growing.
+
 ---
 
 ::: {.callout-important title="Status of these claims"}
@@ -57,8 +59,40 @@ This paper documents the mechanism. The measured record is
 - **The gates are verdicts of the model.** 5 mm tracking and 20 mm envelope against the declared uncertainty box, with the plant-robot match assumed (KI-020). They are not hardware guarantees.
 - **The S-curve fails today**: 0.51 cm against the 5 mm tracking gate. The other roadmap missions pass, with `--propagation tick`.
 - **Two open levers.** The gradient polish has never been measured (Q16), and the default `plant` propagation bounds an open-loop plant with the controller outside the tube (KI-049); `tick` is the closed-loop model.
-- **The verdict is a boolean** against thresholds the operator did not choose (KI-055), and the envelope limit is absolute, so a long path can fail for being long (KI-054).
+- **The verdict is a boolean** against thresholds the operator did not choose (KI-055), and the envelope limit is absolute, so a long path can fail for being long (KI-054); the hierarchy of §Objective is enforced here as a filter, not as a ranking.
 :::
+
+---
+
+# Objective: precision from the reference, not the controller
+
+## Two clocks
+
+Planning and execution do not share a clock, and the asymmetry is what makes this a planning problem at all. Offline, on a PC, a solve takes seconds to minutes and may evaluate several candidates against a reachability model. Online, on the hub, one control tick is 20 ms: read the gyroscope and the encoders, evaluate Ramsete, write the wheel commands. The robot cannot re-plan, filter or re-estimate while it drives, and it does no computation between power-on and the first move.
+
+Every method in this paper therefore lives on the offline side of that line. The reference path is the last place precision can be bought, because it is the last place anything is computed.
+
+## Three classes of failure
+
+The loop closes on measured error, so it can correct only what it can measure:
+
+1. **Recoverable disturbance.** Ramsete removes cross-track and heading error against the reference, at a rate set by $k_1$ in @eq-ramsete-closed-loop.
+2. **Control failure.** The reference asks for more than the wheels can deliver, and no controller can track it (@eq-actuator-diamond, @eq-traction-envelope).
+3. **Measurement failure.** Slip and drift corrupt the odometry the loop corrects against, so it corrects toward a pose that is wrong.
+
+The classes interact, and the interaction is why the gain is not a free parameter: a hard correction is a demand for wheel force, wheel force is what breaks traction, and broken traction destroys the odometry the correction depends on. A path that provokes corrections damages the sensing it needs.
+
+Classes 2 and 3 are fixed at plan time — by where the path turns hard, accelerates hard, or dead-reckons over a long stretch — and no tuning of the controller changes them.
+
+## The hierarchy
+
+Spread first, then time, then residual pose error, because a tight execution with a constant offset can be calibrated out while scatter cannot:
+
+$$\min_{\boldsymbol{\zeta}} \; t_f = \sum_{i=0}^{M-1} S_i \Delta t_i \quad \text{s.t.} \quad \hat{r}_k \le d_{\text{tube}}, \quad \hat{e}_k \le d_{\text{gate}}, \quad \text{and the constraints of the NLP above}$$ {#eq-goal-hierarchy}
+
+where $\hat{r}_k$ is the predicted reachable-set radius at node $k$ and $\hat{e}_k$ the predicted tracking error. Spread enters as a bound rather than as a linear term because a strict lexicographic order on continuous objectives is degenerate — no two plans have equal spread, so the second objective would never be reached.
+
+The current implementation of @eq-goal-hierarchy is the certification gate of the Verification section, in two strengths: the soft $J_{\text{disc}}$ penalty normalises the three discretization mechanisms by $d_{\text{gate}}$ inside the cost (@eq-nlp-objective), and the interval tube is the hard check.
 
 ---
 
@@ -358,6 +392,10 @@ $$\max_k \|\mathbf{p}_{\text{mid}, k} - \mathbf{p}_{\text{ref}, k}\|_2 \le 0.005
 
 and no motor-force, wheel-slip, wheel-speed or divergence violation is reported. The tracking gate is fixed at 5 mm; the envelope limit defaults to 20 mm and can be set per run (1–50 mm) or per waypoint (`error_threshold`). Certification is a verdict of the model, not a hardware guarantee: `CLAIMS.md` records the plant-robot match as assumed, and the S-curve example fails the tracking gate today.
 
+### The gate as the precision objective
+
+@eq-certification-gates is usually read as a filter applied after the solve. Under @eq-goal-hierarchy it is the objective: the tube radius is the spread the model predicts, the tracking bound is the residual pose error, and the gate value is where spread is no longer allowed to grow. What the solver minimises is time, inside that budget. Today the hierarchy is enforced as a verdict rather than as a ranking, so the result is boolean against fixed thresholds (KI-055) and a long path can fail for being long rather than for being risky (KI-054); ranking candidates by predicted spread is the open version of the same statement.
+
 ## Reverse-Mode Adjoint Sensitivity Polish
 
 The polish is off by default. The planner's `plan()` runs it only when the champion is near the gate ($e_{\text{track}} > 0.90 \cdot d_{\text{gate}}$); the CLI's opt-in `--polish` runs it on every solved candidate. It uses reverse-mode automatic differentiation in JAX to compute the gradient of the boundary violation loss $\mathcal{L}$:
@@ -378,7 +416,7 @@ $$W_k = \text{clip} \left( 1.0 + 4.0 \left(\frac{\|\mathbf{g}_k\|_2}{\max_j \|\m
 
 # Architectural Flowchart
 
-The end-to-end trajectory generation, optimization, and verification pipeline is depicted below:
+The end-to-end trajectory generation, optimization, and verification pipeline is depicted below. Stages 1–4 are offline; stage 5 is everything that runs on the robot.
 
 ```{mermaid}
 %%| label: fig-pipeline
@@ -423,7 +461,13 @@ flowchart TD
     end
     class S4 stageStyle;
 
-    class W,TB,IM,LA,CC,EPass,Triad,Opti,GL,Epi,Disc,Scan compStyle;
+    subgraph S5["Stage 5: On the robot - 20 ms Ramsete loop (no re-planning)"]
+        Cert --> FW["Firmware: reference interpolation, odometry, drive()"]
+        FW --> Run["Run: tracking only - no estimation, no re-plan"]
+    end
+    class S5 stageStyle;
+
+    class W,TB,IM,LA,CC,EPass,Triad,Opti,GL,Epi,Disc,Scan,FW,Run compStyle;
     class Cert passStyle;
     class Fail failStyle;
     class Grad,Polish gradStyle;
@@ -443,6 +487,7 @@ To highlight the computational characteristics of this formulation, @tbl-benchma
 | **Force-bound smoothness** | N/A | $\sqrt{F^2+\epsilon}$ puts a $10^6$ Hessian entry at $F=0$ | Four linear inequalities, zero second derivative (no condition-number study) |
 | **Mesh Density** | Uniform spatial division | Uniform sample counts | 50 ms targeting mesh (heuristic) |
 | **Seeding Mechanism** | Straight chords ($v=0$) | Heuristic lookahead | Analytical seed set (~1.3 ms per seed, 2.5 ms for three) |
+| **Precision** | Not modelled | Post-hoc forward integration | Interval tube from the uncertainty box; the bound the plan is optimised inside |
 | **Safety Certification** | None | Post-hoc forward integration (CPU RK4) | JAX interval reachability: open-loop plant by default, opt-in closed-loop tick (mixed-Jacobian) |
 
 : Comparative benchmark of trajectory generation frameworks. {#tbl-benchmark}
@@ -454,6 +499,8 @@ To highlight the computational characteristics of this formulation, @tbl-benchma
 Project O.V.E.R.B.O.A.R.D implements a deterministic, time-optimal trajectory planning and tracking pipeline for differential-drive mobile robots.
 
 By combining **Asymmetric Late-Apex Transition Geometry**, **Composite Kinetic Velocity Envelopes**, and **Discretization-Consistent Linear Epigraph Collocation**, the system avoids the force-bound Hessian spike and removes stochastic evolutionary search from the solve path.
+
+The second half of the claim is operability, and it is a claim rather than a nicety: a method that cannot be run on someone else's robot is not a result. The pipeline is therefore three one-command stages — calibrate the robot and its uncertainty ranges, generate and gate a path, deploy the code the gate approved — each of which names the step to fix when it fails, and none of which can let an unvalidated file look approved.
 
 The reachability engine and optional adjoint polish check the plan against dynamic motor curves, wheel-lift tipping limits and Coulomb friction boundaries **in the model**. Whether a plan passes is a per-mission gate verdict: the tracking gate is 5 mm in the model, the plant-robot match is assumed, and the S-curve example fails today.
 
