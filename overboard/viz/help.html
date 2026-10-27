@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>OVERBOARD - manual</title>
+<title>OVERBOARD - start here</title>
 <link rel="stylesheet" href="studio.css">
 <style>
   /* studio.css makes the studio one screen; this page is a document. */
@@ -27,35 +27,83 @@
 <body>
 <main>
 
-<h1>OVERBOARD Studio</h1>
-<p class="lede">Time-optimal mission planner for a LEGO differential-drive robot.
-It plans the motion, checks it against a reachability model, and only then lets a
-trajectory leave the machine.</p>
+<h1>OVERBOARD Studio - start here</h1>
+<p class="lede">Plan how a LEGO differential-drive robot should move, check the plan
+against what the robot can actually do, and only then let it leave the machine.
+This page is the short version: the journey, what the numbers mean, and what to do
+when a plan fails.</p>
 
-<h2>The loop</h2>
+<h2>The journey: draw, solve, read, run</h2>
 <ol>
-  <li><strong>Mission</strong> - name it, and give it a start pose and waypoints.
-      Click the field to add one; drag to move it. A waypoint can be marked
-      <em>stop</em> (the robot halts there) and/or carry a heading.</li>
-  <li><strong>Robot</strong> - the machine's limits: wheel size, mass, motor, gear
-      ratio, force, slip. The shipped example is a placeholder; measure yours
-      (see <em>Calibration</em> below) before you trust a plan.</li>
-  <li><strong>Solve</strong> - picks the planner's candidates, solves each with
-      CasADi/IPOPT, and validates. <em>Solve</em> in the header starts it.</li>
-  <li><strong>Result</strong> - the verdict, every candidate with its numbers, the
-      envelope, and the downloads. <strong>Run</strong> pushes to the hub.</li>
+  <li><strong>Draw a path.</strong> Double-click the field to add waypoints; drag
+      one to move it. Tick <em>Stop here</em> where the robot must halt. The
+      <strong>Mission</strong> tab names and saves it.</li>
+  <li><strong>Press Solve.</strong> The planner finds the fastest plan for the path
+      and - with <em>Validate before export</em> on in the <strong>Solve</strong>
+      tab - checks it against your robot before anything is written.</li>
+  <li><strong>Read the verdict.</strong> The <strong>Result</strong> tab opens with
+      the score first: what it means, and what to do next. The detail is behind
+      <em>Advanced</em> when you want it.</li>
+  <li><strong>Run it.</strong> The <strong>Run</strong> tab says whether the plan is
+      ready, and gives you the files. Pushing it to the hub is optional.</li>
 </ol>
+<p>Each tab shows the everyday controls; anything expert sits behind an
+<em>Advanced</em> reveal, so you never have to open one to finish the journey.</p>
+
+<h2>What the score means (and what it does not)</h2>
+<p>After a checked solve, the Result tab shows a <strong>decision score</strong> from
+0 to 100 - the planner's judgement of the plan in decision units, <strong>not a
+probability of hardware success</strong>. A 90 does not mean a 90% chance of working;
+it means this plan scores better than one that scores 80, on the profile you picked.</p>
+<table>
+  <tr><th>Category</th><th>What it says</th></tr>
+  <tr><td><strong>Physical</strong></td><td>How hard the wheels work against the force and slip limits.</td></tr>
+  <tr><td><strong>Accuracy</strong></td><td>How close the robot stays to the planned path - the drift, against the drift budget.</td></tr>
+  <tr><td><strong>Motion Quality</strong></td><td>How smooth the drive is - how abruptly the wheels change force (jerk).</td></tr>
+  <tr><td><strong>Duration</strong></td><td>How fast it is, against your target run time.</td></tr>
+</table>
+<p>The <em>scoring profile</em> in the Solve tab is what the score values:
+<strong>Precision</strong> (accuracy first), <strong>Balanced</strong> (even), or
+<strong>Speed</strong> (time first).</p>
+
+<h2>What the checks mean</h2>
+<ul>
+  <li><strong>Drift budget</strong> (the envelope): how far the robot may stray from
+      the planned path. The check measures it as a <em>tube</em> around the path -
+      everywhere the robot could reasonably be - and refuses a plan whose tube is
+      wider than the budget. Each waypoint can ask for a tighter budget of its own.</li>
+  <li><strong>Tracking error</strong>: how far the robot strayed while driving the
+      plan, under the controller that will run on the hub.</li>
+  <li><strong>Force and slip limits</strong>: how hard the wheels may be pushed at
+      all, and sideways before they slide. A plan that needs more than the robot has
+      is refused, however fast it is.</li>
+</ul>
+<p class="note">A pass is a model prediction, not a measurement. The validator is not
+yet a full digital twin: motor, odometry and slip are modelled only in part. Treat
+the drift budget as a budget, and check the first runs by hand.</p>
 
 <h2>What a verdict means</h2>
 <table>
   <tr><th>Verdict</th><th>Reading</th></tr>
-  <tr><td><strong>Passed</strong></td><td>Every candidate gate held: envelope, tracking, force, slip. This is the only verdict that can be pushed to the robot.</td></tr>
-  <tr><td><strong>Failed</strong></td><td>Nothing is exported. The message names the failing segment and the excess. With best effort on, a plan that only misses the accuracy budget is written and marked unapproved; a force, slip or convergence failure never is.</td></tr>
-  <tr><td><strong>Unvalidated</strong></td><td>The solve ran without the validator. The trajectory exists, the push stays off.</td></tr>
+  <tr><td><strong>Passed</strong></td><td>Every check held: drift budget, tracking, force, slip. This is the verdict that is ready to run and can be pushed to the robot.</td></tr>
+  <tr><td><strong>Accepted despite a known problem</strong></td><td>The plan failed a check, and you chose to keep it because its score was at or above your accept-score. It is <em>not</em> a passed plan. You can push it, deliberately, on that understanding.</td></tr>
+  <tr><td><strong>Failed</strong></td><td>Nothing is exported. The message names what failed and by how much.</td></tr>
+  <tr><td><strong>Best effort</strong></td><td>The plan's only failure was the drift budget or tracking, so the best path is kept to look at. It is never approved for the robot.</td></tr>
+  <tr><td><strong>Not validated</strong></td><td>The solve ran without the checks. The path exists on the field; the push stays off. Turn validation on and solve again before driving it.</td></tr>
+  <tr><td><strong>Structural failure</strong></td><td>The plan itself is broken - the solver did not finish, the check crashed, or the path is incomplete. Nothing is written at all.</td></tr>
 </table>
-<p class="note">A pass is a model prediction, not a measurement. The validator is not
-yet a full digital twin: motor, odometry and slip are modelled only in part. Treat
-the envelope as a budget, and check the first runs by hand.</p>
+
+<h2>When a plan fails</h2>
+<ol>
+  <li>Read the plain line under the score: it names the reason and the next step.</li>
+  <li>Open <em>Advanced</em> on the Result tab for the per-segment numbers, and press
+      a <strong>Try</strong> button - each one pulls the lever the numbers point at
+      and solves again, and the studio records what that lever <em>measured</em>.</li>
+  <li>Or change the mission: a tighter turn, a stop, a shorter path. The solver can
+      only plan the path you drew.</li>
+</ol>
+<p>Every number the studio gives you after a solve is measured, never estimated in
+advance. The lever table only grows when a solve has finished.</p>
 
 <h2>Where your files are</h2>
 <p>Missions, calibration and generated firmware are kept outside the program, so an
@@ -73,43 +121,49 @@ somewhere else.</p>
   <li><code>pybricks_code/</code> - the firmware, including the generated <code>hub_mission.py</code> and your <code>robot_config.py</code>.</li>
   <li><code>mats/</code> - the field artwork, downloaded on request.</li>
   <li><code>docs/</code> - every document from the project, including the
-      calibration procedure and the design notes.</li>
+      calibration procedure and the design notes. The desktop app seeds a copy
+      here, so the manual travels with the program.</li>
 </ul>
 <p>A trajectory is written into the folder of the solve that produced it, and is
-listed with the other artifacts under <em>Result</em>.</p>
+listed with the other files under <em>Run</em>.</p>
 
 <h2>Calibration</h2>
-<p>The SysId loop measures the real robot and writes the numbers the planner needs:
-collect a session over Bluetooth, run the reference tests when the hub asks, fill in
-the sheet, fit, then compare against the digital twin. Until that is done the
-envelope describes the example robot, not yours. <code>docs/CALIBRATION_PROCEDURE.md</code>
-walks through it.</p>
+<p>Before you trust a plan, measure the real robot. The SysId loop does it: collect a
+session over Bluetooth, run the reference tests when the hub asks, fill in the sheet,
+fit, then compare against the digital twin. Until that is done the checks describe
+the example robot, not yours. <code>docs/CALIBRATION_PROCEDURE.md</code> walks through
+it step by step.</p>
 
-<h2>Pushing to the robot</h2>
-<p><em>Run</em> imports the trajectory and pushes <code>hub_runner.py</code> with
-<code>pybricksdev</code>. It needs the robot connected over Bluetooth or USB, and it
-refuses a trajectory that is not a pass, or a mission that changed after the solve.
-The hub reports its own odometry back, which the studio compares with the plan.</p>
+<h2>Pushing to the robot (optional)</h2>
+<p>The <em>Run</em> tab can push the plan to the hub and drive it. It needs the robot
+on and connected over Bluetooth or USB - <em>Scan for hubs</em> finds it - and it
+refuses a trajectory that is not approved, or a mission that changed after the solve.
+A hub is never required: download the files and run the plan another way. After the
+drive, the hub reports its own odometry back, and the studio compares it with the
+plan.</p>
 
 <h2>Command line</h2>
 <p>The same program without the browser. Every option the studio sets has a flag:</p>
-<pre>overboard -w mission.json -o out.traj --validate
-overboard --doctor
-overboard --gui</pre>
-<p><code>--doctor</code> prints the Python, the packages, the example files, the
-folders and the ports, with the command that fixes anything missing. Run it first
-when something does not work.</p>
+<pre>python -m overboard.main -w mission.json -o out.traj --validate
+python -m overboard.main --doctor
+python -m overboard.main --gui</pre>
+<p>A validated run ends with a short plain-language verdict block (score, what it
+means, the next step) and one machine-readable line for tools. <code>--doctor</code>
+prints the Python, the packages, the example files, the folders and the ports, with
+the command that fixes anything missing. Run it first when something does not work.</p>
 
 <h2>If something goes wrong</h2>
 <ul>
-  <li><strong>The solve never finishes.</strong> Cancel, cut the sample count under
-      <em>Solve</em>, or use the fast preset; a long mission with many candidates is
-      the usual cause.</li>
+  <li><strong>The solve never finishes.</strong> Cancel, cut the points per piece of
+      path under <em>Solve &gt; Advanced</em>, or use the fast preset; a long mission
+      with many candidates is the usual cause.</li>
   <li><strong>Nothing is exported.</strong> Read the verdict: a failure is a refusal,
-      not a glitch. The named lever - a wider accuracy limit, one more candidate,
-      another propagation model - is the thing to change.</li>
-  <li><strong>The push button is off.</strong> The trajectory has to be a pass, and
-      the mission on screen has to be the one that was solved.</li>
+      not a glitch. The plain line under the score names the next step.</li>
+  <li><strong>The push button is off.</strong> The plan has to be a pass (or one you
+      deliberately accepted), and the mission on screen has to be the one that was
+      solved. The Run tab says which of those it is.</li>
+  <li><strong>No hub answers the scan.</strong> Turn the hub on, close Pybricks Code
+      (it holds the connection), and scan again.</li>
   <li><strong>The port is busy.</strong> The studio takes the next free one and says
       which.</li>
 </ul>
