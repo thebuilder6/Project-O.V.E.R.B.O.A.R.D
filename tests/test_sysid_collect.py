@@ -861,7 +861,7 @@ class TestSheetFormAndOneStepFit(unittest.TestCase):
             return load_runs([path])[1]
 
     def test_the_form_holds_every_measurement(self):
-        from overboard.sysid.sheet_form import write_form
+        from overboard.sysid.sheet_form import weigh_in_rows, write_form
 
         rows = sheet_rows(self._runs(repeats=2))
         with tempfile.TemporaryDirectory() as tmp:
@@ -871,14 +871,18 @@ class TestSheetFormAndOneStepFit(unittest.TestCase):
             with open(path, encoding="utf-8") as handle:
                 text = handle.read()
 
-        # One row per measurement, keyed the way the sheet keys it.
-        self.assertEqual(text.count("<tr data-test="), len(rows))
+        # One row per measurement, keyed the way the sheet keys it, plus
+        # the weigh-in rows the sheet always carries.
+        self.assertEqual(
+            text.count("<tr data-test="), len(rows) + len(weigh_in_rows()))
         self.assertIn(
             'data-test="multi_stop" data-repeat="1" data-stop="2"', text)
+        self.assertIn('data-test="weigh_in" data-repeat="2"', text)
         # The header the fitter reads, and the file the form downloads.
-        self.assertIn("test,repeat,stop,x_mm,y_mm,turn_right_deg", text)
+        self.assertIn("test,repeat,stop,x_mm,y_mm,turn_right_deg,mass_kg",
+                      text)
         self.assertIn('var HEADER = "test,repeat,stop,x_mm,y_mm,'
-                      'turn_right_deg"', text)
+                      'turn_right_deg,mass_kg"', text)
         self.assertIn("calibration_sheet.csv", text)
 
     def test_the_form_and_the_sheet_agree_on_the_rows(self):

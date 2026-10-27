@@ -215,6 +215,29 @@ class DrivetrainFit:
                 "lower > upper")
 
 
+@dataclass(frozen=True)
+class BodyParameterFit:
+    """A measured body parameter: the weigh-in mass or the derived inertia.
+
+    The range is the KI-010 interval over the repeats. The inertia value is
+    the effective body-side quantity the force model consumes: it already
+    includes the reflected rotor inertia, which is never added to it again.
+    """
+
+    calibrated: bool = False
+    value: Optional[float] = None
+    value_range: Tuple[float, float] = (0.0, 0.0)
+    n_sources: int = 0
+
+    def __post_init__(self):
+        if self.value is not None and self.value <= 0.0:
+            raise ValueError(
+                f"body parameter must be positive, got {self.value}")
+        if self.value_range[0] > self.value_range[1]:
+            raise ValueError(
+                f"body parameter range {self.value_range} has lower > upper")
+
+
 def _actuator_from_dict(payload: Dict[str, Any]) -> ActuatorFit:
     payload = payload if isinstance(payload, dict) else {}
     calibrated = bool(payload.get("calibrated", False))
@@ -353,6 +376,30 @@ def _drivetrain_from_dict(payload: Dict[str, Any]) -> DrivetrainFit:
     )
 
 
+def _body_from_dict(payload: Dict[str, Any], value_key: str,
+                    label: str) -> BodyParameterFit:
+    payload = payload if isinstance(payload, dict) else {}
+    value = _optional_float(payload.get(value_key), f"{label}.{value_key}")
+    ci = payload.get(f"{value_key}_ci95")
+    if isinstance(ci, (list, tuple)) and len(ci) == 2:
+        low = _optional_float(ci[0], f"{label}.{value_key}_ci95")
+        high = _optional_float(ci[1], f"{label}.{value_key}_ci95")
+    else:
+        low = high = None
+    if low is not None and high is not None:
+        value_range = (low, high)
+    elif value is not None:
+        value_range = (value, value)
+    else:
+        value_range = (0.0, 0.0)
+    return BodyParameterFit(
+        calibrated=bool(payload.get("calibrated", False)),
+        value=value,
+        value_range=value_range,
+        n_sources=int(payload.get("n_sources", 0) or 0),
+    )
+
+
 def _odometry_from_dict(payload: Dict[str, Any]) -> OdometryFit:
     payload = payload if isinstance(payload, dict) else {}
     return OdometryFit(
@@ -429,6 +476,8 @@ class DigitalTwinConfig:
     drift: DriftFit = field(default_factory=DriftFit)
     stall_torque: StallTorqueFit = field(default_factory=StallTorqueFit)
     drivetrain: DrivetrainFit = field(default_factory=DrivetrainFit)
+    mass: BodyParameterFit = field(default_factory=BodyParameterFit)
+    inertia: BodyParameterFit = field(default_factory=BodyParameterFit)
     backlash: Dict[str, Any] = field(default_factory=dict)
     validation: Dict[str, Any] = field(default_factory=dict)
     drivebase: Dict[str, Any] = field(default_factory=dict)
@@ -455,6 +504,9 @@ class DigitalTwinConfig:
         drift = _drift_from_dict(data.get("drift", {}))
         stall_torque = _stall_torque_from_dict(data.get("stall_torque", {}))
         drivetrain = _drivetrain_from_dict(data.get("drivetrain", {}))
+        mass = _body_from_dict(data.get("mass", {}), "mass_kg", "mass")
+        inertia = _body_from_dict(
+            data.get("inertia", {}), "inertia_kg_m2", "inertia")
         drivebase = _drivebase_from_dict(data.get("drivebase"), data)
 
         # A documented limit is usable without a calibration: the DriveBase
@@ -486,6 +538,8 @@ class DigitalTwinConfig:
             drift=drift,
             stall_torque=stall_torque,
             drivetrain=drivetrain,
+            mass=mass,
+            inertia=inertia,
             backlash=dict(backlash) if isinstance(backlash, dict) else {},
             validation=dict(validation) if isinstance(validation, dict) else {},
             drivebase=drivebase,
@@ -580,6 +634,37 @@ class DigitalTwinConfig:
             return None
         return float(self.drivetrain.no_load_speed_rad_s)
 
+    def measured_mass_kg(self) -> Optional[float]:
+        """The weighed robot mass (with battery), or None if not weighed."""
+        if not self.mass.calibrated:
+            return None
+        value = self.mass.value
+        return None if value is None else float(value)
+
+    def measured_mass_range_kg(self) -> Optional[Tuple[float, float]]:
+        """The weighed mass and its KI-010 interval, or None."""
+        if not self.mass.calibrated or self.mass.value is None:
+            return None
+        return tuple(self.mass.value_range)
+
+    def measured_inertia_kg_m2(self) -> Optional[float]:
+        """The derived yaw inertia, or None if it was not derived.
+
+        The value is the effective body-side inertia the force model
+        consumes: it already includes the reflected rotor inertia, which is
+        never added to it again.
+        """
+        if not self.inertia.calibrated:
+            return None
+        value = self.inertia.value
+        return None if value is None else float(value)
+
+    def measured_inertia_range_kg_m2(self) -> Optional[Tuple[float, float]]:
+        """The derived inertia and its KI-010 interval, or None."""
+        if not self.inertia.calibrated or self.inertia.value is None:
+            return None
+        return tuple(self.inertia.value_range)
+
     def measured_motor(self, gearing: float = 1.0) -> Dict[str, Any]:
         """The measured motor numbers, ready for ``RobotConfig``.
 
@@ -671,6 +756,18 @@ class DigitalTwinConfig:
                 "no_load_speed_rad_s": self.drivetrain.no_load_speed_rad_s,
                 "no_load_speed_range": list(self.drivetrain.no_load_speed_range),
                 "n_sources": self.drivetrain.n_sources,
+            },
+            "mass": {
+                "calibrated": self.mass.calibrated,
+                "mass_kg": self.mass.value,
+                "mass_range": list(self.mass.value_range),
+                "n_sources": self.mass.n_sources,
+            },
+            "inertia": {
+                "calibrated": self.inertia.calibrated,
+                "inertia_kg_m2": self.inertia.value,
+                "inertia_range": list(self.inertia.value_range),
+                "n_sources": self.inertia.n_sources,
             },
             "applied": {
                 "actuator_gain_range": list(self.actuator_gain_range()),
