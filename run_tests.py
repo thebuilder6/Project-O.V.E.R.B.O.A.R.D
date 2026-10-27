@@ -218,6 +218,11 @@ from tests.test_risk_margins import (
 from tests.test_q18_decomposition import TestQ18Decomposition
 from tests.test_q19_oneknob import TestQ19OneKnob
 from tests.test_q20_taxonomy import TestClassifySolverError, TestFailureStatsCarryKind
+from tests.test_compare_traj import (
+    TestOracleMatching,
+    TestComparePair,
+    TestCliSummary,
+)
 from tests.test_doc_numbers import (
     TestDocNumbers,
 )
@@ -250,6 +255,9 @@ except ImportError as e:
 def test_classes():
     """The test classes, the JAX ones first when they are available."""
     classes = [
+        TestOracleMatching,
+        TestComparePair,
+        TestCliSummary,
         TestExportConfig,
         TestSegmentLimits,
         TestGearedSpeedLimit,
