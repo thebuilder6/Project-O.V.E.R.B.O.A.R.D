@@ -53,6 +53,10 @@ test_output*
 random_suite/
 benchmarks/
 pybricks_code/hub_mission.py
+# The studio's per-collect test selection, generated next to the collector
+# and bundled with it. Deleted when a collect runs the full suite, so a
+# manual push never inherits a stale subset.
+pybricks_code/sysid_selection.py
 
 # Research measurement output (the committed copy lives in docs/measurements/)
 research/results/

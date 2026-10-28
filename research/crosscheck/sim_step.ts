@@ -13,10 +13,18 @@
  *
  * Usage (inside the simulator's checkout):
  *   npx tsx crosscheck.ts <out.csv> <command_dps> <stop_mode> <run_ms>
+ *     [drive_mode] [track_mm] [wheel_dia_mm] [start]
  *
  *   command_dps  the commanded wheel speed, in wheel degrees per second
  *   stop_mode    "brake" or "coast"
  *   run_ms       how long the drive phase lasts
+ *   drive_mode   "straight" (default, both wheels forward) or "turn"
+ *     (wheels opposed: left forward, right backward for a positive
+ *     command, i.e. clockwise, the firmware's +w convention)
+ *   track_mm / wheel_dia_mm  the drive base geometry; absent keeps the
+ *     simulator's own default drive base exactly as before
+ *   start        "xMm,yMm,headingDeg" in the mat frame; absent keeps the
+ *     historical start pose
  */
 
 import { writeFileSync } from "node:fs";
@@ -33,15 +41,26 @@ const outPath = process.argv[2] ?? "crosscheck_trace.csv";
 const commandDps = Number(process.argv[3] ?? 1110);
 const stopMode = (process.argv[4] ?? "brake").toLowerCase();
 const runMs = Number(process.argv[5] ?? 1500);
+const driveMode = (process.argv[6] ?? "straight").toLowerCase();
+const trackMm = process.argv[7] ? Number(process.argv[7]) : null;
+const wheelDiaMm = process.argv[8] ? Number(process.argv[8]) : null;
+const startArg = process.argv[9] ?? "500,300,0";
 const totalMs = runMs + 1500;
 const dtMs = 10;
 
 async function main() {
+  const [startXmm, startYmm, startHdeg] = startArg.split(",").map(Number);
+  const driveBase = trackMm !== null || wheelDiaMm !== null
+    ? makeDriveBase({
+        ...(wheelDiaMm !== null ? { wheelDiameterMm: wheelDiaMm } : {}),
+        ...(trackMm !== null ? { trackWidthMm: trackMm } : {}),
+      })
+    : makeDriveBase();
   const sim = await Simulation.create({
     season: season as never,
-    robot: makeDriveBase(),
+    robot: driveBase,
     // Well clear of the walls and of every mission model.
-    start: { xMm: 500, yMm: 300, headingDeg: 0 },
+    start: { xMm: startXmm, yMm: startYmm, headingDeg: startHdeg },
     footprints: false,
   });
   // Let the robot settle on the mat before it is measured.
@@ -61,7 +80,11 @@ async function main() {
   for (let t = 0; t <= totalMs; t += dtMs) {
     if (t === 0) {
       // A big acceleration so the profile is not the thing being measured.
-      api.pairMove(0, 0, commandDps, 10000);
+      if (driveMode === "turn") {
+        api.pairMoveTank(0, commandDps, -commandDps, 10000);
+      } else {
+        api.pairMove(0, 0, commandDps, 10000);
+      }
     }
     if (t === runMs) {
       api.pairStop(0, stopMode === "coast" ? Stop.COAST : Stop.BRAKE);

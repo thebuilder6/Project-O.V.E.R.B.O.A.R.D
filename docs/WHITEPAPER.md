@@ -1,7 +1,7 @@
 # FLL Trajectory Optimizer: Technical Whitepaper
 
 **Version:** 3.0<br>
-**Date:** October 22, 2026<br>
+**Date:** October 22, 2026 (record; the measurement ledger runs through 2026-10-27 in `docs/HEURISTICS_AND_VERIFICATION.md`, `docs/STRATEGY_LEDGER.md`, `docs/RESEARCH_AGENDA.md`)<br>
 **Author:** Johnathan Pollard
 
 This document describes the current implementation in the working tree. It replaces the earlier version, which mixed implemented code with aspirational designs and unreproducible performance numbers. The code, `KNOWN_ISSUES.md`, and the test suite are the authority if this document drifts again.

@@ -8,10 +8,11 @@
 # Pinned to the pair the test suite runs against here: the Immrax inclusion
 # rules and the JAX API move, and an unpinned install brings a stack whose
 # numbers nobody measured. Raise both together and re-run the suite.
-# jax 0.6.2 / immrax 0.3.6 raise MemoryError in the tick propagation on this
-# tree, so the pair below is the newest one measured to pass.
-jax==0.12.0
-immrax==0.3.8
+# jax 0.12.0 / immrax 0.3.8 are unmeasured here (jax 0.12.0 has no matching
+# distribution) and break the tick propagation, so the pair below is the one
+# measured to pass.
+jax==0.6.2
+immrax==0.3.6
 pybricksdev
 # The PDF renderer for the mat import: FIRST's field guide is a PDF, and
 # the studio composes the mat picture from it. Without this the mat

@@ -86,7 +86,7 @@ The `uncertainties` block is used in two places:
 - The optimizer's per-wheel force and traction limits use the declared worst cases (minimum cof, minimum torque headroom, smallest wheel radius for the speed term, largest wheel radius for the force term, maximum inertia and minimum track width for the force split).
 - `--validate` passes the same ranges to Immrax.
 
-The optional `--sysid-fit sysid_fit.json` model is separate from this file. It is produced by `python -m overboard.sysid.fit` from robot logs and is not a `robot` config block. `python -m overboard.sysid.fit --profile examples/drivebase_profile.example.json` can read the minimal wheel-radius/track-width profile instead of a full robot config. After a run, `sysid_compare.py` compares the planned trajectory with measured `poses.csv` rows.
+The optional `--sysid-fit sysid_fit.json` model is separate from this file. It is produced by `python -m overboard.sysid.fit` from robot logs and is not a `robot` config block. `python -m overboard.sysid.fit --profile examples/drivebase_profile.example.json` can read the minimal wheel-radius/track-width profile instead of a full robot config. After a run, `python -m overboard.sysid.compare` compares the planned trajectory with measured `poses.csv` rows.
 
 A minimal drivebase profile is:
 
@@ -98,7 +98,7 @@ A minimal drivebase profile is:
 }
 ```
 
-`wheel_radius_m` is required for fitting; `track_width_m` is optional metadata. Pybricks-style `wheel_diameter_mm` and `axle_track_mm` are accepted, as are a full robot config (`robot.wheel_radius`, `robot.track_width`) and an existing `sysid_fit.json`. `sysid_compare.py --profile ...` prints the profile and warns when its geometry differs from the trajectory config. The comparator also accepts a plain predicted-pose CSV (`t,x,y,heading`, or `t_ms`/`heading_deg`) instead of a `.traj`.
+`wheel_radius_m` is required for fitting; `track_width_m` is optional metadata. Pybricks-style `wheel_diameter_mm` and `axle_track_mm` are accepted, as are a full robot config (`robot.wheel_radius`, `robot.track_width`) and an existing `sysid_fit.json`. `python -m overboard.sysid.compare --profile ...` prints the profile and warns when its geometry differs from the trajectory config. The comparator also accepts a plain predicted-pose CSV (`t,x,y,heading`, or `t_ms`/`heading_deg`) instead of a `.traj`.
 
 Recognized ranges:
 

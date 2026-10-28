@@ -30,7 +30,63 @@ from robot_config import (
     WHEEL_DIAMETER_MM,
     AXLE_TRACK_MM,
 )
-from ramsete import Odometry
+from odometry import Odometry
+
+
+# The collector grew test by test and the hub's heap did not. Reclaim the
+# import-time garbage before anything waits on a button, or the first poll
+# dies with MemoryError while the heap is still full of import fragments.
+gc.collect()
+
+# The studio can run a subset of the suite: the collect request carries the
+# test ids, and the server writes them here before pushing (pybricksdev
+# bundles this file with the collector). No file means the full suite.
+# The id is the META test name the session carries. A test that needs the
+# robot left somewhere runs its dependency first even when the dependency
+# was not picked (wall_stall needs wall_homing's robot-against-the-wall).
+try:
+    from sysid_selection import SELECTED, AUTO_START
+except ImportError:
+    SELECTED = None
+    AUTO_START = False
+
+# Bench mode (sysid_selection BENCH): the same suite in short runs for a
+# small bench (~0.6 x 0.8 m). Speeds are unchanged, so the fitted dynamics
+# are the same; only the distances shrink. Read separately so a selection
+# file written before the bench mode still loads (it just runs full-size).
+try:
+    from sysid_selection import BENCH
+except ImportError:
+    BENCH = False
+
+
+def _selected(test_id, extra=()):
+    """Whether one test runs: everything without a selection file."""
+    if SELECTED is None:
+        return True
+    return test_id in SELECTED or test_id in extra
+
+
+# Tests that chain without the operator touching anything: the robot stays
+# where it is (rate steps, spins, chirps) or is already where the next test
+# needs it (the stall, after its homing). Everything else waits for the
+# button, because the operator has to place, lift or still the robot first.
+AUTO_ADVANCE = {
+    "straight_steps_fwd", "straight_steps_rev",
+    "turn_steps_cw", "turn_steps_ccw",
+    "curvature_cw", "curvature_ccw",
+    "reversal_backlash",
+    "chirp_straight", "chirp_turn",
+    "wall_stall",
+}
+
+# Seconds between two chained tests. A press skips the wait.
+AUTO_DELAY_S = 5
+
+# The first wait of a push is the operator getting ready, so it always
+# blocks - unless the page triggered this one test (AUTO_START), which is
+# the trigger already.
+_FIRST_WAIT = True
 
 
 # --- CONFIGURATION ---------------------------------------------------------
@@ -49,6 +105,16 @@ REPEATS = 3
 # The repeat number of the test that is running. It goes into the META line
 # so the host can group the repeats of one test.
 _REPEAT = 0
+
+# Bench geometry: short runs for a small bench. Speeds are unchanged, only
+# durations and distances shrink, so the fitted dynamics are the same. The
+# curvature arcs are skipped in bench mode on top of this: the host fit
+# never reads them.
+STEP_MS = 500 if BENCH else 900
+STEP_SETTLE_MS = 300 if BENCH else 600
+ODOMETRY_STRAIGHT_MS = 5000 if BENCH else 10000
+MULTI_STOP_TARGETS_MM = (200, 350, 500) if BENCH else (500, 1000, 1500)
+BRAKE_CRUISE_MS = 1000 if BENCH else 2000
 
 RATE_HEADER = (
     "t_ms,loop_ms,v_cmd_mm_s,w_cmd_deg_s,l_deg,r_deg,"
@@ -91,7 +157,7 @@ def _read_optional(obj, name, method):
         return "unavailable"
 
 
-def _print_metadata(name, notes="", poses=0):
+def _print_metadata(name, notes="", poses=0, extra=None):
     global _RUN_ID
     _RUN_ID += 1
     # The META lines are "META,key,value": the host parses them that way, so
@@ -105,6 +171,9 @@ def _print_metadata(name, notes="", poses=0):
     print("META,poses,%d" % poses)
     print("META,wheel_diameter_mm,%d" % WHEEL_DIAMETER_MM)
     print("META,axle_track_mm,%d" % AXLE_TRACK_MM)
+    if extra:
+        for key in sorted(extra):
+            print("META,%s,%s" % (key, extra[key]))
     print("META,battery_mv,%d" % hub.battery.voltage())
     print("META,mem_free,%d" % gc.mem_free())
     print("META,settings,%s" % _fmt_tuple(drivebase.settings()))
@@ -138,15 +207,40 @@ def _dump(buf, cols, formatter):
 
 
 def _wait_for_start(test_name, instructions):
+    """Hold for the operator, the button, or the countdown.
+
+    The first wait of a push always blocks: the operator is still getting
+    ready - unless the page triggered this one test (AUTO_START), which is
+    the trigger already. Later, a chained test counts down and starts by
+    itself; a press skips the wait. A setup test always blocks.
+    """
+    global _FIRST_WAIT
+    first = _FIRST_WAIT
+    _FIRST_WAIT = False
+    # One collection per test: each test frees a big log buffer, and the
+    # next wait loop is the first thing that allocates after it.
+    gc.collect()
     hub.light.on(Color.YELLOW)
     print("")
     print("=" * 50)
     print("READY FOR:", test_name)
     print("SETUP:", instructions)
-    print("Press CENTER to start. BLUETOOTH is emergency stop.")
-    print("=" * 50)
-    while Button.CENTER not in hub.buttons.pressed():
-        wait(10)
+    if first and AUTO_START:
+        print("Started from the page.")
+        print("=" * 50)
+    elif test_name in AUTO_ADVANCE and not first:
+        print("Starting %s in %d s - press CENTER to start now."
+              % (test_name, AUTO_DELAY_S))
+        for _ in range(AUTO_DELAY_S * 10):
+            if Button.CENTER in hub.buttons.pressed():
+                break
+            wait(100)
+        print("=" * 50)
+    else:
+        print("Press CENTER to start. BLUETOOTH is emergency stop.")
+        print("=" * 50)
+        while Button.CENTER not in hub.buttons.pressed():
+            wait(10)
     hub.display.text("OK")
     while Button.CENTER in hub.buttons.pressed():
         wait(10)
@@ -213,10 +307,11 @@ def _turn_chirp(amplitude, duration_ms, f0=0.2, f1=3.0):
 
 # --- HIGH-RATE PLANT TESTS -------------------------------------------------
 
-def run_rate_test(name, duration_ms, command, instructions, notes=""):
+def run_rate_test(name, duration_ms, command, instructions, notes="",
+                  poses=0, extra=None):
     """Log raw encoders/IMU at ~100 Hz while issuing drive() every 20 ms."""
     _wait_for_start(name, instructions)
-    _print_metadata(name, notes)
+    _print_metadata(name, notes, poses=poses, extra=extra)
 
     buf = bytearray()
     watch = StopWatch()
@@ -350,14 +445,16 @@ def test_straight_steps(direction):
     sign = 1 if direction > 0 else -1
     segments = []
     for value in _step_values((50, 100, 200, 400, 600)):
-        segments.append((900, sign * value, 0))
-        segments.append((600, 0, 0))
+        segments.append((STEP_MS, sign * value, 0))
+        segments.append((STEP_SETTLE_MS, 0, 0))
     name = "straight_steps_fwd" if sign > 0 else "straight_steps_rev"
     run_rate_test(
         name,
         sum(s[0] for s in segments),
         _sequence(segments),
-        "2+ m clear runway. Robot starts at rest facing along the runway.",
+        ("Longest bench diagonal, facing along it. About 0.7 m of travel."
+         if BENCH else
+         "2+ m clear runway. Robot starts at rest facing along the runway."),
         "forward steps" if sign > 0 else "reverse steps",
     )
 
@@ -366,8 +463,8 @@ def test_turn_steps(direction):
     sign = 1 if direction > 0 else -1
     segments = []
     for value in _step_values((30, 60, 120, 240)):
-        segments.append((900, 0, sign * value))
-        segments.append((600, 0, 0))
+        segments.append((STEP_MS, 0, sign * value))
+        segments.append((STEP_SETTLE_MS, 0, 0))
     name = "turn_steps_cw" if sign > 0 else "turn_steps_ccw"
     run_rate_test(
         name,
@@ -406,7 +503,9 @@ def test_reversal():
         "reversal_backlash",
         sum(s[0] for s in segments),
         _sequence(segments),
-        "2 m clear runway. Robot oscillates forward/back.",
+        ("Centred with room to spare. Robot oscillates forward/back around "
+         "the start." if BENCH else
+         "2 m clear runway. Robot oscillates forward/back."),
         "backlash and command deadband",
     )
 
@@ -417,7 +516,9 @@ def test_chirp_straight():
         "chirp_straight",
         duration,
         _chirp(250, duration),
-        "2 m clear runway. Robot sweeps forward/back around the start.",
+        ("Start in the middle. Robot sweeps forward/back around the start."
+         if BENCH else
+         "2 m clear runway. Robot sweeps forward/back around the start."),
         "linear chirp 0.2-3 Hz, amplitude 250 mm/s",
     )
 
@@ -510,11 +611,55 @@ def run_odometry_test(name, duration_ms, v_cmd, w_cmd, instructions, notes=""):
 def test_odometry_straight():
     run_odometry_test(
         "odometry_straight",
-        10000,
+        ODOMETRY_STRAIGHT_MS,
         100,
         0,
-        "2 m clear runway. Robot drives straight at 100 mm/s for 10 s.",
-        "measure final distance with a tape; expected about 1000 mm",
+        ("Bench diagonal. Robot drives straight at 100 mm/s for 5 s."
+         if BENCH else
+         "2 m clear runway. Robot drives straight at 100 mm/s for 10 s."),
+        ("measure final distance with a tape; expected about 500 mm"
+         if BENCH else
+         "measure final distance with a tape; expected about 1000 mm"),
+    )
+
+
+SQUARE_SIDE_MM = 150
+SQUARE_SPEED_MM_S = 100
+SQUARE_TURN_DEG_S = 50
+# The robot pauses briefly at every corner and after every turn, so the
+# servo transient of the phase change has decayed before the next phase is
+# measured. Without the pause the transient curves into the leg and biases
+# the geometry the squares identify.
+SQUARE_SETTLE_MS = 500
+
+
+def test_square(direction):
+    """One UMBmark square: four slow legs, four in-place quarter turns.
+
+    Run slowly so slip stays out of the measurement (the UMBmark
+    discipline). The operator measures only the end pose; the start mark
+    is the reference the fit compares it against.
+    """
+    name = "square_cw" if direction > 0 else "square_ccw"
+    turn = SQUARE_TURN_DEG_S if direction > 0 else -SQUARE_TURN_DEG_S
+    leg_ms = SQUARE_SIDE_MM * 1000 // SQUARE_SPEED_MM_S
+    turn_ms = 90 * 1000 // SQUARE_TURN_DEG_S
+    segments = []
+    for _ in range(4):
+        segments.append((leg_ms, SQUARE_SPEED_MM_S, 0))
+        segments.append((SQUARE_SETTLE_MS, 0, 0))
+        segments.append((turn_ms, 0, turn))
+        segments.append((SQUARE_SETTLE_MS, 0, 0))
+    run_rate_test(
+        name,
+        sum(s[0] for s in segments),
+        _sequence(segments),
+        "Clear 400 mm square, e.g. a launch zone. Robot drives a 150 mm "
+        "square, then stops.",
+        "square, run slowly; end pose is the measurement",
+        poses=1,
+        extra={"square_side_mm": SQUARE_SIDE_MM,
+               "square_direction": "cw" if direction > 0 else "ccw"},
     )
 
 
@@ -615,9 +760,12 @@ def test_wall_homing():
         "wall_homing",
         60,
         30000,
-        "Put the robot's centre on the start mark, square to the wall. The "
-        "wall is about a metre ahead. Do not touch the robot once it is "
-        "running.",
+        ("Put the robot's centre on the start mark, square to the bench "
+         "backstop. Do not touch the robot once it is running."
+         if BENCH else
+         "Put the robot's centre on the start mark, square to the wall. The "
+         "wall is about a metre ahead. Do not touch the robot once it is "
+         "running."),
         "drive into the wall and stop when it is blocked; the host checks "
         "the odometry against the marked distance",
     )
@@ -637,11 +785,18 @@ def test_odometry_turn():
 def test_multi_stop():
     _wait_for_start(
         "MULTI-STOP ODOMETRY",
-        "2 m runway. Mark the start pose and a measuring spot at each stop.",
+        ("Bench diagonal. Mark the start pose and a measuring spot at each "
+         "stop." if BENCH else
+         "2 m runway. Mark the start pose and a measuring spot at each stop."),
     )
     drivebase.reset(0, 0)
     odom = Odometry(drivebase)
-    _print_metadata("multi_stop", "measure pose at 500/1000/1500 mm", poses=3)
+    _print_metadata(
+        "multi_stop",
+        ("measure pose at 200/350/500 mm" if BENCH else
+         "measure pose at 500/1000/1500 mm"),
+        poses=3,
+    )
 
     buf = bytearray()
     watch = StopWatch()
@@ -649,7 +804,7 @@ def test_multi_stop():
     start = watch.time()
     print("t_ms,target_mm,db_d_mm,db_v_mm_s,db_a_deg,db_w_deg_s,batt_mv")
 
-    for target_mm in (500, 1000, 1500):
+    for target_mm in MULTI_STOP_TARGETS_MM:
         while drivebase.distance() < target_mm:
             drivebase.drive(100, 0)
             wait(CONTROL_MS)
@@ -681,7 +836,9 @@ def test_multi_stop():
 def test_brake_from_speed(speed_mm_s):
     _wait_for_start(
         "BRAKE FROM " + str(speed_mm_s) + " MM/S",
-        "Mark the start and final pose. 2 m runway is required.",
+        ("Mark the start and final pose. Use the bench diagonal."
+         if BENCH else
+         "Mark the start and final pose. 2 m runway is required."),
     )
     drivebase.reset(0, 0)
     odom = Odometry(drivebase)
@@ -694,7 +851,7 @@ def test_brake_from_speed(speed_mm_s):
     watch = StopWatch()
     watch.reset()
     start = watch.time()
-    while watch.time() - start < 2000:
+    while watch.time() - start < BRAKE_CRUISE_MS:
         drivebase.drive(speed_mm_s, 0)
         wait(CONTROL_MS)
     stop_t = watch.time() - start
@@ -840,7 +997,14 @@ async def test_replay(module_name):
 
 # --- MAIN ------------------------------------------------------------------
 
-async def main():
+def run_suite():
+    """The whole collection protocol, run synchronously at top level.
+
+    Blocking wait() calls inside a run_task coroutine leak a scheduler
+    allocation per call (~36 bytes each, measured), which bleeds the heap
+    dry during a long button wait - the MemoryError before the first test.
+    Only the replay step is async, and it runs its own task and returns.
+    """
     global _REPEAT
 
     hub.system.set_stop_button((Button.BLUETOOTH,))
@@ -848,55 +1012,96 @@ async def main():
     print("Digital twin SysId collector")
     print("Save the complete console output as one .csv file.")
     print("Calibration tests run %d times each." % REPEATS)
+    if SELECTED is None:
+        print("Running the full suite.")
+    else:
+        print("Running %d selected tests: %s." % (len(SELECTED),
+                                                  ", ".join(SELECTED)))
+    if BENCH:
+        print("Bench mode: short runs for a small bench; "
+              "curvature is skipped.")
 
     # The tests that feed the fitted numbers are repeated, so the fit has a
     # between-run spread to report. The rest run once: they are diagnostics
     # or a held-out check, and one run is enough for those.
-    test_static()
+    if _selected("static"):
+        test_static()
     for _REPEAT in range(REPEATS):
-        test_straight_steps(+1)
-        test_straight_steps(-1)
+        if _selected("straight_steps_fwd"):
+            test_straight_steps(+1)
+        if _selected("straight_steps_rev"):
+            test_straight_steps(-1)
     for _REPEAT in range(REPEATS):
-        test_turn_steps(+1)
-        test_turn_steps(-1)
+        if _selected("turn_steps_cw"):
+            test_turn_steps(+1)
+        if _selected("turn_steps_ccw"):
+            test_turn_steps(-1)
 
     # These run once, so they are all repeat zero.
     _REPEAT = 0
-    test_curvature(+1)
-    test_curvature(-1)
-    test_reversal()
-    test_chirp_straight()
-    test_chirp_turn()
+    # Bench mode skips the curvature arcs: the host fit never reads them.
+    # The _selected() calls stay, so the studio's test list still matches
+    # the collector's suite.
+    if _selected("curvature_cw") and not BENCH:
+        test_curvature(+1)
+    if _selected("curvature_ccw") and not BENCH:
+        test_curvature(-1)
+    if _selected("reversal_backlash"):
+        test_reversal()
+    if _selected("chirp_straight"):
+        test_chirp_straight()
+    if _selected("chirp_turn"):
+        test_chirp_turn()
 
     # The tests the operator has to measure, one repeat after another so the
     # measurements are taken in one go. The wall test is in here too: it
     # measures the motor's stall torque, and the operator has to move the
     # robot to the wall anyway, so three pushes cost little.
     for _REPEAT in range(REPEATS):
-        test_odometry_straight()
-        test_odometry_turn()
-        test_multi_stop()
-        test_brake_from_speed(300)
-        test_brake_from_speed(600)
+        if _selected("odometry_straight"):
+            test_odometry_straight()
+        if _selected("odometry_turn_cw"):
+            test_odometry_turn()
+        if _selected("multi_stop"):
+            test_multi_stop()
+        if _selected("brake_from_300"):
+            test_brake_from_speed(300)
+        if _selected("brake_from_600"):
+            test_brake_from_speed(600)
+        if _selected("square_cw"):
+            test_square(+1)
+        if _selected("square_ccw"):
+            test_square(-1)
 
     # The wall tests, from the start mark to the wall and then into it. The
     # homing run leaves the robot against the wall, which is where the stall
-    # test wants it, so the operator only sets the robot up once.
+    # test wants it, so the operator only sets the robot up once. Picking the
+    # stall without the homing still homes first (the extra argument).
     for _REPEAT in range(REPEATS):
-        test_wall_homing()
-        test_wall_stall()
+        if _selected("wall_homing", ("wall_stall",)):
+            test_wall_homing()
+        if _selected("wall_stall"):
+            test_wall_stall()
 
     # The robot has to be lifted off the ground for this one, so it runs on
     # its own after the measuring tests are done.
     for _REPEAT in range(REPEATS):
-        test_top_speed()
+        if _selected("top_speed"):
+            test_top_speed()
 
     _REPEAT = 0
-    await test_replay("complex_mission")
+    if _selected("replay_complex_mission"):
+        run_task(test_replay("complex_mission"))
 
     hub.light.on(Color.GREEN)
     print("SysId collection complete.")
 
 
+# The hub menu runs the suite by importing this module, and hub_deploy runs
+# it as __main__. gc.mem_free exists on the hub and never on a host
+# interpreter, so a stubbed host import defines everything and starts
+# nothing (the tests replace this module's gc after import, so the check
+# runs unpatched).
 if __name__ == "__main__" or __name__ == "sysid_digital_twin":
-    run_task(main())
+    if hasattr(gc, "mem_free"):
+        run_suite()

@@ -1370,5 +1370,181 @@ class TestCollectCommand(unittest.TestCase):
         self.assertFalse(result["odometry"]["calibrated"])
 
 
+class TestBenchMode(unittest.TestCase):
+    """The short bench runs: the same suite on a ~0.6 x 0.8 m bench.
+
+    Speeds are unchanged, so the fitted dynamics are the same; only the
+    distances shrink and the curvature arcs (which the fit never reads)
+    are skipped. Every surface that names a distance has a bench variant:
+    the hub console, the studio test list, the collect banners and the
+    measurement form.
+    """
+
+    def test_the_full_size_guide_is_unchanged(self):
+        from overboard.sysid.sheet_form import guide_for
+        self.assertIn("one metre", guide_for("odometry_straight")["does"])
+        self.assertIn("500, 1000 and 1500",
+                      guide_for("multi_stop")["does"])
+        self.assertIn("2+ m", guide_for("straight_steps_fwd")["does"])
+
+    def test_the_bench_guide_names_the_short_runs(self):
+        from overboard.sysid.sheet_form import guide_for
+        straight = guide_for("odometry_straight", bench=True)
+        self.assertIn("half a metre", straight["does"])
+        self.assertIn("about 500", straight["numbers"])
+        multi = guide_for("multi_stop", bench=True)
+        self.assertIn("200, 350 and 500", multi["does"])
+        steps = guide_for("straight_steps_fwd", bench=True)
+        self.assertNotIn("2+ m", steps["does"])
+        self.assertIn("diagonal", steps["does"])
+        # A test that names no distance says the same on a bench.
+        self.assertEqual(guide_for("square_cw", bench=True),
+                         guide_for("square_cw"))
+
+    def test_the_bench_banner_names_the_short_runs(self):
+        import overboard.sysid.collect as sysid_collect
+
+        printed = []
+        guide = sysid_collect.TestGuide(print_fn=printed.append, bench=True)
+        guide("TEST_START odometry_straight")
+        text = "\n".join(printed)
+        self.assertIn("odometry_straight - run 1 - MEASURE THIS ONE", text)
+        self.assertIn("half a metre", text)
+
+    def test_the_form_cards_use_the_bench_wording(self):
+        from overboard.sysid.sheet_form import write_form
+
+        rows = [{"test": "odometry_straight", "repeat": 0, "stop": 0}]
+        with tempfile.TemporaryDirectory() as tmp:
+            full = os.path.join(tmp, "full.html")
+            bench = os.path.join(tmp, "bench.html")
+            write_form(rows, full)
+            write_form(rows, bench, bench=True)
+            with open(full, encoding="utf-8") as handle:
+                full_text = handle.read()
+            with open(bench, encoding="utf-8") as handle:
+                bench_text = handle.read()
+        self.assertIn("one metre", full_text)
+        self.assertIn("half a metre", bench_text)
+        self.assertNotIn("half a metre", full_text)
+
+    def _reload_collector(self, bench):
+        """Re-import the collector with a bench (or full-size) selection."""
+        import importlib
+        import types
+        import sysid_digital_twin
+
+        selection = types.ModuleType("sysid_selection")
+        selection.SELECTED = None
+        selection.AUTO_START = False
+        selection.BENCH = bench
+        sys.modules["sysid_selection"] = selection
+        try:
+            return importlib.reload(sysid_digital_twin)
+        finally:
+            del sys.modules["sysid_selection"]
+
+    def test_the_collector_shortens_its_runs_on_a_bench(self):
+        import importlib
+        import sysid_digital_twin
+
+        _load_collector()
+        try:
+            module = self._reload_collector(bench=True)
+            self.assertTrue(module.BENCH)
+            self.assertEqual(module.STEP_MS, 500)
+            self.assertEqual(module.STEP_SETTLE_MS, 300)
+            self.assertEqual(module.ODOMETRY_STRAIGHT_MS, 5000)
+            self.assertEqual(module.MULTI_STOP_TARGETS_MM, (200, 350, 500))
+            self.assertEqual(module.BRAKE_CRUISE_MS, 1000)
+        finally:
+            # Back to the full-size defaults for every other test.
+            importlib.reload(sysid_digital_twin)
+            sysid_digital_twin._RUN_ID = 0
+
+    def test_the_collector_runs_full_size_without_a_selection(self):
+        module = _load_collector()
+        self.assertFalse(module.BENCH)
+        self.assertEqual(module.STEP_MS, 900)
+        self.assertEqual(module.MULTI_STOP_TARGETS_MM, (500, 1000, 1500))
+        self.assertEqual(module.ODOMETRY_STRAIGHT_MS, 10000)
+        self.assertEqual(module.BRAKE_CRUISE_MS, 2000)
+
+    def test_collect_bench_restores_a_stale_selection_file(self):
+        import overboard.paths as paths
+        import overboard.sysid.collect as sysid_collect
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as tmp:
+            selection = Path(tmp) / "sysid_selection.py"
+            selection.write_text("SELECTED = ['static']\n", encoding="utf-8")
+            session = os.path.join(tmp, "session.csv")
+            seen = {}
+
+            def fake_deploy(script, connection="ble", name=None, wait=True,
+                            print_output=True, stream_path=None, on_line=None):
+                seen["selection"] = selection.read_text(encoding="utf-8")
+                text = _measurement_session(repeats=1)
+                with open(stream_path, "w", encoding="utf-8") as handle:
+                    handle.write(text)
+                return text.splitlines()
+
+            args = ["--session", session, "--bench"]
+            with patch.object(paths, "PYBRICKS_DIR", Path(tmp)):
+                with patch.object(sysid_collect, "deploy", fake_deploy):
+                    with redirect_stdout(io.StringIO()):
+                        status = sysid_collect.main(args)
+            self.assertEqual(status, 0)
+            # The hub saw the bench flag, and the stale file came back.
+            self.assertIn("BENCH = True", seen["selection"])
+            self.assertEqual(selection.read_text(encoding="utf-8"),
+                             "SELECTED = ['static']\n")
+
+    def test_collect_bench_removes_a_selection_it_created(self):
+        import overboard.paths as paths
+        import overboard.sysid.collect as sysid_collect
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as tmp:
+            selection = Path(tmp) / "sysid_selection.py"
+            session = os.path.join(tmp, "session.csv")
+
+            def fake_deploy(script, connection="ble", name=None, wait=True,
+                            print_output=True, stream_path=None, on_line=None):
+                text = _measurement_session(repeats=1)
+                with open(stream_path, "w", encoding="utf-8") as handle:
+                    handle.write(text)
+                return text.splitlines()
+
+            args = ["--session", session, "--bench"]
+            with patch.object(paths, "PYBRICKS_DIR", Path(tmp)):
+                with patch.object(sysid_collect, "deploy", fake_deploy):
+                    with redirect_stdout(io.StringIO()):
+                        status = sysid_collect.main(args)
+            self.assertEqual(status, 0)
+            self.assertFalse(selection.exists())
+
+    def test_write_form_bench_names_the_short_runs(self):
+        from overboard.sysid.fit import main as fit_main
+
+        with tempfile.TemporaryDirectory() as tmp:
+            session = os.path.join(tmp, "session.csv")
+            with open(session, "w", encoding="utf-8") as handle:
+                handle.write(_measurement_session(repeats=1))
+            full = os.path.join(tmp, "full.html")
+            bench = os.path.join(tmp, "bench.html")
+            with redirect_stdout(io.StringIO()):
+                self.assertEqual(
+                    fit_main([session, "--write-form", full]), 0)
+                self.assertEqual(
+                    fit_main([session, "--write-form", bench, "--bench"]), 0)
+            with open(full, encoding="utf-8") as handle:
+                full_text = handle.read()
+            with open(bench, encoding="utf-8") as handle:
+                bench_text = handle.read()
+        self.assertIn("one metre", full_text)
+        self.assertIn("half a metre", bench_text)
+
+
 if __name__ == "__main__":
     unittest.main()

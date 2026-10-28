@@ -12,10 +12,15 @@
 #
 # Usage:
 #   bash research/crosscheck/run_sim.sh [out_csv] [command_dps] [stop_mode] [run_ms]
+#       [drive_mode] [track_mm] [wheel_dia_mm] [start]
 #
 #   run_ms defaults to 600: long enough to reach steady speed at 10000 dps^2
 #   ramps, short enough to stay clear of the walls and mission models (a
 #   10 s drive collides with the field and corrupts the measurement).
+#   drive_mode is straight (default) or turn (wheels opposed). track_mm /
+#   wheel_dia_mm select the drive base geometry; absent keeps the
+#   simulator's default (the RQ-B regression path). start is the mat-frame
+#   "xMm,yMm,headingDeg" (default 500,300,0).
 #
 # The simulator's repository has no licence file, so nothing from it is
 # copied into this repository. This script runs it as a separate program and
@@ -31,6 +36,10 @@ OUT="${1:-$REPO/research/crosscheck/trace.csv}"
 COMMAND_DPS="${2:-1110}"
 STOP_MODE="${3:-brake}"
 RUN_MS="${4:-600}"
+DRIVE_MODE="${5:-straight}"
+TRACK_MM="${6:-}"
+WHEEL_DIA_MM="${7:-}"
+START="${8:-500,300,0}"
 
 if [ ! -d "$CHECKOUT" ]; then
   echo "The simulator is not checked out at $CHECKOUT." >&2
@@ -52,7 +61,7 @@ fi
 cp "$HERE/sim_step.ts" "$CHECKOUT/crosscheck.ts"
 
 cd "$CHECKOUT"
-"$TSX" crosscheck.ts /tmp/crosscheck_trace.csv "$COMMAND_DPS" "$STOP_MODE" "$RUN_MS"
+"$TSX" crosscheck.ts /tmp/crosscheck_trace.csv "$COMMAND_DPS" "$STOP_MODE" "$RUN_MS" "$DRIVE_MODE" "$TRACK_MM" "$WHEEL_DIA_MM" "$START"
 cp /tmp/crosscheck_trace.csv "$OUT"
 
 echo "trace written to $OUT"

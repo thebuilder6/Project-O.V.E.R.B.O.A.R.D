@@ -674,7 +674,17 @@ drivebase.use_gyro(True)
         base_track = float(new_track) if (new_track is not None and float(new_track) > 0.0) else float(self.track_width)
 
         odometry = getattr(twin, "odometry", None)
-        if odometry is not None and getattr(odometry, "calibrated", False):
+        wheel_geom = (twin.wheel_geometry_tuple()
+                      if hasattr(twin, "wheel_geometry_tuple") else None)
+        if wheel_geom is not None:
+            # Q25-1 belief-first: the UMBmark pair replaces the single
+            # scales, and stays wired to the belief (declared-track
+            # integration in the validator). The mean radius scales the
+            # wheels and the effective wheelbase is the track.
+            k_avg = 0.5 * (float(wheel_geom[0]) + float(wheel_geom[1]))
+            effective_r = base_r * k_avg
+            effective_track = float(wheel_geom[2])
+        elif odometry is not None and getattr(odometry, "calibrated", False):
             dist_scale = float(getattr(odometry, "distance_scale", 1.0))
             head_scale = float(getattr(odometry, "heading_scale", 1.0))
             effective_r = base_r * dist_scale

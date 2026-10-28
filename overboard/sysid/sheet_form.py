@@ -112,6 +112,26 @@ TEST_GUIDE = {
                    "point is normal). y_mm: how far left. turn_right_deg: "
                    "how far it turned right.",
     },
+    "square_cw": {
+        "does": "The robot drives a 150 mm square clockwise, slowly, with "
+                "in-place quarter turns at each corner and a brief pause "
+                "at every corner so the turn settles before the next leg.",
+        "measure": "Where the robot's centre ended, from the same start "
+                   "mark. A perfect robot returns to the mark; the gap is "
+                   "what calibrates the wheels.",
+        "numbers": "x_mm: how far forward it ended (near 0). y_mm: how far "
+                   "left. turn_right_deg: how far it turned right (near 0, "
+                   "a full square turns 360 and comes back).",
+    },
+    "square_ccw": {
+        "does": "The same 150 mm square, counter-clockwise, pausing at "
+                "every corner. The cw+ccw pair is what separates the wheel "
+                "errors: one direction alone cannot tell them apart.",
+        "measure": "Where the robot's centre ended, from the same start "
+                   "mark.",
+        "numbers": "x_mm: how far forward it ended (near 0). y_mm: how far "
+                   "left. turn_right_deg: how far it turned right (near 0).",
+    },
     WEIGH_IN_TEST: {
         "does": "Not a hub test. This one happens on the kitchen scale.",
         "measure": "The robot's mass with the battery in, three times. Pick "
@@ -137,6 +157,7 @@ GUIDE_FALLBACK = {
 MEASURED_HINTS = frozenset({
     "odometry_straight", "odometry_turn_cw", "multi_stop",
     "brake_from_300", "brake_from_600",
+    "square_cw", "square_ccw",
 })
 
 _WATCH = "Nothing to measure for this one - watch it."
@@ -215,9 +236,53 @@ TEST_GUIDE.update({
     },
 })
 
+# The bench variants of the guide: the same tests in short runs. Only the
+# entries that name a distance or a runway differ; everything else reads the
+# same on a bench as on a floor.
+_BENCH_GUIDE = {
+    "odometry_straight": {
+        "does": "The robot drives straight at 100 mm/s for 5 seconds, "
+                "about half a metre, down the bench diagonal.",
+        "measure": TEST_GUIDE["odometry_straight"]["measure"],
+        "numbers": "x_mm: how far it went forward (about 500). y_mm: how "
+                    "far it drifted left (0 if it stayed on the line). "
+                    "turn_right_deg: how far it turned right (0 if it kept "
+                    "its heading).",
+    },
+    "multi_stop": {
+        "does": "The robot drives down the bench diagonal and pauses at "
+                "three stops, at about 200, 350 and 500 mm. The hub waits "
+                "at each stop for you.",
+        "measure": TEST_GUIDE["multi_stop"]["measure"],
+        "numbers": TEST_GUIDE["multi_stop"]["numbers"],
+    },
+    "straight_steps_fwd": {
+        "does": "The robot drives straight at five speeds, in short steps. "
+                "Give it the longest bench diagonal, facing along it.",
+        "measure": _WATCH, "numbers": "",
+    },
+    "reversal_backlash": {
+        "does": "The robot drives forward and back, over and over, around "
+                "the start mark (the gear backlash test). Centre it with "
+                "room to spare.",
+        "measure": _WATCH, "numbers": "",
+    },
+    "chirp_straight": {
+        "does": "The robot sweeps forward and back around the start mark at "
+                "changing speeds. Start it in the middle of the bench.",
+        "measure": _WATCH, "numbers": "",
+    },
+}
 
-def guide_for(test):
-    """What to say about one test: what the robot does and what to measure."""
+
+def guide_for(test, bench=False):
+    """What to say about one test: what the robot does and what to measure.
+
+    ``bench`` reads the short-run variants for the tests that name a
+    distance or a runway; everything else says the same on a bench.
+    """
+    if bench and test in _BENCH_GUIDE:
+        return _BENCH_GUIDE[test]
     return TEST_GUIDE.get(test, GUIDE_FALLBACK)
 
 
@@ -541,9 +606,9 @@ def row_html(row):
     )
 
 
-def _card_html(test, rows):
+def _card_html(test, rows, bench=False):
     """One card: what the test is, and its measurement rows."""
-    guide = guide_for(test)
+    guide = guide_for(test, bench)
     weigh = test == WEIGH_IN_TEST
     body = "\n".join(row_html(row) for row in rows)
     # quote=False: this copy lands in element text, where an apostrophe is
@@ -567,7 +632,7 @@ def _card_html(test, rows):
 
 
 def write_form(rows, path, csv_name=DEFAULT_CSV_NAME, title="Measurement sheet",
-               fit_command=""):
+               fit_command="", bench=False):
     """Write the measurement sheet as a self-contained HTML form.
 
     ``rows`` are the rows of the sheet: a test name, a repeat and a stop for
@@ -580,7 +645,7 @@ def write_form(rows, path, csv_name=DEFAULT_CSV_NAME, title="Measurement sheet",
     groups = {}
     for row in list(rows) + weigh_in_rows():
         groups.setdefault(row["test"], []).append(row)
-    cards = "\n".join(_card_html(test, grouped)
+    cards = "\n".join(_card_html(test, grouped, bench)
                       for test, grouped in groups.items())
     text = (_TEMPLATE
             .replace("{{TITLE}}", html.escape(title))

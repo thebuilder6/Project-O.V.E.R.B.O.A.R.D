@@ -1,8 +1,8 @@
 # Studio UI Inventory
 
-**Status:** 2026-10-27, after the plain-language / progressive-disclosure pass. A complete list of every control, readout and generated element in the browser studio, so the next change starts from a list rather than from the page.
+**Status:** 2026-10-27, after the plain-language / progressive-disclosure pass. A complete list of every control, readout and generated element in the browser studio, so the next change starts from a list rather than from the page. Counts below are the studio page as served; the served `/sysid` page (`overboard/viz/sysid.html/js/css`) is a second browser UI from the same server (KI-059) and is tracked alongside, not in these counts.
 **Scope:** `overboard/viz/studio.html`, `overboard/viz/studio.js`, `overboard/viz/studio.css`
-(served by `overboard/gui_server.py`). The studio is the only browser UI (the WebSocket live view was
+(served by `overboard/gui_server.py`, which also serves `/sysid` → `sysid.html`). The studio is the mission-planning UI (the WebSocket live view was
 removed).
 
 ---
@@ -24,7 +24,7 @@ removed).
 
 **Three columns, two of them tabbed.** The left column is what you set, the canvas is the work, the right column is what you read. Each side column is a strip of tabs over one panel, so a column holds one topic at a time.
 
-The page carries **182 element ids**: **86 controls with an id** (39 buttons, 39 inputs, 8 selects), of which 8 are the tab buttons themselves. Sixteen regions are filled in at run time:
+The page carries **183 element ids**: **86 controls with an id** (39 buttons, 39 inputs, 8 selects), of which 8 are the tab buttons themselves. Sixteen regions are filled in at run time:
 
 | Generated region | Element id | Where |
 |---|---|---|
@@ -114,6 +114,7 @@ Accepted is never called passed: an accepted plan is **"accepted despite a known
 | **status line** | The state, and after a solve the result: `3.70 s \| 1.23 m - validated`, or `Failed`. | Always |
 | **Solve** | Runs the command line with the current options. | Always; disabled while a job runs |
 | **Cancel** | Stops the running solve, push or collect. | Only while a job runs |
+| **SysId** (`link-sysid`) | Opens the guided SysId page (`/sysid`); the SysId page links back here. | Always |
 
 ## Left column - the tabs
 
@@ -353,3 +354,33 @@ The keys are ignored while a text field has the focus, so typing a heading does 
 `tests/test_studio_inventory.py` checks the document against the page: no dangling id lookups, the quoted counts are the real counts, every button in the page has a row here, and every generated region is named. A control added to the studio fails the test until this document is updated.
 
 `tests/test_studio_report.py` covers the report and the project file: the report escapes what the operator typed, it is printable and self-contained, the server writes it next to the trajectory and serves it back, and a file that is not a project is refused with a reason.
+
+---
+
+## The guided SysId page (`/sysid`)
+
+**Scope:** `overboard/viz/sysid.html`, `overboard/viz/sysid.js`, `overboard/viz/sysid.css`
+(served by `overboard/gui_server.py` as `/sysid`). A separate page, not a tab:
+no field, no solve, no 3-panel layout. Four stacked steps - Collect, Measure,
+Fit, Refinement - reusing the server's `/api/calibration/*` routes, so a session
+collected here also fits with `overboard/sysid/fit.py`. Every raw artifact lands per robot
+in `calibration/<name>.*`: the full hub session (every DATA row and META line
+kept), the sheet with the weigh-in, the poses and the fit with its intervals.
+A dropped Bluetooth tail is flagged (`truncated`), never silently cut. A pushed
+trajectory session (`missions/*.session.csv`) is compare-only and is never
+fitted.
+
+| Step | Controls | Generated region |
+|---|---|---|
+| 1. Collect | **sys-name** (robot name), **sys-conn**, **sys-hub**, **sys-scan**, **sys-collect**, **sys-cancel**, status **sys-collect-status**, truncated warning **sys-truncated**, hub log **sys-log** + **sys-copy-log**, test picker **sys-tests** + **sys-express**/**sys-lab** presets + **sys-select-all**/**sys-select-none** + note **sys-tests-note** + tier **sys-tier**, per-test setup hints, **sys-step-mode** (one push per checked test, chained), **sys-bench** (short bench runs for a small bench; curvature is skipped), live prompt feed **sys-prompts** (each hub prompt with its entry boxes) | **sys-meta** (per-test battery min/med/max, geometry, row counts, dropped-tail flags) |
+| 2. Measure | **sys-reload**, **sys-save**, status **sys-sheet-status**, voltages **sys-voltages** | **sys-sheet** (the measurements the session needs), **sys-weigh** (the 3x weigh-in) |
+| 3. Fit | **sys-gearing**, **sys-wall**, **sys-fit**, **sys-anchor** (one tape anchor on Express) + note **sys-anchor-note**, status **sys-fit-status** | **sys-summary** (gain/tau/delay, gyro bias, odometry scales, slip, drift, stall, no-load speed, mass, inertia, each with its 95% interval) |
+| 4. Refinement | **sys-finish** (preselects the fit in Solve, solves nothing) | **sys-compare** (before - the prior fit, or nominal - against after, row-for-row through `summarize_fit`/`load_fit`) |
+
+`sys-finish` writes the handoff (`overboard.sysid.handoff.v1` in localStorage,
+plus `?sysid_fit=` on the URL) and returns to `/`. The main studio adopts it on
+load: the measured model is loaded, "Plan against the measured model"
+(`opt-use-model`) is ticked, and nothing solves until the operator presses
+Solve. `tests/test_studio_inventory.py::TestSysIdInventory` pins the page the
+same way the studio is pinned: every id the script looks up exists, `[hidden]`
+wins, the page never calls `solve(`, and every control above is named here.

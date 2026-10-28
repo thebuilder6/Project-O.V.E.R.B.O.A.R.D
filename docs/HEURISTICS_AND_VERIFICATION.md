@@ -1,16 +1,17 @@
 # Path Planning Heuristics and Verification Strategy
 
-**Status:** 2026-10-19. Describes the working tree as measured on this date.
+**Status:** 2026-10-19 record, current through 2026-10-27. The matrix in §9 and the findings above are the record of the old `fll_choreo.json` ranges with `plant` propagation; the current ledger is the widened ranges with `--propagation tick` (`safe` preset) plus the Q17 tail verdict (2026-10-26) and the Q21-Q24 polish/timing nulls (2026-10-27). Do not re-measure the record; cite the ledger in `docs/STRATEGY_LEDGER.md` (2026-10-27) and `docs/RESEARCH_AGENDA.md` (2026-10-27) for what is current.
 **Scope:** every path-planning heuristic in the repository and the verification chain that judges its output. The two research records have their own files: [`STRATEGY_LEDGER.md`](STRATEGY_LEDGER.md) (the strategies that did not work) and [`RESEARCH_AGENDA.md`](RESEARCH_AGENDA.md) (the open questions).
 **Audience:** anyone who wants to improve the planner, the validator, or both.
 
 > **Archive note.** Raw logs and experiment scripts referenced below live in the `archive/research-2026-10` tag, not in the product tree. Retrieve a file with `git show archive/research-2026-10:<path>`; see [`ARCHIVE.md`](ARCHIVE.md).
 >
 > **How to read the module references.** The runtime moved into the `overboard/` package after this
-> document was written, so a bare `overboard/core/optimizer.py`, `overboard/main.py`, `overboard/verification/validator.py`, `overboard/verification/immrax_validator.py`,
-> `overboard/models/robot_model.py`, `overboard/sysid/digital_twin.py`, `overboard/core/frontier_seed.py` or `overboard/core/unified_planner.py` names the file that
-> now lives under `overboard/core/`, `overboard/`, `overboard/verification/`, `overboard/models/`,
-> `overboard/sysid/`, `overboard/core/` and `overboard/core/`. Every `file:line` is the line in the
+> document was written, so a bare `optimizer.py`, `main.py`, `validator.py`, `immrax_validator.py`,
+> `robot_model.py`, `digital_twin.py`, `frontier_seed.py` or `unified_planner.py` names the file that
+> now lives at `overboard/core/optimizer.py`, `overboard/main.py`, `overboard/verification/validator.py`,
+> `overboard/verification/immrax_validator.py`, `overboard/models/robot_model.py`,
+> `overboard/sysid/digital_twin.py`, `overboard/core/frontier_seed.py` and `overboard/core/unified_planner.py`. Every `file:line` is the line in the
 > tree as measured on 2026-10-19, not in today's file. The measurements are the record; the tree is
 > the authority on where the code is.
 >
@@ -974,7 +975,7 @@ ok = (errors["max_pos_error_m"] < 0.01
 | `plant` (the default) | the plant; the controller is evaluated *outside* the propagation, at the tube's midpoint, with the command held for the tick | the reachable set of an **open-loop** plant driven by a pre-recorded command — the feedback's contraction is not in the tube at all |
 | `tick` | one 20 ms tick of the **closed loop** — controller, pose estimate and delayed command — as a discrete map, propagated once per tick | the reachable set of the loop the robot actually runs; the map's Jacobian carries `dF/dx = dPhi/dx + (dPhi/du)(dN/dx)`, and the Ramsete feedback contracts the tube |
 
-The tick propagation needs a Jacobian inclusion: with the natural extension the closed-loop map explodes (627 mm on a 1 m straight). It costs 2-3x (`jac`) to 7-10x (`mjac`) the validation time, which is why it is opt-in (`main.py --propagation tick`). It is the lever on the paths where the plant propagation *diverges* rather than merely widens — the S-curve, the stops and the complex mission, where the mixed-Jacobian gives 1.88, 1.30 and 1.83 cm against 5.36, 5.31 and 5.07 cm, and every tube still contains the sampled reachable set. With the digital twin it is **wider**, and the reason is the twin's plant state, not the propagation (KI-049, KI-050).
+The tick propagation needs a Jacobian inclusion: with the natural extension the closed-loop map explodes (627 mm on a 1 m straight). It costs 2-3x (`jac`) to 7-10x (`mjac`) the validation time, which is why it is opt-in (`overboard/main.py --propagation tick`). It is the lever on the paths where the plant propagation *diverges* rather than merely widens — the S-curve, the stops and the complex mission, where the mixed-Jacobian gives 1.88, 1.30 and 1.83 cm against 5.36, 5.31 and 5.07 cm, and every tube still contains the sampled reachable set. With the digital twin it is **wider**, and the reason is the twin's plant state, not the propagation (KI-049, KI-050).
 
 Two rules come with it. **The controller must not unpack the pose**: `x, y, theta = current_pose` is the JAX `unstack` primitive, Immrax's natural inclusion has no rule for it, and the tick map dies with "unstack not in inclusion_registry" — so the pose is read by indexing, which compiles to `slice`+`squeeze` and gives the same number. And **an envelope is never read without its model**: the report, the studio's validation note and the studio's chip tooltip all name the propagation, the same rule as `envelope_truncated`.
 
@@ -1103,7 +1104,7 @@ Two constraints on the interval mode: the natural inclusion does not support `ab
   overboard.main --sysid-fit sysid_fit.json --validate
         |  switches Immrax to the fitted five-state plant
         v
-  sysid_compare.py output.traj poses.csv --run-id <id>
+  overboard.sysid.compare output.traj poses.csv --run-id <id>
         reports planned-vs-measured error and whether the measured pose
         is inside the trajectory's reachability envelope
 ```

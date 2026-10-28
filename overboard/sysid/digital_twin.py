@@ -107,6 +107,34 @@ class OdometryFit:
 
 
 @dataclass(frozen=True)
+class WheelGeometryFit:
+    """Per-side wheel radii + effective wheelbase (UMBmark, Q25.1).
+
+    ``kL`` / ``kR`` scale the left / right encoder wheel speeds to true
+    ground speeds; ``b_eff_m`` is the wheelbase the wheels actually grip
+    over. They replace the single distance/heading scales wherever they
+    are calibrated: a fit that carries both keeps the geometry.
+    """
+
+    calibrated: bool = False
+    kL: float = 1.0
+    kR: float = 1.0
+    b_eff_m: Optional[float] = None
+    n_sources: int = 0
+
+    def __post_init__(self):
+        if self.kL <= 0.0:
+            raise ValueError(
+                f"wheel geometry kL must be > 0, got {self.kL}")
+        if self.kR <= 0.0:
+            raise ValueError(
+                f"wheel geometry kR must be > 0, got {self.kR}")
+        if self.b_eff_m is not None and self.b_eff_m <= 0.0:
+            raise ValueError(
+                f"wheel geometry b_eff_m must be > 0, got {self.b_eff_m}")
+
+
+@dataclass(frozen=True)
 class SlipFit:
     """Bounded braking-slip estimate from measured stop poses."""
 
@@ -413,6 +441,18 @@ def _odometry_from_dict(payload: Dict[str, Any]) -> OdometryFit:
     )
 
 
+def _wheel_geometry_from_dict(payload: Dict[str, Any]) -> WheelGeometryFit:
+    payload = payload if isinstance(payload, dict) else {}
+    return WheelGeometryFit(
+        calibrated=bool(payload.get("calibrated", False)),
+        kL=_positive_float(payload.get("kL"), "wheel_geometry.kL", 1.0),
+        kR=_positive_float(payload.get("kR"), "wheel_geometry.kR", 1.0),
+        b_eff_m=_optional_positive_float(
+            payload.get("b_eff_m"), "wheel_geometry.b_eff_m"),
+        n_sources=int(payload.get("n_sources", 0) or 0),
+    )
+
+
 def _slip_from_dict(payload: Dict[str, Any]) -> SlipFit:
     payload = payload if isinstance(payload, dict) else {}
     return SlipFit(
@@ -472,6 +512,7 @@ class DigitalTwinConfig:
     actuator_turn: ActuatorFit = field(default_factory=ActuatorFit)
     sensors: SensorFit = field(default_factory=SensorFit)
     odometry: OdometryFit = field(default_factory=OdometryFit)
+    wheel_geometry: WheelGeometryFit = field(default_factory=WheelGeometryFit)
     slip: SlipFit = field(default_factory=SlipFit)
     drift: DriftFit = field(default_factory=DriftFit)
     stall_torque: StallTorqueFit = field(default_factory=StallTorqueFit)
@@ -499,6 +540,8 @@ class DigitalTwinConfig:
         straight = _actuator_from_dict(actuator.get("straight", {}))
         turn = _actuator_from_dict(actuator.get("turn", {}))
         odometry = _odometry_from_dict(data.get("odometry", {}))
+        wheel_geometry = _wheel_geometry_from_dict(
+            data.get("wheel_geometry", {}))
         slip = _slip_from_dict(data.get("slip", {}))
         sensors = _sensors_from_dict(data.get("sensors", {}))
         drift = _drift_from_dict(data.get("drift", {}))
@@ -516,6 +559,7 @@ class DigitalTwinConfig:
         calibrated = any((
             straight.calibrated,
             odometry.calibrated,
+            wheel_geometry.calibrated,
             documented_accel,
         ))
         if enabled is None:
@@ -534,6 +578,7 @@ class DigitalTwinConfig:
             actuator_turn=turn,
             sensors=sensors,
             odometry=odometry,
+            wheel_geometry=wheel_geometry,
             slip=slip,
             drift=drift,
             stall_torque=stall_torque,
@@ -594,6 +639,19 @@ class DigitalTwinConfig:
         if not self.odometry.calibrated:
             return 1.0
         return float(self.odometry.heading_scale)
+
+    def wheel_geometry_tuple(self) -> Optional[Tuple[float, float, float]]:
+        """(kL, kR, b_eff_m), or None when it was not measured.
+
+        A fit that carries the UMBmark pair replaces the single
+        distance/heading scales wherever the model reads them. Q25-1:
+        the pair stays wired to the belief (declared-track integration);
+        the single scales remain the fallback when no fit is present.
+        """
+        geom = self.wheel_geometry
+        if not geom.calibrated or geom.b_eff_m is None:
+            return None
+        return (float(geom.kL), float(geom.kR), float(geom.b_eff_m))
 
     def drift_rad_per_m(self) -> float:
         """How much the robot curves per metre when told to drive straight.
@@ -738,6 +796,12 @@ class DigitalTwinConfig:
                 "calibrated": self.odometry.calibrated,
                 "distance_scale": self.odometry.distance_scale,
                 "heading_scale": self.odometry.heading_scale,
+            },
+            "wheel_geometry": {
+                "calibrated": self.wheel_geometry.calibrated,
+                "kL": self.wheel_geometry.kL,
+                "kR": self.wheel_geometry.kR,
+                "b_eff_m": self.wheel_geometry.b_eff_m,
             },
             "slip": {
                 "calibrated": self.slip.calibrated,

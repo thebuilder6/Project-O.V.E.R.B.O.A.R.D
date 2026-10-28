@@ -15,6 +15,9 @@ ROOT = Path(__file__).resolve().parents[1]
 HTML_PATH = ROOT / "overboard" / "viz" / "studio.html"
 JS_PATH = ROOT / "overboard" / "viz" / "studio.js"
 DOC_PATH = ROOT / "docs" / "STUDIO_UI_INVENTORY.md"
+SYSID_HTML_PATH = ROOT / "overboard" / "viz" / "sysid.html"
+SYSID_JS_PATH = ROOT / "overboard" / "viz" / "sysid.js"
+SYSID_CSS_PATH = ROOT / "overboard" / "viz" / "sysid.css"
 
 
 def _read(path):
@@ -87,6 +90,74 @@ class TestStudioInventory(unittest.TestCase):
             selected = re.findall(r'aria-selected="true"', strip)
             self.assertEqual(len(selected), 1,
                              "A tab strip must start with exactly one open tab.")
+
+
+class TestSysIdInventory(unittest.TestCase):
+    """The guided SysId page (`/sysid`) has its own inventory section.
+
+    It is a separate page, not a tab, so the studio counts above do not
+    cover it. A control added to it fails here until the document names it.
+    """
+
+    def setUp(self):
+        self.html = _read(SYSID_HTML_PATH)
+        self.js = _read(SYSID_JS_PATH)
+        self.css = _read(SYSID_CSS_PATH)
+        self.doc = _read(DOC_PATH)
+
+    def test_the_sysid_files_exist(self):
+        for path in (SYSID_HTML_PATH, SYSID_JS_PATH, SYSID_CSS_PATH):
+            self.assertTrue(path.is_file(), f"{path.name} is missing.")
+
+    def test_every_id_the_sysid_script_looks_up_exists_on_its_page(self):
+        in_html = set(re.findall(r'id="([a-z0-9-]+)"', self.html))
+        used = set(re.findall(r"getElementById\('([^']+)'\)", self.js))
+        missing = sorted(used - in_html)
+        self.assertEqual(missing, [], f"The SysId script looks up ids the page lacks: {missing}")
+
+    def test_the_sysid_hides_behind_hidden_like_the_studio(self):
+        rules = re.findall(r"([^{}]+)\{([^{}]*)\}", self.css)
+        hidden = [body for selector, body in rules
+                  if "[hidden]" in selector and "display" in body
+                  and "none" in body]
+        self.assertTrue(hidden, "sysid.css has no rule that hides [hidden].")
+
+    def test_the_sysid_never_solves(self):
+        """Finish hands the fit to Solve; the page itself solves nothing."""
+        self.assertNotIn("solve(", self.js)
+        self.assertIn("overboard.sysid.handoff.v1", self.js)
+
+    def test_the_pages_link_both_ways(self):
+        studio = _read(HTML_PATH)
+        self.assertIn('id="link-sysid"', studio)
+        self.assertIn('href="/sysid"', studio)
+        self.assertIn('link-sysid', self.doc)
+        self.assertIn('href="/"', self.html)
+
+    def test_the_step_mode_chains_single_pushes(self):
+        self.assertIn("sys-step-mode", self.html)
+        self.assertIn("runNextStep", self.js)
+        self.assertIn("state.step", self.js)
+
+    def test_the_prompts_feed_mirrors_the_hub(self):
+        self.assertIn("sys-prompts", self.html)
+        self.assertIn("renderPrompts", self.js)
+        self.assertIn("bindSheetInput", self.js)
+
+    def test_every_test_names_its_setup(self):
+        self.assertIn("Setup first", self.js)
+
+    def test_the_document_lists_the_sysid_controls(self):
+        for element_id in ["sys-collect", "sys-save", "sys-fit", "sys-finish",
+                           "sys-copy-log", "sys-select-all", "sys-select-none",
+                           "sys-express", "sys-lab", "sys-tier", "sys-anchor",
+                           "sys-anchor-note", "sys-step-mode", "sys-bench",
+                           "sys-prompts", "sys-sheet", "sys-weigh",
+                           "sys-summary", "sys-compare", "sys-meta",
+                           "sys-tests"]:
+            self.assertIn(element_id, self.html, f"{element_id} is gone from the page")
+            self.assertIn(element_id, self.doc,
+                           f"{element_id} is not in the inventory document")
 
 
 if __name__ == "__main__":

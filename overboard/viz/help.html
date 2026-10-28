@@ -128,11 +128,20 @@ somewhere else.</p>
 listed with the other files under <em>Run</em>.</p>
 
 <h2>Calibration</h2>
-<p>Before you trust a plan, measure the real robot. The SysId loop does it: collect a
-session over Bluetooth, run the reference tests when the hub asks, fill in the sheet,
-fit, then compare against the digital twin. Until that is done the checks describe
-the example robot, not yours. <code>docs/CALIBRATION_PROCEDURE.md</code> walks through
-it step by step.</p>
+<p>Before you trust a plan, measure the real robot. The guided SysId page
+(<a href="/sysid">/sysid</a>) walks the loop in four steps - collect on the hub,
+measure with the tape, fit, compare before against after - and keeps every raw
+artifact per robot in <code>calibration/</code>: the full session, the sheet with
+the weigh-in, the poses and the fit with its intervals. A dropped Bluetooth tail
+is flagged, never silently cut. Finish preselects the new fit in the main Solve
+tab ("Plan against the measured model") and solves nothing by itself. The Collect
+step lists every suite test: pick a subset to redo one test out of order (in suite
+order, dependencies first), each with its setup hint, and a redo appends to the session and supersedes the
+attempt it replaces. While it runs, each hub prompt appears on the page with entry boxes for the numbers
+it asked for. A pushed
+trajectory session is compare-only and is never fitted. Until calibration is done
+the checks describe the example robot, not yours.
+<code>docs/CALIBRATION_PROCEDURE.md</code> walks through it step by step.</p>
 
 <h2>Pushing to the robot (optional)</h2>
 <p>The <em>Run</em> tab can push the plan to the hub and drive it. It needs the robot

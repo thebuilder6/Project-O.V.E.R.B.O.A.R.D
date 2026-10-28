@@ -2,7 +2,8 @@ This document outlines the system identification (SysId) tool, the telemetry rec
 
 This design shifts complex mathematical computation to the PC (host side), leaving the robot with lightweight execution steps that are structurally robust against real-world slip and physical interaction [1, 2].
 
-> **Implementation status (2026-10-21)**
+> **Implementation status (2026-10-21 record; ledger through 2026-10-27)**
+> The list below is the 2026-10-21 record; the current ledger is `KNOWN_ISSUES.md` (KI-020 open, KI-059..068 requested) and `docs/RESEARCH_AGENDA.md` Q25 (pre-registered 2026-10-27).
 >
 > - **Implemented:** robot-side digital-twin collector (`pybricks_code/sysid_digital_twin.py`) and host fitter (`overboard/sysid/fit.py`); the optional fitted plant (`overboard/sysid/digital_twin.py`) behind `python -m overboard.main --sysid-fit`, which applies the actuator gain, time constant, command delay, acceleration limit, odometry belief and braking shortfall; canonical/legacy/flat config parsing with declared uncertainty ranges; per-wheel force and traction limits; CPU + Immrax validation gate; controller JSON and Python export.
 > - **Partial:** the robot's own odometry is modelled as a *belief* inside the validator rather than as a plant state; motor current transients, DriveBase PID, slip under load and full slip dynamics are still missing.

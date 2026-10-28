@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>OVERBOARD SysId</title>
+<link rel="stylesheet" href="sysid.css">
+<link rel="icon" href="data:,">
+</head>
+<body>
+
+<header class="topbar">
+  <div class="brand">OVERBOARD <span>SysId</span></div>
+  <div class="status" id="sys-status" role="status" aria-live="polite">Guided calibration: collect, measure, fit, compare.</div>
+  <div class="topbar-actions">
+    <a class="btn" href="/">Back to studio</a>
+    <a class="btn" href="/help.html" target="_blank" rel="noopener">Help</a>
+  </div>
+</header>
+
+<main class="wrap">
+
+  <p class="hint">Four steps, one robot. Two tiers: <strong>Express</strong> (no tape,
+    wall-anchored dynamics in minutes) and <strong>Lab</strong> (the full tape
+    suite for odometry, drift and slip). Everything lands in
+    <span class="mono">calibration/&lt;name&gt;.*</span>: the full hub session
+    (<span class="mono">.session.csv</span>, every DATA row and META line kept),
+    your tape numbers (<span class="mono">.sheet.csv</span>, weigh-in included),
+    the poses (<span class="mono">.poses.csv</span>) and the fit
+    (<span class="mono">.sysid_fit.json</span>, intervals included).
+    A dropped Bluetooth tail is flagged, never silently cut.
+    Pushed trajectory sessions are compare-only and are never fitted here.</p>
+
+  <!-- 1. Collect -->
+  <section class="card" id="step-collect">
+    <h2>1. Collect <span class="count" id="sys-collect-count"></span></h2>
+    <p class="hint">Push the test suite to the hub. The hub prints every test;
+      this page names the running test, the repeat and how many measurements
+      are still missing.</p>
+    <div class="row">
+      <label class="field"><span>Robot name</span>
+        <input type="text" id="sys-name" value="robot" autocomplete="off"></label>
+      <label class="field"><span>Connection</span>
+        <select id="sys-conn">
+          <option value="ble" selected>Bluetooth (BLE)</option>
+          <option value="usb">USB</option>
+        </select></label>
+      <label class="field"><span>Hub name (BLE only)</span>
+        <input type="text" id="sys-hub" placeholder="empty for the only hub" autocomplete="off"></label>
+    </div>
+    <div class="row">
+      <button type="button" id="sys-scan" class="btn small">Scan for hubs</button>
+      <button type="button" id="sys-collect" class="btn small primary">Collect on the hub</button>
+      <button type="button" id="sys-cancel" class="btn small" hidden>Cancel</button>
+    </div>
+    <p class="hint" id="sys-collect-status">No session yet.</p>
+    <div id="sys-prompts"></div>
+    <h3 class="sub">Tests <span class="count" id="sys-tests-count"></span></h3>
+    <p class="hint">Pick what this collect runs, in suite order. A redo appends
+      and supersedes the attempt it replaces; a full suite starts over.
+      Dependencies are added by themselves (stall needs its homing).</p>
+    <div class="row">
+      <button type="button" id="sys-express" class="btn small">Express (no tape)</button>
+      <button type="button" id="sys-lab" class="btn small">Lab (full tape)</button>
+      <button type="button" id="sys-select-all" class="btn small">Select all</button>
+      <button type="button" id="sys-select-none" class="btn small">Clear</button>
+    </div>
+    <table class="report" id="sys-tests"></table>
+    <p class="hint" id="sys-tests-note"></p>
+    <p class="hint" id="sys-tier"></p>
+    <label class="check"><input type="checkbox" id="sys-step-mode">
+      <span>Run one by one: each checked test is its own push, and the next
+        starts when the last finishes (one push per test).</span></label>
+    <label class="check"><input type="checkbox" id="sys-bench">
+      <span>Small bench: short runs for a ~0.6 × 0.8 m bench (same speeds,
+        shorter distances; the curvature tests are skipped).</span></label>
+    <p class="hint warn" id="sys-truncated" hidden></p>
+    <table class="report" id="sys-meta"></table>
+    <details id="sys-log-details">
+      <summary>Hub log</summary>
+      <div class="row">
+        <button type="button" id="sys-copy-log" class="btn small">Copy log</button>
+        <span class="hint">The whole log, not the selection.</span>
+      </div>
+      <pre class="log" id="sys-log"></pre>
+    </details>
+  </section>
+
+  <!-- 2. Measure -->
+  <section class="card" id="step-measure">
+    <h2>2. Measure</h2>
+    <p class="hint" id="sys-sheet-status">The measurements the session needs, as a form.
+      Every measurement is in the frame the robot sat in at the start of the test:
+      x_mm forward from the start pose, y_mm to the left of the runway,
+      turn_right_deg to the right. Measure from the robot's centre, not its bumper.
+      A test that does not turn has a turn of 0.</p>
+    <table class="report sheet" id="sys-sheet"></table>
+    <p class="hint">The weigh-in: the robot's mass with the battery in,
+      on a kitchen scale, three times.</p>
+    <table class="report sheet" id="sys-weigh"></table>
+    <p class="hint" id="sys-voltages"></p>
+    <div class="row">
+      <button type="button" id="sys-reload" class="btn small">Reload the sheet</button>
+      <button type="button" id="sys-save" class="btn small">Save the sheet</button>
+    </div>
+  </section>
+
+  <!-- 3. Fit -->
+  <section class="card" id="step-fit">
+    <h2>3. Fit</h2>
+    <p class="hint" id="sys-fit-status">The session and the sheet become the measured model.</p>
+    <p class="hint">Express needs no tape: wall_homing is the distance anchor, so give
+      the wall distance when you have a wall. Lab adds the tape rows on top.</p>
+    <div class="row">
+      <label class="field"><span>Gearing (motor turns per wheel turn; blank uses 1. Count teeth: wheel-side ÷ motor-side)</span>
+        <input type="number" id="sys-gearing" step="0.01" min="0.01" placeholder="1"></label>
+      <label class="field"><span>Wall distance (m, robot CENTRE to wall when resting against it; blank skips it)</span>
+        <input type="number" id="sys-wall" step="0.01" min="0" placeholder="none"></label>
+    </div>
+    <div class="row">
+      <button type="button" id="sys-fit" class="btn small primary">Fit the model</button>
+      <button type="button" id="sys-anchor" class="btn small" hidden>Add one tape anchor</button>
+    </div>
+    <p class="hint" id="sys-anchor-note" hidden></p>
+    <dl class="facts" id="sys-summary"></dl>
+  </section>
+
+  <!-- 4. Refinement -->
+  <section class="card" id="step-refine">
+    <h2>4. Refinement</h2>
+    <p class="hint" id="sys-before-note">Before: the prior fit, or the nominal robot config when there is none.</p>
+    <table class="report" id="sys-compare"></table>
+    <div class="row">
+      <button type="button" id="sys-finish" class="btn small primary" disabled>Finish: use this measured model in Solve</button>
+    </div>
+    <p class="hint" id="sys-finish-note">Finish does not solve anything. It preselects
+      the new fit in the main Solve tab ("Plan against the measured model"),
+      so the next solve validates against your measured robot.</p>
+  </section>
+
+</main>
+
+<div class="toast" id="sys-toast" role="alert" hidden></div>
+
+<script src="sysid.js"></script>
+</body>
+</html>

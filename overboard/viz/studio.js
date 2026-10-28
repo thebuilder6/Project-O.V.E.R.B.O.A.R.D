@@ -5628,6 +5628,40 @@ async function init() {
         } catch (err) {
             // No measured model yet; the nominal one is used.
         }
+        // A fit the SysId page just made preselects itself here: the model
+        // is loaded, "Plan against the measured model" is ticked, and
+        // nothing solves until the operator presses Solve.
+        try {
+            const handoffParams = new URLSearchParams(location.search);
+            let handoff = null;
+            try {
+                handoff = JSON.parse(
+                    localStorage.getItem('overboard.sysid.handoff.v1') || 'null');
+            } catch (handoffErr) {
+                handoff = null;
+            }
+            const wanted = handoffParams.get('sysid_fit')
+                || (handoff && handoff.path);
+            if (wanted) {
+                const handed = await api('/api/robot/model/load', {
+                    method: 'POST',
+                    body: JSON.stringify({ path: wanted }),
+                });
+                useModel(handed);
+                await loadModels();
+                toast('Using the measured model from the SysId page. Press Solve when ready.');
+                try {
+                    localStorage.removeItem('overboard.sysid.handoff.v1');
+                } catch (handoffErr) {
+                    // Storage blocked: the query already carried the path.
+                }
+                if (handoffParams.get('sysid_fit')) {
+                    window.history.replaceState(null, '', location.pathname);
+                }
+            }
+        } catch (handoffErr) {
+            // No handoff, or a stale path: the nominal model stays.
+        }
         // A robot with a collected session reopens with its sheet.
         loadSheet();
         // The field: the mission models standing on the mat.

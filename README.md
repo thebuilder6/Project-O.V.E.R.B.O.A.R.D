@@ -25,13 +25,15 @@ side is **not** yet validated against a calibrated drivebase (KI-020), so a
 passing plan is a model prediction, not a guarantee on the field. Calibrate the
 drivebase before trusting the envelope.
 
-Three items are open, everything else in the audit is fixed or mitigated:
+Three items need a decision from you, everything else in the audit is fixed, mitigated, or roadmap:
 
 | ID | What it means for you |
 |---|---|
 | **KI-020** | The validator is not a full digital twin. Motor, odometry, slip and DriveBase dynamics are only partly modelled. |
-| **KI-054** | The envelope gate compares an absolute radius against a tube that grows with path length, so a long path can fail for being long. `--envelope-limit-per-metre` is the lever. |
-| **KI-055** | The gate returns a verdict, not a score: it refuses a mission it cannot approve rather than ranking it. |
+| **KI-054** | The envelope gate compares an absolute radius against a tube that grows with path length, so a long path can fail for being long. `--envelope-limit-per-metre` is the lever; `--field-clearance` prices the limit against the field where geometry exists. |
+| **KI-059..068** | Open requested features (roadmap, not bugs; KI-063/KI-067/KI-068 are stretch goals). See `KNOWN_ISSUES.md`. |
+
+The gate no longer returns just a verdict: it returns a decision score (0-100, in decision units, not a probability of hardware success) with `--accept-score` as the explicit lever (was KI-055, fixed).
 
 ## Install
 

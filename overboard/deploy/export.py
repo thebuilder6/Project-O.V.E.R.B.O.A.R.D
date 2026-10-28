@@ -1,6 +1,7 @@
 from typing import List, Dict, Any
 import json
 import math
+import os
 import struct
 import numpy as np
 
@@ -152,8 +153,10 @@ def write_compact_python_file(input_traj_file: str, output_file: str) -> None:
     lines.append("# Events: (sample_index, name)")
     lines.append(_format_events_literal(events).rstrip("\n"))
 
-    with open(output_file, "w", encoding="utf-8") as f:
+    temporary = f"{output_file}.tmp"
+    with open(temporary, "w", encoding="utf-8") as f:
         f.write("\n".join(lines) + "\n")
+    os.replace(temporary, output_file)
 
     print(
         f"Exported {len(samples)} samples as a packed blob "
@@ -272,8 +275,10 @@ def write_controller_file(
     samples = traj_data["trajectory"]["samples"]
     ctrl = export_controller_json(samples, target_dt, track_width)
 
-    with open(output_file, "w") as f:
+    temporary = f"{output_file}.tmp"
+    with open(temporary, "w") as f:
         json.dump(ctrl, f, indent=1)
+    os.replace(temporary, output_file)
 
     print(f"Exported {ctrl['num_samples']} controller samples at dt={target_dt}s to {output_file}")
 
@@ -359,8 +364,10 @@ def write_python_file(input_traj_file: str, output_file: str, compact: bool = Fa
 
     lines.append("]")
 
-    with open(output_file, "w") as f:
+    temporary = f"{output_file}.tmp"
+    with open(temporary, "w") as f:
         f.write("\n".join(lines))
+    os.replace(temporary, output_file)
 
     print(f"Exported {len(samples)} samples and config to Python file: {output_file}")
 

@@ -1,6 +1,6 @@
 # The SysId Loop in the Studio
 
-**Status:** 2026-10-20. All four phases are implemented. The sysid process itself is settled (see [docs/CALIBRATION_PROCEDURE.md](CALIBRATION_PROCEDURE.md)); this document is about putting it in the browser, together with the studio's phase 4 (compare and fit).
+**Status:** 2026-10-20. All four phases are implemented. The sysid process itself is settled (see [docs/CALIBRATION_PROCEDURE.md](CALIBRATION_PROCEDURE.md)); this document is about putting it in the browser, together with the studio's phase 4 (compare and fit). This is the design KI-059 asks the guided page to follow.
 **Scope:** how the calibration, the fit and the mission loop fit together in one place, and what the GUI adds to a procedure that already works from the command line.
 **Audience:** anyone implementing it, and anyone changing the calibration procedure afterwards.
 
@@ -107,7 +107,7 @@ The robot panel gains a **Measured model** slot:
 - its summary: the straight and turn gain with their 95% intervals, tau, delay, the gyro bias, the distance and heading scales, the brake slip,
 - a **use it for planning** toggle, which adds `--sysid-fit` to every solve with that robot.
 
-The solve then runs against the measured model, and the result panel says so: *"planned against the measured model (gain 0.974-0.988), not the nominal one"*. `digital_twin.py` already uses the fit's gain interval as the band it plans against, so the conservative behaviour comes for free.
+The solve then runs against the measured model, and the result panel says so: *"planned against the measured model (gain 0.974-0.988), not the nominal one"*. `overboard/sysid/digital_twin.py` already uses the fit's gain interval as the band it plans against, so the conservative behaviour comes for free.
 
 This is the smallest piece of the whole plan, and it is the one that pays off on every mission after one calibration.
 
@@ -222,7 +222,7 @@ question of what the gate should measure is already open in
 
 ## Still open
 
-- **Should the studio run the collect step at all, or only read a session the operator collected with the CLI?** The wizard is nicer, but the collect is the one step where the operator is at the robot with a tape. Both can be supported: the button collects, and an "open a session" action reads one that was collected elsewhere.
-- **Where does the fit's summary come from - the fit JSON or the fitter's output?** The JSON has the numbers; the fitter's printed summary has the wording and the caveats. The studio should show the JSON's numbers in the fitter's wording, so the two do not drift.
-- **Does the studio write the fit next to the robot or next to the mission?** This document says `calibration/`, because the model belongs to the robot (D1). If the team prefers one folder, that is a path change, not a design change.
+- **Should the studio run the collect step at all, or only read a session the operator collected with the CLI?** Resolved: the studio runs it. The `/sysid` page collects with a pickable test list (subset or full suite), one-by-one step mode, and setup-free tests chaining by themselves; the CLI collect stays for scripting. An "open a session collected elsewhere" action was never built — nobody has asked for it since the page reads any session file dropped into `calibration/`.
+- **Where does the fit's summary come from - the fit JSON or the fitter's output?** Resolved: `summarize_fit()` in `overboard/gui_server.py` is the single reader, covering every twin section with its interval, so the before/after table is the same numbers row for row. The page renders its own wording around them.
+- **Does the studio write the fit next to the robot or next to the mission?** Resolved: `calibration/<robot>.*`, because the model belongs to the robot (D1).
 - **Should a mission record which fit it was planned against?** A mission planned with a fit from March and one planned with no fit are different plans. Writing the fit's summary into the trajectory's stats would record it.

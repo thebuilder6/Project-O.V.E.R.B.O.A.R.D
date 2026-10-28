@@ -13,6 +13,14 @@ The procedure has two halves:
 Budget about half an hour. The robot drives for about six minutes of that;
 the rest is your setup between tests and the tape work.
 
+The easiest way through is the guided SysId page. Start the studio and open
+`/sysid` (the **SysId** link in the studio header goes there, and it links
+back): four steps — collect with a pickable test list, measure with entry
+boxes next to each hub prompt, fit with a before/after table, and a Finish
+button that preselects the new fit in the Solve tab. Everything below
+describes the same flow; the command-line version follows it step for step
+and is kept for scripting.
+
 ## The whole thing, in two commands and one form
 
 ```bash
@@ -41,6 +49,28 @@ The steps below are the same three things, in detail.
 - A kitchen scale, for the weigh-in (the robot's mass, with the battery).
 - A clear floor with 2 m of runway in both directions, and room to spin.
 - A rigid wall the front bumper can press against.
+
+### On a small bench (~0.6 x 0.8 m)
+
+The suite also runs in short bench runs: same speeds, shorter distances, so
+the fitted dynamics are the same. Tick **Small bench** on the studio's
+collect step, or pass `--bench` to `collect` (and to `fit --write-form` if
+you regenerate the form):
+
+```bash
+python -m overboard.sysid.collect --conn ble --bench --profile my_drivebase.json \
+  --session session.csv --sheet calibration_sheet.csv
+```
+
+Run the straight tests down the longest bench diagonal, centre the
+oscillating tests with room to spare, and use a bench backstop or a book as
+the wall (set its distance in the profile; 0.2 m is the minimum). The
+curvature arcs are skipped in bench mode: the fit never reads them.
+
+The one cost is the distance scale. The tape error (~2-3 mm) over a 500 mm
+run instead of a 1000 mm run roughly doubles the scale error to ~0.5%, which
+is ~15 mm over a 3 m path. Measure each tape pose twice and cross-check
+against the wall homing run, which needs no tape reading.
 - Masking tape, to mark the start pose and the stop marks.
 - A laptop with Bluetooth (or a USB cable to the hub).
 
@@ -127,8 +157,8 @@ deliberately wide, because three is a small sample. The step order is
 reversed on every other repeat, so a drift over the run cannot land on the
 step index.
 
-The cost is that you measure more. Seven poses per repeat, three repeats,
-**21 measurements**, and the robot's mass three times on the scale.
+The cost is that you measure more. Nine poses per repeat, three repeats,
+**27 measurements**, and the robot's mass three times on the scale.
 
 ---
 
@@ -149,11 +179,22 @@ the measurement sheet for the session: the CSV the fitter reads
 (`calibration_sheet.csv`) and a form in a browser next to it
 (`calibration_sheet.html`) that you fill in instead of editing a spreadsheet.
 
+**On the `/sysid` page, step 1 is a test list.** Every suite test is listed
+with its repeats, its setup hint, and whether it is already on file. Pick a
+subset to redo one test out of order: the collect runs the picked tests in
+suite order (dependencies are added by themselves) and appends to the
+session, so a redo supersedes the attempt it replaces; a full suite starts
+the session over. **Run one by one** chains each checked test as its own
+push, advancing when the last finishes. Each hub prompt appears on the page
+as it runs, with entry boxes for the numbers it asked for.
+
 **What happens on the hub:** the display lights yellow and the hub waits for
 the centre button. The terminal prints a step banner for each test: the
 name, what the robot will do, and — for the tests you measure — what to
 write down and in which columns, in the words of the measurement convention
-above. Do the setup, press the **centre button**, and the test runs. The
+above. Do the setup, press the **centre button**, and the test runs. Tests
+that need nothing from you chain by themselves after a 5 s countdown (a
+press skips the wait); setup tests always wait. The
 **Bluetooth button is the emergency stop** — press it if the robot does
 something unexpected.
 
@@ -177,12 +218,14 @@ measure it each time:
 | 13 | `multi_stop` ×3 | 2 m runway. Mark the start pose and a measuring spot at each stop. | **the pose at each of 3 stops** |
 | 14 | `brake_from_300` ×3 | Mark the start and final pose. 2 m runway required. | **the end pose** |
 | 15 | `brake_from_600` ×3 | Same, at 600 mm/s. | **the end pose** |
-| 16 | `wall_homing` ×3 | Robot's centre on the start mark, square to the wall. | — |
-| 17 | `wall_stall` ×3 | The robot is against the wall now, from the homing run. | — |
-| 18 | `top_speed` ×3 | **Lift the robot so both wheels spin free.** They must not touch the mat. | — |
-| 19 | `replay_complex_mission` | Place the robot at the trajectory start pose. Clear the full path. | — |
+| 16 | `square_cw` ×3 | Clear 400 mm square, e.g. a launch zone. Drives a 150 mm square, then stops. | **the end pose** |
+| 17 | `square_ccw` ×3 | Same, the other way. | **the end pose** |
+| 18 | `wall_homing` ×3 | Robot's centre on the start mark, square to the wall. | — |
+| 19 | `wall_stall` ×3 | The robot is against the wall now, from the homing run. | — |
+| 20 | `top_speed` ×3 | **Lift the robot so both wheels spin free.** They must not touch the mat. | — |
+| 21 | `replay_complex_mission` | Place the robot at the trajectory start pose. Clear the full path. | — |
 
-Only tests 11 to 15 need a tape measure. The rest are for the actuator model
+Only tests 11 to 17 need a tape measure. The rest are for the actuator model
 and the gyro bias, and you only have to watch them.
 
 The table lists the tests in the order they first appear. The repeats are
@@ -191,17 +234,17 @@ measured tests run as one group of five per repeat, so the tape work is done
 in one go. The step order is reversed on every other repeat, so a battery
 that sags over the session cannot land on the step index.
 
-**Test 16, `wall_homing`, checks the distance scale against the wall.** The
+**Test 18, `wall_homing`, checks the distance scale against the wall.** The
 robot drives slowly forward from the start mark and stops when it is blocked,
 so the distance it covered is the distance to the wall. The wall does not
 move and nobody has to read it, so the scale can be re-checked later
 without a human. It needs the `wall` block in the drivebase profile.
 
-**Test 17, `wall_stall`, measures the motor's stall torque** from the same
+**Test 19, `wall_stall`, measures the motor's stall torque** from the same
 wall, which is why it runs straight after the homing run: the robot is
 already against it.
 
-**Test 18, `top_speed`, needs the robot off the ground.** With the wheels
+**Test 20, `top_speed`, needs the robot off the ground.** With the wheels
 lifted the motor pushes nothing, so it runs up to the speed at which it makes
 no torque. That speed is the other end of the motor's torque-speed line, and
 the robot config otherwise has to declare it. It runs last, after the
@@ -210,7 +253,7 @@ larger than any LEGO motor can reach, so the motor is torque-limited rather
 than speed-limited; if the robot somehow reached the commanded speed, the
 fit rejects the number and says why.
 
-**Measure these seven, in each of the three repeats:**
+**Measure these nine, in each of the three repeats:**
 
 - **Test 11, `odometry_straight`** — how far it went, and whether it drifted
   sideways. It should read about 1000 mm. **The sideways offset matters as
@@ -226,6 +269,9 @@ fit rejects the number and says why.
   after the stop. The robot was told to brake from a speed, so it may have
   skidded and ended short of where it was driving to. That is the point of
   the test: the gap is the brake slip.
+- **Test 16 and 17, `square_cw` and `square_ccw`** — the end pose after the
+  150 mm square. The square is run slowly so slip stays out of the
+  measurement; the start mark is the reference the fit compares it against.
 
 Write the numbers on a sheet of paper as you go, one line per measurement,
 with the repeat number on the line. A phone photo of the sheet is a fine
@@ -303,6 +349,10 @@ the sheet, so it drops straight into the next step. The form also takes a
 sheet you saved earlier, so a session you measured in two goes is not
 measured twice.
 
+On the `/sysid` page this is step 2, **Measure**, plus the prompt cards in
+step 1: each hub prompt carries the entry boxes for its numbers, so you type
+them as the run goes instead of afterwards.
+
 ---
 
 ## Step 3 — fit the model
@@ -311,6 +361,12 @@ measured twice.
 python -m overboard.sysid.fit session.csv --sheet calibration_sheet.csv \
   --profile my_drivebase.json --out sysid_fit.json
 ```
+
+On the `/sysid` page this is step 3, **Fit** (gearing and wall distance as
+fields), with the before/after table in step 4, **Refinement**: the prior
+fit — or the nominal config when there is none — against the new one,
+row for row. **Finish** preselects the new fit in the Solve tab ("Plan
+against the measured model") and solves nothing by itself.
 
 The sheet is keyed by test name and repeat, so it does not matter which
 order the tests ran in or which ones you skipped. The tool looks each
@@ -465,7 +521,8 @@ python -m overboard.main -w examples/example_straight.json -o output.traj \
 ```
 
 `--sysid-fit` requires `--validate` (the studio passes the same fit to every solve the
-studio runs). The validator applies the fitted actuator response, the odometry belief and the
+studio runs; on the `/sysid` page the Finish button ticks "Plan against the measured
+model" in the Solve tab for the next solve). The validator applies the fitted actuator response, the odometry belief and the
 measured braking shortfall, and it uses the **gain interval** as the band it plans against, so a
 robot that varies a lot produces a conservative plan.
 
@@ -506,7 +563,10 @@ thresholds do not change.
   of that test, so there is no spread to report. Collect a session with the
   repeats, or accept the point estimate with no interval.
 - **The link dropped mid-session.** The session file keeps whatever arrived.
-  Re-run step 1 to get a clean one; the fit is only as good as the log.
+  Re-run the failed tests only: on the `/sysid` page pick them in the test
+  list and collect again — the new runs append and supersede the dropped
+  ones. On the command line, re-run step 1 to get a clean session; the fit
+  is only as good as the log.
 - **`odometry heading_scale must be > 0`** — the fit is broken, not the robot.
   This means the sheet and the session disagree about the sign of the turn.
   Check that a turn to the right is a positive `turn_right_deg`.

@@ -1,10 +1,10 @@
 # Known Issues
 
-Last reviewed: 2026-10-24
+Last reviewed: 2026-10-28
 
 Scope: whole repository, reviewed as a single-user, offline desktop tool for one FLL robot. This is not a multi-user or server-scale review.
 
-Status: KI-001 through KI-003, KI-005 through KI-019, KI-021 through KI-031, KI-033 through KI-044, KI-045, KI-046, KI-047 through KI-053, KI-055, KI-056, KI-057, KI-058 are **fixed**. KI-032 is **mitigated** (test cache). KI-054 is **mitigated** (the absolute duration gate is priced by `--field-clearance` when field geometry is used; runs without it keep the absolute default limit). KI-004 is **deleted** (the Multi-Verse pipeline was removed; archived in git tag `archive/legacy-2026-10`). Open: KI-020 (hardware calibration & digital twin validation).
+Status: KI-001 through KI-003, KI-005 through KI-019, KI-021 through KI-031, KI-033 through KI-044, KI-045, KI-046, KI-047 through KI-053, KI-055, KI-056, KI-057, KI-058 are **fixed**. KI-032 is **mitigated** (test cache). KI-054 is **mitigated** (the absolute duration gate is priced by `--field-clearance` when field geometry is used; runs without it keep the absolute default limit). KI-004 is **deleted** (the Multi-Verse pipeline was removed; archived in git tag `archive/legacy-2026-10`). Open: KI-020 (hardware calibration & digital twin validation); KI-059 through KI-068 are **open requested features** (roadmap, not bugs; KI-063/KI-067/KI-068 are stretch goals; added after the 2026-10-24 review).
 
 How to use this list: refer to an item by its ID, for example "fix KI-003". The **Quick triage** table is the index - read that, then open the entry you are working on. The entries are now short records: what was wrong, what changed, and which files carry the fix. The long narrative each entry used to carry is in the git history - this file before the 2026-10-21 pruning - so `git log -p KNOWN_ISSUES.md` reads any entry in full.
 
@@ -74,6 +74,16 @@ How to use this list: refer to an item by its ID, for example "fix KI-003". The 
 | KI-056 | P1 | Validation | ~~An empty trajectory crashed the gate and read as an Immrax error~~ (fixed; a failed solve is reported as a failed candidate) |
 | KI-057 | P1 | Runtime | ~~A busy machine made MUMPS abort the process and lose the run~~ (fixed; one thread per pool, and MUMPS is told its memory limit) |
 | KI-058 | P2 | Solver / validation | ~~The gradient polish differentiated a diverged rollout and acted on phantom tracking errors~~ (fixed; the gradient rollout now runs at the gate's resolution) |
+| KI-059 | P2 | Studio / SysId | Guided SysId page that walks the loop and shows the refinement (open, requested) |
+| KI-060 | P2 | CLI / Studio | No expected-time / progress bar for solves (open, requested) |
+| KI-061 | P2 | Solver / validation | No toggleable mission-model / obstacle avoidance (open, requested) |
+| KI-062 | P2 | Install | No standalone app / one-button download-and-run (open, requested) |
+| KI-063 | P3 | Solver / physics | No measurable interaction force profiles, e.g. pushing a lever (open, requested, stretch) |
+| KI-064 | P2 | SysId / validation | No run-to-run iterative refinement from hub logs (open, requested) |
+| KI-065 | P2 | SysId / physics | Battery-level effect on performance is not measured (open, requested) |
+| KI-066 | P2 | Studio / validation | No run history per mission (open, requested) |
+| KI-067 | P3 | SysId / validation | No left/right asymmetry detector (open, requested, stretch) |
+| KI-068 | P3 | Config / validation | No attachment profiles, e.g. width/weight per tool (open, requested, stretch) |
 
 ## Open
 
@@ -81,7 +91,7 @@ How to use this list: refer to an item by its ID, for example "fix KI-003". The 
 
 **Status:** Open, partially addressed in the working tree. The controller parity, linear reference, 20 ms sample-and-hold, and physical backlash model are implemented. The controller split is also done: `robot_config.py` is hardware-only, `mission_4_ramsete.py` imports `ramsete_fast` with its calibrated defaults, and `mission_5_lambdas.py` imports `ramsete` for events. `pybricks_code/sysid_digital_twin.py` and `sysid_fit.py` provide the robot log/capture and host fit path; no hardware logs have been collected yet. The host can now push a script to the hub and capture its console output without the Pybricks IDE (`hub_deploy.py`, `main.py --push-hub`), so the robot log no longer has to be copied out by hand, and a pushed trajectory reports its measured final pose as a `POSE` line. The fitted numbers now carry an uncertainty: the calibration-critical tests run three times each, the fit reports a 95% t-interval per parameter over those repeats, and the validator plans against that interval instead of the spread of the steps inside one run, which was not an uncertainty because the steps are sequential. The interval covers the run-to-run variation and any drift over the session, but not the error of the tape measure: the tape error is in the numerator of every measurement, it is the same every time, and no number of repeats averages it out. Two parameters that the robot config could only declare are now measured as well: the straight-line heading drift, which the plant adds to the heading rate because the plan's straight segments are straight, and the motor's stall torque, which the wall test measures and the validator uses as the motor force limit. **The motor is now measured on both ends and every tool uses the measured pair.** The collector's new `top_speed` test measures the free-running speed with the wheels off the ground, which is the other end of the torque-speed line; the fit rejects the number when the robot reached the commanded speed instead, because then the command was the limit and not the motor. `main.py --sysid-fit` writes the measured pair into the robot config, so the optimizer, the CPU audit, the validator and the exported controller all plan against the same motor (the KI-010 rule). Before this, the optimizer planned against the declared motor while the validator checked the measured one, so a plan could satisfy its own constraint and still trip the validator. The drivetrain model itself is in `drivetrain.py`, and its structure was checked against an independent rigid-body simulator: the top speed agrees within 7%, the coast deceleration is 2.4x higher in the simulator because the model has no rolling resistance, and that simulator's brake mode turns out to reverse the wheels instead of braking them, so its braking distance is not a usable reference. See `docs/research/RQ-B_drivetrain_model.md`. The drift is a slope against the speed, not a subtraction, so the gyro's bias lands in the intercept instead of leaking into the drift; the tape's lateral offset is the independent second estimate. The step fit is a two-stage search, so the reported time constant and delay are no longer quantised to the 10 ms grid of the first pass. The wall is also a reference for the distance scale: the robot drives into it from a marked start and stops when it is blocked, so the scale can be checked against something that does not move and that nobody has to read, which is what makes it possible to re-check the calibration unattended. The wall and the tape are two estimates of the same number and the fit reports them side by side. The wall cannot measure the heading, because a wall does not straighten a crooked robot, so the drift still comes from the speed regression. The host tools accept a minimal drivebase profile (`wheel_radius_m`, optional `track_width_m`) instead of a full robot config. `digital_twin.py` and `main.py --sysid-fit` now load and validate a fit. When enabled, the validator uses a five-state plant with actual wheel speeds, the fitted straight-line gain interval, first-order time constant, command delay, and odometry distance/heading scale in feedback. The nominal feedback path does **not** round the drive command: KI-028 moved the firmware to unrounded floats and the validator to mirror it, so the model and the robot agree (the rounding model is still there behind `quantize=True`, for an A/B measurement). Braking slip is now applied by the plant. Reachability is a post-solve candidate score (`--candidates`), not yet an optimizer term. The firmware's DriveBase trajectory limits are now known (about 7800 mm/s² and 9300 deg/s² for this robot, derived from Pybricks' 20,000 deg/s² ceiling), so the plant's instant-tracking assumption matches the hub; Motor/current transients, DriveBase PID, and slip under load remain unimplemented; the whole-millimeter distance reading was measured rather than assumed and costs 0.75 mm of final drift on the 6.08 s complex mission, so it is not worth modelling. The machinery for the rest is built and inert until the fit provides the numbers: the controller is fed the robot's own integrated odometry belief instead of the truth, the plant applies the measured braking shortfall and the measured acceleration limit, and the belief drifts with the measured gyro bias. `docs/DIGITAL_TWIN_PLAN.md` records the data contract, what is built, and what is still open. The measurement loop around them is now complete on the host: `main.py --push-hub --hub-log session.log` captures the hub console output, `sysid_fit.py --from-hub-session session.log --out-poses poses.csv` turns its `POSE` lines into the measured-pose CSV that `sysid_compare.py` reads, and the sysid battery feeds `sysid_fit.py` the same way. The measured poses are matched to the sysid log by `run_id`, and only `odometry_straight`, `odometry_turn` and `brake_from_*` runs contribute a distance scale, a heading scale or a braking-slip estimate, so a poses file with the wrong run id is silently ignored ("no measured poses supplied"). A documented limit needs no calibration: the default `examples/fll_choreo.json` declares the DriveBase's 7.8 m/s² acceleration ceiling, and a declared limit alone selects the ramped five-state plant, so a plan the hub cannot accelerate along now fails the gate (Q11 step 1, `tests/test_digital_twin.py`).
 
-**Files:** `optimizer.py`, `immrax_validator.py`, `jax_ramsete.py`, `digital_twin.py`, `drivetrain.py`, `robot_model.py`, `main.py`, `multiverse_optimizer.py`, `pybricks_code/ramsete_fast.py`, `pybricks_code/robot_config.py`, `pybricks_code/mission_4_ramsete.py`, `pybricks_code/mission_5_lambdas.py`, `pybricks_code/sysid_digital_twin.py`, `pybricks_code/hub_runner.py`, `pybricks_code/ramsete_compact_events.py`, `sysid_fit.py`, `sysid_compare.py`, `sysid_collect.py`, `hub_deploy.py`, `examples/drivebase_profile.example.json`, `tests/test_sysid_fit.py`, `tests/test_sysid_compare.py`, `tests/test_digital_twin.py`, `tests/test_drivetrain.py`, `tests/test_hub_deploy.py`, `tests/test_sysid_collect.py`
+**Files:** `overboard/core/optimizer.py`, `overboard/verification/immrax_validator.py`, `overboard/models/jax_ramsete.py`, `overboard/sysid/digital_twin.py`, `overboard/models/drivetrain.py`, `overboard/models/robot_model.py`, `overboard/main.py`, `pybricks_code/ramsete_fast.py`, `pybricks_code/robot_config.py`, `pybricks_code/mission_4_ramsete.py`, `pybricks_code/mission_5_lambdas.py`, `pybricks_code/sysid_digital_twin.py`, `pybricks_code/hub_runner.py`, `pybricks_code/ramsete_compact_events.py`, `overboard/sysid/fit.py`, `overboard/sysid/compare.py`, `overboard/sysid/collect.py`, `overboard/deploy/hub_deploy.py`, `examples/drivebase_profile.example.json`, `tests/test_sysid_fit.py`, `tests/test_sysid_compare.py`, `tests/test_digital_twin.py`, `tests/test_drivetrain.py`, `tests/test_hub_deploy.py`, `tests/test_sysid_collect.py` (record kept bare pre-`overboard/` move; the `multiverse_optimizer.py` seed provider is deleted, archived in `archive/legacy-2026-10`)
 
 **Problem:** The default validator mirrors the deployed controller's math and timing, but its plant is still kinematic: commanded wheel speeds become motion immediately (apart from wheel backlash). The optional fitted plant adds actuator lag, delay, gain uncertainty, and a static odometry correction, but it still has no motor current/torque transient, DriveBase PID, integrated encoder/gyro odometry, or wheel-slip dynamics. Feedback uses a scaled version of the true pose, not the robot's actual `DriveBase.state()` estimate. Reachability is a post-solve candidate score (`--candidates`, `main.py`), not yet a term or constraint in the optimizer.
 
@@ -90,6 +100,8 @@ How to use this list: refer to an item by its ID, for example "fix KI-003". The 
 **Fix:** Collect and fit in one command with `python -m overboard.sysid.collect --conn ble --profile examples/drivebase_profile.example.json`: it pushes the logger, captures the session as it arrives, converts the hub's `POSE` lines to `poses.csv`, and writes `sysid_fit.json`. The poses are the hub's own odometry, so the distance and heading scale of the fit have no ground truth and stay at 1.0 until someone measures the robot with a tape and replaces those rows; the actuator part of the fit does not need a measurement. The written procedure is `docs/CALIBRATION_PROCEDURE.md`: the operator drives the robot through the collector tests, measures the end pose of the five that need a tape, and fills in a measurement sheet keyed by test name. `python -m overboard.sysid.fit <session.csv> --from-sheet <sheet> --out-poses poses.csv` turns that sheet into the measured poses, so the order the tests ran in does not matter and a skipped test is reported instead of guessed. The sheet is also fitted directly (`--sheet`), so there is no intermediate pose file, and it is written as a form in a browser (`--write-form`, `sheet_form.py`) so the operator types the numbers instead of editing a spreadsheet; the studio has the same form on the server. The same thing step by step: push the logger and capture its session with `python -m overboard.deploy.hub_deploy pybricks_code/sysid_digital_twin.py --out session.csv` (or run it from the Pybricks IDE), record the stop/final poses in `poses.csv`, fit the logs with `sysid_fit.py --profile examples/drivebase_profile.example.json`, and pass the result with `main.py --sysid-fit sysid_fit.json --validate`. Compare the planned trajectory with the measured poses using `sysid_compare.py`; it prints position/heading errors and whether each measured pose is inside the reachability envelope, and it accepts a plain predicted-pose CSV and a drivebase profile. The pushed run gives the same comparison without hand-editing: `main.py --push-hub --hub-log session.log`, then `sysid_fit.py --from-hub-session session.log --out-poses poses.csv --run-id <id>`, then `sysid_compare.py output.traj poses.csv --run-id <id>`. Extend the plant to integrated odometry and a braking-slip state only after that comparison. The post-solve choice is made: `--candidates` scores several solutions (seed/timing combinations with `--simple`, accuracy-weight variants on the Multi-Verse path) and picks the passing one with the lowest envelope (then the shortest). Extend it to a hard constraint or differentiable proxy only if the candidate set cannot find a passing path. Do not tune the 5 mm/2 cm thresholds or b/zeta to one path.
 
 **Workaround:** Use the straight example as a parity smoke test; treat predictions for curved/high-speed paths as uncalibrated until hardware logs are available. `examples/fll_choreo.json` now declares physical-looking ranges instead of the old clamped ones (track width ±0.5 mm, wheel radius ±0.5 mm, backlash 0.2-0.8 mm, COF 0.95 ±10 %), but they are still assumptions, not measured hardware values - run the SysId loop before calling them calibrated. Because a wide range makes the open-loop `plant` tube exceed the 2 cm gate on a curved path, validation of the examples needs `--propagation tick`; the `safe` preset (CLI and studio) selects it.
+
+## Mitigated
 
 ### KI-054 — The envelope gate is an absolute radius on a cumulative tube
 
@@ -123,8 +135,6 @@ If none of those is available, the run does not know that the plan is accurate e
 
 **The smarter rule is built as `--field-clearance`:** the tube is compared against the mission's tolerance per sample - the clearance to the nearest mission model or mat boundary from the field season's model - and the clearance to the mission models is its own physical gate on top, so a tube that reaches a model fails like force or slip even where the clamped accuracy limit would pass it. The mat edge is a game-rule boundary, not a crash: it shapes the accuracy limit but fails nothing physically, and a nominal body inside a model is a structural failure, never accepted. Opt-in, so existing verdicts do not change. What it cannot fix: the field model is nominal geometry with about 100 mm of placement uncertainty (recorded, not subtracted), so a per-waypoint `error_threshold` remains the manual form of a tolerance the field cannot express, and the 2 cm default is still a placeholder, not a requirement.
 
-## Mitigated
-
 ### KI-032 — A test cache can hide a regression
 
 **Status:** Mitigated in the working tree (uncommitted). The cache is on by default and its rules live in `testcache.py`; `--no-cache` runs everything.
@@ -148,6 +158,108 @@ If none of those is available, the run does not know that the plan is accurate e
 **Evidence:** Measured on 2026-10-20, a cold full run took 251 s (`run_tests.py` prints the count; this entry does not quote one). A second run over the same tree takes 5 s: 671 of the tests are skipped, and the 16 that run are the ones that must not be skipped because they write into the repository (the doctor's probe, the deprecated-flag CLI runs, the hub and sysid session writers, and the cache's own tests). The saving is reported in the summary, so the number is never a guess, and a third run takes the same 5 s: the cache does not invalidate itself.
 
 **Workaround:** `python run_tests.py --no-cache` for the full suite. The cache is a development convenience; it is not a gate, and no release decision rests on a cached run.
+
+## Requested features (open)
+
+### KI-059 — SysId needs a guided page that shows the refinement
+
+**Status:** Open (requested feature, not a bug).
+
+**Problem:** Calibration is a CLI sequence plus `docs/CALIBRATION_PROCEDURE.md`: `sysid.profile` → `collect` → `fit --sheet` → `compare`. The operator cannot see what each test changed in the fitted numbers.
+
+**Current:** `overboard/sysid/profile.py`, `collect.py`, `fit.py`, `sheet_form.py`, and the same form served by the studio. The fit reports 95 % t-intervals per parameter over repeats (KI-042).
+
+**Next:** one dedicated studio page walking the loop (measure → fit → compare → re-validate), showing per-parameter before/after with intervals and which steps still need a tape measurement. Design lives in `docs/CALIBRATION_STUDIO_PLAN.md`; the served `/sysid` page (`overboard/viz/sysid.html`, `overboard/gui_server.py`) is the first step toward it (KI-059 tracks the guided refinement view, not the plan itself).
+
+### KI-060 — Solves give no expected time or progress bar
+
+**Status:** Open (requested feature, not a bug).
+
+**Problem:** A validating run solves the candidate set (parallel when validating) with IPOPT's 5000-iteration budget per candidate (KI-048), so wall time varies from seconds to minutes with no feedback until the `##OVERBOARD-VALIDATION##` line.
+
+**Current:** per-candidate iteration counts print after the fact; the studio Run tab polls the job but shows no ETA.
+
+**Next:** report per-candidate stage (candidate i/N, iteration count) and an elapsed/expected-time hint from the mission's solved-candidate history. No solver behaviour change.
+
+### KI-061 — No toggleable mission-model / obstacle avoidance
+
+**Status:** Open (requested feature, not a bug).
+
+**Problem:** The planner optimises time/pose against the waypoint list; mission models only gate the plan via `--field-clearance` clearance/utilisation (KI-054). There is no "avoid this box" switch.
+
+**Current:** `--field-clearance SEASON` prices clearance and fails penetration as a physical gate; nothing steers the optimizer around an obstacle.
+
+**Next:** an opt-in obstacle list (per mission or per run) consumed as a constraint/penalty by `overboard/core/optimizer.py`, off by default so existing plans are bit-identical. Needs the field-frame convention the SysId sheet already uses.
+
+### KI-062 — No standalone app / one-button download-and-run
+
+**Status:** Open (requested feature, not a bug).
+
+**Problem:** A new user builds a venv via `install.bat` / `sh install.sh`, then runs CLI + studio separately (KI-031). There is no double-clickable bundle.
+
+**Current:** the scripts create `.venv` with both requirement files and start the studio; `python -m overboard.main --doctor` reports what is missing.
+
+**Next:** one packaged artifact (e.g. PyInstaller one-folder + installer, or equivalent) that ships solver + studio + JAX stack and opens the studio on launch. Offline-bundled docs (`docs/`, root `.md`) travel with it.
+
+### KI-063 — No measurable interaction force profiles, e.g. pushing a lever (stretch)
+
+**Status:** Open (requested feature, stretch goal — needs new measurement + model, not just UI).
+
+**Problem:** Some missions push against the field (levers, doors). The force model (`overboard/models/drivetrain_physics.py`, KI-009/KI-010) only budgets traction/motor limits for moving the robot, with no declared external load at a pose.
+
+**Current:** none — an external push is unmodelled in optimizer, validator and firmware.
+
+**Next:** a per-segment/pose force declaration (magnitude + direction + uncertainty, measured with a scale/spring rig), consumed as a wheel-force margin by optimizer and validator and gated like slip/motor force. Do after KI-020: without a calibrated twin the extra term is decoration. Ranked against Q25 component 4 (slip/grip, contingent in `docs/research/RQ-C_digital_twin_model.md`): interaction load is a separate input, slip is the model that would carry it — neither is committed work (stretch).
+
+### KI-064 — No run-to-run iterative refinement from hub logs
+
+**Status:** Open (requested feature, not a bug).
+
+**Problem:** Each solve starts from the same seeds and ranges; the measured `POSE`/`EVENT` log from `--push-hub --hub-log` never feeds back into the next plan.
+
+**Current:** the log path streams to disk (`hub_deploy.py`, KI-040) and `sysid_compare.py` reports planned-vs-measured error, but nothing updates the fit or re-solves automatically.
+
+**Next:** a closed loop — push → capture log → re-fit deltas (gain/drift/slip) → re-solve with narrowed ranges — with the operator approving each round and every round recorded. Explicitly opt-in; never silent. This is the run-to-run side of Q25 (`docs/RESEARCH_AGENDA.md` Q25, `docs/research/RQ-C_digital_twin_model.md`): the UMBmark pair (component 1) is the identification the loop would drive, and the Q9 dress rehearsal is the turnkey check before hardware.
+
+### KI-065 — Battery-level effect on performance is not measured
+
+**Status:** Open (requested feature, not a bug).
+
+**Problem:** Stall torque and no-load speed are measured once per SysId session (KI-010/KI-020), but hub battery voltage sags over a match day and both numbers move with it. No table or derate exists.
+
+**Current:** `collect` top-speed + wall stall tests write one motor pair into the robot config; every tool plans against that pair. The hub session already logs voltage per test (`META,battery_mv`, per-row `batt_mv` in `overboard/gui_server.py`), so the column Q11/KI-065 needs is in the file — the derate on top of it is not built.
+
+**Next:** repeat the two motor tests across charge levels (or log voltage per test via the hub session), fit torque/speed vs. voltage, and apply the derate in `robot_model.py` + validator. At minimum, record voltage with each SysId session so runs are comparable.
+
+### KI-066 — No run history per mission
+
+**Status:** Open (requested feature, not a bug).
+
+**Problem:** Every solve overwrites the last `.traj` / `_stats.json`; there is no record that a mission got slower after a re-fit or faster after a planner change.
+
+**Current:** the `##OVERBOARD-VALIDATION##` JSON and `_stats.json` carry score, profile, ranges and `trajectory_sha256` for one run only.
+
+**Next:** append one row per validated solve (mission, score, profile, ranges hash, duration, date) to a local history file the studio can table/chart. Read-only log; never gates a run.
+
+### KI-067 — No left/right asymmetry detector (stretch)
+
+**Status:** Open (requested feature, stretch goal — needs a diagnosed signal, not just a comparison).
+
+**Problem:** A dragging wheel or weak motor shows up as a left/right tracking bias, but nothing separates it from generic tracking error.
+
+**Current:** `sysid_compare.py` reports planned-vs-measured position/heading error; the hub log carries `POSE`/`EVENT` lines (KI-064).
+
+**Next:** compare per-side wheel command vs. measured motion over repeated runs and flag a persistent bias with its size. Do after KI-064: without the run-to-run loop there is no baseline to call asymmetric. The same physical effect is Q25 component 1 (per-side radii + effective wheelbase, UMBmark `Ed`/`Eb` in `docs/research/RQ-C_digital_twin_model.md`); KI-067 is the detector on top of that identification, not a separate model.
+
+### KI-068 — No attachment profiles, e.g. width/weight per tool (stretch)
+
+**Status:** Open (requested feature, stretch goal — one robot, several shapes).
+
+**Problem:** Attachments change the body box (width, bumper overhang) and the mass/inertia, but the robot config describes one shape. The `--field-clearance` body box (KI-054) then checks the wrong rectangle.
+
+**Current:** single `robot` config in `robot_model.py`; the clearance gate uses `back_bumper_m` / `front_bumper_m` / `width_m` from it.
+
+**Next:** named attachment variants (geometry + mass delta) selectable per mission, consumed by optimizer, validator and studio overlay. Unselected missions use the base config, bit-identical to today. Do after KI-054: the `--field-clearance` body box is the rectangle the variant would replace — one robot, several shapes (stretch, not committed).
 
 ## Deleted
 

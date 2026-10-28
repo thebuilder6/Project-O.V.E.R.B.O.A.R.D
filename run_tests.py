@@ -144,6 +144,7 @@ from tests.test_sysid_collect import (
     TestCollectCommand,
     TestGuidedSheetForm,
     TestCollectGuidance,
+    TestBenchMode,
 )
 from tests.test_sysid_mass_inertia import (
     TestMassInertiaFormulas,
@@ -176,12 +177,16 @@ from tests.test_gui_server import (
     TestStudioHubScan,
     TestStudioModel,
     TestStudioCalibration,
+    TestCollectSelection,
+    TestCollectPrompts,
+    TestKeepAliveDesync,
     TestStudioHelpers,
     TestStudioReport,
     TestValidationVerdict,
 )
 from tests.test_studio_inventory import (
     TestStudioInventory,
+    TestSysIdInventory,
 )
 from tests.test_studio_report import (
     TestReportBuilder,
@@ -207,6 +212,13 @@ from tests.test_studio_honesty import (
     TestTheCandidateLabelsComeFromTheReport,
     TestTheFirstTimeStripIsDismissible,
     TestAdvancedRevealsDoNotLeak,
+    TestSysIdPageIsServed,
+    TestSysIdFinishNeverSolves,
+    TestPushedSessionsAreCompareOnly,
+    TestSheetSurfacesVoltageAndTruncation,
+    TestSummaryIsRowForRow,
+    TestCollectorRunsOutsideATask,
+    TestCollectorAdvanceModes,
 )
 from tests.test_testcache import (
     TestCacheSkipsUnchangedCode,
@@ -230,6 +242,7 @@ from tests.test_compare_traj import (
     TestComparePair,
     TestCliSummary,
 )
+from tests.test_q25_component1 import TestWheelGeometry, TestMeasureHelpers, TestBeliefFirstDefault
 from tests.test_doc_numbers import (
     TestDocNumbers,
 )
@@ -295,6 +308,9 @@ def test_classes():
         TestRiskMargins,
         TestQ18Decomposition,
         TestQ19OneKnob,
+        TestWheelGeometry,
+        TestMeasureHelpers,
+        TestBeliefFirstDefault,
         TestClassifySolverError,
         TestFailureStatsCarryKind,
         TestDocNumbers,
@@ -354,6 +370,7 @@ def test_classes():
         TestCollectCommand,
         TestGuidedSheetForm,
         TestCollectGuidance,
+        TestBenchMode,
         TestMassInertiaFormulas,
         TestMassInertiaRoundtrip,
         TestWeighInSheet,
@@ -402,8 +419,12 @@ def test_classes():
         TestCandidateSpecs,
         TestStudioRoutes,
         TestStudioSolve,
+        TestCollectSelection,
+        TestCollectPrompts,
+        TestKeepAliveDesync,
         TestStudioHelpers,
         TestStudioInventory,
+        TestSysIdInventory,
         TestStudioReport,
         TestReportBuilder,
         TestProjectFile,
@@ -426,6 +447,13 @@ def test_classes():
         TestTheCandidateLabelsComeFromTheReport,
         TestTheFirstTimeStripIsDismissible,
         TestAdvancedRevealsDoNotLeak,
+        TestSysIdPageIsServed,
+        TestSysIdFinishNeverSolves,
+        TestPushedSessionsAreCompareOnly,
+        TestSheetSurfacesVoltageAndTruncation,
+        TestSummaryIsRowForRow,
+        TestCollectorRunsOutsideATask,
+        TestCollectorAdvanceModes,
         TestCacheSkipsUnchangedCode,
         TestCacheFingerprints,
         TestCacheRecords,

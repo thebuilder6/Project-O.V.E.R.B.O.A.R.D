@@ -8,6 +8,7 @@ in a subprocess and never writes an artifact the CLI did not write.
 import json
 import math
 import os
+import re
 import shutil
 import sys
 import tempfile
@@ -1120,6 +1121,365 @@ TEST_END,3
                      payload={"name": "my robot", "gearing": "fast"})
         self.assertEqual(ctx.exception.code, 400)
         self.assertNotIn("\\", ctx.exception.read().decode("utf-8"))
+
+    def test_an_express_fit_needs_no_sheet_and_names_its_tier(self):
+        """Express (no tape rows) fits without a sheet and warns wall-first."""
+        paths = gui_server.calibration_paths("express robot")
+        paths["session"].parent.mkdir(parents=True, exist_ok=True)
+        with open(paths["session"], "w", encoding="utf-8") as handle:
+            handle.write(
+                "TEST_START wall_homing\n"
+                "META,run_id,1\nMETA,test,wall_homing\nMETA,repeat,0\n"
+                "META,poses,0\nMETA,wheel_diameter_mm,56\n"
+                "META,axle_track_mm,96.5\nDATA\n"
+                "t_ms,v_cmd_mm_s,gyro_z_deg_s\n0,0,0\nTEST_END,1\n")
+        status, summary = _request(f"{self.base}/api/calibration/fit",
+                                   method="POST",
+                                   payload={"name": "express robot"})
+        self.assertEqual(status, 200)
+        self.assertEqual(summary["tier"], "express")
+        self.assertTrue(any("wall_homing" in problem
+                            for problem in summary["problems"]))
+        status, sheet = _request(
+            f"{self.base}/api/calibration/sheet?name=express%20robot")
+        self.assertEqual(sheet["tier"], "express")
+
+    def test_the_test_list_names_the_express_tier(self):
+        status, payload = _request(f"{self.base}/api/calibration/tests")
+        self.assertEqual(status, 200)
+        self.assertIn("wall_homing", payload["express"])
+        self.assertNotIn("odometry_straight", payload["express"])
+        self.assertNotIn("replay_complex_mission", payload["express"])
+
+
+class TestCollectSelection(StudioTestCase):
+    """The SysId page collects one test, some tests, or all of them.
+
+    A subset runs in suite order (dependencies first) and appends to the
+    robot's session with offset run ids, so a redo supersedes the attempt
+    it replaces. A full suite - or no selection - starts the session over
+    and deletes the selection file, so a manual push never inherits a
+    stale subset.
+    """
+
+    OLD = """TEST_START odometry_straight
+META,run_id,1
+META,test,odometry_straight
+META,repeat,0
+META,poses,1
+META,wheel_diameter_mm,56
+META,axle_track_mm,96
+DATA
+t_ms,v_cmd_mm_s,gyro_z_deg_s
+0,0,0
+TEST_END,1
+"""
+
+    NEW = """TEST_START wall_stall
+META,run_id,1
+META,test,wall_stall
+META,repeat,0
+META,poses,0
+META,wheel_diameter_mm,56
+META,axle_track_mm,96
+DATA
+t_ms,v_cmd_mm_s,gyro_z_deg_s
+0,0,0
+TEST_END,1
+"""
+
+    def setUp(self):
+        super().setUp()
+        self.calibration = tempfile.mkdtemp()
+        self._patch = patch.object(gui_server, "CALIBRATION_DIR", Path(self.calibration))
+        self._patch.start()
+        self.addCleanup(self._patch.stop)
+        self.addCleanup(shutil.rmtree, self.calibration, True)
+        self._selection = patch.object(gui_server, "SELECTION_SCRIPT",
+                                       Path(self.calibration) / "sysid_selection.py")
+        self._selection.start()
+        self.addCleanup(self._selection.stop)
+        self.fake = os.path.join(self.calibration, "fake_collect.py")
+        with open(self.fake, "w", encoding="utf-8") as handle:
+            handle.write(
+                "import sys\n"
+                f"session = {self.NEW!r}\n"
+                "out = sys.argv[sys.argv.index('--out') + 1]\n"
+                "with open(out, 'w', encoding='utf-8') as handle:\n"
+                "    handle.write(session)\n"
+                "print('Hub runner: collecting')\n"
+            )
+        self._deploy_patch = patch.object(gui_server, "HUB_DEPLOY", Path(self.fake))
+        self._deploy_patch.start()
+        self.addCleanup(self._deploy_patch.stop)
+
+    def _collect(self, name, tests="omitted", bench=False):
+        payload = {"name": name, "connection": "ble"}
+        if tests != "omitted":
+            payload["tests"] = tests
+        if bench:
+            payload["bench"] = True
+        status, job = _request(f"{self.base}/api/calibration/collect",
+                               method="POST", payload=payload)
+        self.assertEqual(status, 202)
+        deadline = time.time() + 120
+        while time.time() < deadline:
+            status, body = _request(f"{self.base}/api/jobs/{job['id']}")
+            if body["status"] != "running":
+                break
+            time.sleep(0.2)
+        self.assertEqual(body["status"], "ok", body["log"][-3:])
+        return body
+
+    def test_the_test_list_names_every_selectable_test(self):
+        status, payload = _request(f"{self.base}/api/calibration/tests")
+        self.assertEqual(status, 200)
+        ids = [entry["id"] for entry in payload["tests"]]
+        self.assertEqual(len(ids), 21)
+        self.assertEqual(ids, sorted(ids, key=gui_server.SELECTABLE_TEST_IDS.index))
+        by_id = {entry["id"]: entry for entry in payload["tests"]}
+        self.assertEqual(by_id["wall_stall"]["deps"], ["wall_homing"])
+        self.assertTrue(by_id["odometry_straight"]["tape"])
+        self.assertFalse(by_id["static"]["tape"])
+        self.assertEqual(by_id["straight_steps_fwd"]["repeats"], 3)
+        self.assertTrue(by_id["static"]["does"])
+        self.assertTrue(by_id["chirp_straight"]["auto"])
+        self.assertFalse(by_id["static"]["auto"])
+        self.assertFalse(by_id["odometry_straight"]["auto"])
+        for entry in payload["tests"]:
+            self.assertTrue(entry["setup"],
+                            f"{entry['id']} names no setup")
+        self.assertIn("LIFT", by_id["top_speed"]["setup"])
+        self.assertIn("wall", by_id["wall_homing"]["setup"])
+        # The firmware reads the same ids: nothing listed that the
+        # collector does not run, and nothing run that is not listed.
+        firmware = (REPO_ROOT / "pybricks_code" / "sysid_digital_twin.py"
+                    ).read_text(encoding="utf-8")
+        for test_id in ids:
+            self.assertIn('"%s"' % test_id, firmware,
+                          f"{test_id} is listed but the collector never runs it")
+        picked = sorted(set(re.findall(r'_selected\("([^"]+)"', firmware)))
+        self.assertEqual(picked, sorted(ids))
+        # The auto chain matches too: a badge the page shows but the hub
+        # waits on (or the reverse) is a lie about who presses what.
+        auto = sorted(entry["id"] for entry in payload["tests"] if entry["auto"])
+        match = re.search(r"AUTO_ADVANCE = \{([^}]*)\}", firmware, re.S)
+        self.assertIsNotNone(match, "the collector has no AUTO_ADVANCE set")
+        hub_auto = sorted(re.findall(r'"([^"]+)"', match.group(1)))
+        self.assertEqual(auto, hub_auto)
+
+    def test_a_subset_collect_writes_the_selection_file(self):
+        self._collect("subset robot", tests=["static", "wall_stall"])
+        with open(gui_server.SELECTION_SCRIPT, encoding="utf-8") as handle:
+            content = handle.read()
+        self.assertIn("'static'", content)
+        self.assertIn("'wall_stall'", content)
+        self.assertIn("AUTO_START = False", content)
+        self.assertIn("BENCH = False", content)
+
+    def test_a_bench_collect_writes_the_bench_flag(self):
+        self._collect("bench robot", tests=["static"], bench=True)
+        with open(gui_server.SELECTION_SCRIPT, encoding="utf-8") as handle:
+            content = handle.read()
+        self.assertIn("'static'", content)
+        self.assertIn("BENCH = True", content)
+
+    def test_a_full_bench_collect_keeps_the_selection_file(self):
+        self._collect("full bench robot", bench=True)
+        with open(gui_server.SELECTION_SCRIPT, encoding="utf-8") as handle:
+            content = handle.read()
+        self.assertIn("SELECTED = None", content)
+        self.assertIn("BENCH = True", content)
+
+    def test_a_full_size_collect_after_bench_clears_the_flag(self):
+        self._collect("full bench robot", bench=True)
+        self.assertTrue(gui_server.SELECTION_SCRIPT.is_file())
+        self._collect("full robot")
+        self.assertFalse(gui_server.SELECTION_SCRIPT.exists())
+
+    def test_the_test_list_has_a_bench_mode(self):
+        status, default = _request(f"{self.base}/api/calibration/tests")
+        self.assertEqual(status, 200)
+        status, bench = _request(f"{self.base}/api/calibration/tests?bench=1")
+        self.assertEqual(status, 200)
+        by_id = {entry["id"]: entry for entry in default["tests"]}
+        bench_by_id = {entry["id"]: entry for entry in bench["tests"]}
+        self.assertEqual([entry["id"] for entry in bench["tests"]],
+                         [entry["id"] for entry in default["tests"]])
+        # The bench setups fit on a small bench; the default ones do not.
+        self.assertIn("2 m", by_id["odometry_straight"]["setup"])
+        self.assertNotIn("2 m", bench_by_id["odometry_straight"]["setup"])
+        self.assertIn("200/350/500", bench_by_id["multi_stop"]["setup"])
+        self.assertIn("half a metre", bench_by_id["odometry_straight"]["does"])
+        # Only the curvature arcs are skipped on a bench, in either mode:
+        # the flag names the property, the mode decides.
+        skipped = sorted(entry["id"] for entry in bench["tests"]
+                         if entry["bench_skip"])
+        self.assertEqual(skipped, ["curvature_ccw", "curvature_cw"])
+        default_skipped = sorted(entry["id"] for entry in default["tests"]
+                                 if entry["bench_skip"])
+        self.assertEqual(default_skipped, ["curvature_ccw", "curvature_cw"])
+
+    def test_a_single_setup_free_test_starts_by_itself(self):
+        """A one-test push from the page is the trigger already."""
+        self._collect("auto robot", tests=["chirp_straight"])
+        with open(gui_server.SELECTION_SCRIPT, encoding="utf-8") as handle:
+            content = handle.read()
+        self.assertIn("AUTO_START = True", content)
+
+    def test_a_single_setup_test_still_waits_for_the_button(self):
+        self._collect("setup robot", tests=["odometry_straight"])
+        with open(gui_server.SELECTION_SCRIPT, encoding="utf-8") as handle:
+            content = handle.read()
+        self.assertIn("AUTO_START = False", content)
+
+    def test_a_full_collect_starts_over_and_clears_the_selection(self):
+        gui_server.write_selection(["static"])
+        self.assertTrue(gui_server.SELECTION_SCRIPT.is_file())
+        paths = gui_server.calibration_paths("full robot")
+        paths["session"].parent.mkdir(parents=True, exist_ok=True)
+        with open(paths["session"], "w", encoding="utf-8") as handle:
+            handle.write(self.OLD)
+        self._collect("full robot")
+        self.assertFalse(gui_server.SELECTION_SCRIPT.exists())
+        text = paths["session"].read_text(encoding="utf-8")
+        self.assertNotIn("appended run_id offset", text)
+        self.assertNotIn("odometry_straight", text)
+        self.assertIn("wall_stall", text)
+
+    def test_a_subset_collect_appends_with_offset_run_ids(self):
+        paths = gui_server.calibration_paths("redo robot")
+        paths["session"].parent.mkdir(parents=True, exist_ok=True)
+        with open(paths["session"], "w", encoding="utf-8") as handle:
+            handle.write(self.OLD)
+        self._collect("redo robot", tests=["wall_stall"])
+        text = paths["session"].read_text(encoding="utf-8")
+        # Both attempts are on file; only the run ids were rewritten.
+        self.assertIn("odometry_straight", text)
+        self.assertIn("wall_stall", text)
+        self.assertIn("appended run_id offset 1", text)
+        run_ids = re.findall(r"^META,run_id,(\d+)$", text, re.M)
+        self.assertEqual(sorted(run_ids), ["1", "2"])
+        # A redo supersedes: the fit reads the latest attempt per test.
+        from overboard.sysid.fit import parse_session, session_tests
+        index = session_tests(parse_session(text))
+        self.assertEqual(index[("wall_stall", 0)][0], "2")
+
+    def test_an_unknown_test_is_refused(self):
+        with self.assertRaises(urllib.error.HTTPError) as ctx:
+            _request(f"{self.base}/api/calibration/collect", method="POST",
+                      payload={"name": "x", "connection": "ble",
+                               "tests": ["warp_drive"]})
+        self.assertEqual(ctx.exception.code, 400)
+
+    def test_selecting_nothing_is_refused(self):
+        with self.assertRaises(urllib.error.HTTPError) as ctx:
+            _request(f"{self.base}/api/calibration/collect", method="POST",
+                      payload={"name": "x", "connection": "ble", "tests": []})
+        self.assertEqual(ctx.exception.code, 400)
+
+    def test_appending_offsets_run_ids_and_keeps_every_row(self):
+        from overboard.sysid.fit import parse_session
+        old = os.path.join(self.calibration, "old.csv")
+        new = os.path.join(self.calibration, "new.csv")
+        with open(old, "w", encoding="utf-8") as handle:
+            handle.write(self.OLD)
+        with open(new, "w", encoding="utf-8") as handle:
+            handle.write(self.OLD.replace("odometry_straight",
+                                          "odometry_turn_cw"))
+        offset = gui_server.append_session(Path(old), Path(new))
+        self.assertEqual(offset, 1)
+        text = Path(old).read_text(encoding="utf-8")
+        runs = parse_session(text)
+        self.assertEqual(len(runs), 2)
+        self.assertEqual([run["meta"]["run_id"] for run in runs], ["1", "2"])
+        rows = sum(int(run["data"].shape[0]) for run in runs)
+        self.assertEqual(rows, 2)
+
+
+class TestCollectPrompts(unittest.TestCase):
+    """The prompt cards mirror the hub log: READY title, SETUP text, state.
+
+    A TEST_START opens a card, a Measure line marks it measuring, TEST_END
+    marks it done. The page pairs each card with the sheet rows for that
+    test, so the entry boxes sit next to the prompt that asked for them.
+    """
+
+    LOG = [
+        "Digital twin SysId collector",
+        "=" * 50,
+        "READY FOR: STATIC / GYRO BIAS",
+        "SETUP: Robot still and level. Do not touch it.",
+        "=" * 50,
+        "TEST_START static",
+        "META,run_id,1",
+        "DATA",
+        "TEST_END,50",
+        "READY FOR: MULTI-STOP ODOMETRY",
+        "SETUP: 2 m runway. Mark the start pose.",
+        "=" * 50,
+        "TEST_START multi_stop",
+        "META,run_id,2",
+        "STOP_AT 500",
+        "Measure the robot pose now, then press CENTER.",
+        "TEST_END,3",
+    ]
+
+    def test_each_test_gets_a_card_with_its_prompt(self):
+        cards = gui_server.prompts_from_log(self.LOG)
+        self.assertEqual([card["id"] for card in cards],
+                         ["static", "multi_stop"])
+        self.assertEqual(cards[0]["title"], "STATIC / GYRO BIAS")
+        self.assertIn("Do not touch it", cards[0]["setup"])
+        self.assertEqual(cards[0]["state"], "done")
+
+    def test_the_measure_line_marks_the_card_measuring(self):
+        lines = self.LOG[:self.LOG.index("TEST_END,3")]
+        cards = gui_server.prompts_from_log(lines)
+        self.assertEqual(cards[1]["state"], "measuring")
+
+    def test_a_test_without_a_ready_line_still_cards(self):
+        cards = gui_server.prompts_from_log(["TEST_START static", "TEST_END,1"])
+        self.assertEqual(len(cards), 1)
+        self.assertEqual(cards[0]["title"], "")
+        self.assertEqual(cards[0]["state"], "done")
+
+    def test_data_rows_and_chatter_never_open_cards(self):
+        cards = gui_server.prompts_from_log([
+            "TEST_START static",
+            "0.00,10.0,0.0,0.0",
+            "Battery Voltage: 8217 mV",
+            "TEST_END,2",
+        ])
+        self.assertEqual(len(cards), 1)
+        self.assertEqual(cards[0]["state"], "done")
+
+
+class TestKeepAliveDesync(StudioTestCase):
+    """A POST that ignores its body must still drain it.
+
+    The browser reuses keep-alive connections. Two fire-and-forget routes
+    (hub scan, job cancel) never read their '{}' body, so those two bytes
+    became the next request's method and the server answered the *next*
+    click with `501 Unsupported method ('{}POST')`.
+    """
+
+    def test_a_cancel_leaves_the_connection_clean(self):
+        import http.client
+        conn = http.client.HTTPConnection(
+            "127.0.0.1", self.server.server_address[1], timeout=60)
+        try:
+            conn.request("POST", "/api/jobs/no-such-job/cancel", body="{}",
+                         headers={"Content-Type": "application/json"})
+            response = conn.getresponse()
+            self.assertEqual(response.status, 404)
+            response.read()
+            conn.request("GET", "/api/health")
+            response = conn.getresponse()
+            self.assertEqual(response.status, 200)
+            response.read()
+        finally:
+            conn.close()
 
 
 class TestStudioHelpers(unittest.TestCase):

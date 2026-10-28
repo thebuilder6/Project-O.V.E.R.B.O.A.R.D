@@ -9,6 +9,7 @@ not carry the internal path of a temporary folder.
 
 import io
 import json
+import os
 import re
 import threading
 import unittest
@@ -764,6 +765,307 @@ class TestAdvancedRevealsDoNotLeak(unittest.TestCase):
         end = source.find("\nfunction ", start + 1)
         body = source[start:end if end > 0 else len(source)]
         self.assertIn("renderScoreNext(null)", body)
+
+
+class TestSysIdPageIsServed(unittest.TestCase):
+    """The guided SysId page is a route, not a tab."""
+
+    def setUp(self):
+        self.server = gui_server.create_server(
+            0, {"fast": {"samples": 4}}, {"config": None, "waypoints": None})
+        self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
+        self.thread.start()
+        self.base = f"http://127.0.0.1:{self.server.server_address[1]}"
+
+    def tearDown(self):
+        self.server.shutdown()
+        self.server.server_close()
+
+    def test_sysid_serves_its_page_script_and_style(self):
+        for path in ("/sysid", "/sysid.html", "/sysid.js", "/sysid.css"):
+            request = urllib.request.Request(f"{self.base}{path}")
+            with urllib.request.urlopen(request, timeout=30) as response:
+                self.assertEqual(response.status, 200)
+                response.read()
+        request = urllib.request.Request(f"{self.base}/sysid")
+        with urllib.request.urlopen(request, timeout=30) as response:
+            html = response.read().decode("utf-8")
+        self.assertIn('id="sys-compare"', html)
+
+    def test_the_page_points_at_its_own_controller(self):
+        request = urllib.request.Request(f"{self.base}/sysid")
+        with urllib.request.urlopen(request, timeout=30) as response:
+            html = response.read().decode("utf-8")
+        self.assertIn('src="sysid.js"', html)
+        self.assertIn('href="sysid.css"', html)
+
+    def test_the_hidden_attribute_wins_on_the_sysid_page(self):
+        css = _read(VIZ / "sysid.css")
+        rules = re.findall(r"([^{}]+)\{([^{}]*)\}", css)
+        hidden = [body for selector, body in rules
+                  if "[hidden]" in selector and "display" in body
+                  and "none" in body]
+        self.assertTrue(hidden, "sysid.css has no rule that hides [hidden].")
+
+
+class TestSysIdFinishNeverSolves(unittest.TestCase):
+    """Finish preselects the fit in Solve; the solving stays in the studio."""
+
+    def setUp(self):
+        self.sysid = _read(VIZ / "sysid.js")
+        self.studio = _read(VIZ / "studio.js")
+
+    def test_finish_hands_off_instead_of_solving(self):
+        self.assertIn("const HANDOFF_KEY = 'overboard.sysid.handoff.v1'",
+                      self.sysid)
+        start = self.sysid.index("function finish()")
+        body = self.sysid[start:start + 1500]
+        self.assertIn("HANDOFF_KEY", body)
+        self.assertIn("location.href", body)
+        self.assertNotIn("solve(", self.sysid)
+
+    def test_the_studio_adopts_the_handoff_without_solving(self):
+        start = self.studio.index("A fit the SysId page just made preselects itself")
+        end = self.studio.index(
+            "// A robot with a collected session reopens with its sheet.")
+        block = self.studio[start:end]
+        self.assertIn("useModel(", block)
+        self.assertNotIn("solve(", block)
+        self.assertIn("Press Solve when ready", block)
+
+    def test_every_id_the_sysid_script_looks_up_exists_on_its_page(self):
+        html = _read(VIZ / "sysid.html")
+        in_html = set(re.findall(r'id="([a-z0-9-]+)"', html))
+        used = set(re.findall(r"getElementById\('([^']+)'\)", self.sysid))
+        missing = sorted(used - in_html)
+        self.assertEqual(missing, [], f"The SysId script looks up ids the page lacks: {missing}")
+
+
+class TestPushedSessionsAreCompareOnly(unittest.TestCase):
+    """A pushed trajectory session is compared, never fitted (D3)."""
+
+    def test_a_session_outside_calibration_is_not_a_fit_source(self):
+        import shutil
+        import tempfile
+        from unittest.mock import patch
+        calibration = tempfile.mkdtemp()
+        missions = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, calibration, True)
+        self.addCleanup(shutil.rmtree, missions, True)
+        session = ("TEST_START odometry_straight\nMETA,run_id,11\n"
+                   "META,test,odometry_straight\nMETA,repeat,0\nMETA,poses,1\n"
+                   "DATA\nt_ms,v_cmd_mm_s\n0,0\nTEST_END,1\n")
+        with open(os.path.join(missions, "mission.session.csv"), "w",
+                  encoding="utf-8") as handle:
+            handle.write(session)
+        with patch.object(gui_server, "CALIBRATION_DIR", Path(calibration)), \
+                patch.object(gui_server, "MISSIONS_DIR", Path(missions)):
+            with self.assertRaises(ValueError) as ctx:
+                gui_server.fit_from_sheet("mission")
+        self.assertIn("no collected session", str(ctx.exception).lower())
+
+
+class TestSheetSurfacesVoltageAndTruncation(unittest.TestCase):
+    """The voltage the derate will need is shown; a dropped tail is flagged."""
+
+    SESSION = """TEST_START odometry_straight
+META,run_id,11
+META,test,odometry_straight
+META,repeat,0
+META,poses,1
+META,wheel_diameter_mm,56
+META,axle_track_mm,96
+META,battery_mv,7800
+DATA
+t_ms,v_cmd_mm_s,gyro_z_deg_s,batt_mv
+0,0,0,7800
+10,100,0,7790
+TEST_END,2
+TEST_START multi_stop
+META,run_id,12
+META,test,multi_stop
+META,repeat,0
+META,poses,1
+META,wheel_diameter_mm,56
+META,axle_track_mm,96
+META,battery_mv,7740
+DATA
+t_ms,v_cmd_mm_s,gyro_z_deg_s,batt_mv
+0,0,0,7740
+"""
+
+    def setUp(self):
+        import shutil
+        import tempfile
+        from unittest.mock import patch
+        self.server = gui_server.create_server(
+            0, {"fast": {"samples": 4}}, {"config": None, "waypoints": None})
+        self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
+        self.thread.start()
+        self.base = f"http://127.0.0.1:{self.server.server_address[1]}"
+        self.calibration = tempfile.mkdtemp()
+        self._patch = patch.object(gui_server, "CALIBRATION_DIR",
+                                   Path(self.calibration))
+        self._patch.start()
+        self.addCleanup(self._patch.stop)
+        self.addCleanup(shutil.rmtree, self.calibration, True)
+        paths = gui_server.calibration_paths("volt robot")
+        paths["session"].parent.mkdir(parents=True, exist_ok=True)
+        with open(paths["session"], "w", encoding="utf-8") as handle:
+            handle.write(self.SESSION)
+
+    def tearDown(self):
+        self.server.shutdown()
+        self.server.server_close()
+
+    def test_the_sheet_names_the_voltage_and_the_dropped_tail(self):
+        request = urllib.request.Request(
+            f"{self.base}/api/calibration/sheet?name=volt%20robot")
+        with urllib.request.urlopen(request, timeout=30) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+        by_test = {entry["test"]: entry for entry in payload["meta"]}
+        self.assertEqual(by_test["odometry_straight"]["battery_mv"], "7800")
+        self.assertEqual(by_test["odometry_straight"]["battery_mv_min_med_max"],
+                         [7790.0, 7795.0, 7800.0])
+        # The second run never printed TEST_END: flagged, not silently cut.
+        self.assertTrue(payload["truncated"])
+        self.assertFalse(by_test["multi_stop"]["ended"])
+
+
+class TestSummaryIsRowForRow(unittest.TestCase):
+    """summarize_fit covers the whole twin, so before/after is one reader."""
+
+    def _fit(self):
+        between = lambda low, high: {"n": 3, "ci95": [low, high]}
+        return {
+            "wheel_radius_m": 0.028, "bad_rows": 1, "missing_rows": 2,
+            "actuator": {
+                "straight": {"calibrated": True, "gain": 0.98,
+                             "gain_between_runs": between(0.97, 0.99),
+                             "tau_s": 0.08, "delay_s": 0.02, "n_runs": 3},
+                "turn": {"calibrated": True, "gain": 0.97,
+                         "gain_between_runs": between(0.96, 0.98),
+                         "tau_s": 0.07, "delay_s": 0.01, "n_runs": 3}},
+            "sensors": {"gyro_z_bias_deg_s": 0.004},
+            "odometry": {"calibrated": True, "distance_scale": 0.998,
+                         "distance_scale_between_runs": between(0.99, 1.0),
+                         "distance_scale_source": "tape",
+                         "heading_scale": 1.0,
+                         "heading_scale_between_runs": between(0.99, 1.01)},
+            "slip": {"calibrated": True, "brake_ratio_median": 0.01,
+                     "brake_ratio_min": 0.008, "brake_ratio_max": 0.013},
+            "drift": {"calibrated": True, "drift_deg_per_m": 1.2,
+                      "drift_deg_per_m_between_runs": between(1.0, 1.4),
+                      "drift_deg_per_m_tape": 1.1,
+                      "drift_disagreement_deg_per_m": 0.1, "n_sources": 3},
+            "stall_torque": {"calibrated": True, "t_max_nm": 0.138,
+                             "t_max_nm_between_runs": between(0.13, 0.146),
+                             "n_sources": 3},
+            "drivetrain": {"calibrated": True, "no_load_speed_rad_s": 18.9,
+                           "no_load_speed_rad_s_between_runs": between(18.5, 19.3),
+                           "n_sources": 3},
+            "backlash": {"calibrated": True, "reverse_delay_s": 0.05,
+                         "low_speed_gain": 0.9},
+            "mass": {"calibrated": True, "mass_kg": 0.85,
+                     "mass_kg_between_runs": between(0.84, 0.86),
+                     "n_sources": 3, "source": "weigh_in"},
+            "inertia": {"calibrated": True, "inertia_kg_m2": 0.001,
+                        "inertia_kg_m2_between_runs": between(0.0009, 0.0011),
+                        "n_sources": 2, "tau_mech_s": 0.1,
+                        "source": "turn_steps"},
+            "validation": {"chirp_straight_nrmse": 0.05,
+                           "chirp_turn_nrmse": 0.06},
+        }
+
+    def test_every_twin_section_lands_with_its_interval(self):
+        summary = gui_server.summarize_fit(self._fit())
+        self.assertEqual(summary["drift"]["drift_deg_per_m_ci95"], [1.0, 1.4])
+        self.assertEqual(summary["drift"]["drift_deg_per_m_tape"], 1.1)
+        self.assertEqual(summary["stall"]["t_max_nm_ci95"], [0.13, 0.146])
+        self.assertEqual(summary["top_speed"]["no_load_speed_rad_s_ci95"],
+                         [18.5, 19.3])
+        self.assertEqual(summary["mass"]["mass_kg_ci95"], [0.84, 0.86])
+        self.assertEqual(summary["inertia"]["inertia_kg_m2_ci95"],
+                         [0.0009, 0.0011])
+        self.assertEqual(summary["odometry"]["distance_scale_source"], "tape")
+        self.assertEqual(summary["bad_rows"], 1)
+        self.assertEqual(summary["missing_rows"], 2)
+
+    def test_load_fit_reads_the_same_rows(self):
+        import shutil
+        import tempfile
+        tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, tmp, True)
+        path = os.path.join(tmp, "prior.sysid_fit.json")
+        fit = self._fit()
+        fit["actuator"] = fit["actuator"]
+        with open(path, "w", encoding="utf-8") as handle:
+            json.dump(fit, handle)
+        summary = gui_server.load_fit(path)
+        self.assertEqual(summary["drift"]["drift_deg_per_m"], 1.2)
+        self.assertEqual(summary["stall"]["t_max_nm"], 0.138)
+
+
+class TestCollectorRunsOutsideATask(unittest.TestCase):
+    """Blocking waits inside a run_task coroutine leak ~36 bytes each.
+
+    Measured: an in-task button poll bleeds the heap dry in under a minute
+    (the MemoryError before the first test), while the same loop at top
+    level is flat for 6000 rounds. So the suite runs synchronously; only
+    the replay step - genuinely async - runs its own task and returns.
+    """
+
+    def setUp(self):
+        self.source = (REPO_ROOT / "pybricks_code" / "sysid_digital_twin.py"
+                       ).read_text(encoding="utf-8")
+
+    def test_the_suite_runs_synchronously(self):
+        self.assertIn("def run_suite():", self.source)
+        self.assertNotIn("run_task(main())", self.source)
+        self.assertNotIn("async def main(", self.source)
+
+    def test_only_the_replay_step_uses_a_task(self):
+        self.assertIn("run_task(test_replay(", self.source)
+
+    def test_a_host_import_starts_nothing(self):
+        """The hub menu imports the module to run it; the stubbed tests
+        import it to read it. gc.mem_free exists only on the hub."""
+        start = self.source.index('if __name__ == "__main__"')
+        block = self.source[start:start + 400]
+        self.assertIn("run_suite()", block)
+        self.assertIn('hasattr(gc, "mem_free")', block)
+
+
+class TestCollectorAdvanceModes(unittest.TestCase):
+    """Three ways forward: the GUI, the button, or the countdown.
+
+    A setup test (place, lift, still the robot) always waits for the
+    button. A setup-free test counts down and starts by itself - and a
+    one-test push from the page starts immediately, because the click is
+    the trigger already.
+    """
+
+    def setUp(self):
+        self.source = (REPO_ROOT / "pybricks_code" / "sysid_digital_twin.py"
+                       ).read_text(encoding="utf-8")
+
+    def test_the_countdown_is_the_only_automatic_start(self):
+        self.assertIn("AUTO_ADVANCE = {", self.source)
+        self.assertIn("press CENTER to start now", self.source)
+        self.assertIn("Started from the page.", self.source)
+
+    def test_the_first_wait_is_the_operator_getting_ready(self):
+        self.assertIn("_FIRST_WAIT", self.source)
+        self.assertIn("AUTO_START", self.source)
+
+    def test_a_setup_test_never_chains(self):
+        match = re.search(r"AUTO_ADVANCE = \{([^}]*)\}", self.source, re.S)
+        hub_auto = set(re.findall(r'"([^"]+)"', match.group(1)))
+        for setup in ("static", "odometry_straight", "multi_stop",
+                      "brake_from_300", "square_cw", "wall_homing",
+                      "top_speed", "replay_complex_mission"):
+            self.assertNotIn(setup, hub_auto,
+                             f"{setup} needs the operator and must wait")
 
 
 if __name__ == "__main__":

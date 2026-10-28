@@ -1,5 +1,5 @@
 import jax.numpy as jnp
-from typing import Dict, Any, Tuple, Union
+from typing import Dict, Any, Tuple, Optional, Union
 from jax.tree_util import register_pytree_node_class
 
 from overboard.models.robot_model import RobotConfig
@@ -52,7 +52,13 @@ class JAXRobotConfig:
         self.track_width_range = tuple(rc.uncertainties["track_width_range"])
         self.wheel_radius_range = tuple(rc.uncertainties["wheel_radius_range"])
         self.inertia_range = tuple(rc.uncertainties["inertia_kg_m2"])
-        self.t_max_range = tuple(rc.uncertainties["t_max_range"])
+        self.declared_t_max_range = bool(getattr(rc, "declared_t_max_range", False))
+        if self.declared_t_max_range:
+            self.t_max_range = tuple(rc.uncertainties["t_max_range"])
+        else:
+            # Synthetic default is not a measurement: keep the nominal point
+            # so uncalibrated robots validate against the declared motor.
+            self.t_max_range = (float(rc.t_max_nm), float(rc.t_max_nm))
         self.cof_range = tuple(rc.uncertainties["cof"])
         self.torque_headroom_range = tuple(rc.uncertainties["torque_headroom"])
         self.backlash_range = tuple(rc.uncertainties["gear_backlash_m"])
@@ -60,17 +66,24 @@ class JAXRobotConfig:
         self.initial_y_range = tuple(rc.uncertainties["initial_y_m"])
         self.initial_theta_range = tuple(rc.uncertainties["initial_theta_rad"])
 
-    def no_load_wheel_speed_worst_case(self) -> float:
+    def no_load_wheel_speed_worst_case(
+            self,
+            v_max_range: Optional[Tuple[float, float]] = None,
+            gearing_range: Optional[Tuple[float, float]] = None) -> float:
         """The wheel speed at which the motor makes no torque (m/s).
 
         The smallest declared wheel radius is the one that reaches the
         no-load speed first. The motor turns ``gearing`` times per wheel
         revolution, so the wheel's no-load speed is the motor's divided by
         it, exactly as :meth:`robot_model.RobotConfig.max_linear_speed`
-        and the force model read it (KI-035).
+        and the force model read it (KI-035). With ranges the worst case
+        is the smallest no-load speed: the slowest motor over the
+        largest gearing.
         """
         radius = min(self.wheel_radius_range)
-        return self.v_max_rad_s * radius / max(self.gearing, 1e-9)
+        v_max = min(v_max_range) if v_max_range else self.v_max_rad_s
+        gearing = max(gearing_range) if gearing_range else self.gearing
+        return v_max * radius / max(gearing, 1e-9)
 
     def get_max_force_at_velocity(self, v_wheel: jnp.ndarray, apply_headroom: bool = True, use_intervals: bool = False) -> Any:
         if use_intervals:

@@ -66,8 +66,9 @@ class TestGuide:
 
     MEASURE_MARK = "MEASURE THIS ONE"
 
-    def __init__(self, print_fn=print):
+    def __init__(self, print_fn=print, bench=False):
         self._print = print_fn
+        self._bench = bench
         self._runs = {}
 
     def __call__(self, line):
@@ -79,7 +80,7 @@ class TestGuide:
         self.banner(name, run)
 
     def banner(self, name, run):
-        guide = sheet_form.guide_for(name)
+        guide = sheet_form.guide_for(name, self._bench)
         measured = name in sheet_form.MEASURED_HINTS
         head = f"{name} - run {run}"
         if measured:
@@ -167,7 +168,7 @@ def _hub_error_hints(exc):
     return hints
 
 
-def _write_measurement_sheet(session_path, path):
+def _write_measurement_sheet(session_path, path, bench=False):
     """Write the blank sheet and the browser form for a collected session.
 
     ``path`` names the sheet. The CSV is the file the fitter reads and the
@@ -188,9 +189,11 @@ def _write_measurement_sheet(session_path, path):
         f"python -m overboard.sysid.fit {session_path} --sheet "
         f"{os.path.basename(sheet_path)} --profile my_drivebase.json "
         f"--out sysid_fit.json")
+    if bench:
+        fit_command += " --bench"
     sheet_form.write_form(rows, form_path,
                           csv_name=os.path.basename(sheet_path),
-                          fit_command=fit_command)
+                          fit_command=fit_command, bench=bench)
     return sheet_path, form_path
 
 
@@ -220,6 +223,10 @@ def main(argv=None):
     parser.add_argument("--sheet",
                         help="write the measurement sheet here (the CSV the "
                              "fitter reads and the browser form next to it)")
+    parser.add_argument("--bench", action="store_true",
+                        help="short bench runs for a ~0.6 x 0.8 m bench: "
+                             "same speeds, shorter distances, no curvature "
+                             "arcs (the fit never reads them).")
     parser.add_argument("--out", default="sysid_fit.json",
                         help="Where to write the fitted model.")
     args = parser.parse_args(argv)
@@ -238,9 +245,29 @@ def main(argv=None):
             pass
 
     print(f"Pushing {os.path.basename(args.script)} to the hub over {args.conn}.")
+    if args.bench:
+        print("Bench mode: short runs for a small bench.")
     print("Press the hub button when each test asks for it. Do not close this "
           "window; the session is written as it arrives.")
-    guide = TestGuide()
+    guide = TestGuide(bench=args.bench)
+    # Bench mode rides the studio's selection file next to the collector
+    # (pybricksdev bundles it with the push). A stale file would shrink a
+    # later full-size run, so the previous content is restored afterwards.
+    from overboard.paths import PYBRICKS_DIR
+    selection_path = PYBRICKS_DIR / "sysid_selection.py"
+    previous_selection = None
+    if args.bench:
+        try:
+            previous_selection = selection_path.read_bytes()
+        except OSError:
+            previous_selection = None
+        selection_path.parent.mkdir(parents=True, exist_ok=True)
+        selection_path.write_text(
+            '"""Written by collect --bench; removed after the run."""\n'
+            "SELECTED = None\n"
+            "AUTO_START = False\n"
+            "BENCH = True\n",
+            encoding="utf-8")
     try:
         lines = deploy(args.script, connection=args.conn, name=args.name,
                        stream_path=args.session, on_line=guide)
@@ -258,6 +285,15 @@ def main(argv=None):
         print(f"error: cannot write the session to {args.session}: {exc}",
               file=sys.stderr)
         return 1
+    finally:
+        if args.bench:
+            try:
+                if previous_selection is None:
+                    selection_path.unlink()
+                else:
+                    selection_path.write_bytes(previous_selection)
+            except OSError:
+                pass
 
     print(f"Captured {len(lines)} lines of hub output to {args.session}.")
 
@@ -277,7 +313,7 @@ def main(argv=None):
     if args.sheet:
         try:
             sheet_path, form_path = _write_measurement_sheet(
-                args.session, args.sheet)
+                args.session, args.sheet, bench=args.bench)
         except OSError as exc:
             print(f"error: cannot write the measurement sheet: {exc}",
                   file=sys.stderr)

@@ -288,10 +288,15 @@ Wraps `JAXRobotConfig`. `feedback_mode="nominal"` feeds the interval midpoint to
 on the whole interval and diverges on long fast paths. The remaining arguments select the
 inclusions and the digital-twin options, and default to module constants so a run is reproducible.
 
-## `validate_trajectory(samples, cof_range, torque_margin_range, backlash_range, track_width_range=None, wheel_radius_range=None, inertia_range=None, safety_threshold_m=0.005)`
+## `validate_trajectory(samples, cof_range, torque_margin_range, backlash_range, track_width_range=None, wheel_radius_range=None, inertia_range=None, t_max_range=None, mass_range=None, gravity_range=None, gearing_range=None, v_max_range=None, gain_range=None, safety_threshold_m=0.005)`
 
-Interval audit of every sample: motor force, per-wheel slip and wheel speed, with the stall torque
-read from the config (`--sysid-fit` is what fills it with the measured number). **Returns**
+Interval audit of every sample: motor force, per-wheel slip and wheel speed. The stall torque
+carries its declared `t_max_range` (default 75-95 % of `t_max_nm`, filled with the measured
+range by `--sysid-fit`); `mass_range` defaults to the fitted `mass_kg` range when the config
+carries one, else the point mass. Gravity, gearing and no-load speed have no declared ranges
+and default to points. The actuator `gain_range` defaults to the fitted twin's band when one
+is active, else the config's fitted `actuator_gain_range`, else `(1.0, 1.0)`. The starting
+box is the declared `initial_x_m` / `initial_y_m` / `initial_theta_rad` ranges. **Returns**
 
 ```text
 max_motor_violation_N, max_traction_violation_N,
@@ -312,14 +317,15 @@ the tube's non-divergence are all inside their thresholds; the envelope size is 
 caller against the per-waypoint limit. `overboard/main.py` folds the numbers into the candidate's
 record and into the machine-readable validation report.
 
-## `compute_reachability(samples, backlash_range, track_width_range, wheel_radius_range, cof_range, torque_margin_range, inertia_range)`
+## `compute_reachability(samples, backlash_range, track_width_range, wheel_radius_range, cof_range, torque_margin_range, inertia_range, gain_range=None)`
 
 Propagates the reachable tube sample to sample and returns:
 
 - `envelope` (per sample: `x_min/x_max`, `y_min/y_max`, `theta_min/theta_max`, tracking and heading
   error, and `unknown` when the tube could not be computed)
 - `max_error_m`, `max_tracking_error_m`, `rms_tracking_error_m`, `max_heading_error_rad`,
-  `rms_heading_error_rad`, `max_envelope_radius_m`
+  `rms_heading_error_rad`, `max_envelope_radius_m` (`rms_*` is `inf` on a diverged tube:
+  the pre-divergence samples are the ones that stayed bounded, not the run)
 - `diverged` and `envelope_truncated`
 - `propagation`, the model that produced it
 

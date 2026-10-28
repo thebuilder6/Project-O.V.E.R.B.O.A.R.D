@@ -1,7 +1,7 @@
 ---
 description: Read-only review of Overboard changes against the repository invariants
+model: openrouter/meta/muse-spark-1.3-contributor
 mode: subagent
-model: openrouter/anthropic/claude-sonnet-4.5
 permissions:
   - action: edit
     resource: "*"
@@ -10,13 +10,13 @@ permissions:
     resource: "*"
     effect: deny
   - action: shell
-    resource: "git diff *"
+    resource: git diff *
     effect: allow
   - action: shell
-    resource: "git status *"
+    resource: git status *
     effect: allow
   - action: shell
-    resource: "git log *"
+    resource: git log *
     effect: allow
   - action: read
     resource: "*"

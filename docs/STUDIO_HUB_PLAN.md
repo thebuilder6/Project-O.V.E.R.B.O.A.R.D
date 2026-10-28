@@ -172,7 +172,7 @@ A **Run** section in the result panel:
 
 The measured pose is drawn on the canvas as a distinct marker with a dashed line
 from the planned end pose to the measured one. The numbers come from
-`sysid_compare.compare()`, so the studio shows exactly what the command line
+`overboard.sysid.compare.compare()`, so the studio shows exactly what the command line
 would print, in the same units (mm and degrees).
 
 ---

@@ -528,7 +528,7 @@ def _write_form(args, parser):
         f"python sysid_fit.py {' '.join(args.logs)} --sheet {csv_name} "
         f"--profile my_drivebase.json --out sysid_fit.json")
     sheet_form.write_form(rows, args.write_form, csv_name=csv_name,
-                          fit_command=fit_command)
+                          fit_command=fit_command, bench=args.bench)
     print(f"Wrote a measurement form for {len(rows)} measurement(s) to "
           f"{args.write_form}.")
     print("Open it in a browser, type the numbers the tape says, and click "
@@ -1241,10 +1241,219 @@ def _fit_odometry(runs, poses, distance_scale_default=1.0, wall_distance_m=None)
 
 
 # ---------------------------------------------------------------------------
+# Per-side wheel radii + effective wheelbase (UMBmark, Q25 component 1)
+# ---------------------------------------------------------------------------
+
+def _square_runs(runs):
+    """The square-calibration runs, grouped by (direction, repeat).
+
+    A run qualifies by name (``square_cw`` / ``square_ccw``). The side
+    length comes from its META ``square_side_mm`` and the direction from
+    META ``square_direction``, falling back to the name suffix.
+    """
+    groups = {}
+    for run in runs:
+        name = run["name"]
+        if "square" not in name:
+            continue
+        meta = run.get("meta", {})
+        direction = str(meta.get("square_direction", "")).lower()
+        if direction not in ("cw", "ccw"):
+            direction = "cw" if name.endswith("_cw") else (
+                "ccw" if name.endswith("_ccw") else "")
+        if direction not in ("cw", "ccw"):
+            continue
+        try:
+            side_m = float(meta.get("square_side_mm", 0.0)) / 1000.0
+        except (TypeError, ValueError):
+            side_m = 0.0
+        if side_m <= 0.0:
+            continue
+        run_id = run["meta"].get("run_id")
+        groups.setdefault((direction, _run_repeat(run)), []).append(
+            (run_id, side_m))
+    return groups
+
+
+def _square_end_pose(k_avg, delta_k, b_eff_m, direction, side_m, b_nom_m):
+    """Exact end pose of a commanded square (start frame, CCW+ heading).
+
+    Legs are driven forward at the commanded speed, so each leg is an arc
+    of actual length ``side_m * k_avg`` with heading drift
+    ``side_m * delta_k / b_nom_m`` per leg; each in-place turn covers
+    ``pi/2 * k_avg * b_nom_m / b_eff_m`` in its commanded direction.
+    """
+    turn_rate = k_avg * b_nom_m / b_eff_m
+    drift = side_m * delta_k / b_nom_m
+    turn = (np.pi / 2.0) * turn_rate * (1.0 if direction == "ccw" else -1.0)
+    leg = side_m * k_avg
+    x = y = h = 0.0
+    for _ in range(4):
+        # The leg is an arc only when the wheels disagree; a symmetric
+        # pair drives the commanded straight line.
+        if abs(drift) < 1e-12:
+            x += leg * np.cos(h)
+            y += leg * np.sin(h)
+        else:
+            radius = leg / drift
+            x += radius * (np.sin(h + drift) - np.sin(h))
+            y += radius * (-np.cos(h + drift) + np.cos(h))
+        h += drift + turn
+    return np.array([x, y, h])
+
+
+def _wrap_pi(angle):
+    """The short way around: end headings near +-2 pi read as near zero."""
+    return (float(angle) + np.pi) % (2.0 * np.pi) - np.pi
+
+
+def _umbmark_closed_form(cw, ccw, side_m, b_nom_m):
+    """The linearized UMBmark solution for (delta_k, tau).
+
+    ``cw`` / ``ccw`` are end poses (x, y, h) in the start frame. To first
+    order the cw+ccw pair separates the per-leg veer (delta_k) from the
+    turn error (tau): the veer adds the same way in both directions, the
+    turn error with opposite signs.
+    """
+    ax = (ccw[0] / side_m - ccw[1] / side_m) / 2.0
+    bx = (cw[0] / side_m + cw[1] / side_m) / 2.0
+    ah = ccw[2] / 2.0
+    bh = -cw[2] / 2.0
+    a = (ax + ah) / 2.0
+    b = (bx + bh) / 2.0
+    tau = (a + b) / (2.0 * np.pi)
+    delta = (a - b) / 4.0
+    return delta * b_nom_m / side_m, tau
+
+
+def _fit_lsq(cw, ccw, side_m, b_nom_m, k_avg, init):
+    """Gauss-Newton on the exact square kinematics (the LSQ cross-check).
+
+    Six residuals (x, y, h per direction), two unknowns (delta_k, tau),
+    from the closed-form solution. No scipy: 6x2 is small enough to solve
+    by hand with numpy. Headings compare the short way: a square ends
+    near a full turn, which is near zero error, not near 2 pi.
+    """
+    cw = np.array([cw[0], cw[1], _wrap_pi(cw[2])])
+    ccw = np.array([ccw[0], ccw[1], _wrap_pi(ccw[2])])
+    params = np.array([init[0], init[1]], dtype=float)
+    for _ in range(50):
+        predicted = []
+        for direction in ("cw", "ccw"):
+            delta_k, tau = params
+            b_eff = k_avg * b_nom_m / (1.0 + tau)
+            end = _square_end_pose(
+                k_avg, delta_k, b_eff, direction, side_m, b_nom_m)
+            predicted.append(np.array([end[0], end[1], _wrap_pi(end[2])]))
+        residuals = np.concatenate([
+            predicted[0] - cw, predicted[1] - ccw])
+        step = 1e-7 * np.maximum(np.abs(params), 1e-6)
+        columns = []
+        for i in range(2):
+            varied = params.copy()
+            varied[i] += step[i]
+            varied_pred = []
+            for direction in ("cw", "ccw"):
+                delta_k, tau = varied
+                b_eff = k_avg * b_nom_m / (1.0 + tau)
+                end = _square_end_pose(
+                    k_avg, delta_k, b_eff, direction, side_m, b_nom_m)
+                varied_pred.append(np.array([end[0], end[1], _wrap_pi(end[2])]))
+            columns.append((np.concatenate(
+                [varied_pred[0] - cw, varied_pred[1] - ccw])
+                - residuals) / step[i])
+        jacobian = np.column_stack(columns)
+        update, _, _, _ = np.linalg.lstsq(jacobian, -residuals, rcond=None)
+        params = params + update
+        if float(np.max(np.abs(update))) < 1e-12 * max(
+                1.0, float(np.max(np.abs(params)))):
+            break
+    return float(params[0]), float(params[1])
+
+
+def _fit_wheel_geometry(runs, poses, distance_scale=1.0, track_width_m=None):
+    """Per-side radii + effective wheelbase from cw/ccw squares (Q25.1).
+
+    The closed form is the primary identification; a Gauss-Newton LSQ on
+    the exact arc kinematics cross-checks it on the same session. Both
+    use only the square end poses. The mean radius comes from the
+    straight-line distance scale (a square closes, so it cannot see a
+    uniform scale); the squares separate the asymmetry from the wheelbase.
+    """
+    groups = _square_runs(runs)
+    by_repeat = {}
+    for (direction, repeat), entries in groups.items():
+        for run_id, side_m in entries:
+            for entry in poses.get(str(run_id), []):
+                if int(entry.get("stop", -1)) != 0:
+                    continue
+                by_repeat.setdefault(repeat, {})[direction] = (
+                    float(entry["x_m"]), float(entry["y_m"]),
+                    float(np.radians(entry["heading_deg"])), side_m)
+    pairs = {repeat: dirs for repeat, dirs in by_repeat.items()
+             if "cw" in dirs and "ccw" in dirs}
+    if not pairs:
+        return {"calibrated": False, "n_sources": 0}
+
+    if track_width_m is None:
+        sides = [float(run["meta"].get("axle_track_mm", 0.0)) / 1000.0
+                 for run in runs if "square" in run["name"]]
+        sides = [value for value in sides if value > 0.0]
+        track_width_m = float(np.median(sides)) if sides else None
+    if track_width_m is None or track_width_m <= 0.0:
+        return {"calibrated": False, "n_sources": 0,
+                "reason": "no declared track width"}
+    b_nom_m = float(track_width_m)
+    k_avg = float(distance_scale)
+
+    solutions = []
+    agreements = []
+    for repeat in sorted(pairs):
+        cw = np.array(pairs[repeat]["cw"][:3])
+        ccw = np.array(pairs[repeat]["ccw"][:3])
+        cw[2] = _wrap_pi(cw[2])
+        ccw[2] = _wrap_pi(ccw[2])
+        side_m = float(pairs[repeat]["cw"][3])
+        delta_k, tau = _umbmark_closed_form(cw, ccw, side_m, b_nom_m)
+        lsq_delta_k, lsq_tau = _fit_lsq(
+            cw, ccw, side_m, b_nom_m, k_avg, (delta_k, tau))
+        # Agreement in model space, not in (delta, tau) space: tau sits
+        # near zero, so a relative tolerance on it refuses a b_eff that
+        # agrees to a tenth of a millimetre. The 1% b_eff bar is the model
+        # noise floor (the leg-start transient shortens every leg ~3 mm
+        # against a 150 mm signal); it still catches identification bugs
+        # (the radians bug and the wall-drag run disagreed by 2%+).
+        b_eff = k_avg * b_nom_m / (1.0 + tau)
+        lsq_b_eff = k_avg * b_nom_m / (1.0 + lsq_tau)
+        agree = (abs(delta_k - lsq_delta_k) < 0.002
+                 and abs(b_eff - lsq_b_eff) / b_nom_m < 0.01)
+        agreements.append(agree)
+        solutions.append((repeat, k_avg - delta_k / 2.0,
+                          k_avg + delta_k / 2.0, b_eff))
+    stats_l = _between_runs([(repeat, k_l) for repeat, k_l, _, _ in solutions])
+    stats_r = _between_runs([(repeat, k_r) for repeat, _, k_r, _ in solutions])
+    stats_b = _between_runs([(repeat, b) for repeat, _, _, b in solutions])
+    result = {
+        "calibrated": True,
+        "n_sources": len(solutions),
+        "kL": stats_l["mean"],
+        "kR": stats_r["mean"],
+        "b_eff_m": stats_b["mean"],
+        "lsq_agreement": bool(all(agreements)),
+        "n_repeats": len(solutions),
+    }
+    for key, stats in (("kL", stats_l), ("kR", stats_r), ("b_eff_m", stats_b)):
+        if stats.get("ci95"):
+            result[f"{key}_ci95"] = [float(stats["ci95"][0]),
+                                     float(stats["ci95"][1])]
+    return result
+
+
+# ---------------------------------------------------------------------------
 # Public fitting entry point
 # ---------------------------------------------------------------------------
 
-def _drift_points(runs):
+def _drift_points(runs, wheel_geom=None):
     """(speed, heading rate) points from the runs that drive straight.
 
     The heading rate is the IMU's z rate, which is counter-clockwise
@@ -1252,6 +1461,10 @@ def _drift_points(runs):
     motion the robot actually made. A robot that curves while going
     backwards curves the other way, so the signed speed puts the forward and
     the reverse run in the same fit.
+
+    ``wheel_geom`` is (kL, kR, b_eff_m): the asymmetry's own heading creep
+    (v * (kR - kL) / b_eff) is subtracted first, so the drift keeps only
+    what the geometry does not explain.
     """
     points = []
     for run in runs:
@@ -1265,6 +1478,11 @@ def _drift_points(runs):
             continue
         times = times / 1000.0
         gyro_deg_s = np.degrees(gyro)
+        if wheel_geom is not None:
+            k_l, k_r, b_eff = wheel_geom
+            creep_deg_s = np.degrees(
+                speed * (k_r - k_l) / b_eff) if b_eff > 0 else 0.0
+            gyro_deg_s = gyro_deg_s - creep_deg_s
         for start, end in _find_steps(times, command, 0.005):
             # The steady part of the step: the transient is not the drift.
             tail = max(start + 3, int(start + 0.65 * (end - start)))
@@ -1278,7 +1496,7 @@ def _drift_points(runs):
     return points
 
 
-def _fit_drift(runs, poses, gyro_bias_deg_s):
+def _fit_drift(runs, poses, gyro_bias_deg_s, wheel_geom=None):
     """The straight-line heading drift of the robot, in degrees per metre.
 
     A robot whose wheels are not parallel curves even when it is told to
@@ -1298,7 +1516,7 @@ def _fit_drift(runs, poses, gyro_bias_deg_s):
     it, but it carries the operator's placement error, so the two are
     reported together with the disagreement between them.
     """
-    points = _drift_points(runs)
+    points = _drift_points(runs, wheel_geom=wheel_geom)
     by_repeat = {}
     for repeat, speed, rate in points:
         by_repeat.setdefault(repeat, []).append((speed, rate))
@@ -1813,7 +2031,23 @@ def fit_session(runs, poses=None, wheel_radius_m=0.028, wall_distance_m=None,
 
     odometry, slip = _fit_odometry(runs, poses, wall_distance_m=wall_distance_m)
     sensors = _static_summary(runs)
-    drift = _fit_drift(runs, poses, sensors.get("gyro_z_bias_deg_s"))
+    geometry = _fit_wheel_geometry(
+        runs, poses, distance_scale=odometry.get("distance_scale", 1.0),
+        track_width_m=track_width_m)
+    geom_tuple = None
+    if geometry.get("calibrated"):
+        geom_tuple = (float(geometry["kL"]), float(geometry["kR"]),
+                      float(geometry["b_eff_m"]))
+    drift = _fit_drift(runs, poses, sensors.get("gyro_z_bias_deg_s"),
+                       wheel_geom=geom_tuple)
+    if geometry.get("calibrated"):
+        # The asymmetry and the drift share one heading-creep channel, so
+        # the drift is fitted from the residual after the kinematics. The
+        # shift is the number the old single-scale pipeline double-counted.
+        plain = _fit_drift(runs, poses, sensors.get("gyro_z_bias_deg_s"))
+        if drift.get("calibrated") and plain.get("drift_deg_per_m") is not None:
+            geometry["drift_shift_deg_per_m"] = float(
+                plain["drift_deg_per_m"] - drift["drift_deg_per_m"])
     stall = _fit_stall_torque(runs)
     drivetrain = _fit_no_load_speed(runs, wheel_radius_m)
     mass, inertia = _fit_body_parameters(
@@ -1847,6 +2081,7 @@ def fit_session(runs, poses=None, wheel_radius_m=0.028, wall_distance_m=None,
         },
         "sensors": sensors,
         "odometry": odometry,
+        "wheel_geometry": geometry,
         "slip": slip,
         "backlash": backlash,
         "drift": drift,
@@ -2043,6 +2278,12 @@ def main(argv=None):
             "write the measurement sheet as a form in a browser; the form "
             "downloads the same CSV the fitter reads"
         ),
+    )
+    parser.add_argument(
+        "--bench",
+        action="store_true",
+        help="bench wording for --write-form: the short-run distances of "
+             "a collect --bench session",
     )
     parser.add_argument(
         "--sheet",

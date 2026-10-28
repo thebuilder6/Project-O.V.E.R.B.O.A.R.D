@@ -2,6 +2,12 @@ import umath as math
 import gc
 from pybricks.tools import StopWatch, wait
 
+# The odometry is the one implementation the planner, the validator model
+# and the collector share (KI-027). It lives in odometry.py so the
+# collector can use it without the Ramsete bytecode; it is re-exported
+# here, so everything that reads it from ramsete keeps working.
+from odometry import Odometry, normalize_angle
+
 # The control period, in milliseconds.
 #
 # The drive command is held until the next iteration, and that hold is what
@@ -10,14 +16,6 @@ from pybricks.tools import StopWatch, wait
 # period as the two compact controllers and as ramsete_fast.py's 50 Hz
 # heartbeat.
 CONTROL_MS = 20
-
-def normalize_angle(angle):
-    """Normalize angle to [-pi, pi]."""
-    while angle > math.pi:
-        angle -= 2 * math.pi
-    while angle < -math.pi:
-        angle += 2 * math.pi
-    return angle
 
 def _fire_event(sample, event_map, debug=False, when=0.0):
     """Fire the event attached to one sample, if it has one.
@@ -41,41 +39,6 @@ def _fire_event(sample, event_map, debug=False, when=0.0):
 
     return False
 
-
-class Odometry:
-    """
-    Tracks the global position of the robot using Pybricks DriveBase distance and angle.
-    Assumes initial pose is (x, y, heading) where heading is in radians.
-    """
-    def __init__(self, drivebase, initial_x=0.0, initial_y=0.0, initial_heading=0.0):
-        self.db = drivebase
-        self.x = initial_x
-        self.y = initial_y
-        self.heading = initial_heading
-        
-        # DriveBase metrics
-        self.last_dist = self.db.distance() / 1000.0  # Convert mm to meters
-        # Pybricks angle is positive-clockwise. We invert it so positive is Counter-Clockwise (standard math)
-        self.last_angle = math.radians(-self.db.angle())
-        
-    def update(self):
-        """Updates the internal (x, y, heading) based on changes since last update."""
-        dist = self.db.distance() / 1000.0
-        angle = math.radians(-self.db.angle())
-        
-        d_dist = dist - self.last_dist
-        d_angle = angle - self.last_angle
-        
-        # Use average heading during the move for slightly better integration
-        avg_angle = self.heading + d_angle / 2.0
-        
-        self.x += d_dist * math.cos(avg_angle)
-        self.y += d_dist * math.sin(avg_angle)
-        self.heading += d_angle
-        self.heading = normalize_angle(self.heading)
-        
-        self.last_dist = dist
-        self.last_angle = angle
 
 class RamseteController:
     """

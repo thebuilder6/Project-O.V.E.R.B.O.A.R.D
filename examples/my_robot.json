@@ -1,0 +1,63 @@
+{
+ "name": "my_robot",
+ "version": 4,
+ "type": "Differential",
+ "robot": {
+  "mass": 0.723,
+  "inertia": 0.0024,
+  "track_width": 0.0965,
+  "wheel_radius": 0.028,
+  "v_max_rad_s": 18.94,
+  "t_max_nm": 0.138,
+  "gearing": 1.0,
+  "gravity": 9.81,
+  "cof": 0.95,
+  "torque_headroom": 0.85,
+  "speed_headroom": 0.9,
+  "uncertainties": {
+   "cof": [
+    0.85,
+    1.05
+   ],
+   "torque_headroom": [
+    0.75,
+    0.9
+   ],
+   "gear_backlash_m": [
+    0.0002,
+    0.0008
+   ],
+   "inertia_kg_m2": [
+    0.002,
+    0.0028
+   ],
+   "track_width_range": [
+    0.096,
+    0.097
+   ],
+   "wheel_radius_range": [
+    0.0275,
+    0.0285
+   ]
+  },
+  "hardware": {
+   "motor_left_port": "Port.A",
+   "motor_right_port": "Port.C",
+   "motor_front_port": "Port.B",
+   "motor_back_port": "Port.D",
+   "color_sensor_left_port": "Port.E",
+   "color_sensor_right_port": "Port.F"
+  }
+ },
+ "digital_twin": {
+  "source": [
+   "DriveBase straight_acceleration, 80% of the 20000 deg/s^2 motor ceiling on 56 mm wheels (KI-021)"
+  ],
+  "actuator": {
+   "straight": {
+    "accel_limit": 7.8
+   }
+  }
+ },
+ "interactions": {}
+}

@@ -20,8 +20,14 @@
  *         "openloop" commands the reference (vl, vr) directly, no feedback.
  *
  * Spec JSON: { wheelDiameterMm, trackWidthMm, robot: {...limiter config...},
+ *              beliefTrackWidthMm?, commandTrackWidthMm?,
  *              start: { xMm, yMm, headingDeg },
  *              samples: [{ t, x, y, heading, vl, vr, omega }] }  (SI units)
+ *
+ * trackWidthMm builds the physics base; the belief/command tracks default
+ * to it (B1: the base's own). A B2 run sets them to the DECLARED geometry:
+ * the firmware believes its configuration while the body answers with the
+ * real one (Q25.1).
  *
  * Trace CSV (SI units; the step harness trace.csv stays in mm):
  *   t_ms,tick,ref_x_m,ref_y_m,ref_heading_rad,odom_x_m,odom_y_m,
@@ -58,6 +64,16 @@ interface Sample {
 interface Spec {
   wheelDiameterMm: number;
   trackWidthMm: number;
+  /** Strip the season's mission models (empty mat + walls). The planner
+    * has no obstacle avoidance (KI-061) and this gate checks tracking,
+    * not model interaction. Absent keeps them (B1 behavior). */
+  clearModels?: boolean;
+  /** The track the firmware believes in (DriveBase configuration). The
+    * robot's own odometry and the open-loop wheel derivation use this;
+    * the physics uses trackWidthMm. Absent = trackWidthMm (B1 behavior,
+    * bit-identical). */
+  beliefTrackWidthMm?: number;
+  commandTrackWidthMm?: number;
   robot?: Record<string, number>;
   samples: Sample[];
 }
@@ -226,8 +242,10 @@ async function main() {
     ? straightTurnSpec()
     : JSON.parse(readFileSync(specArg, "utf8"));
 
+  const useModels = spec.clearModels ? [] : (season as any).missionModels;
+  const activeSeason = { ...(season as any), missionModels: useModels };
   const sim = await Simulation.create({
-    season: season as never,
+    season: activeSeason as never,
     robot: makeDriveBase({
       wheelDiameterMm: spec.wheelDiameterMm,
       trackWidthMm: spec.trackWidthMm,
@@ -255,9 +273,13 @@ async function main() {
 
   const wheelDiaM = spec.wheelDiameterMm / 1000;
   const trackM = spec.trackWidthMm / 1000;
+  const beliefTrackM = (spec.beliefTrackWidthMm ?? spec.trackWidthMm) / 1000;
+  const commandTrackM = (spec.commandTrackWidthMm ?? spec.trackWidthMm) / 1000;
   const degPerM = 360 / (Math.PI * wheelDiaM);
   // The left motor is mirrored in the pair (positive = forward): its encoder
   // runs backwards when the robot drives forwards (pinned by the spike run).
+  // The belief integrates with the CONFIGURED track width: the DriveBase
+  // does not know the oracle's actual one (Q25.1).
   const readEnc = () => {
     const leftFwdDeg = -left.relativePosition();
     const rightFwdDeg = right.relativePosition();
@@ -265,7 +287,7 @@ async function main() {
     const rightFwdM = (rightFwdDeg / 360) * Math.PI * wheelDiaM;
     return {
       distM: (leftFwdM + rightFwdM) / 2,
-      yawRad: (rightFwdM - leftFwdM) / trackM,
+      yawRad: (rightFwdM - leftFwdM) / beliefTrackM,
     };
   };
 
@@ -329,8 +351,10 @@ async function main() {
         }
         currentV = vCmd; currentOmega = omegaCmd;
         lastT = t;
-        const vl = vCmd - (omegaCmd * trackM) / 2;
-        const vr = vCmd + (omegaCmd * trackM) / 2;
+        // Open loop commands the firmware's wheel speeds: (v, omega) through
+        // the CONFIGURED track width, like drive() does (Q25.1).
+        const vl = vCmd - (omegaCmd * commandTrackM) / 2;
+        const vr = vCmd + (omegaCmd * commandTrackM) / 2;
         cmdL = vl * degPerM;
         cmdR = vr * degPerM;
         // Retarget once per tick and let the pair hold between (the deployed

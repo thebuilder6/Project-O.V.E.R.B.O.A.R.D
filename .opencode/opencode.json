@@ -41,13 +41,17 @@
         { "action": "shell", "resource": "git commit *", "effect": "allow" },
         { "action": "edit", "resource": ".git/*", "effect": "deny" },
         { "action": "edit", "resource": "*.env", "effect": "ask" }
-      ]
+      ],
+      "model": "openrouter/meta/muse-spark-1.3-contributor",
+      "mode": "primary"
     },
     "plan": {
-      "model": "openrouter/anthropic/claude-opus-5.5"
+      "model": "openrouter/meta/muse-spark-1.3-contributor",
+      "mode": "primary"
     },
     "explore": {
-      "model": "openrouter/deepseek/deepseek-v4-flash"
+      "model": "openrouter/meta/muse-spark-1.3-contributor",
+      "mode": "subagent"
     }
   }
 }

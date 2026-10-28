@@ -329,6 +329,42 @@ removed with the pipeline.
 | **Status** | partial |
 | **What would revive it** | The shortfall is wired into the five-state plant, and the effect is measured: on the complex mission with an illustrative actuator fit (50 ms lag, 2 % gain band) the envelope grows 1.11 cm and the tracking error 0.55 cm (`research/brake_slip_effect.py`). What is left is a fit measured on the robot, and the gates it would have to pass (KI-020) |
 
+### 21.7 Coast-down drag (Q25.2, null)
+
+| Field | Value |
+|---|---|
+| **Strategy** | Coulomb + viscous load in the wheel-speed dynamics, from coast-down tails |
+| **Mechanism** | Was `DragFit` in `overboard/sysid/digital_twin.py`, `_fit_drag` in `overboard/sysid/fit.py`, plant load in `overboard/verification/immrax_validator.py` (`DigitalTwinOpenLoop`); removed again with the verdict |
+| **Why it was tried** | RQ-B measured the coast gap (oracle 3.59 vs model 1.51 m/s2, 2.4x); the braking-shortfall fit absorbs part of the drag (RQ-C Finding 3) |
+| **Outcome** | **Null, retired.** Fitted coulomb 3.069 m/s2 (viscous 0, 3 repeats, zero-width deterministic intervals) closes the RQ-B gap to 1.17x, but as an always-on wheel load it degrades twin-vs-oracle on the registered 40: mean e_pos 606.6 -> 964.7mm (+358.1, +59%), worst 1824 -> 1972mm, containment 4.12 -> 1.89%, 12/40 beats-or-ties. The DriveBase PID compensates drag while driving, so a motors-off coast number double-counts |
+| **Evidence** | `research/results/q25_c2_drag.jsonl` / `q25_c2_drag_summary.json`, `research/results/q25_c2_drag.md`, `research/q25_drag.py` (reuses C1 samples + traces, no new WSL) |
+| **Status** | dead, removed |
+| **What would revive it** | A regime-gated drag (coast-only, command~0) with evidence that final-stop accuracy moves a gate; today's max-error metric is dominated by driven excursions the PID already masks |
+
+### 21.8 Per-side radii in the truth kinematics alone (Q25 untangle, null)
+
+| Field | Value |
+|---|---|
+| **Strategy** | Claim C1's twin-vs-oracle gain for the UMBmark pair (`Ed`/`Eb`) as geometry in the truth kinematics |
+| **Mechanism** | `DigitalTwinOpenLoop` truth map with `wheel_geometry_tuple()` (kL/kR/b_eff); belief held at scales-only (arm R vs arm A) |
+| **Why it was tried** | C1 bundled geometry + belief wiring and landed (mean -233.3mm); the untangle split the bundle to stop radii claiming the win |
+| **Outcome** | **Null.** On the registered 40 (4-way intersection, 1962 tubes): R-A -1.1mm mean (-0.2%), -2.7mm worst; F-A -231.4mm (-41.9%); B-F -1.0mm; total B-A -232.4mm (C1 -233.3mm, agree within 1mm). Belief carries ~99.5%; radii + interaction ~1mm each (oracle floor noise). Strict beats-or-ties on intersection: R<=A 34/40, F<=A 39/40, B<=A 39/40; containment tie 5.9-7.2% (shared mm-tube vs dm-excursion limitation) |
+| **Evidence** | `research/results/q25_c1_untangle.jsonl` / `q25_c1_untangle_summary.json`, `research/results/q25_c1_untangle.md` (Q25-C1 untangle, 40 missions, intersection; m006 109 vs 48 precedent), `research/q25_untangle.py` |
+| **Status** | **dead as a standalone claim** (Q15/Q17 discipline: the term stays only as wired belief + geometry, belief-first; radii alone claim nothing) |
+| **What would revive it** | A residual stratified by phase that isolates a truth-kinematics error beyond the repeatability floor after belief wiring; today's metric is dominated by the feedback wiring, not the geometry |
+
+### 21.9 Slip-ratio state beyond the braking shortfall (Q25-4 trigger check, SKIP)
+
+| Field | Value |
+|---|---|
+| **Strategy** | A slip state (slip-ratio dynamics) beyond the existing `SlipFit` braking shortfall, identified from extended `brake_from_*` tests |
+| **Mechanism** | (never built) Q25 component 4 in `docs/research/RQ-C_digital_twin_model.md` rank order, contingent on components 1-3 leaving braking/acceleration-concentrated residual |
+| **Why it was tried** | Registered trigger: build ONLY if the post-C1/C2 residual concentrates in braking/acceleration phases beyond the B1 repeatability floor (exactly 0) |
+| **Outcome** | **SKIP — contingent-not-triggered.** B-arm residual is diffuse: braking+accel hold 15.5% of squared error on 24.9% of samples (under-represented), braking/cruise contrast 1.06, F-arm identical (15.5%); full-set B agrees (19.1% on 22.8%). The weight sits in turn (35.5%) and cruise (49.0%) with the worst sample (719.8mm) in cruise — a belief/odometry-drift shape, not longitudinal slip. All three pre-registered gate conjuncts fail. The traction cap + `SlipFit` shortfall stand |
+| **Evidence** | `research/results/q25_stratify.jsonl` / `q25_stratify_summary.json` / `q25_stratify.md`, `research/q25_stratify.py` (1962-tube intersection + 2964-tube full set, 40 missions, no new WSL runs) |
+| **Status** | **closed as contingent-not-triggered** (Q15/Q17 discipline: the term is never added) |
+| **What would revive it** | A phase-stratified residual with braking+accel >= 60% of squared error on a minority of samples AND >= 2x braking-vs-cruise contrast, replicated on the F-arm — i.e. the registered gate passing on new evidence, not a re-tune of its bars |
+
 ## 22. Ledger: silent and unlogged behaviour
 
 These are not "strategies that failed" but behaviours that changed the results without being recorded where a reader would look.

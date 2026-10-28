@@ -100,6 +100,8 @@ STATIC_FILES = {
     "/studio.css": ("studio.css", "text/css; charset=utf-8"),
     "/studio.js": ("studio.js", "application/javascript; charset=utf-8"),
     "/report.js": ("report.js", "application/javascript; charset=utf-8"),
+    "/sysid.css": ("sysid.css", "text/css; charset=utf-8"),
+    "/sysid.js": ("sysid.js", "application/javascript; charset=utf-8"),
     # The manual: the app has to explain itself without the repository.
     "/help.html": ("help.html", "text/html; charset=utf-8"),
 }
@@ -790,7 +792,16 @@ def _interval(summary, name):
 
 
 def summarize_fit(fit):
-    """The numbers of a fitted model, the way the fitter prints them."""
+    """The numbers of a fitted model, the way the fitter prints them.
+
+    Row-for-row with ``fit_session``: every calibrated section lands here
+    with its 95% interval, so a before/after table can compare a prior fit
+    (or the nominal robot config) against a new one without re-reading the
+    raw artifacts. The raw artifacts (session/sheet/poses CSVs) stay the
+    forward-compatible record: UMBmark-style square analysis, coast-down
+    drag and contingent slip have no estimators yet and are read off those
+    files, not this summary.
+    """
     actuator = fit.get("actuator", {}) or {}
     straight = actuator.get("straight", {}) or {}
     turn = actuator.get("turn", {}) or {}
@@ -799,6 +810,11 @@ def summarize_fit(fit):
     slip = fit.get("slip", {}) or {}
     mass = fit.get("mass", {}) or {}
     inertia = fit.get("inertia", {}) or {}
+    drift = fit.get("drift", {}) or {}
+    stall = fit.get("stall_torque", {}) or {}
+    drive = fit.get("drivetrain", {}) or {}
+    backlash = fit.get("backlash", {}) or {}
+    validation = fit.get("validation", {}) or {}
 
     def value(source, key):
         item = source.get(key)
@@ -807,6 +823,8 @@ def summarize_fit(fit):
     return {
         "calibrated": bool(straight.get("calibrated") or turn.get("calibrated")),
         "wheel_radius_m": value(fit, "wheel_radius_m"),
+        "bad_rows": int(fit.get("bad_rows", 0) or 0),
+        "missing_rows": int(fit.get("missing_rows", 0) or 0),
         "straight": {
             "calibrated": bool(straight.get("calibrated")),
             "gain": value(straight, "gain"),
@@ -828,6 +846,11 @@ def summarize_fit(fit):
             "calibrated": bool(odometry.get("calibrated")),
             "distance_scale": value(odometry, "distance_scale"),
             "distance_scale_ci95": _interval(odometry, "distance_scale"),
+            "distance_scale_source": odometry.get("distance_scale_source"),
+            "distance_scale_tape": value(odometry, "distance_scale_tape"),
+            "distance_scale_homing": value(odometry, "distance_scale_homing"),
+            "distance_scale_disagreement": value(
+                odometry, "distance_scale_disagreement"),
             "heading_scale": value(odometry, "heading_scale"),
             "heading_scale_ci95": _interval(odometry, "heading_scale"),
         },
@@ -837,15 +860,53 @@ def summarize_fit(fit):
             "brake_ratio_min": value(slip, "brake_ratio_min"),
             "brake_ratio_max": value(slip, "brake_ratio_max"),
         },
+        "drift": {
+            "calibrated": bool(drift.get("calibrated")),
+            "drift_deg_per_m": value(drift, "drift_deg_per_m"),
+            "drift_deg_per_m_ci95": _interval(drift, "drift_deg_per_m"),
+            "drift_deg_per_m_tape": value(drift, "drift_deg_per_m_tape"),
+            "drift_disagreement_deg_per_m": value(
+                drift, "drift_disagreement_deg_per_m"),
+            "n_sources": drift.get("n_sources"),
+        },
+        "stall": {
+            "calibrated": bool(stall.get("calibrated")),
+            "t_max_nm": value(stall, "t_max_nm"),
+            "t_max_nm_ci95": _interval(stall, "t_max_nm"),
+            "n_sources": stall.get("n_sources"),
+        },
+        "top_speed": {
+            "calibrated": bool(drive.get("calibrated")),
+            "no_load_speed_rad_s": value(drive, "no_load_speed_rad_s"),
+            "no_load_speed_rad_s_ci95": _interval(
+                drive, "no_load_speed_rad_s"),
+            "n_sources": drive.get("n_sources"),
+        },
+        "backlash": {
+            "calibrated": bool(backlash.get("calibrated")),
+            "reverse_delay_s": value(backlash, "reverse_delay_s"),
+            "low_speed_gain": value(backlash, "low_speed_gain"),
+        },
         "mass": {
             "calibrated": bool(mass.get("calibrated")),
             "mass_kg": value(mass, "mass_kg"),
             "mass_kg_ci95": _interval(mass, "mass_kg"),
+            "n_sources": mass.get("n_sources"),
+            "source": mass.get("source"),
+            "derived_mass_kg": value(mass, "derived_mass_kg"),
+            "derived_vs_weighed": value(mass, "derived_vs_weighed"),
         },
         "inertia": {
             "calibrated": bool(inertia.get("calibrated")),
             "inertia_kg_m2": value(inertia, "inertia_kg_m2"),
             "inertia_kg_m2_ci95": _interval(inertia, "inertia_kg_m2"),
+            "n_sources": inertia.get("n_sources"),
+            "tau_mech_s": value(inertia, "tau_mech_s"),
+            "source": inertia.get("source"),
+        },
+        "validation": {
+            "chirp_straight_nrmse": value(validation, "chirp_straight_nrmse"),
+            "chirp_turn_nrmse": value(validation, "chirp_turn_nrmse"),
         },
     }
 
@@ -1048,6 +1109,169 @@ def calibration_paths(name):
     }
 
 
+# Tests that chain without the operator: the robot stays put or is
+# already placed. The firmware reads the same set from AUTO_ADVANCE; a
+# test that drifts out of step fails the inventory test, not the run.
+SELECTABLE_TESTS = [
+    {"id": "static", "repeats": 1, "deps": [], "tape": False, "auto": False,
+     "setup": "Robot still and level. Do not touch it."},
+    {"id": "straight_steps_fwd", "repeats": 3, "deps": [], "tape": False, "auto": True,
+     "setup": "2+ m clear runway, facing along it.",
+     "bench_setup": "Longest bench diagonal, facing along it."},
+    {"id": "straight_steps_rev", "repeats": 3, "deps": [], "tape": False, "auto": True,
+     "setup": "2+ m clear runway, facing along it.",
+     "bench_setup": "Longest bench diagonal, facing along it."},
+    {"id": "turn_steps_cw", "repeats": 3, "deps": [], "tape": False, "auto": True,
+     "setup": "Open space; spins in place, keep clear."},
+    {"id": "turn_steps_ccw", "repeats": 3, "deps": [], "tape": False, "auto": True,
+     "setup": "Open space; spins in place, keep clear."},
+    {"id": "curvature_cw", "repeats": 1, "deps": [], "tape": False, "auto": True,
+     "setup": "Large open area."},
+    {"id": "curvature_ccw", "repeats": 1, "deps": [], "tape": False, "auto": True,
+     "setup": "Large open area."},
+    {"id": "reversal_backlash", "repeats": 1, "deps": [], "tape": False, "auto": True,
+     "setup": "2 m clear runway.",
+     "bench_setup": "Centred, with room to spare."},
+    {"id": "chirp_straight", "repeats": 1, "deps": [], "tape": False, "auto": True,
+     "setup": "2 m clear runway.",
+     "bench_setup": "Start in the middle of the bench."},
+    {"id": "chirp_turn", "repeats": 1, "deps": [], "tape": False, "auto": True,
+     "setup": "Open space."},
+    {"id": "odometry_straight", "repeats": 3, "deps": [], "tape": True, "auto": False,
+     "setup": "Start mark on a 2 m runway; measure the end pose.",
+     "bench_setup": "Start mark on the bench diagonal; measure the end pose (~500 mm)."},
+    {"id": "odometry_turn_cw", "repeats": 3, "deps": [], "tape": True, "auto": False,
+     "setup": "Start mark in open space; measure the end pose."},
+    {"id": "multi_stop", "repeats": 3, "deps": [], "tape": True, "auto": False,
+     "setup": "Runway with marks at 500/1000/1500 mm; measure 3 stops.",
+     "bench_setup": "Bench diagonal with marks at 200/350/500 mm; measure 3 stops."},
+    {"id": "brake_from_300", "repeats": 3, "deps": [], "tape": True, "auto": False,
+     "setup": "Start mark on a 2 m runway; measure the end pose.",
+     "bench_setup": "Start mark on the bench diagonal; measure the end pose."},
+    {"id": "brake_from_600", "repeats": 3, "deps": [], "tape": True, "auto": False,
+     "setup": "Start mark on a 2 m runway; measure the end pose.",
+     "bench_setup": "Start mark on the bench diagonal; measure the end pose."},
+    {"id": "square_cw", "repeats": 3, "deps": [], "tape": True, "auto": False,
+     "setup": "Clear 400 mm square; measure the end pose."},
+    {"id": "square_ccw", "repeats": 3, "deps": [], "tape": True, "auto": False,
+     "setup": "Clear 400 mm square; measure the end pose."},
+    {"id": "wall_homing", "repeats": 3, "deps": [], "tape": False, "auto": False,
+     "setup": "Centre on the start mark, square to the wall ~1 m ahead.",
+     "bench_setup": "Centre on the start mark, square to the bench backstop."},
+    {"id": "wall_stall", "repeats": 3, "deps": ["wall_homing"], "tape": False, "auto": True,
+     "setup": "Already against the wall (runs after its homing)."},
+    {"id": "top_speed", "repeats": 3, "deps": [], "tape": False, "auto": False,
+     "setup": "LIFT the robot; wheels spin free, off the mat."},
+    {"id": "replay_complex_mission", "repeats": 1, "deps": [], "tape": False, "auto": False,
+     "setup": "Place at the trajectory start pose, clear the path."},
+]
+
+SELECTABLE_TEST_IDS = [entry["id"] for entry in SELECTABLE_TESTS]
+
+# Express is the no-tape tier: every watch-only calibration test, minus the
+# replay (compare-only, never fitted). Lab is the full suite on top of it.
+# shortcut: Express cannot see lateral drift/slip; promote to Lab when a
+# mission needs them, upgrade to a camera anchor when tape must go entirely.
+EXPRESS_TEST_IDS = [entry["id"] for entry in SELECTABLE_TESTS
+                    if not entry["tape"]
+                    and entry["id"] != "replay_complex_mission"]
+TAPE_TEST_IDS = [entry["id"] for entry in SELECTABLE_TESTS if entry["tape"]]
+
+
+# Bench mode skips the curvature arcs on the hub: the host fit never reads
+# them. Kept here so the test list can say so; the firmware is the enforcer.
+BENCH_SKIPPED = frozenset({"curvature_cw", "curvature_ccw"})
+
+
+def _test_entry(test_id):
+    """The table row for one test id, or an empty one."""
+    for entry in SELECTABLE_TESTS:
+        if entry["id"] == test_id:
+            return entry
+    return {}
+
+# The studio's per-collect test selection, pushed next to the collector and
+# bundled with it. Generated per request and deleted for a full suite, so a
+# manual push never inherits a stale subset.
+SELECTION_SCRIPT = PYBRICKS_DIR / "sysid_selection.py"
+
+
+def write_selection(tests, auto_start=False, bench=False):
+    """Write the tests one collect runs, or delete the file for a full suite.
+
+    ``auto_start`` tells a one-test push from the page to skip its first
+    button wait: the click is the trigger. It is only ever true for a
+    setup-free test; a setup test always waits, and a manual push without
+    this file runs everything behind the button as before. ``bench`` runs
+    the suite in short bench runs; the file is kept then even for a full
+    suite, because the collector must see the flag.
+    """
+    if not tests and not bench:
+        try:
+            SELECTION_SCRIPT.unlink()
+        except OSError:
+            pass
+        return None
+    SELECTION_SCRIPT.parent.mkdir(parents=True, exist_ok=True)
+    with open(SELECTION_SCRIPT, "w", encoding="utf-8") as handle:
+        handle.write('"""Generated by the studio collect request: the tests to run.\n'
+                     'Delete this file (or collect without a selection) to run\n'
+                     'the full suite.\n'
+                     '"""\n'
+                     f"SELECTED = {tests!r}\n"
+                     f"AUTO_START = {bool(auto_start)!r}\n"
+                     f"BENCH = {bool(bench)!r}\n")
+    return str(SELECTION_SCRIPT)
+
+
+def _max_run_id(path):
+    """The highest META run id in a session file, or 0."""
+    best = 0
+    try:
+        with open(path, "r", encoding="utf-8", errors="replace") as handle:
+            for line in handle:
+                if not line.startswith("META,run_id,"):
+                    continue
+                try:
+                    best = max(best, int(line.split(",")[2]))
+                except (IndexError, ValueError):
+                    continue
+    except OSError:
+        pass
+    return best
+
+
+def append_session(calibration_session, incoming_session):
+    """Append new TEST blocks to the robot's session, offsetting run ids.
+
+    A redo reuses the hub's per-boot run ids, so appending the raw blocks
+    would merge two different runs under one id and corrupt the poses. Only
+    the META,run_id lines are rewritten ( by the highest id already on
+    file); every DATA row and every other META line is kept byte for byte.
+    The fit reads the latest block for each test and repeat, so a redo
+    supersedes the attempt it replaces.
+    """
+    offset = _max_run_id(calibration_session)
+    with open(incoming_session, "r", encoding="utf-8", errors="replace") as handle:
+        text = handle.read()
+    out = []
+    for line in text.splitlines():
+        if line.startswith("META,run_id,"):
+            try:
+                out.append("META,run_id,%d" % (int(line.split(",")[2]) + offset))
+                continue
+            except (IndexError, ValueError):
+                pass
+        out.append(line)
+    with open(calibration_session, "a", encoding="utf-8") as handle:
+        handle.write("# appended run_id offset %d: a redo supersedes the "
+                     "attempt it replaces\n" % offset)
+        handle.write("\n".join(out))
+        if out:
+            handle.write("\n")
+    return offset
+
+
 def _session_runs(path):
     """The runs in a captured session."""
     from overboard.sysid.fit import parse_session
@@ -1087,6 +1311,97 @@ def collect_progress(session_path):
         "rows": rows,
         "needed": len(rows),
     }
+
+
+def prompts_from_log(lines):
+    """Prompt cards for the SysId page, derived from the hub console log.
+
+    Each TEST_START opens a card carrying the READY title and SETUP text
+    that preceded it. A "Measure ... press CENTER" line marks it measuring,
+    TEST_END marks it done. The page pairs each card with the sheet rows
+    for that test, so the entry boxes sit next to the prompt that asked
+    for them. Pure function of the log lines, so the contract is pinned
+    without a hub.
+    """
+    cards = []
+    title = ""
+    setup = ""
+    for raw in lines:
+        line = raw.strip() if isinstance(raw, str) else ""
+        if line.startswith("READY FOR:"):
+            title = line[len("READY FOR:"):].strip()
+            continue
+        if line.startswith("SETUP:"):
+            chunk = line[len("SETUP:"):].strip()
+            setup = (setup + " " + chunk).strip() if setup else chunk
+            continue
+        if line.startswith("TEST_START"):
+            cards.append({
+                "id": line[len("TEST_START"):].strip(),
+                "title": title,
+                "setup": setup,
+                "state": "running",
+            })
+            title = ""
+            setup = ""
+            continue
+        if line.startswith("Measure ") and "press CENTER" in line and cards:
+            cards[-1]["state"] = "measuring"
+            continue
+        if line.startswith("TEST_END") and cards:
+            cards[-1]["state"] = "done"
+    return cards
+
+
+def session_meta(name):
+    """One entry per captured test run: its identity and its voltages.
+
+    The hub prints ``META,battery_mv`` per test and the per-row ``batt_mv``
+    column, so the voltage the Q11/KI-065 derate will need is already in the
+    session file; this only surfaces it. A run the link cut short is flagged
+    here (``missing_rows`` / ``ended``), never silently cut: the file keeps
+    every row that arrived.
+    """
+    paths = calibration_paths(name)
+    if not paths["session"].is_file():
+        return [], {"truncated": False, "bad_rows": 0, "missing_rows": 0}
+    runs = _session_runs(paths["session"])
+    meta = []
+    for run in runs:
+        columns = run.get("columns") or {}
+        batteries = []
+        if "batt_mv" in columns:
+            try:
+                import numpy as _np
+                values = run["data"][:, columns["batt_mv"]]
+                values = values[_np.isfinite(values)]
+                if len(values):
+                    batteries = [float(_np.min(values)),
+                                 float(_np.median(values)),
+                                 float(_np.max(values))]
+            except (IndexError, ValueError):
+                batteries = []
+        meta.append({
+            "test": run.get("name"),
+            "repeat": run["meta"].get("repeat"),
+            "run_id": run["meta"].get("run_id"),
+            "battery_mv": run["meta"].get("battery_mv"),
+            "battery_mv_min_med_max": batteries,
+            "wheel_diameter_mm": run["meta"].get("wheel_diameter_mm"),
+            "axle_track_mm": run["meta"].get("axle_track_mm"),
+            "poses": run["meta"].get("poses"),
+            "rows": int(run["data"].shape[0]) if run.get("data") is not None else 0,
+            "missing_rows": int(run.get("missing_rows", 0) or 0),
+            "bad_rows": int(run.get("bad_rows", 0) or 0),
+            "ended": bool(run.get("ended", False)),
+        })
+    flags = {
+        "truncated": any((not entry["ended"]) or entry["missing_rows"] > 0
+                         for entry in meta),
+        "bad_rows": sum(entry["bad_rows"] for entry in meta),
+        "missing_rows": sum(entry["missing_rows"] for entry in meta),
+    }
+    return meta, flags
 
 
 def read_sheet_rows(sheet_path, rows):
@@ -1267,16 +1582,23 @@ def fit_from_sheet(name, gearing=None, wall_distance_m=None):
     paths = calibration_paths(name)
     if not paths["session"].is_file():
         raise ValueError("There is no collected session for this robot yet.")
-    if not paths["sheet"].is_file():
-        raise ValueError("There is no measurement sheet yet.")
 
     runs = _session_runs(paths["session"])
     if not runs:
         raise ValueError("The session has no test blocks in it.")
 
     from overboard.sysid.fit import read_sheet
-    rows = read_sheet(str(paths["sheet"]))
-    pose_rows, problems = sheet_to_poses(rows, runs)
+    needed = _sheet_rows(runs)
+    if not paths["sheet"].is_file():
+        # Express needs no tape, so there is no sheet to read yet. A Lab
+        # session without one is still missing its measurements.
+        if needed:
+            raise ValueError("There is no measurement sheet yet.")
+        rows, weigh_in, pose_rows, problems = [], [], [], []
+    else:
+        rows = read_sheet(str(paths["sheet"]))
+        pose_rows, problems = sheet_to_poses(rows, runs)
+        weigh_in = read_weigh_in(str(paths["sheet"]))
 
     # The robot's own wheel diameter and track width, measured by the robot:
     # the hub prints them in the session's metadata, so no drivebase profile
@@ -1286,12 +1608,16 @@ def fit_from_sheet(name, gearing=None, wall_distance_m=None):
     for run in runs:
         diameter = run["meta"].get("wheel_diameter_mm")
         if diameter and wheel_radius is None:
-            wheel_radius = float(diameter) / 2000.0
+            try:
+                wheel_radius = float(diameter) / 2000.0
+            except (TypeError, ValueError):
+                wheel_radius = None
         axle = run["meta"].get("axle_track_mm")
         if axle and track_width is None:
-            track_width = float(axle) / 1000.0
-
-    weigh_in = read_weigh_in(str(paths["sheet"]))
+            try:
+                track_width = float(axle) / 1000.0
+            except (TypeError, ValueError):
+                track_width = None
 
     poses = {}
     for row in pose_rows:
@@ -1323,6 +1649,20 @@ def fit_from_sheet(name, gearing=None, wall_distance_m=None):
         "wall_distance_m": wall_distance_m,
         "source": str(paths["session"]),
     }
+    # D3: a fit only ever reads the calibration folder. A pushed trajectory
+    # session (missions/*.session.csv) is compare-only and never fitted.
+    meta, flags = session_meta(name)
+    result["battery"] = {
+        "per_run_mv": [
+            {"test": entry["test"], "repeat": entry["repeat"],
+             "run_id": entry["run_id"], "battery_mv": entry["battery_mv"],
+             "battery_mv_min_med_max": entry["battery_mv_min_med_max"]}
+            for entry in meta
+        ],
+        "truncated": flags["truncated"],
+        "bad_rows": flags["bad_rows"],
+        "missing_rows": flags["missing_rows"],
+    }
     write_poses_csv(pose_rows, str(paths["poses"]))
 
     paths["fit"].parent.mkdir(parents=True, exist_ok=True)
@@ -1333,17 +1673,86 @@ def fit_from_sheet(name, gearing=None, wall_distance_m=None):
     summary = summarize_fit(result)
     summary["name"] = slugify(name, "robot")
     summary["path"] = str(paths["fit"])
+    # Wall-first: a collected homing run without its distance is unused.
+    names = {run.get("name") for run in runs}
+    if "wall_homing" in names and not wall_distance_m:
+        problems = list(problems) + [
+            "wall_homing collected but no wall distance given, "
+            "so its scale stays unused; add it and fit again"]
+    odometry = result.get("odometry", {}) or {}
+    if odometry.get("distance_scale_disagreement") is not None:
+        try:
+            gap = abs(float(odometry["distance_scale_disagreement"]))
+        except (TypeError, ValueError):
+            gap = 0.0
+        if gap > 0.005:
+            problems = list(problems) + [
+                f"wall and tape disagree by {gap:.4f}; "
+                "check the start mark or the tape"]
+    drift = result.get("drift", {}) or {}
+    if drift.get("drift_disagreement_deg_per_m") is not None:
+        try:
+            dgap = abs(float(drift["drift_disagreement_deg_per_m"]))
+        except (TypeError, ValueError):
+            dgap = 0.0
+        if dgap > 1.0:
+            problems = list(problems) + [
+                f"drift estimates disagree by {dgap:.2f} deg/m; "
+                "do not trust the drift term"]
+    straight = (result.get("actuator", {}) or {}).get("straight", {}) or {}
+    ci = straight.get("gain_ci95")
+    if ci and len(ci) == 2:
+        try:
+            width = abs(float(ci[1]) - float(ci[0]))
+        except (TypeError, ValueError):
+            width = 0.0
+        # 1% gain is ~10 mm over 1 m; the tracking gate is 5 mm.
+        if width > 0.005:
+            problems = list(problems) + [
+                f"gain band is {width * 100:.1f}% "
+                f"({width * 1000:.0f} mm per metre); "
+                "expect the tracking gate to fail on long paths"]
+    tape_scales = bool(odometry.get("distance_scale_tape"))
+    calibrated_motion = bool(
+        (result.get("slip", {}) or {}).get("calibrated")
+        or (result.get("drift", {}) or {}).get("calibrated")
+        or tape_scales)
+    summary["tier"] = "lab" if calibrated_motion else "express"
     summary["problems"] = problems
     return summary
 
 
 def start_collect(server, payload):
-    """Push the calibration suite to the hub and capture the session."""
+    """Push the calibration suite to the hub and capture the session.
+
+    ``tests`` is an optional subset of SELECTABLE_TEST_IDS, in any order:
+    the collector runs the picked ones in suite order (dependencies first).
+    A subset appends to the robot's session with offset run ids, so a redo
+    supersedes the attempt it replaces; a full suite (or no selection)
+    starts the session over.
+    """
     name = slugify(payload.get("name") or "robot", "robot")
     connection = str(payload.get("connection") or "ble")
     if connection not in ("ble", "usb"):
         raise ValueError("The connection must be ble or usb.")
     hub_name = payload.get("hub_name") or None
+    tests = payload.get("tests")
+    if tests is not None:
+        if not isinstance(tests, list) or not tests:
+            raise ValueError("Pick at least one test to collect.")
+        unknown = [test for test in tests if test not in SELECTABLE_TEST_IDS]
+        if unknown:
+            raise ValueError("Unknown test%s: %s." % (
+                "s" if len(unknown) != 1 else "", ", ".join(map(str, unknown))))
+        tests = [str(test) for test in tests]
+    append = bool(tests and set(tests) < set(SELECTABLE_TEST_IDS))
+    auto_start = (len(tests or []) == 1
+                  and bool(tests) and _test_entry(tests[0]).get("auto", False))
+    bench = bool(payload.get("bench", False))
+    try:
+        write_selection(tests, auto_start=auto_start, bench=bench)
+    except OSError as exc:
+        raise ValueError(f"Could not write the test selection: {exc}")
 
     job_dir = Path(tempfile.mkdtemp(prefix="overboard_collect_"))
     try:
@@ -1391,7 +1800,15 @@ def start_collect(server, payload):
                     try:
                         paths = calibration_paths(name)
                         paths["session"].parent.mkdir(parents=True, exist_ok=True)
-                        shutil.copyfile(str(session_path), str(paths["session"]))
+                        if append and paths["session"].is_file():
+                            offset = append_session(paths["session"],
+                                                    session_path)
+                            job.log(f"Appended {len(tests or [])} selected "
+                                    f"tests (run_id offset {offset}); a redo "
+                                    f"supersedes the attempt it replaces.")
+                        else:
+                            shutil.copyfile(str(session_path),
+                                            str(paths["session"]))
                         job.result["session_path"] = str(paths["session"])
                         if job.exit_code != 0:
                             job.log("The link dropped; the session that arrived "
@@ -1900,6 +2317,8 @@ class StudioHandler(BaseHTTPRequestHandler):
         try:
             if path in ("/", "/studio.html"):
                 return self._serve_static("studio.html", "text/html; charset=utf-8")
+            if path in ("/sysid", "/sysid.html"):
+                return self._serve_static("sysid.html", "text/html; charset=utf-8")
             if path in STATIC_FILES:
                 filename, content_type = STATIC_FILES[path]
                 return self._serve_static(filename, content_type)
@@ -1921,6 +2340,8 @@ class StudioHandler(BaseHTTPRequestHandler):
                 return self._serve_mat(path)
             if path == "/api/calibration/sheet":
                 return self._sheet()
+            if path == "/api/calibration/tests":
+                return self._tests()
             if path == "/api/jobs/current":
                 job = self.server.active_job()
                 if job is None:
@@ -1997,14 +2418,7 @@ class StudioHandler(BaseHTTPRequestHandler):
 
     def _field_mat(self):
         """Fetch a season's mat picture and hand the browser its URL."""
-        try:
-            length = int(self.headers.get("Content-Length", 0))
-        except (TypeError, ValueError):
-            length = 0
-        try:
-            payload = json.loads(self.rfile.read(length) or b"{}")
-        except ValueError:
-            payload = {}
+        payload = self._read_body()
         season = str(payload.get("season") or "").strip()
         if not season:
             return self._error(400, "A season is needed.")
@@ -2035,9 +2449,11 @@ class StudioHandler(BaseHTTPRequestHandler):
             payload = job.snapshot()
             if job.kind == "collect":
                 # The session grows as the hub prints, so the checklist is
-                # recomputed on every poll.
+                # recomputed on every poll. The prompt cards come from the
+                # console log the same way, so the page mirrors the hub.
                 payload["progress"] = collect_progress(
                     job.result.get("session_path", ""))
+                payload["prompts"] = prompts_from_log(list(job.lines))
             summary = None
             if job.status == "ok":
                 summary = summarize_trajectory(artifact_path(job, "traj"))
@@ -2126,6 +2542,12 @@ class StudioHandler(BaseHTTPRequestHandler):
 
     def _hubs(self):
         """The hubs Bluetooth can see, for the Run tab's device picker."""
+        # The request carries no fields, but the body still has to be read:
+        # whatever stays in the socket becomes the next request on this
+        # keep-alive connection, and the server answers that garbage with
+        # a 501 instead of the answer (the scan button then "breaks" the
+        # next click).
+        self._read_body()
         if self.server.active_job() is not None:
             # A push holds the hub's single connection, and a scan shares
             # the adapter, so one job at a time covers both.
@@ -2192,6 +2614,30 @@ class StudioHandler(BaseHTTPRequestHandler):
             return self._error(409, str(exc))
         return self._json(202, job.snapshot())
 
+    def _tests(self):
+        """The collectable tests, in suite order, with what each one does."""
+        from overboard.sysid.sheet_form import guide_for
+        query = urlparse(self.path).query
+        bench = parse_qs(query).get("bench", ["0"])[0] == "1"
+        tests = []
+        for entry in SELECTABLE_TESTS:
+            guide = guide_for(entry["id"], bench)
+            setup = entry["setup"]
+            if bench:
+                setup = entry.get("bench_setup", setup)
+            tests.append({
+                "id": entry["id"],
+                "repeats": entry["repeats"],
+                "deps": list(entry["deps"]),
+                "tape": entry["tape"],
+                "auto": entry["auto"],
+                "setup": setup,
+                "does": guide.get("does", ""),
+                "bench_skip": entry["id"] in BENCH_SKIPPED,
+            })
+        return self._json(200, {"tests": tests, "express": list(EXPRESS_TEST_IDS),
+                                "tape": list(TAPE_TEST_IDS)})
+
     def _sheet(self):
         """The measurement rows the session needs, and what is filled in."""
         query = urlparse(self.path).query
@@ -2205,14 +2651,45 @@ class StudioHandler(BaseHTTPRequestHandler):
             # and in the operator's face. The empty sheet says the same
             # thing: there is nothing to fill in yet.
             return self._json(200, {"rows": [], "missing": 0, "total": 0,
-                                    "name": name, "session": False})
+                                    "name": name, "session": False,
+                                    "tier": "none",
+                                    "meta": [], "bad_rows": 0,
+                                    "missing_rows": 0, "truncated": False,
+                                    "geometry_warning": ""})
         rows = _sheet_rows(_session_runs(session))
         filled = read_sheet_rows(paths["sheet"], rows)
         missing = count_missing(filled)
+        meta, flags = session_meta(name)
+        # Express is a session that needs no tape: every tape row is absent
+        # because only watch-only tests were collected.
+        tier = "express" if not filled else "lab"
+        geometry_warning = ""
+        try:
+            robot = read_robot_files().get("geometry", {}) or {}
+            for entry in meta:
+                try:
+                    session_wheel = float(entry.get("wheel_diameter_mm") or 0)
+                    robot_wheel = float(robot.get("WHEEL_DIAMETER_MM") or 0)
+                except (TypeError, ValueError):
+                    continue
+                if session_wheel and robot_wheel and abs(
+                        session_wheel - robot_wheel) > 0.5:
+                    geometry_warning = (
+                        f"Session says {session_wheel:g} mm wheel, "
+                        f"robot_config.py says {robot_wheel:g} mm. "
+                        "One of them is stale; the fit uses the session.")
+                    break
+        except Exception:
+            geometry_warning = ""
         return self._json(200, {"rows": filled, "missing": missing,
                                 "total": len(filled), "name": name,
-                                "session": True,
-                                "weigh_in": read_weigh_in_rows(paths["sheet"])})
+                                "session": True, "tier": tier,
+                                "weigh_in": read_weigh_in_rows(paths["sheet"]),
+                                "meta": meta,
+                                "bad_rows": flags["bad_rows"],
+                                "missing_rows": flags["missing_rows"],
+                                "truncated": flags["truncated"],
+                                "geometry_warning": geometry_warning})
 
     def _fit(self):
         """Fit the model from the session and the filled sheet."""
@@ -2252,11 +2729,18 @@ class StudioHandler(BaseHTTPRequestHandler):
         else:
             shown = read_sheet_rows(paths["sheet"], rows)
         missing = count_missing(shown)
+        tier = "express" if not shown and paths["session"].is_file() else (
+            "lab" if shown else "none")
         return self._json(200, {"rows": shown, "missing": missing,
                                 "total": len(shown), "name": name,
+                                "session": paths["session"].is_file(),
+                                "tier": tier,
                                 "weigh_in": read_weigh_in_rows(paths["sheet"])})
 
     def _cancel_job(self, job_id):
+        # See _hubs: the cancel carries an (empty) body that has to be
+        # read, or the next request on this connection 501s.
+        self._read_body()
         job = self.server.get_job(job_id)
         if job is None:
             return self._error(404, "Unknown job.")
