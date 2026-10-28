@@ -1151,6 +1151,15 @@ TEST_END,3
         self.assertNotIn("odometry_straight", payload["express"])
         self.assertNotIn("replay_complex_mission", payload["express"])
 
+    def test_the_anchor_tier_is_express_plus_one_tape_check(self):
+        status, payload = _request(f"{self.base}/api/calibration/tests")
+        self.assertEqual(status, 200)
+        self.assertIn("odometry_straight", payload["anchor"])
+        self.assertNotIn("odometry_turn_cw", payload["anchor"])
+        self.assertNotIn("brake_from_300", payload["anchor"])
+        self.assertEqual(set(payload["anchor"]) - set(payload["express"]),
+                         {"odometry_straight"})
+
 
 class TestCollectSelection(StudioTestCase):
     """The SysId page collects one test, some tests, or all of them.

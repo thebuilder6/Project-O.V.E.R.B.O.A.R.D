@@ -36,6 +36,8 @@ dl.facts dt { font-weight: 600; }
 dl.facts dd { margin: 0; }
 pre.log { max-height: 240px; overflow: auto; white-space: pre-wrap;
   background: rgba(128,128,128,.12); padding: 8px; border-radius: 6px; }
+.live { font-size: 12px; font-weight: 600; color: #1a7f37; }
+.live.quiet { color: #b45309; }
 .toast { position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%);
   background: #333; color: #fff; padding: 8px 16px; border-radius: 6px; }
 .prompt-card { border: 1px solid rgba(128,128,128,.35); border-radius: 8px;

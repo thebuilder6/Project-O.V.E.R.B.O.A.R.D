@@ -16,11 +16,15 @@ const state = {
     before: null,
     fitted: null,
     express: new Set(),
+    anchor: null,
+    profiles: [],
     // Step mode: the checked tests run as chained one-test pushes.
     step: null,
     prompts: [],
     progress: {},
     lastEnds: 0,
+    lastLogLen: 0,
+    lastLogAt: 0,
 };
 
 function toast(message, isError) {
@@ -56,6 +60,42 @@ function slugify(name) {
     return slug || 'robot';
 }
 
+/* The drivebase profile this collect pushes: the same example configs the
+   main tab lists. The server syncs it to robot_config.py before pushing,
+   so the hub's ports and geometry match the plan. */
+async function loadProfiles() {
+    try {
+        const data = await api('/api/examples');
+        state.profiles = (data && data.configs) || [];
+    } catch (err) {
+        state.profiles = [];
+    }
+    const select = el('sys-profile');
+    select.innerHTML = '';
+    state.profiles.forEach((config) => {
+        const option = document.createElement('option');
+        option.value = config.name;
+        option.textContent = config.name;
+        select.appendChild(option);
+    });
+    if (!state.profiles.length) {
+        const option = document.createElement('option');
+        option.value = 'my_robot';
+        option.textContent = 'my_robot';
+        select.appendChild(option);
+    }
+    const want = state.profiles.some((c) => c.name === 'my_robot') ? 'my_robot' : select.options[0].value;
+    select.value = want;
+    // Changing the profile renames the robot: the name is the stem of
+    // calibration/<name>.*.
+    el('sys-name').value = want;
+}
+
+function selectedProfileName() {
+    const select = el('sys-profile');
+    return (select && select.value) || 'my_robot';
+}
+
 /* ----------------------------------------------- 1b. the test list */
 
 async function loadTests() {
@@ -66,6 +106,8 @@ async function loadTests() {
             api(`/api/calibration/sheet?name=${encodeURIComponent(robotName())}`),
         ]);
         state.express = new Set(tests.express || []);
+        state.anchor = tests.anchor ? new Set(tests.anchor) : null;
+        state.testPlan = (tests.tests || []).map((t) => ({ id: t.id, repeats: t.repeats || 1 }));
         renderTests(tests.tests || [], sheet, el('sys-bench').checked);
     } catch (err) {
         el('sys-tests-note').textContent = err.message;
@@ -140,9 +182,9 @@ function updateTestNote() {
     if (picked !== null) {
         const tape = picked.filter((id) => !(state.express || new Set()).has(id));
         note += `${picked.length} selected; the rest stays as it is. `;
-        note += tape.length
-            ? `Lab: ${tape.length} tape test(s), bring the tape measure. `
-            : 'Express: no tape needed, the wall is the anchor. ';
+        if (!tape.length) note += 'Express: no tape needed, the wall is the anchor. ';
+        else if (tape.length === 1 && tape[0] === 'odometry_straight') note += 'Anchor: wall primary, one tape check. ';
+        else note += `Lab: ${tape.length} tape test(s), bring the tape measure. `;
         if (picked.includes('wall_stall') && !picked.includes('wall_homing')) {
             note += 'wall_homing runs too (stall needs the robot against the wall). ';
         }
@@ -156,8 +198,12 @@ function presetTests(which) {
     const boxes = Array.from(el('sys-tests').querySelectorAll('input[type=checkbox]'));
     if (!boxes.length) return;
     const express = state.express || new Set();
+    const anchor = state.anchor || null;
     boxes.forEach((box) => {
-        box.checked = which === 'lab' ? true : express.has(box.dataset.test);
+        if (which === 'lab') box.checked = true;
+        else if (which === 'anchor' && anchor) box.checked = anchor.has(box.dataset.test);
+        else if (which === 'anchor') box.checked = express.has(box.dataset.test) || box.dataset.test === 'odometry_straight';
+        else box.checked = express.has(box.dataset.test);
     });
     updateTestNote();
 }
@@ -212,6 +258,11 @@ async function startCollect() {
 
 async function collectTests(picked) {
     state.lastEnds = 0;
+    state.lastLogLen = 0;
+    state.lastLogAt = Date.now();
+    el('sys-log-details').open = true;
+    el('sys-log-live').textContent = 'waiting for the hub…';
+    el('sys-log-live').className = 'live quiet';
     el('sys-collect').disabled = true;
     el('sys-cancel').hidden = false;
     el('sys-collect-status').textContent = stepPrefix() + 'Pushing the test suite to the hub...';
@@ -220,6 +271,7 @@ async function collectTests(picked) {
             name: robotName(),
             connection: el('sys-conn').value || 'ble',
             hub_name: el('sys-hub').value || null,
+            profile: selectedProfileName(),
         };
         if (picked !== null) body.tests = picked;
         if (el('sys-bench').checked) body.bench = true;
@@ -261,12 +313,86 @@ async function cancelCollect() {
     }
 }
 
+/* The hub log is the proof the hub is alive: it opens itself while a
+   collect runs, follows the tail, and says when the hub goes quiet. */
+function renderLog(log, running) {
+    const pre = el('sys-log');
+    pre.textContent = (log || []).join('\n');
+    const live = el('sys-log-live');
+    if (running) {
+        el('sys-log-details').open = true;
+        if (log.length !== state.lastLogLen) {
+            state.lastLogLen = log.length;
+            state.lastLogAt = Date.now();
+            // Follow the tail while it grows; the operator can still scroll
+            // up, and the next lines pull it back down.
+            pre.scrollTop = pre.scrollHeight;
+        }
+        const quiet_s = Math.floor((Date.now() - state.lastLogAt) / 1000);
+        if (!log.length) {
+            live.textContent = 'waiting for the hub…';
+            live.className = 'live quiet';
+        } else if (quiet_s > 10) {
+            live.textContent = `${log.length} lines · quiet for ${quiet_s}s — check the hub`;
+            live.className = 'live quiet';
+        } else {
+            live.textContent = `${log.length} lines · receiving…`;
+            live.className = 'live';
+        }
+    } else if (log.length) {
+        live.textContent = `${log.length} lines · finished`;
+        live.className = 'live';
+    } else {
+        live.textContent = '';
+        live.className = 'live';
+    }
+}
+
+/* Last / now / on deck, from the plan and the hub's own prompt cards.
+   Pure function of its inputs, so the order is checkable without a hub:
+   plan is the suite order, checked is the table order (null = full suite),
+   prompts are the hub's cards, current is progress.current, stepQueue is the
+   step-mode queue. */
+function queueTrio(plan, checked, prompts, current, stepQueue) {
+    const order = checked === null ? (plan || []).map((t) => t.id) : (checked || []).slice();
+    // The stall drags its homing along (see updateTestNote).
+    if (order.includes('wall_stall') && !order.includes('wall_homing')) {
+        order.splice(order.indexOf('wall_stall'), 0, 'wall_homing');
+    }
+    const repeatsOf = (id) => ((plan || []).find((t) => t.id === id) || {}).repeats || 1;
+    const cards = prompts || [];
+    const doneCards = cards.filter((c) => c.state === 'done');
+    const runningCard = [...cards].reverse().find((c) => c.state !== 'done');
+    const last = doneCards.length ? doneCards[doneCards.length - 1].id : '—';
+    if (stepQueue && stepQueue.length) {
+        return { last, now: stepQueue[0], ondeck: stepQueue.length > 1 ? stepQueue[1] : 'done' };
+    }
+    const cur = (runningCard && runningCard.id) || (current && current.test);
+    if (!cur) {
+        return { last, now: 'pushing…', ondeck: order.length ? order[0] : '—' };
+    }
+    const rep = current && current.repeat !== undefined && current.repeat !== null
+        ? Number(current.repeat) : 0;
+    if (rep + 1 < repeatsOf(cur)) {
+        return { last, now: cur, ondeck: cur };
+    }
+    const idx = order.indexOf(cur);
+    return { last, now: cur, ondeck: idx >= 0 && idx + 1 < order.length ? order[idx + 1] : 'done' };
+}
+
+function renderQueue(prompts, progress, finished) {
+    const trio = finished
+        ? { last: (prompts || []).filter((c) => c.state === 'done').slice(-1).map((c) => c.id)[0] || '—', now: 'finished', ondeck: '—' }
+        : queueTrio(state.testPlan, selectedTests(), prompts, (progress || {}).current,
+            state.step && state.step.queue);
+    el('sys-queue').textContent = `Last: ${trio.last} · Now: ${trio.now} · On deck: ${trio.ondeck}`;
+}
+
 function pollCollect() {
     clearTimeout(state.pollTimer);
     state.pollTimer = setTimeout(async () => {
         try {
             const job = await api(`/api/jobs/${state.jobId}`);
-            el('sys-log').textContent = (job.log || []).join('\n');
             renderPrompts(job.prompts || [], job.progress || {});
             const ends = (job.prompts || []).filter((card) => card.state === 'done').length;
             if (ends !== state.lastEnds) {
@@ -277,7 +403,9 @@ function pollCollect() {
             }
             const progress = job.progress || {};
             const current = progress.current;
+            renderQueue(job.prompts || [], progress, job.status !== 'running');
             if (job.status === 'running') {
+                renderLog(job.log || [], true);
                 el('sys-collect-status').textContent = stepPrefix() + (current
                     ? `Running ${current.test}`
                         + `${current.repeat !== undefined && current.repeat !== null
@@ -290,6 +418,7 @@ function pollCollect() {
             }
             el('sys-collect').disabled = false;
             el('sys-cancel').hidden = true;
+            renderLog(job.log || [], false);
             if (job.status === 'ok') {
                 el('sys-collect-status').textContent = stepPrefix() +
                     `Collected ${progress.tests_done || 0} tests. ` +
@@ -426,6 +555,9 @@ function renderSheet(payload) {
         renderMeta(payload.meta, payload);
         if (payload.geometry_warning) toast(payload.geometry_warning, true);
         return;
+    }
+    if (tier === 'anchor') {
+        tierBox.textContent = 'Anchor session: wall primary, one tape check (odometry_straight). Fit, then promote to Lab only on disagreement.';
     }
     const header = document.createElement('tr');
     ['Test', 'Repeat', 'Stop', 'x (mm)', 'y (mm)', 'Turn (deg)'].forEach((label) => {
@@ -682,7 +814,9 @@ async function fitModel() {
         const tier = summary.tier || 'lab';
         const tierLine = tier === 'express'
             ? 'Express fit: dynamics only, odometry/drift/slip stay uncalibrated. '
-            : 'Lab fit: tape scales included. ';
+            : tier === 'anchor'
+                ? 'Anchor fit: wall primary, one tape check. Promote to Lab only on disagreement. '
+                : 'Lab fit: tape scales included. ';
         el('sys-fit-status').textContent = problems.length
             ? `${tierLine}Fitted with warnings: ${problems.join('; ')}` + (landed.length ? ` Landed: ${landed.join(', ')}.` : '')
             : `${tierLine}Fitted. The model is saved as ${summary.path}.` + (landed.length ? ` Landed: ${landed.join(', ')}.` : '');
@@ -712,9 +846,10 @@ async function fitModel() {
 }
 
 async function addAnchor() {
-    // Minimal C: one tape anchor on top of Express. Appends
+    // Anchor as an option: one tape check on top of Express. Appends
     // odometry_straight (3 repeats) to the session; the sheet then shows
-    // its 3 rows, the tape checks the wall scale, and the next fit is Lab.
+    // its 3 rows, the tape checks the wall scale, and the next fit is
+    // Anchor (Lab only on disagreement).
     el('sys-anchor').disabled = true;
     try {
         collectTests(['odometry_straight']);
@@ -848,6 +983,7 @@ el('sys-fit').addEventListener('click', fitModel);
 el('sys-anchor').addEventListener('click', addAnchor);
 el('sys-finish').addEventListener('click', finish);
 el('sys-express').addEventListener('click', () => presetTests('express'));
+el('sys-anchor-pick').addEventListener('click', () => presetTests('anchor'));
 el('sys-lab').addEventListener('click', () => presetTests('lab'));
 el('sys-select-all').addEventListener('click', () => {
     el('sys-tests').querySelectorAll('input[type=checkbox]')
@@ -860,7 +996,10 @@ el('sys-select-none').addEventListener('click', () => {
     updateTestNote();
 });
 el('sys-name').addEventListener('change', () => { state.before = null; loadSheet(); loadTests(); });
+el('sys-profile').addEventListener('change', () => {
+    el('sys-name').value = selectedProfileName();
+    state.before = null; loadSheet(); loadTests();
+});
 el('sys-bench').addEventListener('change', loadTests);
 
-loadSheet();
-loadTests();
+loadProfiles().then(() => { loadSheet(); loadTests(); });

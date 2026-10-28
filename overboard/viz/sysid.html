@@ -38,8 +38,10 @@
       this page names the running test, the repeat and how many measurements
       are still missing.</p>
     <div class="row">
+      <label class="field"><span>Profile</span>
+        <select id="sys-profile"></select></label>
       <label class="field"><span>Robot name</span>
-        <input type="text" id="sys-name" value="robot" autocomplete="off"></label>
+        <input type="text" id="sys-name" value="my_robot" autocomplete="off"></label>
       <label class="field"><span>Connection</span>
         <select id="sys-conn">
           <option value="ble" selected>Bluetooth (BLE)</option>
@@ -54,6 +56,7 @@
       <button type="button" id="sys-cancel" class="btn small" hidden>Cancel</button>
     </div>
     <p class="hint" id="sys-collect-status">No session yet.</p>
+    <p class="hint" id="sys-queue"></p>
     <div id="sys-prompts"></div>
     <h3 class="sub">Tests <span class="count" id="sys-tests-count"></span></h3>
     <p class="hint">Pick what this collect runs, in suite order. A redo appends
@@ -61,6 +64,7 @@
       Dependencies are added by themselves (stall needs its homing).</p>
     <div class="row">
       <button type="button" id="sys-express" class="btn small">Express (no tape)</button>
+      <button type="button" id="sys-anchor-pick" class="btn small">Anchor (wall + 1 tape)</button>
       <button type="button" id="sys-lab" class="btn small">Lab (full tape)</button>
       <button type="button" id="sys-select-all" class="btn small">Select all</button>
       <button type="button" id="sys-select-none" class="btn small">Clear</button>
@@ -77,7 +81,7 @@
     <p class="hint warn" id="sys-truncated" hidden></p>
     <table class="report" id="sys-meta"></table>
     <details id="sys-log-details">
-      <summary>Hub log</summary>
+      <summary>Hub log <span class="live" id="sys-log-live"></span></summary>
       <div class="row">
         <button type="button" id="sys-copy-log" class="btn small">Copy log</button>
         <span class="hint">The whole log, not the selection.</span>

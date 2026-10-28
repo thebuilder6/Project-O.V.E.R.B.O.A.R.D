@@ -148,9 +148,10 @@ class TestSysIdInventory(unittest.TestCase):
         self.assertIn("Setup first", self.js)
 
     def test_the_document_lists_the_sysid_controls(self):
-        for element_id in ["sys-collect", "sys-save", "sys-fit", "sys-finish",
-                           "sys-copy-log", "sys-select-all", "sys-select-none",
-                           "sys-express", "sys-lab", "sys-tier", "sys-anchor",
+        for element_id in ["sys-profile", "sys-collect", "sys-save", "sys-fit", "sys-finish",
+                           "sys-copy-log", "sys-log-live", "sys-queue", "sys-select-all", "sys-select-none",
+                           "sys-express", "sys-anchor-pick", "sys-lab",
+                           "sys-tier", "sys-anchor",
                            "sys-anchor-note", "sys-step-mode", "sys-bench",
                            "sys-prompts", "sys-sheet", "sys-weigh",
                            "sys-summary", "sys-compare", "sys-meta",

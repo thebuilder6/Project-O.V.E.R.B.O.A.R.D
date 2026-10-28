@@ -1169,13 +1169,20 @@ SELECTABLE_TESTS = [
 SELECTABLE_TEST_IDS = [entry["id"] for entry in SELECTABLE_TESTS]
 
 # Express is the no-tape tier: every watch-only calibration test, minus the
-# replay (compare-only, never fitted). Lab is the full suite on top of it.
-# shortcut: Express cannot see lateral drift/slip; promote to Lab when a
-# mission needs them, upgrade to a camera anchor when tape must go entirely.
+# replay (compare-only, never fitted). Anchor is Express plus one tape check
+# (odometry_straight): the wall stays the primary scale, the tape checks it.
+# Lab is the full suite on top of it.
+# shortcut: Express cannot see lateral drift/slip; Anchor sees the distance
+# scale but not slip; promote to Lab when a mission needs them, upgrade to a
+# camera anchor when tape must go entirely.
 EXPRESS_TEST_IDS = [entry["id"] for entry in SELECTABLE_TESTS
                     if not entry["tape"]
                     and entry["id"] != "replay_complex_mission"]
+ANCHOR_TEST_IDS = [entry["id"] for entry in SELECTABLE_TESTS
+                   if entry["id"] in set(EXPRESS_TEST_IDS)
+                   or entry["id"] == "odometry_straight"]
 TAPE_TEST_IDS = [entry["id"] for entry in SELECTABLE_TESTS if entry["tape"]]
+ANCHOR_TAPE_TESTS = frozenset({"odometry_straight"})
 
 
 # Bench mode skips the curvature arcs on the hub: the host fit never reads
@@ -1713,11 +1720,24 @@ def fit_from_sheet(name, gearing=None, wall_distance_m=None):
                 f"({width * 1000:.0f} mm per metre); "
                 "expect the tracking gate to fail on long paths"]
     tape_scales = bool(odometry.get("distance_scale_tape"))
-    calibrated_motion = bool(
-        (result.get("slip", {}) or {}).get("calibrated")
-        or (result.get("drift", {}) or {}).get("calibrated")
-        or tape_scales)
-    summary["tier"] = "lab" if calibrated_motion else "express"
+    # Tier is what the session asked for: no tape rows is Express, only the
+    # anchor test is Anchor, anything more is Lab. The result alone cannot
+    # tell Anchor from Lab (both carry a tape scale), so read the runs.
+    posed = set()
+    for run in runs:
+        try:
+            if int(run["meta"].get("poses", 0) or 0) > 0:
+                posed.add((run["meta"].get("test") or run.get("name") or "").strip())
+        except (TypeError, ValueError):
+            continue
+    posed.discard("")
+    if not posed:
+        tier = "express"
+    elif posed <= set(ANCHOR_TAPE_TESTS):
+        tier = "anchor"
+    else:
+        tier = "lab"
+    summary["tier"] = tier
     summary["problems"] = problems
     return summary
 
@@ -1758,6 +1778,11 @@ def start_collect(server, payload):
     try:
         from overboard.models.robot_model import RobotConfig
         cfg_dict = payload.get("config") or payload.get("robot")
+        if not cfg_dict and payload.get("profile"):
+            # The page sends the profile name; the file on this machine is
+            # the source of truth, not a copy of it in the request.
+            candidate = (EXAMPLES_DIR / f"{slugify(payload.get('profile'), 'robot')}.json")
+            cfg_dict = _read_json(candidate)
         if cfg_dict:
             RobotConfig(cfg_dict).sync_pybricks_robot_config()
     except Exception:
@@ -2521,9 +2546,11 @@ class StudioHandler(BaseHTTPRequestHandler):
         })
 
     def _solve(self):
+        # Read the body before the busy check: whatever stays in the socket
+        # becomes the next request on this keep-alive connection (see _hubs).
+        payload = self._read_body()
         if self.server.active_job() is not None:
             return self._error(409, "A solve is already running. Cancel it first.")
-        payload = self._read_body()
         try:
             job = start_job(self.server, payload)
         except BusyError as exc:
@@ -2531,9 +2558,11 @@ class StudioHandler(BaseHTTPRequestHandler):
         return self._json(202, job.snapshot())
 
     def _push(self):
+        # Read the body before the busy check: whatever stays in the socket
+        # becomes the next request on this keep-alive connection (see _hubs).
+        payload = self._read_body()
         if self.server.active_job() is not None:
             return self._error(409, "Something is already running. Cancel it first.")
-        payload = self._read_body()
         try:
             job = start_push(self.server, payload)
         except BusyError as exc:
@@ -2605,9 +2634,12 @@ class StudioHandler(BaseHTTPRequestHandler):
 
     def _collect(self):
         """Push the calibration suite to the hub and capture the session."""
+        # Read the body before the busy check: whatever stays in the socket
+        # becomes the next request on this keep-alive connection, and the
+        # server answers that garbage with an HTML 400 (see _hubs).
+        payload = self._read_body()
         if self.server.active_job() is not None:
             return self._error(409, "Something is already running. Cancel it first.")
-        payload = self._read_body()
         try:
             job = start_collect(self.server, payload)
         except BusyError as exc:
@@ -2636,6 +2668,7 @@ class StudioHandler(BaseHTTPRequestHandler):
                 "bench_skip": entry["id"] in BENCH_SKIPPED,
             })
         return self._json(200, {"tests": tests, "express": list(EXPRESS_TEST_IDS),
+                                "anchor": list(ANCHOR_TEST_IDS),
                                 "tape": list(TAPE_TEST_IDS)})
 
     def _sheet(self):
@@ -2660,9 +2693,16 @@ class StudioHandler(BaseHTTPRequestHandler):
         filled = read_sheet_rows(paths["sheet"], rows)
         missing = count_missing(filled)
         meta, flags = session_meta(name)
-        # Express is a session that needs no tape: every tape row is absent
-        # because only watch-only tests were collected.
-        tier = "express" if not filled else "lab"
+        # Express needs no tape; Anchor needs only odometry_straight; Lab
+        # needs the rest. The tier is what the session asks for, not what
+        # is filled in yet.
+        tape_tests = {row["test"] for row in filled}
+        if not filled:
+            tier = "express"
+        elif tape_tests <= set(ANCHOR_TAPE_TESTS):
+            tier = "anchor"
+        else:
+            tier = "lab"
         geometry_warning = ""
         try:
             robot = read_robot_files().get("geometry", {}) or {}
@@ -2729,8 +2769,15 @@ class StudioHandler(BaseHTTPRequestHandler):
         else:
             shown = read_sheet_rows(paths["sheet"], rows)
         missing = count_missing(shown)
-        tier = "express" if not shown and paths["session"].is_file() else (
-            "lab" if shown else "none")
+        tape_tests = {row["test"] for row in shown}
+        if not shown and paths["session"].is_file():
+            tier = "express"
+        elif shown and tape_tests <= set(ANCHOR_TAPE_TESTS):
+            tier = "anchor"
+        elif shown:
+            tier = "lab"
+        else:
+            tier = "none"
         return self._json(200, {"rows": shown, "missing": missing,
                                 "total": len(shown), "name": name,
                                 "session": paths["session"].is_file(),
