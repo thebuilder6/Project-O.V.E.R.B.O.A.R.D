@@ -223,6 +223,10 @@ def check_trajectory_approval(doc):
         raise ValueError(
             "the trajectory's approval uses unsupported score_version "
             f"{validation.get('score_version')!r}, expected {SCORE_VERSION}")
+    if validation.get("propagation", "plant") not in ("plant", "tick"):
+        raise ValueError(
+            "the trajectory's approval uses unsupported propagation "
+            f"{validation.get('propagation')!r}, expected 'plant' or 'tick'")
     traj = doc.get("trajectory") or {}
     expected = validation.get("trajectory_sha256")
     actual = trajectory_sha256(traj.get("config"), traj.get("samples"))

@@ -301,6 +301,9 @@ class TestPushHubCli(unittest.TestCase):
     def test_an_unsupported_score_version_is_refused(self):
         self._refused(self._approved(score_version=2), "score_version")
 
+    def test_an_unsupported_propagation_is_refused(self):
+        self._refused(self._approved(propagation="bogus"), "propagation")
+
     def test_a_stale_hash_is_refused(self):
         doc = self._approved()
         doc["trajectory"]["samples"][0]["x"] += 0.01
