@@ -202,7 +202,7 @@ waypoints
    ├─ CPU audit     : validator.py         validate_samples
    ├─ Immrax        : immrax_validator.py  validate_trajectory
    ├─ scoring       : main.py              per-candidate tube / tracking / ok / fitness
-   ├─ selection     : main.py              _select_attempt   (shortest duration first - see 7.3)
+   ├─ selection     : main.py              _select_attempt_scored   (highest decision score first - see 7.3)
    └─ export gate   : main.py              _export_block_reason
 ```
 
@@ -223,7 +223,7 @@ waypoints
    ├─ CPU audit     : validator.py         validate_samples
    ├─ Immrax        : immrax_validator.py  validate_trajectory
    ├─ scoring       : main.py              per-candidate tube / tracking / ok / fitness
-   ├─ selection     : overboard/main.py    _select_attempt   (fastest first - see 7.3)
+   ├─ selection     : overboard/main.py    _select_attempt (deleted T020; fastest-first, historical)
    └─ export gate   : main.py              _export_block_reason
 ```
 
@@ -304,7 +304,7 @@ Every candidate goes through the full gate chain in [Part II](#part-ii--the-veri
 - `duration` — the trajectory duration,
 - `cost` — the solver's objective value.
 
-Then `_select_attempt` (`overboard/main.py`) picks one: the **shortest passing candidate**, with the envelope breaking a duration tie. The 5-part fitness score is reported for every candidate, so another rule can be run offline on the same numbers, but it does not decide. See [Section 7](#7-scoring-and-selection) and [7.3](#73-the-selection-rule).
+Then `_select_attempt_scored` (`overboard/main.py`) picks one: the **highest decision score** (a pass beats an accepted failure, then the accuracy and physical categories, then the shorter duration). The 5-part fitness score is reported for every candidate, so another rule can be run offline on the same numbers, but it does not decide. See [Section 7](#7-scoring-and-selection) and [7.3](#73-the-selection-rule).
 
 ### 3.4 Export
 
@@ -1266,7 +1266,7 @@ to go looking.
 
 | Module | Holds | The symbols this document names |
 |---|---|---|
-| `overboard/main.py` | the CLI, the candidate set, the scoring, the selection, the export gate | `main`, `_candidate_specs`, `_select_attempt`, `_choose_attempt`, `_record_candidate`, `_score_attempt`, `_run_candidate_rounds`, `_export_block_reason`, `_emit_validation_report`, `_immrax_failure_reasons`, `_cpu_failure_reasons`, `_segment_limit`, `_segment_report`, `_load_waypoints`, `_apply_preset`, `_rescue_specs`, `PRESETS`, `SWEEP_WEIGHTS`, `VALIDATION_MARKER`, `HAS_JAX` |
+| `overboard/main.py` | the CLI, the candidate set, the scoring, the selection, the export gate | `main`, `_candidate_specs`, `_select_attempt_scored`, `_choose_attempt`, `_record_candidate`, `_score_attempt`, `_run_candidate_rounds`, `_export_block_reason`, `_emit_validation_report`, `_immrax_failure_reasons`, `_cpu_failure_reasons`, `_segment_limit`, `_segment_report`, `_load_waypoints`, `_apply_preset`, `_rescue_specs`, `PRESETS`, `SWEEP_WEIGHTS`, `VALIDATION_MARKER`, `HAS_JAX` |
 | `overboard/core/optimizer.py` | the CasADi/IPOPT optimizer and the five stock seeds | `TrajectoryOptimizer`, `solve`, `_solve_once`, `_compute_cost`, `_build_initial_guess`, `_guess_point`, `_offset_segment_interiors`, `_rotate_before_driving`, `_set_rolling_speeds`, `_sample_times`, `format_output`, `guess_from_samples`, `get_segment_sample_counts`, `get_adaptive_mesh_sample_counts`, `merge_conditions`, `GUESS_STYLES`, `CASADI_IPOPT_LOCK` |
 | `overboard/core/frontier_seed.py` | the analytical frontier seeds | `generate_frontier_seed`, `generate_canonical_seeds`, `compute_tangent_headings` |
 | `overboard/core/unified_planner.py` | the 3-Pillar unified engine | `UnifiedPathEngine`, `compute_invariant_mesh_samples`, `generate_seed`, `solve_candidate`, `plan` |

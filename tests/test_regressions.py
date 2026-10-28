@@ -102,111 +102,125 @@ class TestExportConfig(unittest.TestCase):
 
 
 class TestAttemptSelection(unittest.TestCase):
-    """Finding 2: a failed attempt must never be preferred over a passing one."""
+    """Finding 2 (scored rule): eligibility first, then highest decision score."""
 
     @staticmethod
     def attempt(name, cost, ok=False, violation=float("inf"), converged=True,
-                tube=float("inf"), duration=float("inf"), fitness=None):
+                tube=float("inf"), duration=float("inf"), fitness=None,
+                score=None):
         record = {"samples": name, "stats": {}, "cost": cost,
                   "ok": ok, "violation": violation, "converged": converged,
                   "tube": tube, "duration": duration}
         if fitness is not None:
             record["fitness"] = fitness
+        if score is not None:
+            record["score"] = score
         return record
 
     def setUp(self):
-        from overboard.main import _select_attempt
-        self.select = _select_attempt
+        from overboard.main import _select_attempt_scored
+        self.select = _select_attempt_scored
 
     def test_passing_attempt_beats_cheaper_failed_one(self):
-        failed = self.attempt("failed", 10.0, violation=0.07)
-        passed = self.attempt("passed", 20.0, ok=True)
+        failed = self.attempt("failed", 10.0, violation=0.07, score=95.0)
+        passed = self.attempt("passed", 20.0, ok=True, score=80.0)
         best, passed_any = self.select([failed, passed])
         self.assertTrue(passed_any)
         self.assertEqual(best["samples"], "passed")
 
-    def test_smallest_tracking_error_wins_when_none_pass(self):
-        worse = self.attempt("worse", 10.0, violation=0.08)
-        better = self.attempt("better", 20.0, violation=0.05)
+    def test_higher_score_wins_when_none_pass(self):
+        worse = self.attempt("worse", 10.0, violation=0.08, score=40.0)
+        better = self.attempt("better", 20.0, violation=0.05, score=50.0)
         best, passed_any = self.select([worse, better])
         self.assertFalse(passed_any)
         self.assertEqual(best["samples"], "better")
 
-    def test_the_envelope_only_breaks_a_tie(self):
-        """A wider tube does not lose a shorter plan; it only breaks a tie."""
-        fast = self.attempt("fast", 10.0, ok=True, tube=0.012, duration=6.0)
-        safe = self.attempt("safe", 20.0, ok=True, tube=0.008, duration=9.0)
+    def test_score_beats_tube(self):
+        """The decision score decides; a wider tube does not beat a higher score."""
+        fast = self.attempt("fast", 10.0, ok=True, tube=0.012, duration=6.0,
+                            score=90.0)
+        safe = self.attempt("safe", 20.0, ok=True, tube=0.008, duration=9.0,
+                            score=80.0)
         best, _ = self.select([fast, safe])
         self.assertEqual(best["samples"], "fast")
 
-    def test_shortest_wins_when_envelopes_tie(self):
-        slow = self.attempt("slow", 10.0, ok=True, tube=0.008, duration=9.0)
-        quick = self.attempt("quick", 20.0, ok=True, tube=0.008, duration=6.0)
+    def test_higher_score_beats_duration(self):
+        slow = self.attempt("slow", 10.0, ok=True, tube=0.008, duration=9.0,
+                            score=80.0)
+        quick = self.attempt("quick", 20.0, ok=True, tube=0.008, duration=6.0,
+                             score=90.0)
         best, _ = self.select([slow, quick])
         self.assertEqual(best["samples"], "quick")
 
-    def test_tiny_envelope_difference_beats_cheaper_candidate(self):
-        cheap = self.attempt("cheap", 10.0, ok=True, tube=0.010, duration=6.0)
+    def test_higher_score_beats_narrower_tube(self):
+        cheap = self.attempt("cheap", 10.0, ok=True, tube=0.010, duration=6.0,
+                             score=80.0)
         safer = self.attempt("safer", 20.0, ok=True,
-                             tube=0.010 - 1e-6, duration=6.0)
+                             tube=0.010 - 1e-6, duration=6.0, score=90.0)
         best, _ = self.select([cheap, safer])
         self.assertEqual(best["samples"], "safer")
 
     def test_quantified_failure_beats_unquantified(self):
-        physical = self.attempt("physical", 5.0)  # violation=inf
-        tracking = self.attempt("tracking", 20.0, violation=0.09)
+        physical = self.attempt("physical", 5.0, score=40.0)  # violation=inf
+        tracking = self.attempt("tracking", 20.0, violation=0.09, score=50.0)
         best, _ = self.select([physical, tracking])
         self.assertEqual(best["samples"], "tracking")
 
-    def test_cheapest_wins_when_all_failed_physically(self):
-        expensive = self.attempt("expensive", 20.0)
-        cheap = self.attempt("cheap", 10.0)
+    def test_higher_score_wins_when_all_failed_physically(self):
+        expensive = self.attempt("expensive", 20.0, score=40.0)
+        cheap = self.attempt("cheap", 10.0, score=50.0)
         best, _ = self.select([expensive, cheap])
         self.assertEqual(best["samples"], "cheap")
 
     def test_non_converged_attempt_is_never_selected(self):
         non_converged = self.attempt(
-            "nonconverged", 1.0, violation=0.0, converged=False)
-        converged = self.attempt("converged", 20.0, violation=0.05)
+            "nonconverged", 1.0, violation=0.0, converged=False, score=99.0)
+        converged = self.attempt("converged", 20.0, violation=0.05,
+                                 score=50.0)
         best, passed_any = self.select([non_converged, converged])
         self.assertFalse(passed_any)
         self.assertEqual(best["samples"], "converged")
 
     def test_no_converged_attempts_returns_none(self):
         best, passed_any = self.select([
-            self.attempt("bad", 1.0, converged=False),
+            self.attempt("bad", 1.0, converged=False, score=99.0),
         ])
         self.assertIsNone(best)
         self.assertFalse(passed_any)
 
     def test_the_fastest_passing_candidate_is_taken(self):
-        """The rule: the shortest passing plan, the envelope breaking a tie."""
-        slow = self.attempt("slow", 20.0, ok=True, tube=0.005, duration=9.0)
-        fast = self.attempt("fast", 10.0, ok=True, tube=0.010, duration=6.0)
+        """The rule: the highest decision score wins, not the shortest plan."""
+        slow = self.attempt("slow", 20.0, ok=True, tube=0.005, duration=9.0,
+                            score=80.0)
+        fast = self.attempt("fast", 10.0, ok=True, tube=0.010, duration=6.0,
+                            score=90.0)
         best, passed_any = self.select([slow, fast])
         self.assertTrue(passed_any)
         self.assertEqual(best["samples"], "fast")
 
     def test_a_duration_tie_is_broken_with_the_envelope(self):
-        wide = self.attempt("wide", 10.0, ok=True, tube=0.010, duration=6.0)
-        tight = self.attempt("tight", 20.0, ok=True, tube=0.008, duration=6.0)
+        wide = self.attempt("wide", 10.0, ok=True, tube=0.010, duration=6.0,
+                            score=80.0)
+        tight = self.attempt("tight", 20.0, ok=True, tube=0.008, duration=6.0,
+                             score=90.0)
         best, _ = self.select([wide, tight])
         self.assertEqual(best["samples"], "tight")
 
     def test_the_fitness_score_does_not_decide(self):
-        """The score is reported for every candidate, but the time rules."""
+        """The score is reported for every candidate, but the decision score chooses."""
         slow = self.attempt("slow", 20.0, ok=True, tube=0.010, duration=9.0,
-                            fitness=1.0)
+                            fitness=1.0, score=80.0)
         fast = self.attempt("fast", 10.0, ok=True, tube=0.005, duration=6.0,
-                            fitness=2.0)
+                            fitness=2.0, score=90.0)
         best, _ = self.select([slow, fast])
         self.assertEqual(best["samples"], "fast")
 
     def test_a_failing_candidate_is_never_the_fastest_one(self):
-        """Duration only ranks the candidates that passed every gate."""
+        """Eligibility ranks before the score: a failed plan never beats a pass."""
         failed = self.attempt("failed", 10.0, ok=False, tube=0.001,
-                              duration=2.0, violation=0.05)
-        passed = self.attempt("passed", 20.0, ok=True, tube=0.010, duration=9.0)
+                              duration=2.0, violation=0.05, score=95.0)
+        passed = self.attempt("passed", 20.0, ok=True, tube=0.010, duration=9.0,
+                              score=80.0)
         best, passed_any = self.select([failed, passed])
         self.assertTrue(passed_any)
         self.assertEqual(best["samples"], "passed")

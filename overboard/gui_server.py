@@ -561,7 +561,6 @@ def build_command(job_dir, config_path, waypoints_path, output_path, options):
     if pick:
         command += ["--pick-candidate", str(int(pick))]
 
-    timing = options.get("timing", "auto")
     if options.get("fast_polish"):
         command.append("--fast-polish")
 

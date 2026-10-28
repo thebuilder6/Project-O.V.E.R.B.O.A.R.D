@@ -1737,11 +1737,10 @@ class TestStudioEntryPoints(unittest.TestCase):
 
     def test_studio_options_carry_the_cli_settings(self):
         options = self.main._studio_options(
-            samples=14, accuracy_weight=0.005, candidates=3, dt_mode="per-segment",
+            samples=14, accuracy_weight=0.005, candidates=3,
             validate=True, export_format="controller", controller_dt=0.02,
             fast_polish=True, sysid_fit="fit.json")
         self.assertEqual(options["samples"], 14)
-        self.assertEqual(options["timing"], "per-segment")
         self.assertTrue(options["validate"])
         self.assertEqual(options["export_format"], "controller")
         self.assertTrue(options["fast_polish"])

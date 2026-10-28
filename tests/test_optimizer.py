@@ -1390,9 +1390,9 @@ class TestPathFitnessScoring(unittest.TestCase):
 
     def setUp(self):
         from overboard.verification.validator import compute_path_fitness
-        from overboard.main import _select_attempt
+        from overboard.main import _select_attempt_scored
         self.compute_path_fitness = compute_path_fitness
-        self.select = _select_attempt
+        self.select = _select_attempt_scored
         self.robot_cfg = RobotConfig(self.CONFIG)
 
     def _make_samples(self, f_wheel=0.5, duration=2.0, n=11):
@@ -1472,14 +1472,15 @@ class TestPathFitnessScoring(unittest.TestCase):
 
         attempts = [
             {"samples": "B", "stats": {}, "cost": 2.0, "ok": True,
-             "converged": True, "tube": 0.008, "duration": 2.0, "fitness": fit_b},
+             "converged": True, "tube": 0.008, "duration": 2.0, "fitness": fit_b,
+             "score": 95.0},
             {"samples": "A", "stats": {}, "cost": 2.0, "ok": True,
-             "converged": True, "tube": 0.015, "duration": 2.0, "fitness": fit_a},
+             "converged": True, "tube": 0.015, "duration": 2.0, "fitness": fit_a,
+             "score": 90.0},
         ]
         best, passed = self.select(attempts)
         self.assertTrue(passed)
-        # The two plans take the same time, so the envelope decides - the
-        # fitness score is reported, but it does not choose.
+        # The decision score picks, not the fitness or the envelope.
         self.assertEqual(best["samples"], "B")
 
 

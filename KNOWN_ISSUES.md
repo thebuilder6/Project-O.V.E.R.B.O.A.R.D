@@ -281,7 +281,7 @@ If none of those is available, the run does not know that the plan is accurate e
 
 **Was:** IPOPT failure returned the solver's last debug values with `converged=False`, and the CLI wrote them out and exited 0 - a solve to (100, 0, 0) ended near x=20 and still passed the internal checks, so the validator reported PASS.
 
-**Fix:** the CLI checks `stats["converged"]` before any output, `_select_attempt` excludes non-converged candidates, the final pose is checked against the last waypoint, and `forward_integrate` rejects non-positive timestamps instead of crashing.
+**Fix:** the CLI checks `stats["converged"]` before any output, `_select_attempt_scored` excludes non-converged candidates, the final pose is checked against the last waypoint, and `forward_integrate` rejects non-positive timestamps instead of crashing.
 
 **Files:** `overboard/main.py` (candidate loop, export gate), `overboard/verification/validator.py`, `tests/test_regressions.py` (`TestExportGate`, `TestWriteGateIntegration`, `TestValidatorGates`)
 

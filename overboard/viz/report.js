@@ -388,7 +388,6 @@ tr.ok td.verdict-cell { color: var(--ok); }
             `${options.samples} samples per segment`,
             `accuracy weight ${options.accuracy_weight}`,
             `${options.candidates} candidate${options.candidates === 1 ? '' : 's'}`,
-            `timing ${options.timing}`,
             options.validate ? 'validated' : 'not validated',
             options.fast_polish ? 'fast polish' : null,
         ].filter(Boolean).join(' \u00b7 ');

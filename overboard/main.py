@@ -108,31 +108,6 @@ def _ensure_jax_classes():
     return ImmraxValidator, JAXRobotConfig
 
 
-def _select_attempt(attempts):
-    """Choose the candidate to export: the passing attempt with the shortest
-    duration, the reachability envelope breaking a tie.
-
-    The 5-part fitness score is reported for every candidate, so the rule
-    can be re-run offline, but it does not decide: the planner is
-    time-optimal, so the shortest passing plan is the one that ships. If
-    nothing passed, the converged attempt with the smallest quantified
-    violation wins, and `passed_any` is False - so the export is still
-    blocked. Non-converged attempts are never eligible (KI-001)."""
-    candidates = [a for a in attempts if a.get("converged", False)]
-    if not candidates:
-        return None, False
-    passing = [a for a in candidates if a["ok"]]
-    if passing:
-        return min(
-            passing,
-            key=lambda a: (
-                a.get("duration", a["cost"]),
-                a.get("tube", float("inf")),
-            ),
-        ), True
-    return min(candidates, key=lambda a: (a["violation"], a["cost"])), False
-
-
 def _attempt_accepted(attempt, accept_score):
     """True when a failed candidate is eligible under an explicit --accept-score.
 
@@ -184,10 +159,6 @@ def _select_attempt_scored(attempts, accept_score=None):
     return min(candidates, key=lambda a: (a.get("violation", float("inf")),
                                           a.get("cost", float("inf")))), False
 
-
-
-# The timing model the planner uses: one interval per waypoint segment.
-TIMING_MODEL = "per-segment"
 
 # The fallback seeds the rescue used to try when the planner's own candidates
 # produced nothing usable (KI-048) are not run any more. On the 32-mission
@@ -1068,7 +1039,7 @@ def _apply_preset(ctx, preset, values):
     return values
 
 
-def _studio_options(samples, accuracy_weight, candidates, dt_mode, validate,
+def _studio_options(samples, accuracy_weight, candidates, validate,
                     export_format, controller_dt, fast_polish, sysid_fit=None,
                     hub_conn=None, hub_name=None, propagation="plant",
                     auto_mesh=True, polish=False):
@@ -1078,7 +1049,6 @@ def _studio_options(samples, accuracy_weight, candidates, dt_mode, validate,
         "auto_mesh": auto_mesh,
         "accuracy_weight": accuracy_weight,
         "candidates": candidates,
-        "timing": dt_mode,
         "validate": validate,
         "export_format": export_format,
         "controller_dt": controller_dt,
@@ -2545,11 +2515,6 @@ def main(ctx, config, waypoints, output, gui, gui_port, doctor, preset,
             "validator - or one accepted by --accept-score - may drive the hub.")
     scoring_profile = (scoring_profile or DEFAULT_SCORING_PROFILE).lower()
 
-    # The timing model is the planner's: one interval per waypoint segment.
-    # The flags that used to choose it were removed, so the label and the
-    # studio option say what the plan actually does.
-    dt_mode = TIMING_MODEL
-
     if gui:
         if plot or animate:
             raise click.ClickException(
@@ -2564,7 +2529,7 @@ def main(ctx, config, waypoints, output, gui, gui_port, doctor, preset,
         run_studio(config_path=config, waypoints_path=waypoints,
                    port=gui_port, presets=PRESETS, auto_solve=False,
                    options=_studio_options(samples, accuracy_weight, candidates,
-                                           dt_mode, validate, export_format,
+                                           validate, export_format,
                                            controller_dt, fast_polish, sysid_fit,
                                            hub_conn, hub_name, propagation,
                                            auto_mesh=not samples_set and preset is None,
